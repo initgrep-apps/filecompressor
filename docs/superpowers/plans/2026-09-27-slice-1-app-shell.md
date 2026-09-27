@@ -105,7 +105,7 @@ file-compressor/
 - `verify_dev_launches` — `yarn tauri dev` opens window, heading renders, no errors
 - `verify_gate_smoke` — `cd src-tauri && cargo test` compiles + passes (0 tests, lib.rs builds)
 
-- [ ] **Step 1: Scaffold Tauri 2 project with React + TypeScript + Vite**
+- [x] **Step 1: Scaffold Tauri 2 project with React + TypeScript + Vite**
 
 > **Before starting:** Fetch Tauri 2 setup docs via Context7 MCP — resolve `/tauri-apps/tauri-docs`, query "create-tauri-app Vite React TypeScript setup". This ensures you follow the current official setup steps, not outdated patterns.
 
@@ -131,7 +131,7 @@ This creates `src/`, `src-tauri/`, `package.json`, `index.html`, `vite.config.ts
 - Vite: 8.3.x (check `package.json`)
 - `tauri.conf.json` should have `beforeDevCommand: "yarn dev"`, `beforeBuildCommand: "yarn build"`, `devUrl: "http://localhost:5173"`, `frontendDist: "../dist"`
 
-- [ ] **Step 2: Verify the project builds and launches**
+- [x] **Step 2: Verify the project builds and launches**
 
 Run:
 ```bash
@@ -141,7 +141,7 @@ yarn tauri dev
 
 Expected: The Tauri dev window opens showing the default Tauri+React welcome page. No errors in terminal.
 
-- [ ] **Step 3: Clean up boilerplate**
+- [x] **Step 3: Clean up boilerplate**
 
 Remove the default Tauri welcome content from `src/App.tsx` — replace with a minimal placeholder:
 
@@ -159,7 +159,7 @@ export default App
 
 Delete `src/assets/` if it exists (default Tauri logo assets).
 
-- [ ] **Step 4: Verify the cleaned app still launches**
+- [x] **Step 4: Verify the cleaned app still launches**
 
 Run:
 ```bash
@@ -168,7 +168,7 @@ yarn tauri dev
 
 Expected: Window opens showing "File Size Optimizer" heading. No errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git init

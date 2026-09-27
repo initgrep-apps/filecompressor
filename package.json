@@ -1,0 +1,27 @@
+{
+  "name": "file-compressor",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "verify:dev": "bash scripts/verify-dev.sh"
+  },
+  "dependencies": {
+    "react": "19.3.x",
+    "react-dom": "19.3.x",
+    "@tauri-apps/api": "2.12.x",
+    "@tauri-apps/plugin-opener": "2.6.x"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.x",
+    "@types/react-dom": "19.3.x",
+    "@vitejs/plugin-react": "6.1.x",
+    "typescript": "~6.0.3",
+    "vite": "8.3.x",
+    "@tauri-apps/cli": "2.12.x"
+  }
+}
