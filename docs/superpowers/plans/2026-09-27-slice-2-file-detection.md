@@ -59,6 +59,27 @@ src/
 **Interfaces:**
 - Produces: `Category` enum, `FileStatus` enum, `FileEntry` struct — used by all subsequent Rust modules and serialized to frontend
 
+**Acceptance Criteria:**
+- `Category` enum has 5 variants (Image, Video, Pdf, Document, Other) with `#[serde(rename_all = "lowercase")]`
+- `FileStatus` enum has 9 variants with `#[serde(rename_all = "snake_case")]`
+- `FileEntry` struct has 12 fields with `#[serde(rename_all = "camelCase")]`
+- `FileEntry::new(path)` extracts filename, reads file size via `std::fs::metadata`, detects category via `detection::detect_category`, assigns status (Unsupported if Other else Pending), sets target via `detection::default_target_bytes`, generates UUID v4
+- Serialization round-trip (Rust → JSON → Rust) preserves all fields
+- Gate passes clean: `yarn build && cd src-tauri && cargo test`
+- Boundary rules enforced (per tech spec Section 2: Architecture)
+
+**Required Tests:**
+- `test_file_entry_new_valid_file` — constructs FileEntry from existing file, verifies all fields populated correctly
+- `test_file_entry_new_missing_file` — handles non-existent file (original_size = 0, no panic)
+- `test_file_entry_new_permission_denied` — handles metadata permission error gracefully
+- `test_file_entry_new_empty_filename` — path ending in slash returns "unknown" name
+- `test_file_entry_new_unicode_filename` — non-ASCII filename handled correctly
+- `test_file_entry_status_assignment` — Unsupported for Other category, Pending for supported
+- `test_file_entry_serialization_roundtrip` — serde JSON serialize + deserialize preserves all fields
+- `test_file_entry_uuid_format` — id is valid UUID v4 string
+- `test_category_enum_serialization` — lowercase serialization matches frontend expectation
+- `test_file_status_enum_serialization` — snake_case serialization matches frontend expectation
+
 - [ ] **Step 1: Create models.rs**
 
 ```rust
@@ -163,6 +184,30 @@ git commit -m "feat: add Rust data models (Category, FileStatus, FileEntry)"
 **Interfaces:**
 - Produces: `detect_category(filename: &str) -> Category` and `default_target_bytes(category: Category) -> u64`
 - Consumed by: `models.rs` (`FileEntry::new`)
+
+**Acceptance Criteria:**
+- `detect_category` maps extensions per spec: jpg/jpeg/png/webp/heic/heif→Image, mp4/mov→Video, pdf→PDF, docx/xlsx/pptx→Document, else→Other
+- Case-insensitive for all extensions (JPEG, PNG, WEBP, HEIC, HEIF, MP4, MOV, PDF, DOCX, XLSX, PPTX)
+- Handles multi-dot filenames (`file.v1.jpg`), hidden files (`.hidden.jpg`), empty string, whitespace
+- `default_target_bytes` returns: Image=200KB, Video=10MB, PDF=2MB, Document=1MB, Other=0
+- `category_label` and `category_formats` helpers return correct strings for UI
+- Gate passes clean: `yarn build && cd src-tauri && cargo test`
+- Boundary rules enforced (per tech spec Section 2: Architecture)
+
+**Required Tests:**
+- `test_detect_image_formats` — jpg, JPEG, png, webp, heic, heif (existing)
+- `test_detect_video_formats` — mp4, MOV (existing)
+- `test_detect_pdf` — pdf, PDF (existing)
+- `test_detect_document_formats` — docx, xlsx, pptx (existing)
+- `test_detect_unknown` — zip, xyz, noextension (existing)
+- `test_default_targets` — all 5 categories (existing)
+- `test_detect_case_insensitivity_all` — uppercase variants for PNG, WEBP, HEIC, HEIF, MP4, DOCX, XLSX, PPTX
+- `test_detect_multi_dot_filename` — file.v1.jpg → Image
+- `test_detect_hidden_file` — .hidden.jpg → Image
+- `test_detect_empty_string` — "" → Other
+- `test_detect_whitespace_only` — "   " → Other
+- `test_category_label_all` — all 5 categories return correct label
+- `test_category_formats_all` — all 5 categories return correct format string
 
 - [ ] **Step 1: Create detection.rs**
 
@@ -298,6 +343,28 @@ git commit -m "feat: add category detection with extension registry + tests"
 - Produces: `add_files`, `remove_file`, `clear_list` Tauri commands
 - Consumes: `models.rs` (FileEntry), `detection.rs` (detect_category)
 
+**Acceptance Criteria:**
+- `add_files(file_paths)` validates file exists, skips non-existent silently, deduplicates by exact path, returns only newly added entries
+- `remove_file(file_id)` removes entry by UUID from state
+- `clear_list()` removes all entries from state
+- State: `FileListState(Mutex<Vec<FileEntry>>)` managed via `tauri::State`
+- Commands registered in `lib.rs` invoke_handler
+- App compiles and launches (`yarn tauri dev`)
+- Gate passes clean: `yarn build && cd src-tauri && cargo test`
+- Boundary rules enforced (per tech spec Section 2: Architecture)
+
+**Required Tests:**
+- `test_add_files_valid_paths` — adds files, returns new entries, populates state
+- `test_add_files_skips_nonexistent` — non-existent paths silently skipped
+- `test_add_files_deduplicates` — duplicate paths not added twice
+- `test_add_files_returns_new_only` — return value contains only newly added entries
+- `test_remove_file_existing` — removes entry by UUID
+- `test_remove_file_nonexistent` — non-existent ID is no-op
+- `test_clear_list` — empties the list
+- `test_add_files_empty_vec` — empty input returns empty, state unchanged
+- `test_concurrent_access` — multiple add_files calls don't corrupt state (Mutex)
+- `test_mutex_poison_recovery` — panic during lock doesn't poison permanently
+
 - [ ] **Step 1: Create commands.rs**
 
 ```rust
@@ -395,6 +462,17 @@ git commit -m "feat: add Tauri commands for file list management"
 **Interfaces:**
 - Produces: ability to open native file picker from frontend
 
+**Acceptance Criteria:**
+- `Cargo.toml` includes `tauri-plugin-dialog = "2"` dependency
+- `lib.rs` registers `.plugin(tauri_plugin_dialog::init())` in builder
+- `capabilities/default.json` includes `"dialog:default"` permission
+- Frontend package `@tauri-apps/plugin-dialog` installed
+- App compiles and launches (`yarn tauri dev`)
+- Gate passes clean: `yarn build && cd src-tauri && cargo test`
+
+**Required Tests:**
+- (Configuration only — verified by integration in Task 6/10)
+
 - [ ] **Step 1: Add dialog plugin to Cargo.toml**
 
 Add to `[dependencies]` in `src-tauri/Cargo.toml`:
@@ -465,6 +543,21 @@ git commit -m "chore: add tauri-plugin-dialog for file picker"
 **Interfaces:**
 - Produces: TS types matching Rust models — used by all frontend components
 
+**Acceptance Criteria:**
+- `Category` type: `'image' | 'video' | 'pdf' | 'document' | 'other'` (lowercase, matches Rust `#[serde(rename_all = "lowercase")]`)
+- `FileStatus` type: 9 variants snake_case (matches Rust `#[serde(rename_all = "snake_case")]`)
+- `FileEntry` interface: 12 fields camelCase (matches Rust `#[serde(rename_all = "camelCase")]`)
+- Optional fields: `compressedSize: number | null`, `outputPath: string | null`, `error: string | null`
+- Type drift detection: Rust/TS types stay in sync (manual verification in this slice)
+- Gate passes clean: `yarn build && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `test_types_category_values` — all 5 category values valid
+- `test_types_file_status_values` — all 9 status values valid
+- `test_types_file_entry_shape` — FileEntry has all 12 required fields
+- `test_types_optional_fields_nullable` — compressedSize, outputPath, error accept null
+- `test_types_serialization_compatibility` — manual: Rust JSON ↔ TS interface match
+
 - [ ] **Step 1: Create types.ts**
 
 ```typescript
@@ -510,7 +603,27 @@ git commit -m "feat: add TypeScript types matching Rust models"
 
 **Interfaces:**
 - Consumes: `FileEntry` from `src/types.ts`, Tauri `invoke` API
-- Produces: `useFileList()` hook returning `{ files, addFiles, removeFile, clearList }`
+- Produces: `useFileList()` hook returning `{ files, addFiles, browseFiles, removeFile, clearList }`
+
+**Acceptance Criteria:**
+- Hook returns `{ files, addFiles, browseFiles, removeFile, clearList }`
+- `addFiles(paths)` invokes `add_files` command, merges new entries into state
+- `browseFiles()` uses `@tauri-apps/plugin-dialog` `open({ multiple: true })`, handles `null` (cancel) and array/string return, calls `addFiles`
+- `removeFile(id)` invokes `remove_file`, filters local state
+- `clearList()` invokes `clear_list`, resets state to `[]`
+- IPC errors caught and handled (state not corrupted)
+- Gate passes clean: `yarn build && cd src-tauri && cargo test`
+- Boundary rules enforced (per tech spec Section 2: Architecture)
+
+**Required Tests:**
+- `test_useFileList_addFiles` — calls invoke, updates state with new entries
+- `test_useFileList_browseFiles_cancel` — open returns null, no state change
+- `test_useFileList_browseFiles_single` — open returns string, wraps to array, calls addFiles
+- `test_useFileList_browseFiles_array` — open returns array, calls addFiles
+- `test_useFileList_removeFile` — calls invoke, filters state
+- `test_useFileList_clearList` — calls invoke, clears state
+- `test_useFileList_invoke_error_handling` — failed invoke doesn't corrupt state
+- `test_useFileList_rapid_addFiles` — multiple rapid calls don't cause race conditions
 
 - [ ] **Step 1: Create useFileList.ts**
 
@@ -568,6 +681,15 @@ git commit -m "feat: add useFileList hook for file list state + IPC"
 - Create: `src/components/ui/table.tsx` (auto-generated)
 - Create: `src/components/ui/badge.tsx` (auto-generated)
 
+**Acceptance Criteria:**
+- `yarn dlx shadcn@latest add table badge` succeeds
+- Both component files exist in `src/components/ui/`
+- Components render without crash
+- Gate passes clean: `yarn build && cd src-tauri && cargo test`
+
+**Required Tests:**
+- (Generated components — verified by integration in Task 9/10)
+
 - [ ] **Step 1: Add Table and Badge via shadcn CLI**
 
 Run:
@@ -596,6 +718,31 @@ git commit -m "chore: add shadcn table and badge components"
 **Interfaces:**
 - Consumes: `browseFiles` from `useFileList` hook
 - Produces: A drag-drop + click-to-browse area that calls `addFiles` on drop
+
+**Acceptance Criteria:**
+- Click triggers `onBrowse` callback
+- Drag-enter/leave/over adds/removes visual feedback (`isDragging` state)
+- Drop extracts file paths from `dataTransfer.files` (Tauri-specific `.path` property)
+- Filters out files without paths
+- Calls `onDrop(paths)` with valid paths array
+- Multiple rapid drag-enter/leave handled correctly (`dragCounter` ref)
+- Keyboard accessible: Enter/Space triggers `onBrowse`, `role="button"`, `tabIndex=0`
+- Screen reader accessible: aria labels
+- Gate passes clean: `yarn build && cd src-tauri && cargo test`
+- Boundary rules enforced (per tech spec Section 2: Architecture)
+
+**Required Tests:**
+- `test_dropzone_click_triggers_browse` — click calls onBrowse
+- `test_dropzone_drag_enter_feedback` — drag enter sets isDragging true
+- `test_dropzone_drag_leave_feedback` — drag leave sets isDragging false
+- `test_dropzone_drag_over_prevents_default` — drag over calls preventDefault
+- `test_dropzone_drop_extracts_paths` — drop reads file paths from dataTransfer.files
+- `test_dropzone_drop_filters_empty_paths` — files without .path filtered out
+- `test_dropzone_drop_calls_onDrop` — valid paths passed to onDrop callback
+- `test_dropzone_drag_counter_nested` — rapid enter/leave doesn't flicker
+- `test_dropzone_empty_drop` — drop with no files doesn't call onDrop
+- `test_dropzone_keyboard_accessibility` — Enter/Space triggers onBrowse
+- `test_dropzone_aria_labels` — proper accessibility attributes
 
 - [ ] **Step 1: Create DropZone.tsx**
 
@@ -691,6 +838,35 @@ git commit -m "feat: add DropZone component with drag-drop and browse"
 **Interfaces:**
 - Consumes: `FileEntry[]` from `useFileList`, `removeFile` callback
 - Produces: A table showing files with category badges, targets, sizes, status, remove button
+
+**Acceptance Criteria:**
+- Renders nothing when `files.length === 0`
+- Table with columns: File (name + size), Category (Badge), Target, Status (StatusBadge), Remove (× button)
+- `categoryVariant`/`categoryLabel` maps per spec for all 5 categories
+- `formatSize()` human-readable (B, KB, MB), `formatSize(0)` returns `'—'`
+- `formatTarget(0)` returns `'—'`
+- `StatusBadge` shows correct dot color, label, text color for all 9 FileStatus variants
+- Unsupported rows have `opacity-40`
+- Remove button calls `onRemove(file.id)`
+- Truncation for long filenames (`max-w-[200px] truncate`)
+- Tabular-nums class applied to sizes
+- Gate passes clean: `yarn build && cd src-tauri && cargo test`
+- Boundary rules enforced (per tech spec Section 2: Architecture)
+
+**Required Tests:**
+- `test_filelist_empty_renders_null` — files.length === 0 returns null
+- `test_filelist_renders_table` — correct columns and structure
+- `test_filelist_row_shows_filename_size` — name and formatted size displayed
+- `test_filelist_category_badge_mapping` — all 5 categories show correct badge
+- `test_filelist_format_size_bytes` — formatSize(500) → "500 B"
+- `test_filelist_format_size_kb` — formatSize(2048) → "2 KB"
+- `test_filelist_format_size_mb` — formatSize(2097152) → "2.0 MB"
+- `test_filelist_format_size_zero` — formatSize(0) → "—"
+- `test_filelist_format_target_zero` — formatTarget(0) → "—"
+- `test_filelist_status_badge_all_variants` — all 9 FileStatus show correct dot/label/color
+- `test_filelist_unsupported_opacity` — unsupported rows have opacity-40
+- `test_filelist_remove_button_calls_callback` — click calls onRemove with file.id
+- `test_filelist_long_filename_truncates` — max-w + truncate applied
 
 - [ ] **Step 1: Create FileList.tsx**
 
@@ -849,6 +1025,31 @@ git commit -m "feat: add FileList component with category badges and status"
 **Interfaces:**
 - Consumes: `DropZone`, `FileList`, `useFileList`
 
+**Acceptance Criteria:**
+- Uses `useFileList` hook for state and actions
+- Renders `DropZone` with `className` prop support
+- Renders `FileList` when files exist
+- Shows file count + "Clear List" button (ghost, sm)
+- Layout: flex-col, gap-3.5, p-5, min-h-0, overflow-hidden
+- Drag-drop, browse, remove, clear all work end-to-end
+- App launches via `yarn tauri dev`
+- Drag more files appends to existing list
+- Unsupported files show dimmed + "Unsupported" status
+- Gate passes clean: `yarn build && cd src-tauri && cargo test`
+- Boundary rules enforced (per tech spec Section 2: Architecture)
+
+**Required Tests:**
+- `test_compressview_renders_dropzone` — DropZone rendered with className
+- `test_compressview_renders_filelist_when_files` — FileList shown when files exist
+- `test_compressview_shows_file_count` — count displays correctly
+- `test_compressview_clear_list_button` — click calls clearList
+- `test_compressview_drag_drop_integration` — drop → addFiles → FileList updates
+- `test_compressview_browse_integration` — browse → addFiles → FileList updates
+- `test_compressview_remove_integration` — remove button → removeFile → FileList updates
+- `test_compressview_clear_integration` — clear button → clearList → FileList hidden
+- `test_compressview_append_files` — multiple drops append to list
+- `test_compressview_unsupported_dimmed` — unsupported files show opacity-40 + Unsupported status
+
 - [ ] **Step 1: Replace CompressView.tsx**
 
 ```tsx
@@ -958,6 +1159,27 @@ git commit -m "feat: wire up CompressView with drop zone and file list"
 10. ✅ Each file row has a remove button → removes that file
 11. ✅ "Clear List" button removes all files
 12. ✅ File sizes displayed in human-readable format (KB/MB)
+
+**Acceptance Criteria:**
+- All 12 acceptance criteria verified manually in running app
+- All Rust unit tests pass (`cargo test`)
+- All Required Tests from Tasks 1-10 pass
+- Gate passes clean: `yarn build && cd src-tauri && cargo test`
+- No regressions in existing functionality
+
+**Required Tests:**
+- `test_acceptance_criteria_1_drag_drop` — manual: drag files appear in list
+- `test_acceptance_criteria_2_browse` — manual: browse dialog opens, files appear
+- `test_acceptance_criteria_3_file_display` — manual: all fields shown per file
+- `test_acceptance_criteria_4_image_category` — manual: JPEG/PNG/WebP/HEIC → Image/200KB
+- `test_acceptance_criteria_5_video_category` — manual: MP4/MOV → Video/10MB
+- `test_acceptance_criteria_6_pdf_category` — manual: PDF → PDF/2MB
+- `test_acceptance_criteria_7_document_category` — manual: DOCX/XLSX/PPTX → Document/1MB
+- `test_acceptance_criteria_8_unknown_category` — manual: .zip/.xyz → Other/—/Unsupported
+- `test_acceptance_criteria_9_append_files` — manual: drag more appends to list
+- `test_acceptance_criteria_10_remove_file` — manual: × button removes file
+- `test_acceptance_criteria_11_clear_list` — manual: Clear List empties list
+- `test_acceptance_criteria_12_human_readable_sizes` — manual: KB/MB formatting correct
 
 - [ ] **Step 1: Run acceptance checklist**
 
