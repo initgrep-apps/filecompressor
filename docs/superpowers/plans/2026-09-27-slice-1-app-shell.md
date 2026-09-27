@@ -508,7 +508,7 @@ git commit -m "feat: add placeholder views for Compress, History, Settings"
 - `verify_theme_both_modes` — system light → white bg + green accents; system dark → dark bg + green accents (macOS: `defaults write -g AppleInterfaceStyle Dark` + relaunch, then `defaults delete -g AppleInterfaceStyle` + relaunch)
 - `verify_app_builds` — `yarn build` passes with App.tsx + sidebar imports
 
-- [ ] **Step 1: Write App.tsx with sidebar + view routing**
+- [x] **Step 1: Write App.tsx with sidebar + view routing**
 
 Replace `src/App.tsx`:
 
@@ -610,7 +610,7 @@ export default App
 
 > **Note:** The exact sidebar structure may need adjustment based on which shadcn sidebar block was chosen in Task 3. The implementer should adapt the markup to match the chosen block's API while keeping the three nav items and view switching.
 
-- [ ] **Step 2: Verify the app launches with sidebar**
+- [x] **Step 2: Verify the app launches with sidebar**
 
 Run:
 ```bash
@@ -619,14 +619,14 @@ yarn tauri dev
 
 Expected: Window opens with a sidebar on the left showing "Optimizer" brand, three nav items (Compress, History, Settings), and "v1.0.0 · GPLv3" at the bottom. The main area shows the Compress view placeholder. Clicking History / Settings switches the view.
 
-- [ ] **Step 3: Verify theme works in both light and dark mode**
+- [x] **Step 3: Verify theme works in both light and dark mode**
 
 1. Set system to light mode → app should have white background, green primary accents
 2. Set system to dark mode → app should have dark background, green primary accents
 
 Verify the sidebar uses `sidebar` / `sidebar-foreground` / `sidebar-border` tokens correctly.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
