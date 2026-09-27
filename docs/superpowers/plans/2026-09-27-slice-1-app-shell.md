@@ -418,7 +418,7 @@ git commit -m "chore: add shadcn sidebar component"
 - `verify_history_coming_soon` — `grep 'Coming soon' src/views/HistoryView.tsx` matches
 - `verify_views_compile` — `yarn build` passes with no TS errors in views/
 
-- [ ] **Step 1: Create CompressView placeholder**
+- [x] **Step 1: Create CompressView placeholder**
 
 Create `src/views/CompressView.tsx`:
 
@@ -435,7 +435,7 @@ export function CompressView() {
 }
 ```
 
-- [ ] **Step 2: Create HistoryView placeholder**
+- [x] **Step 2: Create HistoryView placeholder**
 
 Create `src/views/HistoryView.tsx`:
 
@@ -452,7 +452,7 @@ export function HistoryView() {
 }
 ```
 
-- [ ] **Step 3: Create SettingsView placeholder**
+- [x] **Step 3: Create SettingsView placeholder**
 
 Create `src/views/SettingsView.tsx`:
 
@@ -469,7 +469,7 @@ export function SettingsView() {
 }
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
