@@ -730,14 +730,14 @@ git commit -m "chore: configure Tauri window title and size"
 - `verify_no_secrets_committed` — `git ls-files | grep -E '\.env|secret'` exits non-zero (no matches)
 - `verify_git_status_clean` — `git status --short` shows only intended files staged before commit
 
-- [ ] **Step 1: Create LICENSE file with GPLv3 text**
+- [x] **Step 1: Create LICENSE file with GPLv3 text**
 
 Create `LICENSE` at the repo root with the full GPLv3 text from:
 https://www.gnu.org/licenses/gpl-3.0.txt
 
 Fetch the text and write it to the file. Do not paraphrase or shorten.
 
-- [ ] **Step 2: Add GPLv3 license headers to source files**
+- [x] **Step 2: Add GPLv3 license headers to source files**
 
 Add this header to the top of each source file (adjust comment syntax per language):
 
@@ -779,7 +779,7 @@ Rust (`src-tauri/src/lib.rs`):
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 ```
 
-- [ ] **Step 3: Update .gitignore**
+- [x] **Step 3: Update .gitignore**
 
 Ensure `.gitignore` contains (merge with any existing entries from Tauri scaffold):
 
@@ -809,7 +809,7 @@ Thumbs.db
 .env.local
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
