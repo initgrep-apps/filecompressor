@@ -887,3 +887,21 @@ git commit -m "feat: slice 1 complete — app shell with sidebar navigation"
 5. **Do not add functionality:** This slice is only the shell. No file detection, no compression, no settings storage. Just the navigable UI.
 
 6. **Theme tokens:** The exact oklch values matter. Do not approximate or use hex fallbacks. The preset should handle this, but verify manually.
+
+---
+
+## Limitations — Deferred to Future Work
+
+Limitations discovered during Slice 1 execution. Implement in a later slice (or before release).
+
+1. **Cross-platform build verification (Windows/Linux)** — Slice 1's "cross-platform" AC was verified on macOS only. Windows (.msi/.exe via NSIS/WiX) and Linux (.deb/.AppImage) builds are unverified. **Deferred:** add a GitHub Actions CI workflow with a build matrix (`macos-latest`, `windows-latest`, `ubuntu-latest`) running `yarn build && cd src-tauri && cargo test` + `yarn tauri build` per platform. Required before first release (spec Section 1: Platforms — macOS, Windows, Linux).
+
+2. **No automated UI regression tests** — All 10 ACs verified manually (cua-driver AX tree + screenshots, one-time evidence). Future slices can silently break nav switching, theming, or view rendering with no signal. **Deferred:** add Playwright/Tauri-driver smoke test (launch, click each nav item, assert heading text) + wire into GATE_E2E_COMMAND.
+
+3. **No React error boundary** — A render error in any view produces a blank window with no feedback (scaffold-level state, flagged in PR #2 review). **Deferred:** add an error boundary in `src/main.tsx` (or wrap `<App />`) showing a user-readable fallback + error detail, before the compression logic slice lands (sidecar failures must not blank-screen the app).
+
+4. **Hardcoded version string** — "v1.0.0 · GPLv3" footer text is hardcoded in `src/App.tsx`. **Deferred:** read app version from `tauri.conf.json` / package.json (single source of truth) when version bumps start happening.
+
+5. **No window state persistence** — Window position/size reset to 900×640 centered on every launch. **Deferred:** persist window bounds (tauri-plugin-window-state) if users expect OS-standard remember-last-position behavior.
+
+6. **Temp file stale-scan not implemented** — Spec Section 6 requires: "On next launch: scan temp dir for stale files older than 24h and delete them." Not applicable yet (no compression → no temp files), but must land with the compression slice. Tracked here so it isn't lost.
