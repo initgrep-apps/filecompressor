@@ -6,18 +6,31 @@
 
 **Architecture:** Tauri 2 + React + TypeScript + Vite frontend. shadcn/ui + Tailwind CSS with a custom green oklch theme preset. Sidebar layout with three view placeholders. Theme switches automatically via system preference (CSS `prefers-color-scheme`).
 
-**Tech Stack:** Tauri 2, React 18+, TypeScript, Vite, Tailwind CSS, shadcn/ui (preset `bNRvlrmDx`), Inter font
+**Tech Stack:** Tauri 2.12, React 19.3, TypeScript, Vite 8.3, Tailwind CSS 4.3, shadcn/ui 4.21 (preset `bNRvlrmDx`), Inter font 5.3
 
 ## Global Constraints
 
 - **Platforms:** macOS, Windows, Linux (all three must build)
 - **License:** GPLv3 — add `LICENSE` file and license headers
-- **Font:** Inter (loaded via `@fontsource/inter` or Google Fonts CDN)
+- **Font:** Inter (loaded via `@fontsource-variable/inter` 5.3)
 - **Theme tokens:** Use the exact oklch values from the spec (Section 2, Theme Tokens). Do not approximate.
 - **Border radius:** `--radius: 0.45rem` (from preset)
 - **Sidebar:** Must use an existing shadcn sidebar block — ask the user which block to use before adding it. Do not build a custom sidebar.
 - **shadcn init command:** `yarn dlx shadcn@latest init --preset bNRvlrmDx --template vite`
 - **No functionality in this slice** — views are placeholders with a heading only
+- **Tauri 3 alpha exists — do NOT use. Stay on 2.12 stable.**
+- **shadcn/ui 4.x requires Tailwind CSS v4** (CSS-based config via `@tailwindcss/vite` plugin — no `tailwind.config.js` needed)
+- **Vite 8.x uses Rolldown** (Rust-based bundler) as default — this is expected
+
+## Skills & AI Docs to Use
+
+Before writing code for any library below, fetch its official AI docs:
+
+- **Tauri 2.12** — Use Context7 MCP: resolve `/tauri-apps/tauri-docs`, query "Tauri 2 project setup create-tauri-app Vite React" and "tauri.conf.json configuration window settings". Or fetch `https://v2.tauri.app/llms.txt`.
+- **shadcn/ui 4.21** — Use the `shadcn` skill (already installed in opencode). It auto-reads `components.json` for project context. Before adding any component, ask which shadcn block to use.
+- **React 19.3** — Use Context7: resolve `/websites/react_dev`, or fetch `https://react.dev/llms.txt`.
+- **Vite 8.3** — Use Context7: resolve `Vite`, or fetch `https://vite.dev/llms.txt`.
+- **Tailwind CSS 4.3** — No llms.txt. Use Context7: resolve `Tailwind CSS` if needed. Config is CSS-based (no `tailwind.config.js`).
 
 ---
 
@@ -80,6 +93,8 @@ file-compressor/
 
 - [ ] **Step 1: Scaffold Tauri 2 project with React + TypeScript + Vite**
 
+> **Before starting:** Fetch Tauri 2 setup docs via Context7 MCP — resolve `/tauri-apps/tauri-docs`, query "create-tauri-app Vite React TypeScript setup". This ensures you follow the current official setup steps, not outdated patterns.
+
 Run from the project root (where `initial-spec.md` is):
 
 ```bash
@@ -95,6 +110,12 @@ When prompted, choose:
 - UI flavor: **TypeScript**
 
 This creates `src/`, `src-tauri/`, `package.json`, `index.html`, `vite.config.ts`, `tsconfig.json`, `index.html`.
+
+**Expected versions** (verify after scaffold):
+- Tauri: 2.12.x (check `src-tauri/Cargo.toml` → `tauri = "2"`)
+- React: 19.3.x (check `package.json`)
+- Vite: 8.3.x (check `package.json`)
+- `tauri.conf.json` should have `beforeDevCommand: "yarn dev"`, `beforeBuildCommand: "yarn build"`, `devUrl: "http://localhost:5173"`, `frontendDist: "../dist"`
 
 - [ ] **Step 2: Verify the project builds and launches**
 
