@@ -23,3 +23,4 @@ target
 .superpowers
 .DS_Store
 .superpowers/
+.worktrees/
