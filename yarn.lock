@@ -164,7 +164,7 @@
     "@tauri-apps/cli-win32-ia32-msvc" "2.12.0"
     "@tauri-apps/cli-win32-x64-msvc" "2.12.0"
 
-"@tauri-apps/plugin-opener@^2":
+"@tauri-apps/plugin-opener@2.6.x":
   version "2.6.0"
   resolved "https://registry.yarnpkg.com/@tauri-apps/plugin-opener/-/plugin-opener-2.6.0.tgz#d70d5068d6e6533b4057ba8974525dbdd2a9740f"
   integrity sha512-KIl9qkBGyAUrbzfCtdk+NRPTXUOwpMyUKsKN57H6/qA0q8auVywXpfUyWClqX6I/iH8PHmqAUa/KK9YZPWVQew==
@@ -183,7 +183,7 @@
   dependencies:
     csstype "^3.2.2"
 
-"@vitejs/plugin-react@^6.0.2":
+"@vitejs/plugin-react@6.1.x":
   version "6.1.1"
   resolved "https://registry.yarnpkg.com/@vitejs/plugin-react/-/plugin-react-6.1.1.tgz#47fa1a2f956e88eaf778ebf65ddce8e2b36597e7"
   integrity sha512-yxLaQV9gkhS8ezJqCM6+ndU7mDY6gqAg75NQ+0IjwEI8IYOmQCgkRwHKVSfWXW076DsqMo0Dk+0FK1U+M5RgFw==
