@@ -12,9 +12,14 @@
   "app": {
     "windows": [
       {
-        "title": "file-compressor",
-        "width": 800,
-        "height": 600
+        "title": "File Size Optimizer",
+        "width": 900,
+        "height": 640,
+        "minWidth": 700,
+        "minHeight": 500,
+        "decorations": true,
+        "resizable": true,
+        "center": true
       }
     ],
     "security": {
