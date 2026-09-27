@@ -210,7 +210,7 @@ git commit -m "chore: scaffold Tauri 2 + React + TypeScript project"
 - `verify_themed_button` — `yarn tauri dev` renders green Button (primary oklch) in light; system dark → dark-green button on dark bg
 - `verify_frontend_build` — `yarn build` passes with no TS errors
 
-- [ ] **Step 1: Run shadcn init with preset**
+- [x] **Step 1: Run shadcn init with preset**
 
 Run:
 ```bash
@@ -223,7 +223,7 @@ This will:
 - Update `src/index.css` with theme tokens (including the green oklch values)
 - Update `vite.config.ts` with `@tailwindcss/vite` plugin (Tailwind v4 CSS-based config — no `tailwind.config.js`)
 
-- [ ] **Step 2: Verify theme tokens are applied**
+- [x] **Step 2: Verify theme tokens are applied**
 
 Open `src/index.css` and verify it contains the oklch theme variables from the spec. Check that:
 - `:root` has `--primary: oklch(0.527 0.154 150.069)` (green, light mode)
@@ -277,7 +277,7 @@ If the preset did not apply these exact values, manually replace the theme token
 }
 ```
 
-- [ ] **Step 3: Add Inter font**
+- [x] **Step 3: Add Inter font**
 
 Install Inter:
 ```bash
@@ -289,7 +289,7 @@ Add to the top of `src/main.tsx` (before other imports):
 import '@fontsource-variable/inter'
 ```
 
-- [ ] **Step 4: Verify shadcn works by adding a test Button**
+- [x] **Step 4: Verify shadcn works by adding a test Button**
 
 Run:
 ```bash
@@ -312,7 +312,7 @@ function App() {
 export default App
 ```
 
-- [ ] **Step 5: Verify the app launches with themed button**
+- [x] **Step 5: Verify the app launches with themed button**
 
 Run:
 ```bash
@@ -321,7 +321,7 @@ yarn tauri dev
 
 Expected: Window shows heading + a green button. Button uses the green `--primary` color. In dark mode (system), background is dark and button is the dark-mode green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A

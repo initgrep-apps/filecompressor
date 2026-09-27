@@ -54,5 +54,15 @@ BODY="$(curl -fsS "$DEV_URL" 2>/dev/null || true)"
 echo "$BODY" | grep -q '<div id="root">' || fail "response missing <div id=\"root\">"
 echo "$BODY" | grep -q '/src/main.tsx' || fail "response missing /src/main.tsx script reference"
 
-echo "verify-dev: PASS — dev server serves root div + main.tsx; tauri.conf.json valid"
+# 3. Served source modules: App.tsx renders a shadcn Button, index.css has the
+# green oklch primary token (guards against font/theme regression).
+APP_SRC="$(curl -fsS "$DEV_URL/src/App.tsx" 2>/dev/null || true)"
+[ -n "$APP_SRC" ] || fail "no response from $DEV_URL/src/App.tsx"
+echo "$APP_SRC" | grep -q 'Button' || fail "App.tsx missing Button reference"
+
+CSS_SRC="$(curl -fsS "$DEV_URL/src/index.css" 2>/dev/null || true)"
+[ -n "$CSS_SRC" ] || fail "no response from $DEV_URL/src/index.css"
+echo "$CSS_SRC" | grep -q '0.527 0.154 150.069' || fail "index.css missing green light --primary oklch value"
+
+echo "verify-dev: PASS — dev server serves root div + main.tsx; App.tsx has Button; index.css has green primary; tauri.conf.json valid"
 exit 0
