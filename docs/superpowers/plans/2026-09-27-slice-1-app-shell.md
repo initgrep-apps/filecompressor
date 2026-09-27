@@ -659,7 +659,7 @@ git commit -m "feat: add sidebar layout with Compress/History/Settings navigatio
 - `verify_window_size_min` — attempt resize below 700×500 → OS blocks; 900×640 initial; centered
 - `verify_native_decorations` — macOS: traffic lights visible top-left; Windows/Linux: standard title bar buttons
 
-- [ ] **Step 1: Update tauri.conf.json window settings**
+- [x] **Step 1: Update tauri.conf.json window settings**
 
 Open `src-tauri/tauri.conf.json` and update the `app.windows[0]` section:
 
@@ -684,7 +684,7 @@ Open `src-tauri/tauri.conf.json` and update the `app.windows[0]` section:
 
 Keep all other settings in the file (productName, identifier, etc.) unchanged.
 
-- [ ] **Step 2: Verify window title and size**
+- [x] **Step 2: Verify window title and size**
 
 Run:
 ```bash
@@ -693,7 +693,7 @@ yarn tauri dev
 
 Expected: Window title bar shows "File Size Optimizer". Window is 900×640, centered. Resizing works but cannot go below 700×500.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add -A
