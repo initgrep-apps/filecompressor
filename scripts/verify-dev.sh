@@ -8,7 +8,7 @@ set -euo pipefail
 
 DEV_URL="http://localhost:5173"
 TAURI_CONF="src-tauri/tauri.conf.json"
-EXPECTED_TITLE="file-compressor"
+EXPECTED_TITLE="File Size Optimizer"
 
 fail() { echo "verify-dev: FAIL — $*" >&2; exit 1; }
 
