@@ -354,7 +354,7 @@ git commit -m "chore: init shadcn/ui with green theme preset + Inter font"
 
 > **STOP and ask the user:** Before running the shadcn CLI, ask the user which specific shadcn sidebar block to use. The spec requires using an existing shadcn sidebar block, not a custom build. Present the available sidebar blocks from the shadcn registry and let the user choose.
 
-- [ ] **Step 1: Ask user which sidebar block to use**
+- [x] **Step 1: Ask user which sidebar block to use**
 
 Present the available sidebar blocks from shadcn:
 - `sidebar-01` — default sidebar with nav items
@@ -368,7 +368,7 @@ Present the available sidebar blocks from shadcn:
 
 Ask the user to pick one. Note: the specific block only affects the sidebar component shape and styling. The three nav items (Compress / History / Settings) will be added regardless.
 
-- [ ] **Step 2: Add the sidebar component**
+- [x] **Step 2: Add the sidebar component**
 
 Run:
 ```bash
@@ -377,15 +377,15 @@ yarn dlx shadcn@latest add sidebar
 
 This generates `src/components/ui/sidebar.tsx` and any dependent components.
 
-- [ ] **Step 3: Add any additional components the sidebar block needs**
+- [x] **Step 3: Add any additional components the sidebar block needs**
 
 Depending on the chosen block, the CLI may prompt to install additional components (e.g. `breadcrumb`, `separator`, `tooltip`). Accept all.
 
-- [ ] **Step 4: Verify sidebar component exists**
+- [x] **Step 4: Verify sidebar component exists**
 
 Check that `src/components/ui/sidebar.tsx` exists and exports `Sidebar`, `SidebarProvider`, `SidebarTrigger`, `SidebarMenu`, `SidebarMenuItem`, `SidebarMenuButton`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
