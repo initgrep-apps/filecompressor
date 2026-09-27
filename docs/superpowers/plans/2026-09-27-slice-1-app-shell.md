@@ -851,11 +851,11 @@ git commit -m "chore: add GPLv3 license and update gitignore"
 - `verify_version_pins_collective` — `yarn list --pattern 'react|vite|tailwindcss|@fontsource-variable/inter' && grep '^tauri = ' src-tauri/Cargo.toml` confirms all pins
 - `verify_license_present` — `head -1 LICENSE` prints `GNU GENERAL PUBLIC LICENSE`
 
-- [ ] **Step 1: Run acceptance checklist**
+- [x] **Step 1: Run acceptance checklist**
 
 Go through each of the 10 criteria above. For each, verify by running the app and testing manually.
 
-- [ ] **Step 2: Run production build**
+- [x] **Step 2: Run production build**
 
 ```bash
 yarn tauri build
@@ -865,7 +865,7 @@ Expected: Build completes without errors. Binary is produced in `src-tauri/targe
 
 Note: This may take several minutes on first run (Rust compilation). If it fails on missing system dependencies, install them per Tauri prerequisites for your platform.
 
-- [ ] **Step 3: Final commit**
+- [x] **Step 3: Final commit**
 
 ```bash
 git add -A
