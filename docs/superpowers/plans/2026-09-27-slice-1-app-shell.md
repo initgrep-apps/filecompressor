@@ -890,18 +890,6 @@ git commit -m "feat: slice 1 complete — app shell with sidebar navigation"
 
 ---
 
-## Limitations — Deferred to Future Work
+## Limitations Discovered During Slice 1
 
-Limitations discovered during Slice 1 execution. Implement in a later slice (or before release).
-
-1. **Cross-platform build verification (Windows/Linux)** — Slice 1's "cross-platform" AC was verified on macOS only. Windows (.msi/.exe via NSIS/WiX) and Linux (.deb/.AppImage) builds are unverified. **Deferred:** add a GitHub Actions CI workflow with a build matrix (`macos-latest`, `windows-latest`, `ubuntu-latest`) running `yarn build && cd src-tauri && cargo test` + `yarn tauri build` per platform. Required before first release (spec Section 1: Platforms — macOS, Windows, Linux).
-
-2. **No automated UI regression tests** — All 10 ACs verified manually (cua-driver AX tree + screenshots, one-time evidence). Future slices can silently break nav switching, theming, or view rendering with no signal. **Deferred:** add Playwright/Tauri-driver smoke test (launch, click each nav item, assert heading text) + wire into GATE_E2E_COMMAND.
-
-3. **No React error boundary** — A render error in any view produces a blank window with no feedback (scaffold-level state, flagged in PR #2 review). **Deferred:** add an error boundary in `src/main.tsx` (or wrap `<App />`) showing a user-readable fallback + error detail, before the compression logic slice lands (sidecar failures must not blank-screen the app).
-
-4. **Hardcoded version string** — "v1.0.0 · GPLv3" footer text is hardcoded in `src/App.tsx`. **Deferred:** read app version from `tauri.conf.json` / package.json (single source of truth) when version bumps start happening.
-
-5. **No window state persistence** — Window position/size reset to 900×640 centered on every launch. **Deferred:** persist window bounds (tauri-plugin-window-state) if users expect OS-standard remember-last-position behavior.
-
-6. **Temp file stale-scan not implemented** — Spec Section 6 requires: "On next launch: scan temp dir for stale files older than 24h and delete them." Not applicable yet (no compression → no temp files), but must land with the compression slice. Tracked here so it isn't lost.
+Six limitations were found during execution (cross-platform build unverified, no UI regression tests, no React error boundary, hardcoded version string, no window state persistence, temp stale-scan missing). They are tracked as implementation tasks in **`docs/superpowers/plans/2026-09-27-slice-2-devops-cicd-hardening.md`** — implement that slice next.
