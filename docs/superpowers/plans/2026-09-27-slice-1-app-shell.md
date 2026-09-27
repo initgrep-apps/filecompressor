@@ -63,7 +63,6 @@ file-compressor/
 ├── package.json
 ├── tsconfig.json
 ├── vite.config.ts
-├── tailwind.config.js          # shadcn config with oklch tokens
 ├── components.json             # shadcn config
 ├── LICENSE                     # GPLv3
 └── .gitignore
@@ -90,6 +89,21 @@ file-compressor/
 
 **Interfaces:**
 - Produces: a runnable Tauri 2 + React + TS + Vite project at the repo root
+
+**Acceptance Criteria:**
+- `yarn tauri dev` opens a window showing "File Size Optimizer" heading, no terminal errors
+- Pinned versions match spec: Tauri 2.12.x, React 19.3.x, Vite 8.3.x (not Tauri 3 alpha)
+- `tauri.conf.json` has `beforeDevCommand: "yarn dev"`, `devUrl: "http://localhost:5173"`, `frontendDist: "../dist"`, `identifier: "com.filecompressor.app"`
+- `yarn.lock` exists (yarn, not npm/pnpm)
+- `src/assets/` deleted, no orphaned imports in `src/App.tsx`
+- GATE smoke passes: `cd src-tauri && cargo test` (empty lib.rs compiles)
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`)
+
+**Required Tests:**
+- `verify_versions` — `yarn list --pattern 'react|vite|@tauri-apps' && grep '^tauri = ' src-tauri/Cargo.toml` shows Tauri 2.12.x, React 19.3.x, Vite 8.3.x
+- `verify_tauri_conf` — `grep -E '"(beforeDevCommand|devUrl|frontendDist|identifier)"' src-tauri/tauri.conf.json` prints expected values
+- `verify_dev_launches` — `yarn tauri dev` opens window, heading renders, no errors
+- `verify_gate_smoke` — `cd src-tauri && cargo test` compiles + passes (0 tests, lib.rs builds)
 
 - [ ] **Step 1: Scaffold Tauri 2 project with React + TypeScript + Vite**
 
@@ -170,10 +184,31 @@ git commit -m "chore: scaffold Tauri 2 + React + TypeScript project"
 - Create: `components.json` (shadcn config)
 - Create: `src/lib/utils.ts` (cn helper, auto-generated)
 - Modify: `src/index.css` (theme tokens)
-- Modify: `tailwind.config.js` (shadcn integration)
+- Modify: `vite.config.ts` (register `@tailwindcss/vite` plugin if not already)
 
 **Interfaces:**
 - Produces: shadcn/ui initialized with the green theme preset, Tailwind configured with oklch tokens
+
+**Acceptance Criteria:**
+- `components.json` exists with `baseColor`, `cssVariables` enabled, `aliases.@` pointing to `src/`
+- `src/lib/utils.ts` exists and exports `cn`
+- `src/index.css` has both `:root` and `.dark` selector blocks with full oklch token set from spec (not just 3 tokens)
+- `:root` has `--primary: oklch(0.527 0.154 150.069)`, `.dark` has `--primary: oklch(0.448 0.119 151.328)`, `--radius: 0.45rem`
+- `@tailwindcss/vite` plugin registered in `vite.config.ts`; Tailwind v4.3.x installed (not v3)
+- `@fontsource-variable/inter` 5.3.x in `package.json`; import in `src/main.tsx` resolves
+- `yarn tauri dev` shows heading + green Button using `--primary`; dark mode (system) → dark background, dark-green button
+- `yarn build` passes (TS typecheck + Vite production build, isolates frontend errors)
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`)
+
+**Required Tests:**
+- `verify_shadcn_config` — `cat components.json` shows `baseColor`, `cssVariables: true`, `aliases.@ = src/`
+- `verify_cn_helper` — `grep -E 'export (function|const) cn' src/lib/utils.ts` matches
+- `verify_theme_tokens_light` — `grep -A25 ':root' src/index.css` contains all 18 light tokens including `--primary: oklch(0.527 0.154 150.069)`, `--background: oklch(1 0 0)`, `--destructive: oklch(0.577 0.245 27.325)`
+- `verify_theme_tokens_dark` — `grep -A25 '\.dark' src/index.css` contains all 18 dark tokens including `--primary: oklch(0.448 0.119 151.328)`, `--border: oklch(1 0 0 / 10%)`
+- `verify_tailwind_v4` — `yarn list --pattern 'tailwindcss'` shows 4.3.x; `grep '@tailwindcss/vite' vite.config.ts` matches
+- `verify_inter_font` — `grep '@fontsource-variable/inter' src/main.tsx` matches; `yarn list --pattern '@fontsource-variable/inter'` shows 5.3.x
+- `verify_themed_button` — `yarn tauri dev` renders green Button (primary oklch) in light; system dark → dark-green button on dark bg
+- `verify_frontend_build` — `yarn build` passes with no TS errors
 
 - [ ] **Step 1: Run shadcn init with preset**
 
@@ -186,7 +221,7 @@ This will:
 - Create `components.json`
 - Create `src/lib/utils.ts` (with `cn()` helper)
 - Update `src/index.css` with theme tokens (including the green oklch values)
-- Update `tailwind.config.js` with shadcn integration
+- Update `vite.config.ts` with `@tailwindcss/vite` plugin (Tailwind v4 CSS-based config — no `tailwind.config.js`)
 
 - [ ] **Step 2: Verify theme tokens are applied**
 
@@ -304,6 +339,19 @@ git commit -m "chore: init shadcn/ui with green theme preset + Inter font"
 **Interfaces:**
 - Produces: `Sidebar`, `SidebarProvider`, `SidebarTrigger`, `SidebarMenu`, `SidebarMenuItem`, `SidebarMenuButton` components in `src/components/ui/`
 
+**Acceptance Criteria:**
+- User-selected sidebar block recorded in commit message or plan note (which block chosen)
+- `src/components/ui/sidebar.tsx` exists and exports all 6 named components Task 5 imports: `Sidebar`, `SidebarProvider`, `SidebarTrigger`, `SidebarMenu`, `SidebarMenuItem`, `SidebarMenuButton`
+- Dependent components the block needs (breadcrumb/separator/tooltip/etc.) installed, not skipped
+- `yarn build` passes (TS typecheck) — sidebar component compiles before Task 5
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`)
+
+**Required Tests:**
+- `record_block_choice` — user states which block; commit message includes `sidebar-NN` identifier
+- `verify_sidebar_exports` — `grep -E 'export (function|const) (Sidebar|SidebarProvider|SidebarTrigger|SidebarMenu|SidebarMenuItem|SidebarMenuButton)' src/components/ui/sidebar.tsx` matches all 6
+- `verify_sidebar_compiles` — `yarn build` passes with sidebar.tsx + deps in tree
+- `verify_deps_installed` — `ls src/components/ui/` shows all dependent components CLI prompted for (breadcrumb, separator, tooltip, etc.)
+
 > **STOP and ask the user:** Before running the shadcn CLI, ask the user which specific shadcn sidebar block to use. The spec requires using an existing shadcn sidebar block, not a custom build. Present the available sidebar blocks from the shadcn registry and let the user choose.
 
 - [ ] **Step 1: Ask user which sidebar block to use**
@@ -355,6 +403,20 @@ git commit -m "chore: add shadcn sidebar component"
 
 **Interfaces:**
 - Produces: three view components, each rendering a heading. Consumed by `App.tsx` in Task 5.
+
+**Acceptance Criteria:**
+- `src/views/CompressView.tsx` exports named `CompressView` function; heading text exactly "Compress Files"
+- `src/views/HistoryView.tsx` exports named `HistoryView` function; heading text exactly "History"; body contains "Coming soon"
+- `src/views/SettingsView.tsx` exports named `SettingsView` function; heading text exactly "Settings"
+- `yarn build` passes — views compile, named exports resolve (Task 5 uses named imports)
+- `text-muted-foreground` Tailwind class resolves (token present from Task 2)
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`)
+
+**Required Tests:**
+- `verify_view_exports` — `grep -E 'export function (CompressView|HistoryView|SettingsView)' src/views/*.tsx` matches all 3
+- `verify_view_headings` — `grep -r '"Compress Files"\|"History"\|"Settings"' src/views/` matches expected text per file
+- `verify_history_coming_soon` — `grep 'Coming soon' src/views/HistoryView.tsx` matches
+- `verify_views_compile` — `yarn build` passes with no TS errors in views/
 
 - [ ] **Step 1: Create CompressView placeholder**
 
@@ -425,6 +487,26 @@ git commit -m "feat: add placeholder views for Compress, History, Settings"
 - Consumes: `Sidebar`, `SidebarProvider`, `SidebarMenu`, `SidebarMenuItem`, `SidebarMenuButton` from `src/components/ui/sidebar.tsx` (Task 3)
 - Consumes: `CompressView`, `HistoryView`, `SettingsView` from `src/views/` (Task 4)
 - Produces: A navigable app shell with sidebar switching between three views
+
+**Acceptance Criteria:**
+- `yarn tauri dev` shows sidebar with "Optimizer" brand, 3 nav items (Compress/History/Settings), "v1.0.0 · GPLv3" footer
+- Default active view on cold launch = Compress (first nav item, CompressView renders)
+- Clicking History / Settings switches the main view; active nav item highlighted via `isActive` styling
+- `SidebarTrigger` collapses/expands the sidebar (not just renders)
+- Sidebar uses `--sidebar`, `--sidebar-foreground`, `--sidebar-border` tokens (present in `src/index.css`)
+- Light mode (system light): white background, green primary accents, sidebar light
+- Dark mode (system dark): dark background, green primary accents, sidebar dark
+- `yarn build` passes — App.tsx compiles with sidebar + view imports
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`)
+
+**Required Tests:**
+- `verify_sidebar_tokens` — `grep -E '\-\-sidebar(-foreground|-border|-accent)?' src/index.css` matches all 4 sidebar tokens in both `:root` and `.dark`
+- `verify_dev_with_sidebar` — `yarn tauri dev` renders "Optimizer" brand, 3 nav items, "v1.0.0 · GPLv3" footer, Compress view default
+- `verify_nav_switch` — click History → HistoryView renders, History nav highlighted; click Settings → SettingsView, Settings nav highlighted; click Compress → back to CompressView
+- `verify_default_view` — cold launch shows CompressView (not History/Settings), Compress nav highlighted
+- `verify_sidebar_trigger` — click `SidebarTrigger` → sidebar collapses; click again → expands
+- `verify_theme_both_modes` — system light → white bg + green accents; system dark → dark bg + green accents (macOS: `defaults write -g AppleInterfaceStyle Dark` + relaunch, then `defaults delete -g AppleInterfaceStyle` + relaunch)
+- `verify_app_builds` — `yarn build` passes with App.tsx + sidebar imports
 
 - [ ] **Step 1: Write App.tsx with sidebar + view routing**
 
@@ -561,6 +643,22 @@ git commit -m "feat: add sidebar layout with Compress/History/Settings navigatio
 **Interfaces:**
 - Produces: A properly titled window with sensible default size
 
+**Acceptance Criteria:**
+- `tauri.conf.json` valid JSON; `app.windows[0]` has title "File Size Optimizer", 900×640, min 700×500, `decorations: true`, `resizable: true`, `center: true`
+- Other `tauri.conf.json` fields (productName, identifier, etc.) unchanged after edit
+- Window title bar shows "File Size Optimizer"; native decorations present (macOS traffic lights per spec Section 4)
+- Window is 900×640 centered; resizing works but cannot go below 700×500
+- `yarn tauri dev` launches with the configured window
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`)
+
+**Required Tests:**
+- `verify_tauri_conf_json` — `node -e "JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json','utf8'))"` passes (valid JSON, no typo)
+- `verify_window_fields` — `grep -E '"(title|width|height|minWidth|minHeight|decorations|resizable|center)"' src-tauri/tauri.conf.json` prints expected values
+- `verify_other_fields_unchanged` — `git diff src-tauri/tauri.conf.json` shows only `app.windows[0]` changed; productName/identifier untouched
+- `verify_window_title` — `yarn tauri dev` title bar shows "File Size Optimizer"
+- `verify_window_size_min` — attempt resize below 700×500 → OS blocks; 900×640 initial; centered
+- `verify_native_decorations` — macOS: traffic lights visible top-left; Windows/Linux: standard title bar buttons
+
 - [ ] **Step 1: Update tauri.conf.json window settings**
 
 Open `src-tauri/tauri.conf.json` and update the `app.windows[0]` section:
@@ -609,9 +707,28 @@ git commit -m "chore: configure Tauri window title and size"
 **Files:**
 - Create: `LICENSE` (GPLv3 full text)
 - Modify: `.gitignore` (add `.superpowers/` and ensure Tauri/Rust/Node patterns)
+- Modify: `src/main.tsx`, `src/App.tsx`, `src/views/*.tsx` (GPLv3 header comment)
+- Modify: `src-tauri/src/lib.rs` (GPLv3 header comment)
 
 **Interfaces:**
-- Produces: GPLv3 license file, proper gitignore
+- Produces: GPLv3 license file, license headers in source files, proper gitignore
+
+**Acceptance Criteria:**
+- `LICENSE` at repo root contains full GPLv3 text (first line `GNU GENERAL PUBLIC LICENSE`, `Version 3, 29 June 2007`, ~675 lines) — not truncated, not paraphrased
+- GPLv3 short header comment at top of each source file: `src/main.tsx`, `src/App.tsx`, `src/views/*.tsx`, `src-tauri/src/lib.rs`
+- `LICENSE` itself NOT ignored by git
+- `.gitignore` covers: `node_modules/`, `dist/`, `src-tauri/target/`, `.superpowers/`, `.DS_Store`, `Thumbs.db`, `.vscode/`, `.idea/`, `*.swp`, `*.swo`, `.env`, `.env.local`
+- `git check-ignore` confirms all patterns active
+- No `.env` / secrets already committed
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`)
+
+**Required Tests:**
+- `verify_license_full` — `head -1 LICENSE` prints `GNU GENERAL PUBLIC LICENSE`; `grep 'Version 3, 29 June 2007' LICENSE` matches; `wc -l LICENSE` ≥ 600
+- `verify_license_not_ignored` — `git check-ignore LICENSE` exits non-zero (file tracked)
+- `verify_headers_present` — `grep -r 'GPL-3' src/main.tsx src/App.tsx src/views/ src-tauri/src/lib.rs` matches each file
+- `verify_gitignore_patterns` — `git check-ignore node_modules dist src-tauri/target .superpowers .DS_Store .env` all match (exit 0 each)
+- `verify_no_secrets_committed` — `git ls-files | grep -E '\.env|secret'` exits non-zero (no matches)
+- `verify_git_status_clean` — `git status --short` shows only intended files staged before commit
 
 - [ ] **Step 1: Create LICENSE file with GPLv3 text**
 
@@ -620,7 +737,49 @@ https://www.gnu.org/licenses/gpl-3.0.txt
 
 Fetch the text and write it to the file. Do not paraphrase or shorten.
 
-- [ ] **Step 2: Update .gitignore**
+- [ ] **Step 2: Add GPLv3 license headers to source files**
+
+Add this header to the top of each source file (adjust comment syntax per language):
+
+TypeScript/TSX (`src/main.tsx`, `src/App.tsx`, `src/views/CompressView.tsx`, `src/views/HistoryView.tsx`, `src/views/SettingsView.tsx`):
+```tsx
+// File Size Optimizer — offline batch file compression
+// Copyright (C) 2026 File Size Optimizer Contributors
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+```
+
+Rust (`src-tauri/src/lib.rs`):
+```rust
+// File Size Optimizer — offline batch file compression
+// Copyright (C) 2026 File Size Optimizer Contributors
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+```
+
+- [ ] **Step 3: Update .gitignore**
 
 Ensure `.gitignore` contains (merge with any existing entries from Tauri scaffold):
 
@@ -650,7 +809,7 @@ Thumbs.db
 .env.local
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
 git add -A
@@ -675,6 +834,22 @@ git commit -m "chore: add GPLv3 license and update gitignore"
 8. Light mode: system light → app background is white, sidebar is light, green accents visible
 9. Window title is "File Size Optimizer", size 900×640, min 700×500
 10. `LICENSE` file exists with GPLv3 text
+
+**Acceptance Criteria:**
+- All 10 manual ACs above verified by running the app and testing each
+- GATE_COMMAND passes clean: `yarn build && cd src-tauri && cargo test`
+- `yarn tauri build` produces binary in `src-tauri/target/release/`; binary launches
+- All version pins hold: Tauri 2.12.x, React 19.3.x, Vite 8.3.x, Tailwind 4.3.x, shadcn/ui 4.21, Inter 5.3.x
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`)
+
+**Required Tests:**
+- `verify_manual_acs_1_to_10` — run app, go through each of 10 ACs, confirm each passes
+- `verify_gate` — `yarn build && cd src-tauri && cargo test` passes clean (frontend build + Rust tests)
+- `verify_frontend_build_standalone` — `yarn build` passes (fast TS/Vite feedback before slow `tauri build`)
+- `verify_tauri_build` — `yarn tauri build` completes, binary at `src-tauri/target/release/`
+- `verify_binary_launches` — open produced binary, window appears, no crash
+- `verify_version_pins_collective` — `yarn list --pattern 'react|vite|tailwindcss|@fontsource-variable/inter' && grep '^tauri = ' src-tauri/Cargo.toml` confirms all pins
+- `verify_license_present` — `head -1 LICENSE` prints `GNU GENERAL PUBLIC LICENSE`
 
 - [ ] **Step 1: Run acceptance checklist**
 
