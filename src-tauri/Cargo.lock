@@ -970,6 +970,7 @@ dependencies = [
 name = "file-compressor"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "serde",
  "serde_json",
  "tauri",
