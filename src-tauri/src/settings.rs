@@ -23,7 +23,7 @@ const MB: u64 = 1024 * 1024;
 #[serde(rename_all = "camelCase")]
 pub struct CategoryTarget {
     pub size: u64,
-    pub unit: String, // "KB" or "MB"
+    pub unit: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -157,7 +157,7 @@ impl Settings {
                     "MB" => MB,
                     _ => KB,
                 };
-                target.size * multiplier
+                target.size.saturating_mul(multiplier)
             }
             None => 0,
         }
