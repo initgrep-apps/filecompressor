@@ -138,7 +138,7 @@ mod tests {
             canonical.to_uppercase()
         };
         add_files_core(&mut list, vec![canonical.clone()]);
-        let result = add_files_core(&mut list, vec![case_variant]);
+        add_files_core(&mut list, vec![case_variant]);
         assert_eq!(list.len(), 1);
     }
 

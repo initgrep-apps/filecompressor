@@ -295,7 +295,7 @@ git commit -m "fix: harden command layer — poison-safe locks, is_file+canonica
 - Produces: `detect_category` using `std::path::Path::extension()` semantics
 - Removes: `category_label`, `category_formats` and their tests
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Add to `detection.rs` test module:
 
@@ -318,12 +318,12 @@ Add to `detection.rs` test module:
     }
 ```
 
-- [ ] **Step 2: Run to verify fail**
+- [x] **Step 2: Run to verify fail**
 
 Run: `cd src-tauri && cargo test detection`
 Expected: FAIL — `jpg`/`pdf`/`mp4` currently detect as their categories; `file.` returns `""`→Other passes already; `.hidden` returns `hidden`→Other passes already. Two new failures expected (dotless names).
 
-- [ ] **Step 3: Implement Path::extension-based detection + delete dead fns**
+- [x] **Step 3: Implement Path::extension-based detection + delete dead fns**
 
 Replace `detect_category` with:
 
@@ -346,12 +346,12 @@ pub fn detect_category(filename: &str) -> Category {
 
 Delete `category_label` and `category_formats` entirely (and their two tests).
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 Run: `cd src-tauri && cargo test detection`
 Expected: all pass, no dead-code warnings.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A

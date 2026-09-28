@@ -20,7 +20,11 @@ const KB: u64 = 1024;
 const MB: u64 = 1024 * 1024;
 
 pub fn detect_category(filename: &str) -> Category {
-    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+    let ext = std::path::Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+        .unwrap_or_default();
     match ext.as_str() {
         "jpg" | "jpeg" | "png" | "webp" | "heic" | "heif" => Category::Image,
         "mp4" | "mov" => Category::Video,
@@ -37,26 +41,6 @@ pub fn default_target_bytes(category: Category) -> u64 {
         Category::Pdf => 2 * MB,
         Category::Document => 1 * MB,
         Category::Other => 0,
-    }
-}
-
-pub fn category_label(category: Category) -> &'static str {
-    match category {
-        Category::Image => "Image",
-        Category::Video => "Video",
-        Category::Pdf => "PDF",
-        Category::Document => "Document",
-        Category::Other => "Other",
-    }
-}
-
-pub fn category_formats(category: Category) -> &'static str {
-    match category {
-        Category::Image => "JPEG, PNG, WebP, HEIC",
-        Category::Video => "MP4, MOV",
-        Category::Pdf => "PDF",
-        Category::Document => "DOCX, XLSX, PPTX",
-        Category::Other => "",
     }
 }
 
@@ -145,20 +129,20 @@ mod tests {
     }
 
     #[test]
-    fn test_category_label_all() {
-        assert_eq!(category_label(Category::Image), "Image");
-        assert_eq!(category_label(Category::Video), "Video");
-        assert_eq!(category_label(Category::Pdf), "PDF");
-        assert_eq!(category_label(Category::Document), "Document");
-        assert_eq!(category_label(Category::Other), "Other");
+    fn test_detect_dotless_names_not_extensions() {
+        assert_eq!(detect_category("jpg"), Category::Other);
+        assert_eq!(detect_category("pdf"), Category::Other);
+        assert_eq!(detect_category("mp4"), Category::Other);
     }
 
     #[test]
-    fn test_category_formats_all() {
-        assert_eq!(category_formats(Category::Image), "JPEG, PNG, WebP, HEIC");
-        assert_eq!(category_formats(Category::Video), "MP4, MOV");
-        assert_eq!(category_formats(Category::Pdf), "PDF");
-        assert_eq!(category_formats(Category::Document), "DOCX, XLSX, PPTX");
-        assert_eq!(category_formats(Category::Other), "");
+    fn test_detect_trailing_dot() {
+        assert_eq!(detect_category("file."), Category::Other);
     }
+
+    #[test]
+    fn test_detect_dotfile_no_ext() {
+        assert_eq!(detect_category(".hidden"), Category::Other);
+    }
+
 }
