@@ -43,9 +43,11 @@ function formatSize(bytes: number): string {
   if (bytes === 0) return '—'
   const KB = 1024
   const MB = 1024 * 1024
+  const GB = 1024 * 1024 * 1024
   if (bytes < KB) return `${bytes} B`
   if (bytes < MB) return `${(bytes / KB).toFixed(0)} KB`
-  return `${(bytes / MB).toFixed(1)} MB`
+  if (bytes < GB) return `${(bytes / MB).toFixed(1)} MB`
+  return `${(bytes / GB).toFixed(2)} GB`
 }
 
 function formatTarget(bytes: number): string {
@@ -133,6 +135,7 @@ export function FileList({ files, onRemove }: FileListProps) {
               <TableCell>
                 <button
                   onClick={() => onRemove(file.id)}
+                  aria-label={`Remove ${file.name}`}
                   className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                   title="Remove from list"
                 >
