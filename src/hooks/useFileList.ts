@@ -19,34 +19,58 @@ import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { FileEntry } from '@/types'
 
+const toMessage = (err: unknown): string =>
+  err instanceof Error ? err.message : String(err)
+
 export function useFileList() {
   const [files, setFiles] = useState<FileEntry[]>([])
+  const [error, setError] = useState<string | null>(null)
 
   const addFiles = useCallback(async (paths: string[]) => {
-    const newEntries = await invoke<FileEntry[]>('add_files', { filePaths: paths })
-    setFiles((prev) => [...prev, ...newEntries])
-    return newEntries
+    try {
+      const newEntries = await invoke<FileEntry[]>('add_files', { filePaths: paths })
+      setFiles((prev) => [...prev, ...newEntries])
+      setError(null)
+    } catch (err) {
+      setError(`Could not add files: ${toMessage(err)}`)
+      throw err
+    }
   }, [])
 
   const browseFiles = useCallback(async () => {
-    const selected = await open({
-      multiple: true,
-      filters: [],
-    })
-    if (!selected) return
-    const paths = Array.isArray(selected) ? selected : [selected]
-    await addFiles(paths)
+    try {
+      const selected = await open({ multiple: true, filters: [] })
+      if (!selected) return
+      const paths = Array.isArray(selected) ? selected : [selected]
+      await addFiles(paths)
+      setError(null)
+    } catch (err) {
+      setError(`Could not open file picker: ${toMessage(err)}`)
+      throw err
+    }
   }, [addFiles])
 
   const removeFile = useCallback(async (fileId: string) => {
-    await invoke('remove_file', { fileId })
-    setFiles((prev) => prev.filter((f) => f.id !== fileId))
+    try {
+      await invoke('remove_file', { fileId })
+      setFiles((prev) => prev.filter((f) => f.id !== fileId))
+      setError(null)
+    } catch (err) {
+      setError(`Could not remove file: ${toMessage(err)}`)
+      throw err
+    }
   }, [])
 
   const clearList = useCallback(async () => {
-    await invoke('clear_list')
-    setFiles([])
+    try {
+      await invoke('clear_list')
+      setFiles([])
+      setError(null)
+    } catch (err) {
+      setError(`Could not clear list: ${toMessage(err)}`)
+      throw err
+    }
   }, [])
 
-  return { files, addFiles, browseFiles, removeFile, clearList }
+  return { files, error, addFiles, browseFiles, removeFile, clearList }
 }
