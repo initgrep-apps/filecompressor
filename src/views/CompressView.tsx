@@ -20,9 +20,22 @@ import { FileList } from '@/components/FileList'
 import { Button } from '@/components/ui/button'
 
 export function CompressView() {
-  const { files, addFiles, browseFiles, removeFile, clearList } = useFileList()
+  const { files, error, addFiles, browseFiles, removeFile, clearList } = useFileList()
 
   const hasFiles = files.length > 0
+
+  const handleBrowse = () => {
+    browseFiles().catch(() => {})
+  }
+  const handleDrop = (paths: string[]) => {
+    addFiles(paths).catch(() => {})
+  }
+  const handleRemove = (id: string) => {
+    removeFile(id).catch(() => {})
+  }
+  const handleClear = () => {
+    clearList().catch(() => {})
+  }
 
   return (
     <div className="flex flex-1 flex-col gap-3.5 p-5 min-h-0 overflow-hidden">
@@ -31,16 +44,25 @@ export function CompressView() {
         <span className="text-xs text-muted-foreground">Drag files into the area below</span>
       </div>
 
-      <DropZone onBrowse={browseFiles} onDrop={addFiles} className="shrink-0" />
+      {error && (
+        <div
+          role="alert"
+          className="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+        >
+          {error}
+        </div>
+      )}
+
+      <DropZone onBrowse={handleBrowse} onDrop={handleDrop} className="shrink-0" />
 
       {hasFiles && (
         <>
-          <FileList files={files} onRemove={removeFile} />
+          <FileList files={files} onRemove={handleRemove} />
           <div className="flex justify-between items-center pt-0.5 shrink-0">
             <span className="text-xs text-muted-foreground">
               <strong className="text-foreground font-semibold">{files.length} files</strong>
             </span>
-            <Button variant="ghost" size="sm" onClick={clearList}>
+            <Button variant="ghost" size="sm" onClick={handleClear}>
               Clear List
             </Button>
           </div>
