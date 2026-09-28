@@ -26,48 +26,76 @@ pub struct CategoryTarget {
     pub unit: String, // "KB" or "MB"
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageQualityFloor {
     pub min_quality: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl ImageQualityFloor {
+    fn spec_default() -> Self {
+        ImageQualityFloor { min_quality: 30 }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoQualityFloor {
     pub min_crf: u32,
     pub min_resolution: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl VideoQualityFloor {
+    fn spec_default() -> Self {
+        VideoQualityFloor { min_crf: 28, min_resolution: "480p".to_string() }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PdfQualityFloor {
     pub min_dpi: u32,
     pub min_jpeg_quality: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+impl PdfQualityFloor {
+    fn spec_default() -> Self {
+        PdfQualityFloor { min_dpi: 72, min_jpeg_quality: 15 }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentQualityFloor {
     pub min_media_quality: u32,
 }
 
+impl DocumentQualityFloor {
+    fn spec_default() -> Self {
+        DocumentQualityFloor { min_media_quality: 40 }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QualityFloors {
+    #[serde(default = "ImageQualityFloor::spec_default")]
     pub image: ImageQualityFloor,
+    #[serde(default = "VideoQualityFloor::spec_default")]
     pub video: VideoQualityFloor,
+    #[serde(default = "PdfQualityFloor::spec_default")]
     pub pdf: PdfQualityFloor,
+    #[serde(default = "DocumentQualityFloor::spec_default")]
     pub document: DocumentQualityFloor,
 }
 
 impl Default for QualityFloors {
     fn default() -> Self {
         QualityFloors {
-            image: ImageQualityFloor { min_quality: 30 },
-            video: VideoQualityFloor { min_crf: 28, min_resolution: "480p".to_string() },
-            pdf: PdfQualityFloor { min_dpi: 72, min_jpeg_quality: 15 },
-            document: DocumentQualityFloor { min_media_quality: 40 },
+            image: ImageQualityFloor::spec_default(),
+            video: VideoQualityFloor::spec_default(),
+            pdf: PdfQualityFloor::spec_default(),
+            document: DocumentQualityFloor::spec_default(),
         }
     }
 }
@@ -177,6 +205,7 @@ mod tests {
     fn test_settings_serde_roundtrip_camel_case() {
         let value = serde_json::to_value(Settings::default()).unwrap();
         assert!(value.get("outputFolder").is_some());
+        assert!(value.get("categoryTargets").is_some());
         let floors = value.get("qualityFloors").unwrap();
         assert!(floors.get("image").unwrap().get("minQuality").is_some());
         assert!(floors.get("video").unwrap().get("minCrf").is_some());
@@ -232,5 +261,22 @@ mod tests {
         assert_eq!(parsed.output_folder, "/tmp/out");
         assert_eq!(parsed.category_targets.get("image").unwrap().size, 200);
         assert_eq!(parsed.quality_floors.pdf.min_dpi, 72);
+    }
+
+    #[test]
+    fn test_parse_settings_value_empty_quality_floors_fills_defaults() {
+        let partial = serde_json::json!({
+            "outputFolder": "/tmp/out",
+            "qualityFloors": {}
+        });
+        let parsed = parse_settings_value(Some(partial));
+        assert_eq!(parsed.output_folder, "/tmp/out");
+        assert_eq!(parsed.category_targets.get("image").unwrap().size, 200);
+        assert_eq!(parsed.quality_floors.image.min_quality, 30);
+        assert_eq!(parsed.quality_floors.video.min_crf, 28);
+        assert_eq!(parsed.quality_floors.video.min_resolution, "480p");
+        assert_eq!(parsed.quality_floors.pdf.min_dpi, 72);
+        assert_eq!(parsed.quality_floors.pdf.min_jpeg_quality, 15);
+        assert_eq!(parsed.quality_floors.document.min_media_quality, 40);
     }
 }
