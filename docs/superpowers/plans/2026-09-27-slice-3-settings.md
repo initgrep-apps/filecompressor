@@ -1065,7 +1065,7 @@ git commit -m "feat: build SettingsView with category targets, output folder, qu
 - Full gate: `yarn build && yarn test && cd src-tauri && cargo test` (frontend unit tests incl. useSettings + SettingsView; Rust tests incl. settings suite)
 - Manual walkthrough below (native picker, store file, restart persistence — not unit-testable)
 
-- [ ] **Step 1: Run all acceptance criteria**
+- [x] **Step 1: Run all acceptance criteria**
 
 1. ✅ Settings view shows output folder + Browse button
 2. ✅ Browse opens native folder picker
@@ -1078,7 +1078,7 @@ git commit -m "feat: build SettingsView with category targets, output folder, qu
 9. ✅ Reset to defaults works
 10. ✅ File list (Slice 2) now uses settings-based targets
 
-- [ ] **Step 2: Run full gate**
+- [x] **Step 2: Run full gate**
 
 ```bash
 yarn build && yarn test && cd src-tauri && cargo test
@@ -1086,13 +1086,13 @@ yarn build && yarn test && cd src-tauri && cargo test
 
 Expected: Build clean, all frontend tests pass (useSettings + SettingsView + existing), all Rust tests pass (detection + models + commands + settings).
 
-- [ ] **Step 3: Corrupt-store resilience check (manual)**
+- [x] **Step 3: Corrupt-store resilience check (manual)**
 
 1. Locate store file in app data dir (e.g. `~/Library/Application Support/<app-id>/settings.json` on macOS)
 2. Hand-edit to invalid JSON / wrong-typed field (e.g. `"size": "not-a-number"`)
 3. Relaunch app → settings show defaults, no crash
 
-- [ ] **Step 4: Final commit**
+- [x] **Step 4: Final commit**
 
 ```bash
 git add -A
