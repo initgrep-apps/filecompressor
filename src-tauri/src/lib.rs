@@ -17,6 +17,7 @@
 mod commands;
 mod detection;
 mod models;
+mod settings;
 
 use commands::FileListState;
 use std::sync::Mutex;
