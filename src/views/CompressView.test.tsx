@@ -6,6 +6,11 @@ import { open } from '@tauri-apps/plugin-dialog'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
+vi.mock('@tauri-apps/api/webview', () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: () => Promise.resolve(() => {}),
+  }),
+}))
 
 import { CompressView } from '@/views/CompressView'
 
@@ -25,7 +30,7 @@ describe('CompressView', () => {
     await user.click(screen.getByRole('button', { name: /drop files/i }))
     await waitFor(() => {
       const banner = screen.getByRole('alert')
-      expect(banner).toHaveTextContent('Could not open file picker')
+      expect(banner).toHaveTextContent('Could not add files')
       expect(banner).toHaveTextContent('picker dead')
     })
     expect(screen.getByRole('alert').className).toContain('destructive')

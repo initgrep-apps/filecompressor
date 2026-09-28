@@ -692,7 +692,7 @@ git commit -m "feat: surface IPC errors via error state + alert banner; add vite
 - Produces: same props `{ onBrowse, onDrop, className? }` — `onDrop(paths: string[])` called with Tauri-provided paths
 - Behavior: dragging anywhere over the webview sets visual state; drop anywhere adds files; zone remains click/keyboard browse target
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 `src/components/DropZone.test.tsx`:
 
@@ -787,7 +787,7 @@ describe('DropZone', () => {
 
 Note: run `yarn add -D @testing-library/user-event` if not already installed.
 
-- [ ] **Step 2: Rewrite DropZone.tsx**
+- [x] **Step 2: Rewrite DropZone.tsx**
 
 ```tsx
 import { useState, useCallback, useEffect, useRef } from 'react'
@@ -867,7 +867,7 @@ export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
 }
 ```
 
-- [ ] **Step 3: Remove File.path shim**
+- [x] **Step 3: Remove File.path shim**
 
 Delete `src/vite-env.d.ts`'s File interface block so the file is:
 
@@ -875,12 +875,12 @@ Delete `src/vite-env.d.ts`'s File interface block so the file is:
 /// <reference types="vite/client" />
 ```
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 Run: `yarn test`
 Expected: DropZone tests + earlier tests green. `yarn build` green (no `f.path` usage remains).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A

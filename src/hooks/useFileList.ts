@@ -33,7 +33,6 @@ export function useFileList() {
       setError(null)
     } catch (err) {
       setError(`Could not add files: ${toMessage(err)}`)
-      throw err
     }
   }, [])
 
@@ -43,10 +42,8 @@ export function useFileList() {
       if (!selected) return
       const paths = Array.isArray(selected) ? selected : [selected]
       await addFiles(paths)
-      setError(null)
     } catch (err) {
       setError(`Could not open file picker: ${toMessage(err)}`)
-      throw err
     }
   }, [addFiles])
 
@@ -57,7 +54,6 @@ export function useFileList() {
       setError(null)
     } catch (err) {
       setError(`Could not remove file: ${toMessage(err)}`)
-      throw err
     }
   }, [])
 
@@ -68,7 +64,6 @@ export function useFileList() {
       setError(null)
     } catch (err) {
       setError(`Could not clear list: ${toMessage(err)}`)
-      throw err
     }
   }, [])
 
