@@ -61,6 +61,11 @@ impl FileEntry {
             .unwrap_or_default()
             .to_string_lossy()
             .to_string();
+        let name = if name.is_empty() {
+            "unknown".to_string()
+        } else {
+            name
+        };
 
         let original_size = std::fs::metadata(path)
             .map(|m| m.len())
@@ -138,6 +143,14 @@ mod tests {
         let entry = FileEntry::new("/path/to/");
 
         assert_eq!(entry.name, "to");
+    }
+
+    #[test]
+    fn test_file_entry_new_no_filename() {
+        let entry = FileEntry::new("/");
+
+        assert_eq!(entry.name, "unknown");
+        assert_eq!(entry.category, Category::Other);
     }
 
     #[test]

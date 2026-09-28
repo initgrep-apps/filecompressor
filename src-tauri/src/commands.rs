@@ -57,19 +57,28 @@ pub(crate) fn clear_list_core(list: &mut Vec<FileEntry>) {
 
 #[tauri::command]
 pub fn add_files(file_paths: Vec<String>, state: State<FileListState>) -> Vec<FileEntry> {
-    let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = state.0.lock().unwrap_or_else(|e| {
+        eprintln!("warn: file list mutex was poisoned, recovering: {e}");
+        e.into_inner()
+    });
     add_files_core(&mut list, file_paths)
 }
 
 #[tauri::command]
 pub fn remove_file(file_id: String, state: State<FileListState>) {
-    let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = state.0.lock().unwrap_or_else(|e| {
+        eprintln!("warn: file list mutex was poisoned, recovering: {e}");
+        e.into_inner()
+    });
     remove_file_core(&mut list, &file_id)
 }
 
 #[tauri::command]
 pub fn clear_list(state: State<FileListState>) {
-    let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = state.0.lock().unwrap_or_else(|e| {
+        eprintln!("warn: file list mutex was poisoned, recovering: {e}");
+        e.into_inner()
+    });
     clear_list_core(&mut list)
 }
 
@@ -118,7 +127,7 @@ mod tests {
     }
 
     #[test]
-    fn test_add_files_deduplicates_case_insensitive() {
+    fn test_add_files_skips_unresolvable_case_variant() {
         let dir = tempdir().unwrap();
         let mut list = Vec::new();
         let path = make_file(dir.path(), "test.jpg");
@@ -130,7 +139,19 @@ mod tests {
         };
         add_files_core(&mut list, vec![canonical.clone()]);
         let result = add_files_core(&mut list, vec![case_variant]);
-        assert!(result.is_empty(), "case-variant of same path must dedup");
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn test_add_files_deduplicates_exact_canonical() {
+        let dir = tempdir().unwrap();
+        let mut list = Vec::new();
+        let path = make_file(dir.path(), "test.jpg");
+        let canonical = fs::canonicalize(&path).unwrap().to_str().unwrap().to_string();
+        let first = add_files_core(&mut list, vec![canonical.clone()]);
+        assert_eq!(first.len(), 1);
+        let second = add_files_core(&mut list, vec![canonical]);
+        assert!(second.is_empty(), "same canonical path twice must dedup");
         assert_eq!(list.len(), 1);
     }
 
