@@ -67,10 +67,13 @@ pub(crate) fn clear_list_core(list: &mut Vec<FileEntry>) {
 const STORE_FILE: &str = "settings.json";
 
 pub fn load_settings(app: &tauri::AppHandle) -> crate::settings::Settings {
-    let value = app
-        .store(STORE_FILE)
-        .ok()
-        .and_then(|store| store.get("settings"));
+    let value = match app.store(STORE_FILE) {
+        Ok(store) => store.get("settings"),
+        Err(e) => {
+            eprintln!("warn: settings store unreadable, using defaults: {e}");
+            None
+        }
+    };
     let corrupt = value
         .as_ref()
         .is_some_and(|v| serde_json::from_value::<crate::settings::Settings>(v.clone()).is_err());
@@ -83,16 +86,23 @@ pub fn load_settings(app: &tauri::AppHandle) -> crate::settings::Settings {
 fn save_settings_to_store(
     app: &tauri::AppHandle,
     settings: &crate::settings::Settings,
-) {
-    let store = app
-        .store(STORE_FILE)
-        .or_else(|_| app.store_builder(STORE_FILE).build())
-        .expect("store build");
-    store.set(
-        "settings",
-        serde_json::to_value(settings).expect("serialize settings"),
-    );
-    store.save().expect("persist store");
+) -> Result<(), String> {
+    let store = match app.store(STORE_FILE) {
+        Ok(store) => store,
+        Err(e) => {
+            eprintln!("warn: existing settings store unavailable, creating fresh: {e}");
+            app.store_builder(STORE_FILE)
+                .build()
+                .map_err(|e| format!("failed to build settings store: {e}"))?
+        }
+    };
+    let value = serde_json::to_value(settings)
+        .map_err(|e| format!("failed to serialize settings: {e}"))?;
+    store.set("settings", value);
+    store
+        .save()
+        .map_err(|e| format!("failed to persist settings store: {e}"))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -101,15 +111,18 @@ pub fn get_settings(app: tauri::AppHandle) -> crate::settings::Settings {
 }
 
 #[tauri::command]
-pub fn save_settings(app: tauri::AppHandle, settings: crate::settings::Settings) {
-    save_settings_to_store(&app, &settings);
+pub fn save_settings(
+    app: tauri::AppHandle,
+    settings: crate::settings::Settings,
+) -> Result<(), String> {
+    save_settings_to_store(&app, &settings)
 }
 
 #[tauri::command]
-pub fn reset_settings(app: tauri::AppHandle) -> crate::settings::Settings {
+pub fn reset_settings(app: tauri::AppHandle) -> Result<crate::settings::Settings, String> {
     let defaults = crate::settings::Settings::default();
-    save_settings_to_store(&app, &defaults);
-    defaults
+    save_settings_to_store(&app, &defaults)?;
+    Ok(defaults)
 }
 
 #[tauri::command]
