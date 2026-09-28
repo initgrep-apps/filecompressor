@@ -622,7 +622,7 @@ git commit -m "feat: add Settings TypeScript types"
 - `it('browseFolder returns null for non-string selection')` — mocked `open` → array
 - `it('keeps error state and ends loading when get_settings rejects')` — no infinite loading
 
-- [ ] **Step 1: Create useSettings.ts**
+- [x] **Step 1: Create useSettings.ts**
 
 ```typescript
 import { useState, useEffect, useCallback } from 'react'
@@ -682,7 +682,7 @@ export function useSettings() {
 }
 ```
 
-- [ ] **Step 2: Create useSettings.test.ts**
+- [x] **Step 2: Create useSettings.test.ts**
 
 Vitest + `renderHook`, mocking `@tauri-apps/api/core` and `@tauri-apps/plugin-dialog` (pattern: existing `useFileList.test.ts`):
 
@@ -695,7 +695,7 @@ Vitest + `renderHook`, mocking `@tauri-apps/api/core` and `@tauri-apps/plugin-di
 - `it('browseFolder returns null for non-string selection')`
 - `it('keeps error state and ends loading when get_settings rejects')`
 
-- [ ] **Step 3: Run frontend tests**
+- [x] **Step 3: Run frontend tests**
 
 ```bash
 yarn test
@@ -703,7 +703,7 @@ yarn test
 
 Expected: new useSettings tests pass; existing useFileList/CompressView/FileList/DropZone tests stay green.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
