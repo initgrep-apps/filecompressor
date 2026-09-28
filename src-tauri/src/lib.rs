@@ -14,16 +14,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
+mod commands;
+mod detection;
+mod models;
+
+use commands::FileListState;
+use std::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![greet])
+        .plugin(tauri_plugin_dialog::init())
+        .manage(FileListState(Mutex::new(Vec::new())))
+        .invoke_handler(tauri::generate_handler![
+            commands::add_files,
+            commands::remove_file,
+            commands::clear_list,
+        ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
             eprintln!("fatal: failed to start application: {e:#}");

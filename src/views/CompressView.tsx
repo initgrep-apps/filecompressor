@@ -14,13 +14,38 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import { useFileList } from '@/hooks/useFileList'
+import { DropZone } from '@/components/DropZone'
+import { FileList } from '@/components/FileList'
+import { Button } from '@/components/ui/button'
+
 export function CompressView() {
+  const { files, addFiles, browseFiles, removeFile, clearList } = useFileList()
+
+  const hasFiles = files.length > 0
+
   return (
-    <div className="flex flex-1 flex-col gap-4 p-6">
-      <h1 className="text-base font-semibold">Compress Files</h1>
-      <p className="text-sm text-muted-foreground">
-        Drop files here to compress. This view will be implemented in a later slice.
-      </p>
+    <div className="flex flex-1 flex-col gap-3.5 p-5 min-h-0 overflow-hidden">
+      <div className="flex items-center justify-between shrink-0">
+        <h1 className="text-base font-semibold">Compress Files</h1>
+        <span className="text-xs text-muted-foreground">Drag files into the area below</span>
+      </div>
+
+      <DropZone onBrowse={browseFiles} onDrop={addFiles} className="shrink-0" />
+
+      {hasFiles && (
+        <>
+          <FileList files={files} onRemove={removeFile} />
+          <div className="flex justify-between items-center pt-0.5 shrink-0">
+            <span className="text-xs text-muted-foreground">
+              <strong className="text-foreground font-semibold">{files.length} files</strong>
+            </span>
+            <Button variant="ghost" size="sm" onClick={clearList}>
+              Clear List
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   )
 }
