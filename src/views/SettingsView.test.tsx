@@ -76,6 +76,11 @@ describe('SettingsView', () => {
     await loadView()
     expect(screen.getByText(/Quality Floors/)).toBeInTheDocument()
     expect(screen.queryByLabelText('Images minimum quality')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Videos minimum CRF')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Videos minimum resolution')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('PDF minimum DPI')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('PDF minimum JPEG quality')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Documents media quality')).not.toBeInTheDocument()
     await userEvent.setup().click(screen.getByText(/Quality Floors/))
     expect(await screen.findByLabelText('Images minimum quality')).toHaveValue(30)
     expect(screen.getByLabelText('Videos minimum CRF')).toHaveValue(28)
@@ -111,6 +116,37 @@ describe('SettingsView', () => {
         categoryTargets: { ...baseSettings.categoryTargets, image: { size: 2005, unit: 'KB' } },
       },
     })
+  })
+
+  it('changing unit updates save payload', async () => {
+    await loadView()
+    const user = userEvent.setup()
+    await user.selectOptions(screen.getByLabelText('Images target unit'), 'MB')
+    await user.type(screen.getByLabelText('Images target size'), '5')
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('save_settings', expect.anything())
+    })
+    const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === 'save_settings')
+    const saved = (call?.[1] as { settings: Settings }).settings
+    expect(saved.categoryTargets.image).toEqual({ size: 2005, unit: 'MB' })
+  })
+
+  it('shows error banner when save fails and keeps draft', async () => {
+    vi.mocked(invoke).mockImplementation((command: string) =>
+      command === 'save_settings'
+        ? Promise.reject(new Error('disk full'))
+        : Promise.resolve(structuredClone(baseSettings)),
+    )
+    await loadView()
+    const user = userEvent.setup()
+    await user.type(screen.getByLabelText('Images target size'), '5')
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not save settings: disk full',
+    )
+    expect(screen.getByLabelText('Images target size')).toHaveValue(2005)
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
   })
 
   it('cancel reverts draft to last saved settings', async () => {

@@ -38,6 +38,7 @@ const categories = [
 export function SettingsView() {
   const { settings, loading, error, saveSettings, resetSettings, browseFolder } = useSettings()
   const [draft, setDraft] = useState<Settings | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
 
   useEffect(() => {
     if (settings) setDraft(settings)
@@ -91,8 +92,14 @@ export function SettingsView() {
     }
   }
 
-  const handleSave = () => {
-    if (draft) saveSettings(draft)
+  const handleSave = async () => {
+    if (!draft || isSaving) return
+    setIsSaving(true)
+    try {
+      await saveSettings(draft)
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   const handleCancel = () => {
@@ -194,7 +201,7 @@ export function SettingsView() {
 
         <Separator />
 
-        <Accordion keepMounted={false}>
+        <Accordion>
           <AccordionItem value="quality-floors">
             <AccordionTrigger className="text-sm font-medium">
               Quality Floors <span className="ml-2 text-xs font-normal text-muted-foreground">advanced</span>
@@ -300,11 +307,20 @@ export function SettingsView() {
         </Accordion>
       </div>
 
+      {error && (
+        <div
+          role="alert"
+          className="shrink-0 border-t border-destructive/50 bg-destructive/10 px-6 py-3 text-sm text-destructive"
+        >
+          {error}
+        </div>
+      )}
+
       <div className="flex shrink-0 justify-end gap-2 border-t border-border bg-card p-4">
         <Button variant="ghost" onClick={handleCancel} disabled={!hasChanges}>
           Cancel
         </Button>
-        <Button onClick={handleSave} disabled={!hasChanges}>
+        <Button onClick={handleSave} disabled={!hasChanges || isSaving}>
           Save Changes
         </Button>
       </div>
