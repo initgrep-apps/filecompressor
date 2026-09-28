@@ -80,6 +80,32 @@ describe('useFileList', () => {
     expect(result.current.error).toContain('Could not open file picker')
   })
 
+  it('browseFiles surfaces add failure after picker resolves', async () => {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    vi.mocked(open).mockResolvedValueOnce('/t/x.jpg')
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('add dead'))
+    const { result } = renderHook(() => useFileList())
+    await act(async () => {
+      await expect(result.current.browseFiles()).rejects.toThrow('add dead')
+    })
+    expect(result.current.error).toContain('Could not open file picker')
+    expect(result.current.error).toContain('add dead')
+  })
+
+  it('successful retry after failure clears error', async () => {
+    vi.mocked(invoke)
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce([mockEntry])
+    const { result } = renderHook(() => useFileList())
+    await act(async () => {
+      await expect(result.current.addFiles(['/t/a.jpg'])).rejects.toThrow('boom')
+    })
+    expect(result.current.error).toContain('Could not add files')
+    await act(() => result.current.addFiles(['/t/a.jpg']))
+    expect(result.current.error).toBeNull()
+    expect(result.current.files).toHaveLength(1)
+  })
+
   it('removeFile filters only after IPC success', async () => {
     vi.mocked(invoke)
       .mockResolvedValueOnce([mockEntry])
@@ -133,5 +159,6 @@ describe('useFileList', () => {
       await Promise.all([result.current.addFiles(['/t/a.jpg']), result.current.addFiles(['/t/b.jpg'])])
     })
     await waitFor(() => expect(result.current.files).toHaveLength(2))
+    expect(result.current.files.map((f) => f.id).sort()).toEqual(['u1', 'u2'])
   })
 })
