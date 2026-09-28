@@ -68,18 +68,18 @@ src/
 **Required Tests:**
 - No unit tests feasible (plugin wiring verified at runtime). Compile gate + `yarn tauri dev` launch is the verification.
 
-- [ ] **Step 1: Add store plugin to Cargo.toml**
+- [x] **Step 1: Add store plugin to Cargo.toml**
 
 Add to `[dependencies]`:
 ```toml
 tauri-plugin-store = "2"
 ```
 
-- [ ] **Step 2: Register plugin in lib.rs**
+- [x] **Step 2: Register plugin in lib.rs**
 
 Add `.plugin(tauri_plugin_store::Builder::default().build())` to the Tauri builder chain in `src-tauri/src/lib.rs`.
 
-- [ ] **Step 3: Add store permissions**
+- [x] **Step 3: Add store permissions**
 
 In `src-tauri/capabilities/default.json`, add `"store:default"` to the existing permissions array (do NOT remove `opener:default` — it is already present and required):
 ```json
@@ -93,13 +93,13 @@ In `src-tauri/capabilities/default.json`, add `"store:default"` to the existing 
 }
 ```
 
-- [ ] **Step 4: Install frontend package**
+- [x] **Step 4: Install frontend package**
 
 ```bash
 yarn add @tauri-apps/plugin-store
 ```
 
-- [ ] **Step 5: Verify compilation**
+- [x] **Step 5: Verify compilation**
 
 ```bash
 yarn tauri dev
@@ -107,7 +107,7 @@ yarn tauri dev
 
 Expected: App launches without errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
