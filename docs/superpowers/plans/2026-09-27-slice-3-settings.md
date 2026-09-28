@@ -562,7 +562,7 @@ git commit -m "feat: add settings commands (get/save/reset) + use settings for t
 **Required Tests:**
 - No runtime tests — type-only task. Contract verified by Rust serde round-trip test (Task 2) + `tsc` via gate. Fixture contract test skipped (TS structural typing adds nothing over compile check).
 
-- [ ] **Step 1: Add Settings types**
+- [x] **Step 1: Add Settings types**
 
 Add to `src/types.ts`:
 
@@ -586,7 +586,7 @@ export interface Settings {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add -A

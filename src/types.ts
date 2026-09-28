@@ -38,3 +38,21 @@ export interface FileEntry {
   outputPath: string | null
   error: string | null
 }
+
+export interface CategoryTarget {
+  size: number
+  unit: 'KB' | 'MB'
+}
+
+export interface QualityFloors {
+  image: { minQuality: number }
+  video: { minCrf: number; minResolution: string }
+  pdf: { minDpi: number; minJpegQuality: number }
+  document: { minMediaQuality: number }
+}
+
+export interface Settings {
+  outputFolder: string
+  categoryTargets: Record<string, CategoryTarget>
+  qualityFloors: QualityFloors
+}
