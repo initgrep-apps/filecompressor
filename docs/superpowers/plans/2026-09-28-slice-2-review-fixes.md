@@ -898,7 +898,7 @@ git commit -m "fix: restore drag-drop via Tauri onDragDropEvent; drop dead File.
 **Interfaces:**
 - Produces: `formatSize` with GB tier; remove button with aria-label
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `src/components/FileList.test.tsx`:
 
@@ -997,12 +997,12 @@ describe('FileList', () => {
 })
 ```
 
-- [ ] **Step 2: Run to verify fail (GB tier + aria-label missing)**
+- [x] **Step 2: Run to verify fail (GB tier + aria-label missing)**
 
 Run: `yarn test`
 Expected: GB test and aria-label test FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `FileList.tsx`:
 
@@ -1032,12 +1032,12 @@ function formatSize(bytes: number): string {
 >
 ```
 
-- [ ] **Step 4: Run tests to verify pass**
+- [x] **Step 4: Run tests to verify pass**
 
 Run: `yarn test`
 Expected: green.
 
-- [ ] **Step 6: Gate + commit**
+- [x] **Step 6: Gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: all green.
