@@ -16,9 +16,6 @@
 
 use crate::models::Category;
 
-const KB: u64 = 1024;
-const MB: u64 = 1024 * 1024;
-
 pub fn detect_category(filename: &str) -> Category {
     let ext = std::path::Path::new(filename)
         .extension()
@@ -34,14 +31,17 @@ pub fn detect_category(filename: &str) -> Category {
     }
 }
 
+#[cfg(test)]
 pub fn default_target_bytes(category: Category) -> u64 {
-    match category {
-        Category::Image => 200 * KB,
-        Category::Video => 10 * MB,
-        Category::Pdf => 2 * MB,
-        Category::Document => 1 * MB,
-        Category::Other => 0,
-    }
+    let settings = crate::settings::Settings::default();
+    let key = match category {
+        Category::Image => "image",
+        Category::Video => "video",
+        Category::Pdf => "pdf",
+        Category::Document => "document",
+        Category::Other => "other",
+    };
+    settings.target_bytes_for(key)
 }
 
 #[cfg(test)]

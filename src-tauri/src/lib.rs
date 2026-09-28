@@ -33,6 +33,9 @@ pub fn run() {
             commands::add_files,
             commands::remove_file,
             commands::clear_list,
+            commands::get_settings,
+            commands::save_settings,
+            commands::reset_settings,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

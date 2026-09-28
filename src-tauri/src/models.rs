@@ -55,7 +55,7 @@ pub struct FileEntry {
 }
 
 impl FileEntry {
-    pub fn new(path: &str) -> Self {
+    pub fn new(path: &str, target_bytes: u64) -> Self {
         let name = std::path::Path::new(path)
             .file_name()
             .unwrap_or_default()
@@ -78,8 +78,6 @@ impl FileEntry {
             FileStatus::Pending
         };
 
-        let target_bytes = crate::detection::default_target_bytes(category);
-
         FileEntry {
             id: uuid::Uuid::new_v4().to_string(),
             name,
@@ -98,8 +96,13 @@ impl FileEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::detection;
     use std::fs;
     use tempfile::tempdir;
+
+    fn test_target_bytes(category: Category) -> u64 {
+        detection::default_target_bytes(category)
+    }
 
     #[test]
     fn test_file_entry_new_valid_file() {
@@ -107,7 +110,10 @@ mod tests {
         let file_path = dir.path().join("test.jpg");
         fs::write(&file_path, b"test content").unwrap();
 
-        let entry = FileEntry::new(file_path.to_str().unwrap());
+        let entry = FileEntry::new(
+            file_path.to_str().unwrap(),
+            test_target_bytes(Category::Image),
+        );
 
         assert_eq!(entry.name, "test.jpg");
         assert!(entry.original_size > 0);
@@ -122,7 +128,10 @@ mod tests {
 
     #[test]
     fn test_file_entry_new_missing_file() {
-        let entry = FileEntry::new("/nonexistent/path/test.jpg");
+        let entry = FileEntry::new(
+            "/nonexistent/path/test.jpg",
+            test_target_bytes(Category::Image),
+        );
 
         assert_eq!(entry.name, "test.jpg");
         assert_eq!(entry.original_size, 0);
@@ -132,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_file_entry_new_permission_denied() {
-        let entry = FileEntry::new("/root/forbidden.jpg");
+        let entry = FileEntry::new("/root/forbidden.jpg", test_target_bytes(Category::Image));
 
         assert_eq!(entry.name, "forbidden.jpg");
         assert_eq!(entry.original_size, 0);
@@ -140,14 +149,14 @@ mod tests {
 
     #[test]
     fn test_file_entry_new_empty_filename() {
-        let entry = FileEntry::new("/path/to/");
+        let entry = FileEntry::new("/path/to/", 0);
 
         assert_eq!(entry.name, "to");
     }
 
     #[test]
     fn test_file_entry_new_no_filename() {
-        let entry = FileEntry::new("/");
+        let entry = FileEntry::new("/", test_target_bytes(Category::Other));
 
         assert_eq!(entry.name, "unknown");
         assert_eq!(entry.category, Category::Other);
@@ -159,7 +168,10 @@ mod tests {
         let file_path = dir.path().join("测试文件.jpg");
         fs::write(&file_path, b"test").unwrap();
 
-        let entry = FileEntry::new(file_path.to_str().unwrap());
+        let entry = FileEntry::new(
+            file_path.to_str().unwrap(),
+            test_target_bytes(Category::Image),
+        );
 
         assert_eq!(entry.name, "测试文件.jpg");
     }
@@ -170,12 +182,18 @@ mod tests {
         
         let img_path = dir.path().join("test.jpg");
         fs::write(&img_path, b"test").unwrap();
-        let img_entry = FileEntry::new(img_path.to_str().unwrap());
+        let img_entry = FileEntry::new(
+            img_path.to_str().unwrap(),
+            test_target_bytes(Category::Image),
+        );
         assert_eq!(img_entry.status, FileStatus::Pending);
 
         let other_path = dir.path().join("test.xyz");
         fs::write(&other_path, b"test").unwrap();
-        let other_entry = FileEntry::new(other_path.to_str().unwrap());
+        let other_entry = FileEntry::new(
+            other_path.to_str().unwrap(),
+            test_target_bytes(Category::Other),
+        );
         assert_eq!(other_entry.status, FileStatus::Unsupported);
     }
 
@@ -185,7 +203,10 @@ mod tests {
         let file_path = dir.path().join("test.jpg");
         fs::write(&file_path, b"test content").unwrap();
 
-        let entry = FileEntry::new(file_path.to_str().unwrap());
+        let entry = FileEntry::new(
+            file_path.to_str().unwrap(),
+            test_target_bytes(Category::Image),
+        );
         let json = serde_json::to_string(&entry).unwrap();
         let deserialized: FileEntry = serde_json::from_str(&json).unwrap();
 
@@ -207,7 +228,10 @@ mod tests {
         let file_path = dir.path().join("test.jpg");
         fs::write(&file_path, b"test").unwrap();
 
-        let entry = FileEntry::new(file_path.to_str().unwrap());
+        let entry = FileEntry::new(
+            file_path.to_str().unwrap(),
+            test_target_bytes(Category::Image),
+        );
         let uuid = uuid::Uuid::parse_str(&entry.id).unwrap();
         assert_eq!(uuid.get_version(), Some(uuid::Version::Random));
     }

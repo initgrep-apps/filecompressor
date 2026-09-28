@@ -403,7 +403,7 @@ git commit -m "feat: add Settings model with defaults + tests"
 - `test_add_files_core_uses_settings_targets` — pass target resolver returning custom image target (500 KB) → entry `target_bytes == 500*1024`; resolver for Other → 0
 - Existing 11 `add_files_core` tests + 12 models tests updated for new signature and stay green (canonicalize/dedup/is_file regressions guard)
 
-- [ ] **Step 1: Add settings commands to commands.rs**
+- [x] **Step 1: Add settings commands to commands.rs**
 
 Add to `src-tauri/src/commands.rs`:
 
@@ -447,7 +447,7 @@ pub fn reset_settings(app: AppHandle) -> Settings {
 }
 ```
 
-- [ ] **Step 2: Register commands in lib.rs**
+- [x] **Step 2: Register commands in lib.rs**
 
 Update the `invoke_handler` in `src-tauri/src/lib.rs`:
 
@@ -462,7 +462,7 @@ Update the `invoke_handler` in `src-tauri/src/lib.rs`:
 ])
 ```
 
-- [ ] **Step 3: Update add_files to use settings for target bytes**
+- [x] **Step 3: Update add_files to use settings for target bytes**
 
 > ⚠️ **Do NOT replace `add_files_core` body.** Existing implementation (commands.rs:23-48) has `is_file()` check, `fs::canonicalize` + canonical-path dedup with case-variant handling, and poisoned-mutex recovery. Preserve all of it — only extend with a target resolver. Plan originally replaced this body, dropping those behaviors (regression — see docs/bugs.md).
 
@@ -522,7 +522,7 @@ pub fn add_files(
 
 Keep the existing canonicalize/dedup/is_file/poison logic inside `add_files_core` untouched.
 
-- [ ] **Step 4: Run Rust tests + verify compilation**
+- [x] **Step 4: Run Rust tests + verify compilation**
 
 ```bash
 cd src-tauri && cargo test
@@ -536,7 +536,7 @@ yarn tauri dev
 
 Expected: App launches without errors. File list still works but now uses settings-based targets.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
