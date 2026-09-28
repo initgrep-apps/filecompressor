@@ -146,7 +146,7 @@ git commit -m "chore: add tauri-plugin-store for settings persistence"
 - `test_parse_settings_value_corrupt_falls_back_to_defaults` — wrong-typed field (e.g. `size: "not-a-number"`) → `Settings::default()`
 - `test_parse_settings_value_partial_fills_missing_with_defaults` — only some fields present → missing filled from defaults
 
-- [ ] **Step 1: Create settings.rs**
+- [x] **Step 1: Create settings.rs**
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -349,7 +349,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Add dirs dependency**
+- [x] **Step 2: Add dirs dependency**
 
 Add to `src-tauri/Cargo.toml`:
 ```toml
@@ -358,11 +358,11 @@ dirs = "7"
 
 > AGENTS.md pins `dirs 7.0` — do not use "5".
 
-- [ ] **Step 3: Register module in lib.rs**
+- [x] **Step 3: Register module in lib.rs**
 
 Add `mod settings;` to `src-tauri/src/lib.rs`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 cd src-tauri && cargo test settings -- --nocapture
@@ -370,7 +370,7 @@ cd src-tauri && cargo test settings -- --nocapture
 
 Expected: All 8 settings tests pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
