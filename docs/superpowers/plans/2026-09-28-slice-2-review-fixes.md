@@ -370,7 +370,7 @@ git commit -m "fix: Path::extension-based detection; drop dotless misdetection; 
 - Produces: `useFileList()` now returns `{ files, error, addFiles, browseFiles, removeFile, clearList }`; `error: string | null` set on any IPC failure, cleared on next successful op
 - All four ops catch internally; they never throw to callers
 
-- [ ] **Step 1: Rewrite useFileList.ts**
+- [x] **Step 1: Rewrite useFileList.ts**
 
 ```typescript
 import { useState, useCallback } from 'react'
@@ -435,7 +435,7 @@ export function useFileList() {
 }
 ```
 
-- [ ] **Step 2: Write failing test for error state**
+- [x] **Step 2: Write failing test for error state**
 
 `src/hooks/useFileList.test.ts`:
 
@@ -570,7 +570,7 @@ describe('useFileList', () => {
 })
 ```
 
-- [ ] **Step 3: Add vitest infra (Task 11 folds in here)**
+- [x] **Step 3: Add vitest infra (Task 11 folds in here)**
 
 Run: `yarn add -D vitest @vitest/coverage-v8 @testing-library/react @testing-library/dom jsdom`
 
@@ -598,12 +598,12 @@ Create `src/test-setup.ts`:
 import '@testing-library/jest-dom/vitest'
 ```
 
-- [ ] **Step 4: Run test to verify pass**
+- [x] **Step 4: Run test to verify pass**
 
 Run: `yarn test`
 Expected: 11 useFileList tests pass.
 
-- [ ] **Step 5: Wire error banner in CompressView**
+- [x] **Step 5: Wire error banner in CompressView**
 
 ```tsx
 import { useFileList } from '@/hooks/useFileList'
@@ -667,12 +667,12 @@ export function CompressView() {
 
 (Close the `div` tag properly — `<div>` … `</div>`.)
 
-- [ ] **Step 6: Run full gate**
+- [x] **Step 6: Run full gate**
 
 Run: `yarn build && yarn test`
 Expected: green.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A
