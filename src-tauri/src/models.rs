@@ -58,8 +58,8 @@ impl FileEntry {
     pub fn new(path: &str) -> Self {
         let name = std::path::Path::new(path)
             .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
+            .unwrap_or_default()
+            .to_string_lossy()
             .to_string();
 
         let original_size = std::fs::metadata(path)

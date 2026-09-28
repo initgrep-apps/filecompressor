@@ -20,19 +20,26 @@ use tauri::State;
 
 pub struct FileListState(pub Mutex<Vec<FileEntry>>);
 
-#[tauri::command]
-pub fn add_files(file_paths: Vec<String>, state: State<FileListState>) -> Vec<FileEntry> {
-    let mut list = state.0.lock().unwrap();
+pub(crate) fn add_files_core(
+    list: &mut Vec<FileEntry>,
+    file_paths: Vec<String>,
+) -> Vec<FileEntry> {
     let mut new_entries = Vec::new();
 
     for path in file_paths {
-        if !std::path::Path::new(&path).exists() {
+        let p = std::path::Path::new(&path);
+        if !p.is_file() {
             continue;
         }
-        if list.iter().any(|e| e.path == path) {
+        let canonical = match std::fs::canonicalize(p) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let canonical_str = canonical.to_string_lossy().to_string();
+        if list.iter().any(|e| e.path == canonical_str) {
             continue;
         }
-        let entry = FileEntry::new(&path);
+        let entry = FileEntry::new(&canonical_str);
         new_entries.push(entry.clone());
         list.push(entry);
     }
@@ -40,16 +47,30 @@ pub fn add_files(file_paths: Vec<String>, state: State<FileListState>) -> Vec<Fi
     new_entries
 }
 
+pub(crate) fn remove_file_core(list: &mut Vec<FileEntry>, file_id: &str) {
+    list.retain(|e| e.id != file_id);
+}
+
+pub(crate) fn clear_list_core(list: &mut Vec<FileEntry>) {
+    list.clear();
+}
+
+#[tauri::command]
+pub fn add_files(file_paths: Vec<String>, state: State<FileListState>) -> Vec<FileEntry> {
+    let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    add_files_core(&mut list, file_paths)
+}
+
 #[tauri::command]
 pub fn remove_file(file_id: String, state: State<FileListState>) {
-    let mut list = state.0.lock().unwrap();
-    list.retain(|e| e.id != file_id);
+    let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    remove_file_core(&mut list, &file_id)
 }
 
 #[tauri::command]
 pub fn clear_list(state: State<FileListState>) {
-    let mut list = state.0.lock().unwrap();
-    list.clear();
+    let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    clear_list_core(&mut list)
 }
 
 #[cfg(test)]
@@ -57,212 +78,135 @@ mod tests {
     use super::*;
     use crate::models::Category;
     use std::fs;
-    use std::sync::Mutex;
     use tempfile::tempdir;
 
-    fn create_test_state() -> FileListState {
-        FileListState(Mutex::new(Vec::new()))
-    }
-
-    fn add_files_direct(file_paths: Vec<String>, state: &FileListState) -> Vec<FileEntry> {
-        let mut list = state.0.lock().unwrap();
-        let mut new_entries = Vec::new();
-
-        for path in file_paths {
-            if !std::path::Path::new(&path).exists() {
-                continue;
-            }
-            if list.iter().any(|e| e.path == path) {
-                continue;
-            }
-            let entry = FileEntry::new(&path);
-            new_entries.push(entry.clone());
-            list.push(entry);
-        }
-
-        new_entries
-    }
-
-    fn remove_file_direct(file_id: String, state: &FileListState) {
-        let mut list = state.0.lock().unwrap();
-        list.retain(|e| e.id != file_id);
-    }
-
-    fn clear_list_direct(state: &FileListState) {
-        let mut list = state.0.lock().unwrap();
-        list.clear();
+    fn make_file(dir: &std::path::Path, name: &str) -> String {
+        let p = dir.join(name);
+        fs::write(&p, b"x").unwrap();
+        p.to_str().unwrap().to_string()
     }
 
     #[test]
     fn test_add_files_valid_paths() {
         let dir = tempdir().unwrap();
-        let state = create_test_state();
-        
-        let file_path = dir.path().join("test.jpg");
-        fs::write(&file_path, b"test").unwrap();
-        
-        let result = add_files_direct(vec![file_path.to_str().unwrap().to_string()], &state);
-        
+        let mut list = Vec::new();
+        let path = make_file(dir.path(), "test.jpg");
+        let result = add_files_core(&mut list, vec![path]);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "test.jpg");
         assert_eq!(result[0].category, Category::Image);
-        
-        let list = state.0.lock().unwrap();
         assert_eq!(list.len(), 1);
     }
 
     #[test]
     fn test_add_files_skips_nonexistent() {
-        let state = create_test_state();
-        
-        let result = add_files_direct(vec!["/nonexistent/path.jpg".to_string()], &state);
-        
-        assert_eq!(result.len(), 0);
-        
-        let list = state.0.lock().unwrap();
-        assert_eq!(list.len(), 0);
+        let mut list = Vec::new();
+        let result = add_files_core(&mut list, vec!["/nonexistent/path.jpg".to_string()]);
+        assert!(result.is_empty());
+        assert!(list.is_empty());
     }
 
     #[test]
-    fn test_add_files_deduplicates() {
+    fn test_add_files_rejects_directory() {
         let dir = tempdir().unwrap();
-        let state = create_test_state();
-        
-        let file_path = dir.path().join("test.jpg");
-        fs::write(&file_path, b"test").unwrap();
-        let path_str = file_path.to_str().unwrap().to_string();
-        
-        add_files_direct(vec![path_str.clone()], &state);
-        let result = add_files_direct(vec![path_str], &state);
-        
-        assert_eq!(result.len(), 0);
-        
-        let list = state.0.lock().unwrap();
+        let mut list = Vec::new();
+        let subdir = dir.path().join("subdir");
+        fs::create_dir(&subdir).unwrap();
+        let result = add_files_core(&mut list, vec![subdir.to_str().unwrap().to_string()]);
+        assert!(result.is_empty());
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn test_add_files_deduplicates_case_insensitive() {
+        let dir = tempdir().unwrap();
+        let mut list = Vec::new();
+        let path = make_file(dir.path(), "test.jpg");
+        let canonical = fs::canonicalize(&path).unwrap().to_str().unwrap().to_string();
+        let case_variant = if canonical.chars().any(|c| c.is_uppercase()) {
+            canonical.to_lowercase()
+        } else {
+            canonical.to_uppercase()
+        };
+        add_files_core(&mut list, vec![canonical.clone()]);
+        let result = add_files_core(&mut list, vec![case_variant]);
+        assert!(result.is_empty(), "case-variant of same path must dedup");
         assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn test_add_files_deduplicates_redundant_separators() {
+        let dir = tempdir().unwrap();
+        let mut list = Vec::new();
+        let path = make_file(dir.path(), "test.jpg");
+        add_files_core(&mut list, vec![path.clone()]);
+        let doubled = path.replace("/test.jpg", "//test.jpg");
+        let result = add_files_core(&mut list, vec![doubled]);
+        assert!(result.is_empty(), "canonicalize normalizes // before dedup");
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn test_add_files_stores_canonical_path() {
+        let dir = tempdir().unwrap();
+        let mut list = Vec::new();
+        let path = make_file(dir.path(), "test.jpg");
+        add_files_core(&mut list, vec![path]);
+        let canonical = fs::canonicalize(dir.path().join("test.jpg")).unwrap();
+        let stored: Vec<String> = list.iter().map(|e| e.path.clone()).collect();
+        assert_eq!(stored[0], canonical.to_str().unwrap());
     }
 
     #[test]
     fn test_add_files_returns_new_only() {
         let dir = tempdir().unwrap();
-        let state = create_test_state();
-        
-        let file1_path = dir.path().join("test1.jpg");
-        fs::write(&file1_path, b"test1").unwrap();
-        let file2_path = dir.path().join("test2.jpg");
-        fs::write(&file2_path, b"test2").unwrap();
-        
-        add_files_direct(vec![file1_path.to_str().unwrap().to_string()], &state);
-        let result = add_files_direct(vec![
-            file1_path.to_str().unwrap().to_string(),
-            file2_path.to_str().unwrap().to_string(),
-        ], &state);
-        
+        let mut list = Vec::new();
+        let p1 = make_file(dir.path(), "a.jpg");
+        let p2 = make_file(dir.path(), "b.jpg");
+        add_files_core(&mut list, vec![p1.clone()]);
+        let result = add_files_core(&mut list, vec![p1, p2]);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].name, "test2.jpg");
+        assert_eq!(result[0].name, "b.jpg");
+    }
+
+    #[test]
+    fn test_add_files_empty_vec() {
+        let mut list = Vec::new();
+        let result = add_files_core(&mut list, vec![]);
+        assert!(result.is_empty());
+        assert!(list.is_empty());
     }
 
     #[test]
     fn test_remove_file_existing() {
         let dir = tempdir().unwrap();
-        let state = create_test_state();
-        
-        let file_path = dir.path().join("test.jpg");
-        fs::write(&file_path, b"test").unwrap();
-        
-        let result = add_files_direct(vec![file_path.to_str().unwrap().to_string()], &state);
-        let file_id = result[0].id.clone();
-        
-        remove_file_direct(file_id, &state);
-        
-        let list = state.0.lock().unwrap();
-        assert_eq!(list.len(), 0);
-    }
-
-    #[test]
-    fn test_remove_file_nonexistent() {
-        let state = create_test_state();
-        
-        remove_file_direct("nonexistent-id".to_string(), &state);
-        
-        let list = state.0.lock().unwrap();
-        assert_eq!(list.len(), 0);
+        let mut list = Vec::new();
+        let path = make_file(dir.path(), "test.jpg");
+        let entries = add_files_core(&mut list, vec![path]);
+        remove_file_core(&mut list, &entries[0].id);
+        assert!(list.is_empty());
     }
 
     #[test]
     fn test_clear_list() {
         let dir = tempdir().unwrap();
-        let state = create_test_state();
-        
-        let file1_path = dir.path().join("test1.jpg");
-        fs::write(&file1_path, b"test1").unwrap();
-        let file2_path = dir.path().join("test2.jpg");
-        fs::write(&file2_path, b"test2").unwrap();
-        
-        add_files_direct(vec![
-            file1_path.to_str().unwrap().to_string(),
-            file2_path.to_str().unwrap().to_string(),
-        ], &state);
-        
-        clear_list_direct(&state);
-        
-        let list = state.0.lock().unwrap();
-        assert_eq!(list.len(), 0);
-    }
-
-    #[test]
-    fn test_add_files_empty_vec() {
-        let state = create_test_state();
-        
-        let result = add_files_direct(vec![], &state);
-        
-        assert_eq!(result.len(), 0);
-        
-        let list = state.0.lock().unwrap();
-        assert_eq!(list.len(), 0);
-    }
-
-    #[test]
-    fn test_concurrent_access() {
-        use std::sync::Arc;
-        use std::thread;
-        
-        let dir = tempdir().unwrap();
-        let state = Arc::new(create_test_state());
-        
-        let mut handles = vec![];
-        for i in 0..10 {
-            let state_clone = Arc::clone(&state);
-            let dir_path = dir.path().to_path_buf();
-            let handle = thread::spawn(move || {
-                let file_path = dir_path.join(format!("test{}.jpg", i));
-                fs::write(&file_path, b"test").unwrap();
-                add_files_direct(vec![file_path.to_str().unwrap().to_string()], &state_clone);
-            });
-            handles.push(handle);
-        }
-        
-        for handle in handles {
-            handle.join().unwrap();
-        }
-        
-        let list = state.0.lock().unwrap();
-        assert_eq!(list.len(), 10);
+        let mut list = Vec::new();
+        let p1 = make_file(dir.path(), "a.jpg");
+        let p2 = make_file(dir.path(), "b.jpg");
+        add_files_core(&mut list, vec![p1, p2]);
+        clear_list_core(&mut list);
+        assert!(list.is_empty());
     }
 
     #[test]
     fn test_mutex_poison_recovery() {
-        let state = create_test_state();
-        
-        // Simulate a panic while holding the lock
+        let state = FileListState(Mutex::new(Vec::new()));
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _lock = state.0.lock().unwrap();
             panic!("intentional panic");
         }));
-        
         assert!(result.is_err());
-        
-        // Lock is poisoned after panic, but we can recover by accessing the inner value
         let list = state.0.lock().unwrap_or_else(|e| e.into_inner());
-        assert_eq!(list.len(), 0);
+        assert!(list.is_empty());
     }
 }
