@@ -214,4 +214,23 @@ describe('useSettings', () => {
     await act(async () => {})
     expect(result.current.settings).toEqual(updated)
   })
+
+  it('does not set load error when pending load rejects after save succeeds', async () => {
+    let rejectLoad!: (e: unknown) => void
+    vi.mocked(invoke).mockImplementationOnce(
+      () => new Promise<Settings>((_, r) => (rejectLoad = r)),
+    )
+    const { result } = renderHook(() => useSettings())
+    const updated: Settings = { ...mockSettings, outputFolder: '/tmp/race' }
+    vi.mocked(invoke).mockResolvedValueOnce(undefined)
+    await act(async () => {
+      await result.current.saveSettings(updated)
+    })
+    expect(result.current.error).toBeNull()
+    rejectLoad(new Error('late boom'))
+    await act(async () => {})
+    expect(result.current.settings).toEqual(updated)
+    expect(result.current.error).toBeNull()
+    expect(result.current.loading).toBe(false)
+  })
 })

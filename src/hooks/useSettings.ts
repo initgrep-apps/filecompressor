@@ -44,7 +44,9 @@ export function useSettings() {
         if (mutationCountRef.current > mutationsBeforeLoad) return
         setSettings(s)
       } catch (err) {
-        if (!cancelled) setError(`Could not load settings: ${toMessage(err)}`)
+        if (cancelled) return
+        if (mutationCountRef.current > mutationsBeforeLoad) return
+        setError(`Could not load settings: ${toMessage(err)}`)
       } finally {
         if (!cancelled) setLoading(false)
       }
