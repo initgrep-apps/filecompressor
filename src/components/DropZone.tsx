@@ -1,20 +1,5 @@
-// File Size Optimizer — offline batch file compression
-// Copyright (C) 2026 File Size Optimizer Contributors
-//
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or
-// (at your option) any later version.
-//
-// This program is distributed in the hope that it will be useful,
-// but WITHOUT ANY WARRANTY; without even the implied warranty of
-// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-// GNU General Public License for more details.
-//
-// You should have received a copy of the GNU General Public License
-// along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 
 interface DropZoneProps {
   onBrowse: () => void
@@ -24,42 +9,39 @@ interface DropZoneProps {
 
 export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
-  const dragCounter = useRef(0)
+  const onDropRef = useRef(onDrop)
+  onDropRef.current = onDrop
 
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    dragCounter.current += 1
-    setIsDragging(true)
-  }, [])
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: (() => void) | undefined
 
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    dragCounter.current -= 1
-    if (dragCounter.current === 0) {
-      setIsDragging(false)
+    getCurrentWebview()
+      .onDragDropEvent((event) => {
+        if (cancelled) return
+        if (event.payload.type === 'enter') {
+          setIsDragging(true)
+        } else if (event.payload.type === 'over') {
+          setIsDragging(true)
+        } else if (event.payload.type === 'drop') {
+          setIsDragging(false)
+          if (event.payload.paths.length > 0) {
+            onDropRef.current(event.payload.paths)
+          }
+        } else {
+          setIsDragging(false)
+        }
+      })
+      .then((fn) => {
+        if (cancelled) fn()
+        else unlisten = fn
+      })
+
+    return () => {
+      cancelled = true
+      unlisten?.()
     }
   }, [])
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-  }, [])
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(false)
-    dragCounter.current = 0
-
-    const files = Array.from(e.dataTransfer.files)
-    const paths = files.map((f) => f.path).filter(Boolean)
-
-    if (paths.length > 0) {
-      onDrop(paths)
-    }
-  }, [onDrop])
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -70,10 +52,6 @@ export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
 
   return (
     <div
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
       onClick={onBrowse}
       onKeyDown={handleKeyDown}
       role="button"
