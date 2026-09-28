@@ -19,6 +19,7 @@
     "@tauri-apps/api": "2.12.x",
     "@tauri-apps/plugin-dialog": "^2.8.0",
     "@tauri-apps/plugin-opener": "2.6.x",
+    "@tauri-apps/plugin-store": "^2.5.0",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",
     "react": "19.3.x",
