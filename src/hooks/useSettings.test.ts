@@ -159,6 +159,7 @@ describe('useSettings', () => {
   it('browseFolder returns null when picker throws', async () => {
     const { open } = await import('@tauri-apps/plugin-dialog')
     vi.mocked(open).mockRejectedValueOnce(new Error('picker dead'))
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { result } = renderHook(() => useSettings())
     await act(async () => {})
     let picked: string | null | undefined
@@ -167,6 +168,11 @@ describe('useSettings', () => {
     })
     expect(picked).toBeNull()
     expect(result.current.error).toBeNull()
+    expect(consoleSpy).toHaveBeenCalledWith(
+      'Folder picker failed:',
+      expect.any(Error),
+    )
+    consoleSpy.mockRestore()
   })
 
   it('keeps error state and ends loading when get_settings rejects', async () => {
@@ -177,5 +183,35 @@ describe('useSettings', () => {
     expect(result.current.settings).toBeNull()
     expect(result.current.error).toContain('Could not load settings')
     expect(result.current.error).toContain('load boom')
+  })
+
+  it('serializes object rejections as JSON instead of [object Object]', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce({ code: 42 })
+    const { result } = renderHook(() => useSettings())
+    await act(async () => {})
+    expect(result.current.error).toContain('{"code":42}')
+  })
+
+  it('uses raw string for string rejections', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce('plain failure')
+    const { result } = renderHook(() => useSettings())
+    await act(async () => {})
+    expect(result.current.error).toContain('plain failure')
+  })
+
+  it('skips stale load result when save races during mount load', async () => {
+    let resolveLoad!: (v: Settings) => void
+    vi.mocked(invoke).mockImplementationOnce(
+      () => new Promise<Settings>((r) => (resolveLoad = r)),
+    )
+    const { result } = renderHook(() => useSettings())
+    const updated: Settings = { ...mockSettings, outputFolder: '/tmp/race' }
+    vi.mocked(invoke).mockResolvedValueOnce(undefined)
+    await act(async () => {
+      await result.current.saveSettings(updated)
+    })
+    resolveLoad(mockSettings)
+    await act(async () => {})
+    expect(result.current.settings).toEqual(updated)
   })
 })
