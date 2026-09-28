@@ -30,7 +30,7 @@ describe('CompressView', () => {
     await user.click(screen.getByRole('button', { name: /drop files/i }))
     await waitFor(() => {
       const banner = screen.getByRole('alert')
-      expect(banner).toHaveTextContent('Could not open file picker')
+      expect(banner).toHaveTextContent('Could not add files')
       expect(banner).toHaveTextContent('picker dead')
     })
     expect(screen.getByRole('alert').className).toContain('destructive')

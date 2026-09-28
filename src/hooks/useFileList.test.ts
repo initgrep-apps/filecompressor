@@ -32,12 +32,10 @@ describe('useFileList', () => {
     expect(result.current.error).toBeNull()
   })
 
-  it('sets error and rethrows when add IPC fails', async () => {
+  it('sets error state when add IPC fails', async () => {
     vi.mocked(invoke).mockRejectedValueOnce(new Error('boom'))
     const { result } = renderHook(() => useFileList())
-    await act(async () => {
-      await expect(result.current.addFiles(['/t/a.jpg'])).rejects.toThrow('boom')
-    })
+    await act(() => result.current.addFiles(['/t/a.jpg']))
     expect(result.current.files).toHaveLength(0)
     expect(result.current.error).toContain('Could not add files')
     expect(result.current.error).toContain('boom')
@@ -74,10 +72,9 @@ describe('useFileList', () => {
     const { open } = await import('@tauri-apps/plugin-dialog')
     vi.mocked(open).mockRejectedValueOnce(new Error('picker dead'))
     const { result } = renderHook(() => useFileList())
-    await act(async () => {
-      await expect(result.current.browseFiles()).rejects.toThrow('picker dead')
-    })
+    await act(() => result.current.browseFiles())
     expect(result.current.error).toContain('Could not open file picker')
+    expect(result.current.error).toContain('picker dead')
   })
 
   it('browseFiles surfaces add failure after picker resolves', async () => {
@@ -85,10 +82,8 @@ describe('useFileList', () => {
     vi.mocked(open).mockResolvedValueOnce('/t/x.jpg')
     vi.mocked(invoke).mockRejectedValueOnce(new Error('add dead'))
     const { result } = renderHook(() => useFileList())
-    await act(async () => {
-      await expect(result.current.browseFiles()).rejects.toThrow('add dead')
-    })
-    expect(result.current.error).toContain('Could not open file picker')
+    await act(() => result.current.browseFiles())
+    expect(result.current.error).toContain('Could not add files')
     expect(result.current.error).toContain('add dead')
   })
 
@@ -97,9 +92,7 @@ describe('useFileList', () => {
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValueOnce([mockEntry])
     const { result } = renderHook(() => useFileList())
-    await act(async () => {
-      await expect(result.current.addFiles(['/t/a.jpg'])).rejects.toThrow('boom')
-    })
+    await act(() => result.current.addFiles(['/t/a.jpg']))
     expect(result.current.error).toContain('Could not add files')
     await act(() => result.current.addFiles(['/t/a.jpg']))
     expect(result.current.error).toBeNull()
@@ -115,6 +108,7 @@ describe('useFileList', () => {
     await act(() => result.current.removeFile('u1'))
     expect(invoke).toHaveBeenLastCalledWith('remove_file', { fileId: 'u1' })
     expect(result.current.files).toHaveLength(0)
+    expect(result.current.error).toBeNull()
   })
 
   it('removeFile keeps row when IPC fails', async () => {
@@ -123,9 +117,7 @@ describe('useFileList', () => {
       .mockRejectedValueOnce(new Error('nope'))
     const { result } = renderHook(() => useFileList())
     await act(() => result.current.addFiles(['/t/a.jpg']))
-    await act(async () => {
-      await expect(result.current.removeFile('u1')).rejects.toThrow('nope')
-    })
+    await act(() => result.current.removeFile('u1'))
     expect(result.current.files).toHaveLength(1)
     expect(result.current.error).toContain('Could not remove file')
   })
@@ -144,9 +136,7 @@ describe('useFileList', () => {
     vi.mocked(invoke).mockResolvedValueOnce([mockEntry]).mockRejectedValueOnce(new Error('x'))
     const { result } = renderHook(() => useFileList())
     await act(() => result.current.addFiles(['/t/a.jpg']))
-    await act(async () => {
-      await expect(result.current.clearList()).rejects.toThrow('x')
-    })
+    await act(() => result.current.clearList())
     expect(result.current.files).toHaveLength(1)
     expect(result.current.error).toContain('Could not clear list')
   })

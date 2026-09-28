@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
@@ -6,13 +6,15 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 const handlers: Array<(evt: unknown) => void> = []
 const unlisten = vi.fn()
 
+const getCurrentWebviewMock = vi.fn(() => ({
+  onDragDropEvent: (h: (evt: unknown) => void) => {
+    handlers.push(h)
+    return Promise.resolve(unlisten as UnlistenFn)
+  },
+}))
+
 vi.mock('@tauri-apps/api/webview', () => ({
-  getCurrentWebview: () => ({
-    onDragDropEvent: (h: (evt: unknown) => void) => {
-      handlers.push(h)
-      return Promise.resolve(unlisten as UnlistenFn)
-    },
-  }),
+  getCurrentWebview: (...args: unknown[]) => getCurrentWebviewMock(...(args as [])),
 }))
 
 import { DropZone } from '@/components/DropZone'
@@ -24,6 +26,43 @@ function emit(evt: unknown) {
 }
 
 describe('DropZone', () => {
+  beforeEach(() => {
+    getCurrentWebviewMock.mockImplementation(() => ({
+      onDragDropEvent: (h: (evt: unknown) => void) => {
+        handlers.push(h)
+        return Promise.resolve(unlisten as UnlistenFn)
+      },
+    }))
+  })
+
+  it('subscription rejection does not crash and browse still works', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    getCurrentWebviewMock.mockImplementation(() => ({
+      onDragDropEvent: () => Promise.reject(new Error('no webview')),
+    }))
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<DropZone onBrowse={onBrowse} onDrop={vi.fn()} />)
+    await waitFor(() => expect(spy).toHaveBeenCalled())
+    spy.mockRestore()
+    await user.click(screen.getByRole('button', { name: /drop files/i }))
+    expect(onBrowse).toHaveBeenCalled()
+  })
+
+  it('getCurrentWebview sync throw logs and leaves component usable', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    getCurrentWebviewMock.mockImplementation(() => {
+      throw new Error('no internals')
+    })
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(<DropZone onBrowse={onBrowse} onDrop={vi.fn()} />)
+    await waitFor(() => expect(spy).toHaveBeenCalled())
+    spy.mockRestore()
+    await user.click(screen.getByRole('button', { name: /drop files/i }))
+    expect(onBrowse).toHaveBeenCalled()
+  })
+
   it('calls onDrop with Tauri-provided paths on drop event', async () => {
     const onDrop = vi.fn()
     const onBrowse = vi.fn()

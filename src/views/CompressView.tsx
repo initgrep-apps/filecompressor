@@ -24,19 +24,6 @@ export function CompressView() {
 
   const hasFiles = files.length > 0
 
-  const handleBrowse = () => {
-    browseFiles().catch(() => {})
-  }
-  const handleDrop = (paths: string[]) => {
-    addFiles(paths).catch(() => {})
-  }
-  const handleRemove = (id: string) => {
-    removeFile(id).catch(() => {})
-  }
-  const handleClear = () => {
-    clearList().catch(() => {})
-  }
-
   return (
     <div className="flex flex-1 flex-col gap-3.5 p-5 min-h-0 overflow-hidden">
       <div className="flex items-center justify-between shrink-0">
@@ -53,16 +40,16 @@ export function CompressView() {
         </div>
       )}
 
-      <DropZone onBrowse={handleBrowse} onDrop={handleDrop} className="shrink-0" />
+      <DropZone onBrowse={browseFiles} onDrop={addFiles} className="shrink-0" />
 
       {hasFiles && (
         <>
-          <FileList files={files} onRemove={handleRemove} />
+          <FileList files={files} onRemove={removeFile} />
           <div className="flex justify-between items-center pt-0.5 shrink-0">
             <span className="text-xs text-muted-foreground">
               <strong className="text-foreground font-semibold">{files.length} files</strong>
             </span>
-            <Button variant="ghost" size="sm" onClick={handleClear}>
+            <Button variant="ghost" size="sm" onClick={clearList}>
               Clear List
             </Button>
           </div>

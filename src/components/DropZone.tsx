@@ -1,3 +1,19 @@
+// File Size Optimizer — offline batch file compression
+// Copyright (C) 2026 File Size Optimizer Contributors
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 
@@ -10,14 +26,18 @@ interface DropZoneProps {
 export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
   const onDropRef = useRef(onDrop)
-  onDropRef.current = onDrop
+
+  useEffect(() => {
+    onDropRef.current = onDrop
+  })
 
   useEffect(() => {
     let cancelled = false
     let unlisten: (() => void) | undefined
 
-    getCurrentWebview()
-      .onDragDropEvent((event) => {
+    let subscription: Promise<() => void>
+    try {
+      subscription = getCurrentWebview().onDragDropEvent((event) => {
         if (cancelled) return
         if (event.payload.type === 'enter') {
           setIsDragging(true)
@@ -32,9 +52,18 @@ export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
           setIsDragging(false)
         }
       })
+    } catch (err) {
+      console.error('Drag-drop listener registration failed', err)
+      return () => {}
+    }
+
+    subscription
       .then((fn) => {
         if (cancelled) fn()
         else unlisten = fn
+      })
+      .catch((err) => {
+        console.error('Drag-drop listener registration failed', err)
       })
 
     return () => {
