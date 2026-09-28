@@ -748,7 +748,7 @@ git commit -m "feat: add useSettings hook for settings IPC"
 - `it('renders default KB target row for missing category key')`
 - `it('updates nested quality floors')` — image.minQuality, video.minCrf, video.minResolution, pdf.minDpi, pdf.minJpegQuality, document.minMediaQuality
 
-- [ ] **Step 1: Add required shadcn component**
+- [x] **Step 1: Add required shadcn component**
 
 ```bash
 yarn dlx shadcn@latest add accordion
@@ -756,7 +756,7 @@ yarn dlx shadcn@latest add accordion
 
 > Do not add `input`, `select`, or `separator` — input + separator already exist in `src/components/ui/` (customized base-ui variants; regenerating would overwrite them), and the plan's JSX uses native `<select>` for unit/resolution pickers so a shadcn select would be dead code.
 
-- [ ] **Step 2: Replace SettingsView.tsx**
+- [x] **Step 2: Replace SettingsView.tsx**
 
 ```tsx
 import { useState, useEffect } from 'react'
@@ -1015,11 +1015,11 @@ export function SettingsView() {
 }
 ```
 
-- [ ] **Step 3: Create SettingsView.test.tsx**
+- [x] **Step 3: Create SettingsView.test.tsx**
 
 Vitest + `render`, mocking `@tauri-apps/api/core` and `@tauri-apps/plugin-dialog` (pattern: `CompressView.test.tsx`). Cover all Required Tests listed above.
 
-- [ ] **Step 4: Run frontend tests**
+- [x] **Step 4: Run frontend tests**
 
 ```bash
 yarn test
@@ -1027,7 +1027,7 @@ yarn test
 
 Expected: SettingsView tests pass; all existing frontend tests stay green.
 
-- [ ] **Step 5: Verify settings view works**
+- [x] **Step 5: Verify settings view works**
 
 Run:
 ```bash
@@ -1042,7 +1042,7 @@ Test:
 5. Click Reset to defaults → values reset
 6. Restart app → settings persist
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
