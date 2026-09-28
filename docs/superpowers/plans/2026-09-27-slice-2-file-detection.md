@@ -8,6 +8,11 @@
 
 **Tech Stack:** Tauri 2, React, TypeScript, shadcn/ui (Table, Badge, Button), Tauri dialog plugin
 
+> **Post-merge note (2026-09-28):** Plan prose said FileStatus has 9 variants and FileEntry has
+> 12 fields; actual spec/code have 8 and 10. Prose was in error — code is correct. Drag-and-drop
+> guidance to use HTML5 `File.path` was Tauri v1-era and wrong for Tauri 2 (see
+> `docs/superpowers/specs/2026-09-28-slice-2-review-fixes.md` F1).
+
 ## Global Constraints
 
 - **No compression in this slice** — files are only detected and listed, not processed

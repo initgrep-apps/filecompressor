@@ -1058,7 +1058,7 @@ git commit -m "feat: GB tier in formatSize, aria-label remove buttons, FileList 
 **Interfaces:**
 - Produces: gate includes `yarn test`
 
-- [ ] **Step 1: Update AGENTS.md**
+- [x] **Step 1: Update AGENTS.md**
 
 Change:
 
@@ -1072,7 +1072,7 @@ to:
 - `GATE_COMMAND` — `yarn build && yarn test && cd src-tauri && cargo test`
 ```
 
-- [ ] **Step 2: Annotate plan doc**
+- [x] **Step 2: Annotate plan doc**
 
 In `docs/superpowers/plans/2026-09-27-slice-2-file-detection.md` add after the header block:
 
@@ -1083,7 +1083,7 @@ In `docs/superpowers/plans/2026-09-27-slice-2-file-detection.md` add after the h
 > `docs/superpowers/specs/2026-09-28-slice-2-review-fixes.md` F1).
 ```
 
-- [ ] **Step 3: Full gate**
+- [x] **Step 3: Full gate**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: all green, zero warnings.
@@ -1093,7 +1093,7 @@ Expected: all green, zero warnings.
 Run: `yarn tauri build`
 Expected: `.app` + `.dmg` bundle successfully.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
