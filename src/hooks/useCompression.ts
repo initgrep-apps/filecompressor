@@ -61,6 +61,7 @@ export function useCompression(
 
     listen<ProgressPayload>('file:progress', (e) => {
       const { fileId, percent } = e.payload
+      if (!filesRef.current.some((f) => f.id === fileId)) return
       setProgressByFile((prev) => ({ ...prev, [fileId]: percent }))
       setFiles((prev) =>
         prev.map((f) =>

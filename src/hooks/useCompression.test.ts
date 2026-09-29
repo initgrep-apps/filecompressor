@@ -57,11 +57,11 @@ describe('useCompression event handling', () => {
     expect(result.current.progressByFile['f1']).toBe(45)
   })
 
-  it('file:progress for unknown fileId still stored but harmless', async () => {
+  it('file:progress for unknown fileId is ignored', async () => {
     const { result } = renderHook(() => useCompression([entry()], setFilesStub))
     await flush()
     emit('file:progress', { fileId: 'ghost', percent: 10 })
-    expect(result.current.progressByFile['ghost']).toBe(10)
+    expect(result.current.progressByFile['ghost']).toBeUndefined()
   })
 
   it('file:complete applies done status, sizes, output path and clears progress entry', async () => {
