@@ -2010,7 +2010,7 @@ git commit -m "chore: bundle vips sidecar binary"
 - `per_file_cancel_button_calls_cancel_file`
 - `batch_complete_toast_shows_total_saved_bytes` — sonner mocked
 
-- [ ] **Step 1: Expose setFiles from useFileList.ts**
+- [x] **Step 1: Expose setFiles from useFileList.ts**
 
 Add `setFiles` to the hook's return (single-line change):
 
@@ -2018,7 +2018,7 @@ Add `setFiles` to the hook's return (single-line change):
   return { files, error, addFiles, browseFiles, removeFile, clearList, setFiles }
 ```
 
-- [ ] **Step 2: Create useCompression.ts**
+- [x] **Step 2: Create useCompression.ts**
 
 ```typescript
 import { useEffect, useCallback, useState, type Dispatch, type SetStateAction } from 'react'
@@ -2158,7 +2158,7 @@ export function useCompression(
 }
 ```
 
-- [ ] **Step 3: Create useCompression.test.ts**
+- [x] **Step 3: Create useCompression.test.ts**
 
 Mock pattern (match repo conventions from `useFileList.test.ts` — controllable listener registry):
 
@@ -2191,7 +2191,7 @@ const emit = (event: string, payload: unknown) =>
 
 Tests required (see Required Tests above): progress percent stored, complete/error/cancelled/batch-complete handlers, unknown-fileId ignore, compress_all invoke + no-op path, unlisten-all-on-unmount. Assert `invoke` called with `('cancel_file', { fileId })` / `('reveal_in_folder', { filePath })` — camelCase keys exactly.
 
-- [ ] **Step 4: Update CompressView.tsx + FileList.tsx**
+- [x] **Step 4: Update CompressView.tsx + FileList.tsx**
 
 CompressView wiring (extends the Slice 2 view):
 
@@ -2223,7 +2223,7 @@ FileList contract changes:
 - `best_effort` rows → size figures in `text-destructive`
 - Keep the existing 5-column table structure and status badges from Slice 2 (existing tests rely on `getAllByText('—') >= 2` and 'Pending' visibility)
 
-- [ ] **Step 5: Add sonner for toasts**
+- [x] **Step 5: Add sonner for toasts**
 
 ```bash
 yarn dlx shadcn@latest add sonner
@@ -2231,7 +2231,7 @@ yarn dlx shadcn@latest add sonner
 
 Add `<Toaster />` to `src/App.tsx` (from sonner).
 
-- [ ] **Step 6: Update existing tests**
+- [x] **Step 6: Update existing tests**
 
 `src/views/CompressView.test.tsx` + `src/components/FileList.test.tsx`: add
 
@@ -2243,7 +2243,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 Then add the view tests listed in Required Tests (button states, progress bar, before/after line, reveal/cancel callbacks, batch toast).
 
-- [ ] **Step 7: Verify end-to-end**
+- [x] **Step 7: Verify end-to-end**
 
 Run:
 ```bash
@@ -2259,7 +2259,7 @@ Test:
 6. Drop multiple files → processed sequentially with per-file progress
 7. Batch complete → toast notification
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add -A

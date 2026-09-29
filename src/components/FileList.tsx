@@ -21,7 +21,13 @@ import { Badge } from '@/components/ui/badge'
 interface FileListProps {
   files: FileEntry[]
   onRemove: (fileId: string) => void
+  progress?: Record<string, number>
+  onReveal?: (outputPath: string) => void
+  onCancel?: (fileId: string) => void
+  removeDisabled?: boolean
 }
+
+export const RESULT_STATUSES: FileStatus[] = ['done', 'best_effort', 'already_under_target']
 
 const categoryVariant: Record<Category, string> = {
   image: 'bg-secondary text-secondary-foreground',
@@ -39,7 +45,7 @@ const categoryLabel: Record<Category, string> = {
   other: 'Other',
 }
 
-function formatSize(bytes: number): string {
+export function formatSize(bytes: number): string {
   if (bytes === 0) return '—'
   const KB = 1024
   const MB = 1024 * 1024
@@ -50,9 +56,12 @@ function formatSize(bytes: number): string {
   return `${(bytes / GB).toFixed(2)} GB`
 }
 
-function formatTarget(bytes: number): string {
-  if (bytes === 0) return '—'
-  return formatSize(bytes)
+function reductionPercent(file: FileEntry): number {
+  if (file.originalSize === 0 || file.compressedSize === null) return 0
+  return Math.max(
+    0,
+    Math.round(((file.originalSize - file.compressedSize) / file.originalSize) * 100)
+  )
 }
 
 function StatusBadge({ status }: { status: FileStatus }) {
@@ -94,7 +103,7 @@ function StatusBadge({ status }: { status: FileStatus }) {
   )
 }
 
-export function FileList({ files, onRemove }: FileListProps) {
+export function FileList({ files, onRemove, progress, onReveal, onCancel, removeDisabled }: FileListProps) {
   if (files.length === 0) return null
 
   return (
@@ -110,43 +119,111 @@ export function FileList({ files, onRemove }: FileListProps) {
           </TableRow>
         </TableHeader>
         <TableBody>
-          {files.map((file) => (
-            <TableRow
-              key={file.id}
-              className={file.status === 'unsupported' ? 'opacity-40' : ''}
-            >
-              <TableCell>
-                <div className="text-sm font-medium truncate max-w-[200px]">{file.name}</div>
-                <div className="text-xs text-muted-foreground mt-0.5 tabular-nums">
-                  {formatSize(file.originalSize)}
-                </div>
-              </TableCell>
-              <TableCell>
-                <Badge variant="secondary" className={categoryVariant[file.category]}>
-                  {categoryLabel[file.category]}
-                </Badge>
-              </TableCell>
-              <TableCell className="text-xs text-muted-foreground tabular-nums">
-                {formatTarget(file.targetBytes)}
-              </TableCell>
-              <TableCell>
-                <StatusBadge status={file.status} />
-              </TableCell>
-              <TableCell>
-                <button
-                  onClick={() => onRemove(file.id)}
-                  aria-label={`Remove ${file.name}`}
-                  className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                  title="Remove from list"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </TableCell>
-            </TableRow>
-          ))}
+          {files.map((file) => {
+            const hasResult =
+              RESULT_STATUSES.includes(file.status) && file.compressedSize !== null
+            const canReveal = hasResult && !!onReveal && !!file.outputPath
+            const percent = progress?.[file.id] ?? 0
+            return (
+              <TableRow
+                key={file.id}
+                className={`group ${file.status === 'unsupported' ? 'opacity-40' : ''}`}
+              >
+                <TableCell>
+                  <div className="text-sm font-medium truncate max-w-[200px]">{file.name}</div>
+                  {hasResult ? (
+                    <div
+                      className={`text-xs mt-0.5 tabular-nums ${
+                        file.status === 'best_effort' ? 'text-destructive' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {formatSize(file.originalSize)} → {formatSize(file.compressedSize!)} ·{' '}
+                      {reductionPercent(file)}% smaller
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground mt-0.5 tabular-nums">
+                      {formatSize(file.originalSize)}
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Badge variant="secondary" className={categoryVariant[file.category]}>
+                    {categoryLabel[file.category]}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground tabular-nums">
+                  {formatSize(file.targetBytes)}
+                </TableCell>
+                <TableCell>
+                  <div className="flex flex-col gap-1.5">
+                    <StatusBadge status={file.status} />
+                    {file.status === 'compressing' && (
+                      <div
+                        className="w-24"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={percent}
+                      >
+                        <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-primary transition-[width]"
+                            style={{ width: `${percent}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {file.status === 'failed' && file.error && (
+                      <div className="text-xs text-destructive max-w-[180px] truncate" title={file.error}>
+                        {file.error}
+                      </div>
+                    )}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-center gap-0.5">
+                    {canReveal && (
+                      <button
+                        onClick={() => onReveal?.(file.outputPath!)}
+                        aria-label={`Reveal ${file.name}`}
+                        title="Reveal in folder"
+                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                        </svg>
+                      </button>
+                    )}
+                    {file.status === 'compressing' && onCancel ? (
+                      <button
+                        onClick={() => onCancel(file.id)}
+                        aria-label={`Cancel ${file.name}`}
+                        title="Cancel"
+                        className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-muted transition-colors"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="6" y="6" width="12" height="12" rx="1" />
+                        </svg>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => onRemove(file.id)}
+                        disabled={removeDisabled && file.status === 'pending'}
+                        aria-label={`Remove ${file.name}`}
+                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:bg-transparent"
+                        title="Remove from list"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18" />
+                          <line x1="6" y1="6" x2="18" y2="18" />
+                        </svg>
+                      </button>
+                    )}
+                  </div>
+                </TableCell>
+              </TableRow>
+            )
+          })}
         </TableBody>
       </Table>
     </div>

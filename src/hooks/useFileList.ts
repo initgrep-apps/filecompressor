@@ -67,5 +67,5 @@ export function useFileList() {
     }
   }, [])
 
-  return { files, error, addFiles, browseFiles, removeFile, clearList }
+  return { files, error, addFiles, browseFiles, removeFile, clearList, setFiles }
 }
