@@ -4,10 +4,6 @@ import userEvent from '@testing-library/user-event'
 import type { FileEntry } from '@/types'
 import { FileList } from '@/components/FileList'
 
-vi.mock('@tauri-apps/api/event', () => ({
-  listen: vi.fn().mockResolvedValue(() => {}),
-}))
-
 function entry(overrides: Partial<FileEntry> = {}): FileEntry {
   return {
     id: 'f1',
