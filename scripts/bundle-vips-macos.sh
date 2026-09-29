@@ -2,12 +2,22 @@
 # Makes the bundled vips sidecar self-contained on macOS.
 # 1. Recursively collects every transitive non-system dylib into
 #    src-tauri/frameworks/ (single source per test run, committed).
+#    @rpath/* dependencies are resolved through the referencing image's
+#    LC_RPATH entries so brew dylibs pre-wired with @rpath deps are collected.
 # 2. Rewrites every load command (dylibs + sidecar) to @rpath/<basename>.
 # 3. Adds rpaths for both layouts: bundled (Contents/MacOS → ../Frameworks)
-#    and dev (src-tauri/target/<profile> → ../../frameworks).
-# 4. Ad-hoc signs everything (install_name_tool invalidates signatures).
+#    and dev (src-tauri/target/<profile> → ../../frameworks). rpaths are
+#    presence-checked via otool -l; a real install_name_tool failure aborts.
+# 4. Ad-hoc signs everything (install_name_tool invalidates signatures);
+#    signing failures abort.
+# Known limitation: gdk-pixbuf loader modules are dlopened at runtime from a
+# compiled-in prefix and are NOT collected. Harmless for the vips chain;
+# slices 5-8 should ship loaders + a GDK_PIXBUF_MODULE_FILE override only if
+# a future engine actually initializes gdk-pixbuf.
 # Re-runnable: already-bundled state is detected and left untouched
 # (the audit verifies final state); a fresh sidecar triggers a full re-collect.
+# Basename collisions between distinct dylibs abort with a fingerprint
+# mismatch instead of silently unifying.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,14 +37,32 @@ system_path() {
   esac
 }
 
+fingerprint() {
+  {
+    otool -D "$1" | tail -n +2 | awk '{print $1}' | awk -F/ '{print $NF}'
+    otool -L "$1" | tail -n +2 | awk '{print $1}' | awk -F/ '{print $NF}' | sort -u
+  } | sort -u
+}
+
 collect() {
   local src="$1"
   local base="$(basename "$src")"
   local dest="$FRAMEWORKS/$base"
-  [ -f "$dest" ] && return 0
+  if [ -f "$dest" ]; then
+    if [ "$(fingerprint "$src")" != "$(fingerprint "$dest")" ]; then
+      printf 'FAIL duplicate dylib basename with different content: %s vs %s\n' "$src" "$dest"
+      exit 1
+    fi
+    return 0
+  fi
   mkdir -p "$FRAMEWORKS"
   cp "$src" "$dest"
   chmod u+w "$dest"
+  collect_deps_of "$src"
+}
+
+collect_deps_of() {
+  local src="$1"
   local dep depbase cand rp found
   for dep in $(otool -L "$src" | tail -n +2 | awk '{print $1}'); do
     case "$dep" in
@@ -71,6 +99,16 @@ rewrite() {
   done
 }
 
+has_rpath() {
+  local file="$1" rpath="$2"
+  otool -l "$file" | awk -v p="$rpath" '$1 == "path" && $2 == p { found = 1 } END { exit !found }'
+}
+
+ensure_rpath() {
+  local file="$1" rpath="$2"
+  has_rpath "$file" "$rpath" || install_name_tool -add_rpath "$rpath" "$file"
+}
+
 needs_bundle=0
 for dep in $(otool -L "$SIDECAR" | tail -n +2 | awk '{print $1}'); do
   if ! system_path "$dep"; then
@@ -89,25 +127,26 @@ fi
 
 rm -rf "$FRAMEWORKS"
 
-for dep in $(otool -L "$SIDECAR" | tail -n +2 | awk '{print $1}'); do
-  system_path "$dep" || collect "$dep"
-done
+collect_deps_of "$SIDECAR"
 
 for lib in "$FRAMEWORKS"/*.dylib; do
+  [ -e "$lib" ] || continue
   install_name_tool -id "@rpath/$(basename "$lib")" "$lib"
   rewrite "$lib"
 done
 rewrite "$SIDECAR"
 
-install_name_tool -add_rpath "@executable_path/../Frameworks" "$SIDECAR" 2>/dev/null || true
-install_name_tool -add_rpath "@executable_path/../../frameworks" "$SIDECAR" 2>/dev/null || true
+ensure_rpath "$SIDECAR" "@executable_path/../Frameworks"
+ensure_rpath "$SIDECAR" "@executable_path/../../frameworks"
 
 for lib in "$FRAMEWORKS"/*.dylib; do
-  install_name_tool -add_rpath "@executable_path/../Frameworks" "$lib" 2>/dev/null || true
-  install_name_tool -add_rpath "@executable_path/../../frameworks" "$lib" 2>/dev/null || true
+  [ -e "$lib" ] || continue
+  ensure_rpath "$lib" "@executable_path/../Frameworks"
+  ensure_rpath "$lib" "@executable_path/../../frameworks"
 done
 
-codesign --force --sign - "$SIDECAR" 2>/dev/null || true
+codesign --force --sign - "$SIDECAR"
 for lib in "$FRAMEWORKS"/*.dylib; do
-  codesign --force --sign - "$lib" 2>/dev/null || true
+  [ -e "$lib" ] || continue
+  codesign --force --sign - "$lib"
 done
