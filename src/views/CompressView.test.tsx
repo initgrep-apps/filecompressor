@@ -106,6 +106,28 @@ describe('CompressView', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Cancel All' })).toBeInTheDocument()
     )
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Cancel All' })).not.toBeInTheDocument()
+    )
+  })
+
+  it('compress button disabled while compressing', async () => {
+    const user = userEvent.setup()
+    render(<CompressView />)
+    await addFileInView()
+    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    await screen.findByRole('button', { name: 'Cancel All' })
+    expect(screen.getByRole('button', { name: 'Compress' })).toBeDisabled()
+  })
+
+  it('clear list disabled while compressing', async () => {
+    const user = userEvent.setup()
+    render(<CompressView />)
+    await addFileInView()
+    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    await screen.findByRole('button', { name: 'Cancel All' })
+    expect(screen.getByRole('button', { name: 'Clear List' })).toBeDisabled()
   })
 
   it('batch complete toast shows total saved bytes', async () => {

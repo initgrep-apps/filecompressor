@@ -24,9 +24,10 @@ interface FileListProps {
   progress?: Record<string, number>
   onReveal?: (outputPath: string) => void
   onCancel?: (fileId: string) => void
+  removeDisabled?: boolean
 }
 
-const RESULT_STATUSES: FileStatus[] = ['done', 'best_effort', 'already_under_target']
+export const RESULT_STATUSES: FileStatus[] = ['done', 'best_effort', 'already_under_target']
 
 const categoryVariant: Record<Category, string> = {
   image: 'bg-secondary text-secondary-foreground',
@@ -53,11 +54,6 @@ export function formatSize(bytes: number): string {
   if (bytes < MB) return `${(bytes / KB).toFixed(0)} KB`
   if (bytes < GB) return `${(bytes / MB).toFixed(1)} MB`
   return `${(bytes / GB).toFixed(2)} GB`
-}
-
-function formatTarget(bytes: number): string {
-  if (bytes === 0) return '—'
-  return formatSize(bytes)
 }
 
 function reductionPercent(file: FileEntry): number {
@@ -107,7 +103,7 @@ function StatusBadge({ status }: { status: FileStatus }) {
   )
 }
 
-export function FileList({ files, onRemove, progress, onReveal, onCancel }: FileListProps) {
+export function FileList({ files, onRemove, progress, onReveal, onCancel, removeDisabled }: FileListProps) {
   if (files.length === 0) return null
 
   return (
@@ -126,6 +122,7 @@ export function FileList({ files, onRemove, progress, onReveal, onCancel }: File
           {files.map((file) => {
             const hasResult =
               RESULT_STATUSES.includes(file.status) && file.compressedSize !== null
+            const canReveal = hasResult && !!onReveal && !!file.outputPath
             const percent = progress?.[file.id] ?? 0
             return (
               <TableRow
@@ -155,7 +152,7 @@ export function FileList({ files, onRemove, progress, onReveal, onCancel }: File
                   </Badge>
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground tabular-nums">
-                  {formatTarget(file.targetBytes)}
+                  {formatSize(file.targetBytes)}
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-col gap-1.5">
@@ -185,7 +182,7 @@ export function FileList({ files, onRemove, progress, onReveal, onCancel }: File
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center gap-0.5">
-                    {hasResult && file.outputPath && (
+                    {canReveal && (
                       <button
                         onClick={() => onReveal?.(file.outputPath!)}
                         aria-label={`Reveal ${file.name}`}
@@ -211,8 +208,9 @@ export function FileList({ files, onRemove, progress, onReveal, onCancel }: File
                     ) : (
                       <button
                         onClick={() => onRemove(file.id)}
+                        disabled={removeDisabled && file.status === 'pending'}
                         aria-label={`Remove ${file.name}`}
-                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:bg-transparent"
                         title="Remove from list"
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

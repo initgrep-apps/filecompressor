@@ -190,4 +190,43 @@ describe('FileList', () => {
     await user.click(screen.getByRole('button', { name: /reveal a\.jpg/i }))
     expect(onReveal).toHaveBeenCalledWith('/o/a.jpg')
   })
+
+  it('failed row renders destructive error text', () => {
+    render(
+      <FileList
+        files={[entry({ status: 'failed', error: 'Cannot read file: locked' })]}
+        onRemove={vi.fn()}
+      />
+    )
+    expect(screen.getByText('Failed')).toBeInTheDocument()
+    const errText = screen.getByText('Cannot read file: locked')
+    expect(errText.className).toContain('text-destructive')
+  })
+
+  it('remove button disabled for pending rows while compressing', () => {
+    render(<FileList files={[entry()]} onRemove={vi.fn()} removeDisabled />)
+    expect(screen.getByRole('button', { name: /remove a\.jpg/i })).toBeDisabled()
+  })
+
+  it('remove button stays enabled for done rows while compressing', () => {
+    render(
+      <FileList
+        files={[entry({ status: 'done', compressedSize: 500, outputPath: '/o/a.jpg' })]}
+        onRemove={vi.fn()}
+        removeDisabled
+      />
+    )
+    expect(screen.getByRole('button', { name: /remove a\.jpg/i })).toBeEnabled()
+  })
+
+  it('reveal button hidden when no onReveal handler passed', () => {
+    render(
+      <FileList
+        files={[entry({ status: 'done', compressedSize: 500, outputPath: '/o/a.jpg' })]}
+        onRemove={vi.fn()}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /reveal a\.jpg/i })).not.toBeInTheDocument()
+    expect(screen.getByText('1 KB → 500 B · 51% smaller')).toBeInTheDocument()
+  })
 })

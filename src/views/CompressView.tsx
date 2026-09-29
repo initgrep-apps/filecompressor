@@ -17,7 +17,7 @@
 import { useFileList } from '@/hooks/useFileList'
 import { useCompression } from '@/hooks/useCompression'
 import { DropZone } from '@/components/DropZone'
-import { FileList, formatSize } from '@/components/FileList'
+import { FileList, formatSize, RESULT_STATUSES } from '@/components/FileList'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 
@@ -43,9 +43,7 @@ export function CompressView() {
 
   const hasFiles = files.length > 0
   const pendingCount = files.filter((f) => f.status === 'pending').length
-  const doneCount = files.filter(
-    (f) => f.status === 'done' || f.status === 'best_effort' || f.status === 'already_under_target'
-  ).length
+  const doneCount = files.filter((f) => RESULT_STATUSES.includes(f.status)).length
   const canCompress = pendingCount > 0 && !isCompressing
 
   return (
@@ -84,6 +82,7 @@ export function CompressView() {
             progress={progressByFile}
             onReveal={revealInFolder}
             onCancel={cancelFile}
+            removeDisabled={isCompressing}
           />
           <div className="flex justify-between items-center pt-0.5 shrink-0">
             <span className="text-xs text-muted-foreground">
@@ -92,7 +91,7 @@ export function CompressView() {
                 {doneCount} done · {pendingCount} pending
               </span>
             </span>
-            <Button variant="ghost" size="sm" onClick={clearList}>
+            <Button variant="ghost" size="sm" onClick={clearList} disabled={isCompressing}>
               Clear List
             </Button>
           </div>

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
+import { StrictMode } from 'react'
 
 const listeners = new Map<string, (e: { payload: unknown }) => void>()
 const unlistens: ReturnType<typeof vi.fn>[] = []
@@ -17,8 +18,14 @@ vi.mock('@tauri-apps/api/event', () => ({
   }),
 }))
 
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}))
+
 import { useCompression } from '@/hooks/useCompression'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
+import { toast } from 'sonner'
 import type { FileEntry } from '@/types'
 
 const emit = (event: string, payload: unknown) =>
@@ -154,6 +161,80 @@ describe('useCompression event handling', () => {
     expect(updated[0].status).toBe('pending')
     expect(updated[0].error).toBeNull()
   })
+
+  it('file:progress flips pending row to compressing and leaves done rows untouched', async () => {
+    const setFiles = vi.fn()
+    renderHook(() => useCompression([entry()], setFiles))
+    await flush()
+    emit('file:progress', { fileId: 'f1', percent: 45 })
+    const updater = setFiles.mock.calls[0][0]
+    expect(updater([entry()])[0].status).toBe('compressing')
+    expect(updater([entry({ status: 'done' })])[0].status).toBe('done')
+  })
+
+  it('ghost file events do not inflate the processed count', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = renderHook(() =>
+      useCompression([entry()], setFilesStub, { onBatchComplete })
+    )
+    await flush()
+    await act(() => result.current.compressAll())
+    emit('file:complete', { fileId: 'ghost', outputPath: '/o', compressedSize: 1, status: 'done' })
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 10,
+      compressedSize: 5,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1)
+  })
+
+  it('cancelled files do not count as processed and suppress the success toast', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = renderHook(() =>
+      useCompression([entry()], setFilesStub, { onBatchComplete })
+    )
+    await flush()
+    await act(() => result.current.compressAll())
+    emit('file:cancelled', { fileId: 'f1' })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
+    expect(result.current.isCompressing).toBe(false)
+    expect(onBatchComplete).not.toHaveBeenCalled()
+  })
+
+  it('processed count resets between batches', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = renderHook(() =>
+      useCompression([entry({ id: 'f1' }), entry({ id: 'f2', name: 'b.jpg' })], setFilesStub, {
+        onBatchComplete,
+      })
+    )
+    await flush()
+    await act(() => result.current.compressAll())
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 10,
+      compressedSize: 5,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
+    expect(onBatchComplete).toHaveBeenLastCalledWith(5, 1)
+    emit('file:complete', {
+      fileId: 'f2',
+      outputPath: '/o/b.jpg',
+      originalSize: 10,
+      compressedSize: 3,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b2', totalSavedBytes: 7 })
+    expect(onBatchComplete).toHaveBeenLastCalledWith(7, 1)
+  })
 })
 
 describe('useCompression commands', () => {
@@ -183,6 +264,46 @@ describe('useCompression commands', () => {
     await act(() => result.current.revealInFolder('/out/a.jpg'))
     expect(invoke).toHaveBeenCalledWith('reveal_in_folder', { filePath: '/out/a.jpg' })
   })
+
+  it('compress_all resets state when backend returns empty batch id', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce('')
+    const onBatchError = vi.fn()
+    const { result } = renderHook(() =>
+      useCompression([entry()], setFilesStub, { onBatchError })
+    )
+    await flush()
+    await act(() => result.current.compressAll())
+    expect(result.current.isCompressing).toBe(false)
+    expect(onBatchError).toHaveBeenCalledWith('No pending files')
+  })
+
+  it('compress_all resets state and reports when invoke rejects', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('worker dead'))
+    const onBatchError = vi.fn()
+    const { result } = renderHook(() =>
+      useCompression([entry()], setFilesStub, { onBatchError })
+    )
+    await flush()
+    await act(() => result.current.compressAll())
+    expect(result.current.isCompressing).toBe(false)
+    expect(onBatchError).toHaveBeenCalledWith('worker dead')
+  })
+
+  it('reveal failure surfaces a toast error', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('opener unavailable'))
+    const { result } = renderHook(() => useCompression([entry()], setFilesStub))
+    await flush()
+    await act(() => result.current.revealInFolder('/out/a.jpg'))
+    expect(toast.error).toHaveBeenCalledWith('Could not open folder: opener unavailable')
+  })
+
+  it('cancel_all failure surfaces a toast error', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('ipc down'))
+    const { result } = renderHook(() => useCompression([entry()], setFilesStub))
+    await flush()
+    await act(() => result.current.cancelAll())
+    expect(toast.error).toHaveBeenCalledWith('Could not cancel: ipc down')
+  })
 })
 
 describe('useCompression listener lifecycle', () => {
@@ -206,6 +327,25 @@ describe('useCompression listener lifecycle', () => {
     unmount()
     expect(unlistens.length).toBeGreaterThan(0)
     expect(unlistens.every((u) => u.mock.calls.length === 1)).toBe(true)
+  })
+
+  it('strict mode double-mount does not leak duplicate listeners', async () => {
+    const { unmount } = renderHook(() => useCompression([entry()], setFilesStub), {
+      wrapper: StrictMode,
+    })
+    await flush()
+    unmount()
+    await flush()
+    expect(unlistens.length).toBeGreaterThan(0)
+    expect(unlistens.every((u) => u.mock.calls.length === 1)).toBe(true)
+  })
+
+  it('listener registration failure reports batch error', async () => {
+    vi.mocked(listen).mockRejectedValueOnce(new Error('bus down'))
+    const onBatchError = vi.fn()
+    renderHook(() => useCompression([entry()], setFilesStub, { onBatchError }))
+    await flush()
+    expect(onBatchError).toHaveBeenCalledWith('Lost connection to compression worker')
   })
 })
 
