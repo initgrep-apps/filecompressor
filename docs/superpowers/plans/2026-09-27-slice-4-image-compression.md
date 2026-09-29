@@ -1863,7 +1863,7 @@ git commit -m "feat: add job queue, compression commands, reveal_in_folder"
 - `tauri_conf_json_lists_vips_as_external_bin` — Rust test reading `$CARGO_MANIFEST_DIR/../tauri.conf.json`, asserting `bundle.externalBin` contains `"binaries/vips"`
 - `sidecar_binary_exists_for_current_target_triple` — `#[ignore]`d by default (environment-specific); run manually with `cargo test -- --ignored`
 
-- [ ] **Step 1: Download vips binary for current platform**
+- [x] **Step 1: Download vips binary for current platform**
 
 macOS (arm64/x86_64):
 ```bash
@@ -1879,7 +1879,7 @@ Note: `command -v vips` copies the brew shim/binary. If the brew vips binary is 
 
 Windows / Linux: download from the sources in `COMPRESSION_TOOLS_RESEARCH.md`, rename to `vips-x86_64-pc-windows-msvc.exe` / `vips-x86_64-unknown-linux-gnu`.
 
-- [ ] **Step 2: Add externalBin to tauri.conf.json**
+- [x] **Step 2: Add externalBin to tauri.conf.json**
 
 In `src-tauri/tauri.conf.json`, add to the `bundle` section:
 
@@ -1893,7 +1893,7 @@ In `src-tauri/tauri.conf.json`, add to the `bundle` section:
 }
 ```
 
-- [ ] **Step 3: Verify vips runs**
+- [x] **Step 3: Verify vips runs**
 
 ```bash
 ./src-tauri/binaries/vips-$(rustc -Vv | grep host | sed 's/host: //') --version
@@ -1901,7 +1901,7 @@ In `src-tauri/tauri.conf.json`, add to the `bundle` section:
 
 Expected: Prints vips version. Also smoke-test HEIC decode if a sample is available.
 
-- [ ] **Step 4: Add config sanity tests**
+- [x] **Step 4: Add config sanity tests**
 
 In `src-tauri/src/sidecar.rs` `#[cfg(test)]` module, append:
 
@@ -1941,7 +1941,7 @@ Run:
 cd src-tauri && cargo test sidecar && cargo test -- --ignored
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Note: Large binary files. Consider using git-lfs or a download script.
 

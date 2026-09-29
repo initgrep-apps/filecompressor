@@ -37,3 +37,8 @@
 16. Cross-cutting: spec §7 event payload tables use snake_case field names (`file_id`); project convention (AGENTS.md: `#[serde(rename_all = "camelCase")]` for IPC) is camelCase and the TS side reads `fileId`. Plan emits camelCase; spec table not updated (same pattern as slice-3 item 5).
 17. Task 1: Plan's `get_sidecar_path` error message was "Sidecar binary not found: …" while spec §6 wording is "Engine error: [tool] not available". Plan fixed to the spec wording (now also covered by Task 3's Display test for `SidecarNotFound`).
 18. Task 2/6: Plan's `test_no_collision` used a literal `/tmp/nonexistent_dir`; replaced with `tempfile::TempDir` everywhere (tempfile already a dev-dep; `filetime` added as dev-dep for the stale-cleanup 24h boundary test).
+
+## PR Review — 2026-09-27-slice-4-image-compression
+**Date:** 2026-09-29 | **PR:** #31 (Task 6)
+
+1. Bundled vips sidecar is the Homebrew dynamic binary linked to absolute `/opt/homebrew` dylib paths (`libvips.42`, `glib`, `gettext` per `otool -L`); runs on dev machines with brew, dyld-aborts on end-user machines. Fix in release/packaging slice: static/portable build or dylib bundling + rpath. Source: PR #31.
