@@ -17,8 +17,10 @@
 mod commands;
 mod detection;
 mod models;
+mod output;
 mod settings;
 mod sidecar;
+mod temp;
 
 use commands::FileListState;
 use std::sync::Mutex;

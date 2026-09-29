@@ -144,5 +144,4 @@ mod tests {
     fn test_detect_dotfile_no_ext() {
         assert_eq!(detect_category(".hidden"), Category::Other);
     }
-
 }
