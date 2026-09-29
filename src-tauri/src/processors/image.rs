@@ -826,9 +826,11 @@ esac
     #[ignore = "requires real vips sidecar on this machine (Task 8 real-vips smoke)"]
     fn real_vips_compresses_oversized_jpeg_to_target() {
         let dir = tempfile::tempdir().unwrap();
-        let sidecar = std::env::var("CARGO_MANIFEST_DIR")
-            .map(|m| format!("{}/binaries/vips-aarch64-apple-darwin", m))
-            .unwrap();
+        let sidecar = format!(
+            "{}/binaries/{}",
+            env!("CARGO_MANIFEST_DIR"),
+            crate::sidecar::sidecar_filename("vips").unwrap()
+        );
 
         let input = dir.path().join("noise.jpg");
         let tmp = dir.path().join("tmp");
