@@ -62,6 +62,11 @@ export function useCompression(
     listen<ProgressPayload>('file:progress', (e) => {
       const { fileId, percent } = e.payload
       setProgressByFile((prev) => ({ ...prev, [fileId]: percent }))
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === fileId && f.status === 'pending' ? { ...f, status: 'compressing' } : f
+        )
+      )
     }).then(done)
 
     listen<CompletePayload>('file:complete', (e) => {
