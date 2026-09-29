@@ -9,6 +9,7 @@
 ## Global Constraints
 
 - **Every sidecar binary must be self-contained per platform** — never ship a binary that resolves dylibs from absolute non-system paths (e.g. `/opt/homebrew`). macOS: bundle transitive dylibs + rewrite load commands to `@rpath` via `scripts/bundle-vips-macos.sh` (extend per-engine as needed); Windows: official static builds; Linux: musl static or AppImage.
+- **Sidecar path resolution MUST target the executable's directory, not `BaseDirectory::Resource`** — Tauri's bundler strips the target triple from externalBin binaries and places them in `Contents/MacOS/`, NOT `Contents/Resources/`. Resolution pattern (from `src-tauri/src/sidecar.rs` `get_sidecar_path`): candidates = `current_exe().parent()/vips-<triple>` (dev) then `current_exe().parent()/vips` (bundle). A Resource-dir assumption breaks only in bundled builds and is invisible in dev tests — the GUI test in slice-9/acceptance covers it, but implementers must apply the exe-dir pattern for every new engine (qpdf, gs, ffmpeg, ffprobe).
 - **Audit gate is part of the project gate** — `bash scripts/audit-sidecars.sh` must pass (invoked via the Rust test `sidecars_are_self_contained` in `src-tauri/src/sidecar.rs`, runs in `cargo test`); every new engine bundle step MUST re-run the audit and show PASS before commit.
 - **Bundled dylibs are committed** under `src-tauri/frameworks/` and wired via `bundle.macOS.frameworks` in `src-tauri/tauri.conf.json` (merge into existing keys, keep valid JSON).
 
