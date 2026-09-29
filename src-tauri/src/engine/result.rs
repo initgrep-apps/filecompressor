@@ -1,4 +1,22 @@
+// File Size Optimizer — offline batch file compression
+// Copyright (C) 2026 File Size Optimizer Contributors
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 use std::path::PathBuf;
+
+pub const STRATEGY_ALREADY_UNDER_TARGET: &str = "already-under-target";
 
 #[derive(Debug)]
 pub struct CompressionResult {
@@ -24,7 +42,9 @@ impl std::fmt::Display for CompressionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CompressionError::Cancelled => write!(f, "Cancelled"),
-            CompressionError::SidecarNotFound(name) => write!(f, "Engine error: {} not available", name),
+            CompressionError::SidecarNotFound(name) => {
+                write!(f, "Engine error: {} not available", name)
+            }
             CompressionError::SidecarFailed(msg) => write!(f, "Processing error: {}", msg),
             CompressionError::InputFileError(msg) => write!(f, "Cannot read file: {}", msg),
             CompressionError::OutputFileError(msg) => write!(f, "Cannot write output: {}", msg),
@@ -42,17 +62,51 @@ mod tests {
 
     #[test]
     fn compression_error_display_strings_match_spec_wording() {
+        // (variant, expected) copy table — spec §6 wording is user-facing.
+        // The exhaustive match below has NO wildcard arm, so adding an 8th
+        // variant fails this build until the table is extended.
         let cases: Vec<(CompressionError, &str)> = vec![
             (CompressionError::Cancelled, "Cancelled"),
-            (CompressionError::SidecarNotFound("vips".into()), "Engine error: vips not available"),
-            (CompressionError::SidecarFailed("boom".into()), "Processing error: boom"),
-            (CompressionError::InputFileError("locked".into()), "Cannot read file: locked"),
-            (CompressionError::OutputFileError("readonly".into()), "Cannot write output: readonly"),
+            (
+                CompressionError::SidecarNotFound("vips".into()),
+                "Engine error: vips not available",
+            ),
+            (
+                CompressionError::SidecarFailed("boom".into()),
+                "Processing error: boom",
+            ),
+            (
+                CompressionError::InputFileError("locked".into()),
+                "Cannot read file: locked",
+            ),
+            (
+                CompressionError::OutputFileError("readonly".into()),
+                "Cannot write output: readonly",
+            ),
             (CompressionError::DiskFull, "Not enough disk space"),
             (CompressionError::Unknown("odd".into()), "odd"),
         ];
-        for (err, expected) in cases {
-            assert_eq!(err.to_string(), expected);
+        assert_eq!(
+            cases.len(),
+            7,
+            "copy table must cover every CompressionError variant"
+        );
+        for (i, (err, expected)) in cases.into_iter().enumerate() {
+            match &err {
+                CompressionError::Cancelled => {}
+                CompressionError::SidecarNotFound(_) => {}
+                CompressionError::SidecarFailed(_) => {}
+                CompressionError::InputFileError(_) => {}
+                CompressionError::OutputFileError(_) => {}
+                CompressionError::DiskFull => {}
+                CompressionError::Unknown(_) => {}
+            }
+            assert_eq!(err.to_string(), expected, "variant {i}");
         }
+    }
+
+    #[test]
+    fn strategy_already_under_target_const_is_pinned() {
+        assert_eq!(STRATEGY_ALREADY_UNDER_TARGET, "already-under-target");
     }
 }
