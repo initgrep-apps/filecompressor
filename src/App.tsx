@@ -39,6 +39,7 @@ import {
 import { CompressView } from "@/views/CompressView"
 import { HistoryView } from "@/views/HistoryView"
 import { SettingsView } from "@/views/SettingsView"
+import { Toaster } from "@/components/ui/sonner"
 
 type ViewId = "compress" | "history" | "settings"
 
@@ -127,6 +128,7 @@ function App() {
           {activeView === "settings" && <SettingsView />}
         </div>
       </SidebarInset>
+      <Toaster />
     </SidebarProvider>
   )
 }
