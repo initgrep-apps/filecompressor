@@ -820,4 +820,48 @@ esac
             50_000
         );
     }
+
+    #[test]
+    #[cfg(unix)]
+    #[ignore = "requires real vips sidecar on this machine (Task 8 real-vips smoke)"]
+    fn real_vips_compresses_oversized_jpeg_to_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let sidecar = std::env::var("CARGO_MANIFEST_DIR")
+            .map(|m| format!("{}/binaries/vips-aarch64-apple-darwin", m))
+            .unwrap();
+
+        let input = dir.path().join("noise.jpg");
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+        let out = std::process::Command::new(&sidecar)
+            .args(["gaussnoise"])
+            .arg(&input)
+            .args(["2000", "2000"])
+            .output()
+            .expect("gaussnoise generation");
+        assert!(out.status.success(), "gaussnoise failed: {:?}", out.stderr);
+        let input_size = fs::metadata(&input).unwrap().len();
+        assert!(
+            input_size > 200 * 1024,
+            "noise image unexpectedly small: {} bytes",
+            input_size
+        );
+
+        let result = ImageProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.jpg"),
+                200 * 1024,
+                &crate::settings::QualityFloors::default(),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &sidecar,
+                &tmp,
+            )
+            .unwrap();
+
+        assert!(result.met_target, "strategy: {}", result.strategy_used);
+        assert!(result.compressed_size <= 200 * 1024);
+        assert!(result.strategy_used.starts_with("quality="));
+    }
 }
