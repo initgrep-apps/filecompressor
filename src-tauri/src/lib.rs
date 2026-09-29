@@ -19,6 +19,7 @@ mod detection;
 mod engine;
 mod models;
 mod output;
+mod processors;
 mod settings;
 mod sidecar;
 mod temp;
