@@ -245,4 +245,33 @@ mod tests {
         assert!(err.contains(&format!("{:?}", file_path)));
         assert!(err.ends_with(')'));
     }
+
+    #[test]
+    fn tauri_conf_json_lists_vips_as_external_bin() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let conf = std::fs::read_to_string(format!("{}/tauri.conf.json", manifest))
+            .expect("tauri.conf.json readable from src-tauri");
+        let value: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
+        let bins = value["bundle"]["externalBin"]
+            .as_array()
+            .expect("bundle.externalBin array");
+        assert!(
+            bins.iter().any(|b| b.as_str() == Some("binaries/vips")),
+            "externalBin must list binaries/vips, got: {:?}",
+            bins
+        );
+    }
+
+    #[test]
+    #[ignore = "requires sidecar binary present on this machine"]
+    fn sidecar_binary_exists_for_current_target_triple() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let filename = sidecar_filename("vips").unwrap();
+        let path = format!("{}/binaries/{}", manifest, filename);
+        assert!(
+            std::path::Path::new(&path).exists(),
+            "sidecar missing at {} — run Task 6 Step 1",
+            path
+        );
+    }
 }
