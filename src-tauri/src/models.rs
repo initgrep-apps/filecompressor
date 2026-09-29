@@ -67,9 +67,7 @@ impl FileEntry {
             name
         };
 
-        let original_size = std::fs::metadata(path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let original_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
 
         let category = crate::detection::detect_category(&name);
         let status = if category == Category::Other {
@@ -179,7 +177,7 @@ mod tests {
     #[test]
     fn test_file_entry_status_assignment() {
         let dir = tempdir().unwrap();
-        
+
         let img_path = dir.path().join("test.jpg");
         fs::write(&img_path, b"test").unwrap();
         let img_entry = FileEntry::new(

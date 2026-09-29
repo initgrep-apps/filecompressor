@@ -218,7 +218,7 @@ git commit -m "feat: add sidecar path resolution"
 - `cleanup_stale_temp_files_safe_when_app_temp_missing` — no panic, no fs mutation
 - `create_temp_dir` / `cleanup_stale_temp_files` (AppHandle variants) — covered via code review only; unit tests need a Tauri harness (documented limitation, verified in Task 8 manual pass)
 
-- [ ] **Step 1: Create output.rs**
+- [x] **Step 1: Create output.rs**
 
 ```rust
 use std::path::{Path, PathBuf};
@@ -307,7 +307,7 @@ mod tests {
 
 Note on the cap test: with 1000 pre-created names the loop `1..1000` finds no free slot, so the `-overflow` fallback triggers with the extension preserved (`photo-overflow.jpg`).
 
-- [ ] **Step 2: Create temp.rs**
+- [x] **Step 2: Create temp.rs**
 
 `cleanup_stale_temp_files_in` is extracted (path + now injectable) so the 24h boundary is testable without a Tauri harness:
 
@@ -424,7 +424,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2b: Add filetime dev-dependency**
+- [x] **Step 2b: Add filetime dev-dependency**
 
 Add to `src-tauri/Cargo.toml` `[dev-dependencies]`:
 
@@ -432,15 +432,15 @@ Add to `src-tauri/Cargo.toml` `[dev-dependencies]`:
 filetime = "0.2"
 ```
 
-- [ ] **Step 3: Register modules in lib.rs**
+- [x] **Step 3: Register modules in lib.rs**
 
 Add `mod output;` and `mod temp;` to `src-tauri/src/lib.rs`.
 
-- [ ] **Step 4: Add tempfile dev-dependency (if not present)**
+- [x] **Step 4: Add tempfile dev-dependency (if not present)**
 
 `tempfile` is already a dev-dependency (used by models.rs tests). Verify in `src-tauri/Cargo.toml`.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```bash
 cd src-tauri && cargo test output:: -- --nocapture
@@ -448,7 +448,7 @@ cd src-tauri && cargo test output:: -- --nocapture
 
 Expected: all 5 collision tests pass.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A

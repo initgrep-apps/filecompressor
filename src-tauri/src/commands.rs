@@ -96,8 +96,8 @@ fn save_settings_to_store(
                 .map_err(|e| format!("failed to build settings store: {e}"))?
         }
     };
-    let value = serde_json::to_value(settings)
-        .map_err(|e| format!("failed to serialize settings: {e}"))?;
+    let value =
+        serde_json::to_value(settings).map_err(|e| format!("failed to serialize settings: {e}"))?;
     store.set("settings", value);
     store
         .save()
@@ -202,7 +202,11 @@ mod tests {
     #[test]
     fn test_add_files_skips_nonexistent() {
         let mut list = Vec::new();
-        let result = add_files_core(&mut list, vec!["/nonexistent/path.jpg".to_string()], &default_resolver());
+        let result = add_files_core(
+            &mut list,
+            vec!["/nonexistent/path.jpg".to_string()],
+            &default_resolver(),
+        );
         assert!(result.is_empty());
         assert!(list.is_empty());
     }
@@ -213,7 +217,11 @@ mod tests {
         let mut list = Vec::new();
         let subdir = dir.path().join("subdir");
         fs::create_dir(&subdir).unwrap();
-        let result = add_files_core(&mut list, vec![subdir.to_str().unwrap().to_string()], &default_resolver());
+        let result = add_files_core(
+            &mut list,
+            vec![subdir.to_str().unwrap().to_string()],
+            &default_resolver(),
+        );
         assert!(result.is_empty());
         assert!(list.is_empty());
     }
@@ -223,7 +231,11 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut list = Vec::new();
         let path = make_file(dir.path(), "test.jpg");
-        let canonical = fs::canonicalize(&path).unwrap().to_str().unwrap().to_string();
+        let canonical = fs::canonicalize(&path)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
         let case_variant = if canonical.chars().any(|c| c.is_uppercase()) {
             canonical.to_lowercase()
         } else {
@@ -239,7 +251,11 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut list = Vec::new();
         let path = make_file(dir.path(), "test.jpg");
-        let canonical = fs::canonicalize(&path).unwrap().to_str().unwrap().to_string();
+        let canonical = fs::canonicalize(&path)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
         let first = add_files_core(&mut list, vec![canonical.clone()], &default_resolver());
         assert_eq!(first.len(), 1);
         let second = add_files_core(&mut list, vec![canonical], &default_resolver());
@@ -337,9 +353,15 @@ mod tests {
         };
         let result = add_files_core(&mut list, vec![image_path, other_path], &custom);
         assert_eq!(result.len(), 2);
-        let image_entry = result.iter().find(|e| e.category == Category::Image).unwrap();
+        let image_entry = result
+            .iter()
+            .find(|e| e.category == Category::Image)
+            .unwrap();
         assert_eq!(image_entry.target_bytes, 500 * 1024);
-        let other_entry = result.iter().find(|e| e.category == Category::Other).unwrap();
+        let other_entry = result
+            .iter()
+            .find(|e| e.category == Category::Other)
+            .unwrap();
         assert_eq!(other_entry.target_bytes, 0);
     }
 

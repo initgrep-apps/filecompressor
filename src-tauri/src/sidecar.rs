@@ -81,7 +81,10 @@ mod tests {
 
     #[test]
     fn target_triple_returns_triple_per_platform() {
-        assert_eq!(target_triple("macos", "aarch64"), Ok("aarch64-apple-darwin"));
+        assert_eq!(
+            target_triple("macos", "aarch64"),
+            Ok("aarch64-apple-darwin")
+        );
         assert_eq!(target_triple("macos", "x86_64"), Ok("x86_64-apple-darwin"));
         assert_eq!(
             target_triple("windows", "x86_64"),

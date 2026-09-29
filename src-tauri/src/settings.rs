@@ -47,7 +47,10 @@ pub struct VideoQualityFloor {
 
 impl VideoQualityFloor {
     fn spec_default() -> Self {
-        VideoQualityFloor { min_crf: 28, min_resolution: "480p".to_string() }
+        VideoQualityFloor {
+            min_crf: 28,
+            min_resolution: "480p".to_string(),
+        }
     }
 }
 
@@ -60,7 +63,10 @@ pub struct PdfQualityFloor {
 
 impl PdfQualityFloor {
     fn spec_default() -> Self {
-        PdfQualityFloor { min_dpi: 72, min_jpeg_quality: 15 }
+        PdfQualityFloor {
+            min_dpi: 72,
+            min_jpeg_quality: 15,
+        }
     }
 }
 
@@ -72,7 +78,9 @@ pub struct DocumentQualityFloor {
 
 impl DocumentQualityFloor {
     fn spec_default() -> Self {
-        DocumentQualityFloor { min_media_quality: 40 }
+        DocumentQualityFloor {
+            min_media_quality: 40,
+        }
     }
 }
 
@@ -115,19 +123,31 @@ fn default_category_targets() -> std::collections::HashMap<String, CategoryTarge
     let mut category_targets = std::collections::HashMap::new();
     category_targets.insert(
         "image".to_string(),
-        CategoryTarget { size: 200, unit: "KB".to_string() },
+        CategoryTarget {
+            size: 200,
+            unit: "KB".to_string(),
+        },
     );
     category_targets.insert(
         "video".to_string(),
-        CategoryTarget { size: 10, unit: "MB".to_string() },
+        CategoryTarget {
+            size: 10,
+            unit: "MB".to_string(),
+        },
     );
     category_targets.insert(
         "pdf".to_string(),
-        CategoryTarget { size: 2, unit: "MB".to_string() },
+        CategoryTarget {
+            size: 2,
+            unit: "MB".to_string(),
+        },
     );
     category_targets.insert(
         "document".to_string(),
-        CategoryTarget { size: 1, unit: "MB".to_string() },
+        CategoryTarget {
+            size: 1,
+            unit: "MB".to_string(),
+        },
     );
     category_targets
 }
@@ -210,7 +230,11 @@ mod tests {
         assert!(floors.get("image").unwrap().get("minQuality").is_some());
         assert!(floors.get("video").unwrap().get("minCrf").is_some());
         assert!(floors.get("pdf").unwrap().get("minJpegQuality").is_some());
-        assert!(floors.get("document").unwrap().get("minMediaQuality").is_some());
+        assert!(floors
+            .get("document")
+            .unwrap()
+            .get("minMediaQuality")
+            .is_some());
         let roundtripped: Settings = serde_json::from_value(value).unwrap();
         assert_eq!(Settings::default(), roundtripped);
     }
@@ -218,7 +242,13 @@ mod tests {
     #[test]
     fn test_target_bytes_unknown_unit_falls_back_to_kb() {
         let mut s = Settings::default();
-        s.category_targets.insert("image".to_string(), CategoryTarget { size: 500, unit: "gb".to_string() });
+        s.category_targets.insert(
+            "image".to_string(),
+            CategoryTarget {
+                size: 500,
+                unit: "gb".to_string(),
+            },
+        );
         assert_eq!(s.target_bytes_for("image"), 500 * 1024);
     }
 
@@ -232,7 +262,13 @@ mod tests {
     #[test]
     fn test_target_bytes_zero_size_returns_zero() {
         let mut s = Settings::default();
-        s.category_targets.insert("image".to_string(), CategoryTarget { size: 0, unit: "KB".to_string() });
+        s.category_targets.insert(
+            "image".to_string(),
+            CategoryTarget {
+                size: 0,
+                unit: "KB".to_string(),
+            },
+        );
         assert_eq!(s.target_bytes_for("image"), 0);
     }
 
