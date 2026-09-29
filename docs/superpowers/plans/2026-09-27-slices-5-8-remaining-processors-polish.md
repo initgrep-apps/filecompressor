@@ -72,7 +72,7 @@ The processor needs two sidecar paths: `qpdf` and `gs`. Update `sidecar.rs` if n
 
 - [ ] **Step 2: Modify trait to accept SidecarPaths**
 
-Update `src-tauri/src/engine/trait.rs`:
+Update `src-tauri/src/engine/processor.rs` (the merged trait file — `engine/trait.rs` is an invalid Rust filename, `trait` is a keyword; this is the same correction slice-4 made):
 
 ```rust
 pub struct SidecarPaths {
@@ -104,6 +104,30 @@ pub trait CompressionProcessor: Send + Sync {
 Update `ImageProcessor::compress_to_target` to use `sidecar_paths.vips` instead of `sidecar_path`.
 
 Update `queue.rs` to resolve all sidecar paths and pass `SidecarPaths` to the processor.
+
+**Acceptance Criteria:**
+- Trait signature matches the merged 8-param shape: `sidecar_path: &str` (processor.rs:37) → `sidecar_paths: &SidecarPaths` — ONE param swap, no restructure; `temp_dir: &Path` stays
+- Floor type is `&QualityFloors` (merged name — settings.rs:87-98), NOT the plan/spec's `&QualityFloor` spelling
+- ALL call sites update in the same commit (compile-only verification): `ImageProcessor::compress_to_target` impl (processors/image.rs:215-225), `sidecar_path` consumers (image.rs:257, 264 → `run_vips`/`run_vips_resize`), 6 test call sites (image.rs:557, 584, 723, 756, 807, 860), queue.rs single call (queue.rs:289-302)
+- Fail-fast semantics preserved: resolving all 5 sidecars keeps the per-name error copy "Engine error: {name} not available" (sidecar.rs:37) — missing vips still short-circuits before `compress_to_target`; the error-copy pin test (engine/result.rs:71-112) must stay green
+- Registration uses the merged API: `registry.register(Box::new(...))` (processors/mod.rs:29-45) — NOT the plan's hand-rolled `extension_map.insert` block
+- externalBin gains `binaries/qpdf` + `binaries/gs` AND equivalent pinned tests (extend `tauri_conf_json_lists_vips_as_external_bin` pattern — sidecar.rs:290-303) — else the bundle claim is untestable
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `pdf_pass1_qpdf_lossless_stops_early_when_under_target` — pass 1 output ≤ target must not run pass 2/3/4 (prevents wasted sidecar spawns + over-compression)
+- `pdf_pass2_qpdf_image_opt_stops_early` — AC3 sequencing (regress silently ships /screen-degraded PDFs)
+- `pdf_pass3_gs_screen_stops_early` — AC4
+- `pdf_binary_search_dpi_jpegq_grid` — pass 4 = enumerated 16-cell ladder [100,72,50,36]×[60,40,25,15] in descending order, early exit on fit, gs args carry `-dPDFSETTINGS` + DPI/JPEGQ flags (NOT adaptive lo/hi binary search — spec §5 wording)
+- `pdf_all_passes_fail_returns_best_effort_smallest_output` — AC6: keep the SMALLEST of all outputs, never the last candidate (classic bug = last-wins → user gets larger best-effort file)
+- `pdf_already_under_target_skips_all_sidecars` — spec §6 "Already Under Target": PDFs copy as-is, no sidecar call
+- `pdf_gs_missing_binary_fails_with_engine_error` — "Engine error: gs not available" surfaces even when qpdf pass succeeded (no swallow)
+- `pdf_corrupt_input_sidecar_error_maps_to_file_may_be_corrupt` — spec §6 "File may be corrupt": garbage PDF must NOT report Done (gs may exit 0 with garbage output — detect invalid output)
+- `pdf_cancel_mid_pass_returns_cancelled_and_cleans_temp` — sidecar kill + temp cleanup on cancel
+- `sidecar_paths_reaches_both_qpdf_and_gs` — Option A: queue passes both resolved paths through `&SidecarPaths` (breaks only in bundled builds otherwise)
+- `pdf_sidecar_stderr_tail_in_error_message` — GS error diagnostics visible (reuse image.rs fake-sidecar pattern)
+- `pdf_zero_byte_output_rejected` — "measure output" rejects 0-byte gs outputs (exit 0 + empty file ≠ Done)
 
 - [ ] **Step 3: Implement PdfProcessor::compress_to_target**
 
@@ -210,6 +234,35 @@ Implement:
 
 For progress parsing: spawn ffmpeg with `stderr piped`, read lines, parse `time=00:01:23.45` or `out_time_ms=12345678`, compute percentage from duration.
 
+**Acceptance Criteria:**
+- Prerequisite: SidecarPaths refactor from Slice 5 landed first (video needs 2 binaries — ffmpeg + ffprobe — through one `&SidecarPaths`)
+- `processors/video.rs` exists + registered: flips `registry.get_processor(Category::Video)` (queue.rs:238) from `None → Some`; the null-processor guard test (processors/mod.rs:84 `Video.is_none()`) flips to `Some(_)`
+- ffprobe duration parse handles decimal seconds (`123.456`) AND fails the job on empty/`N/A`/garbage entries — no divide-by-zero, no `-b:v NaNk` reaching ffmpeg
+- Bitrate formula matches spec: `(target_bytes * 8 * 0.95) / duration_seconds`, with u64-overflow + tiny-duration guards
+- Two-pass command construction pinned on ARG ORDER (contract test, no real ffmpeg): pass 1 `-an -f mp4 NUL|/dev/null -pass 1 -passlogfile <fresh prefix per attempt>`; pass 2 `-c:a aac -b:a 128k -pass 2` — stale passlog files from a previous attempt must NOT corrupt the next encode
+- `out_time_ms` parsed in MICROSECONDS (modern ffmpeg µs, not ms — common mislabeling bug); both `time=` and `out_time_ms=` accepted; multi-line + partial + garbage stderr lines ignored
+- Progress percent clamped 0..=100 (time=01:00:01 on a 01:00:00 video must not emit 100.001%)
+- Resolution ladder 1080p→720p→480p applies to BOTH passes per attempt; CRF floor 28 → Best effort with smallest-output selection (same rule as PDF)
+- Cancel mid-encode kills ffmpeg AND removes passlog files (temp dir empty after cancel — no orphan files)
+- Already-under-target skip: no sidecar spawn for MP4 ≤ 10 MB target
+- Corrupt input via ffprobe path → "File may be corrupt" (spec §6)
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `ffprobe_parses_duration_decimal_and_missing_entries_fail` — real ffprobe prints `123.456\n`; `""`/`N/A`/garbage → job fails, no divide-by-zero, no NaN bitrate
+- `video_bitrate_formula_matches_spec` — `(target*8*0.95)/duration` + overflow/tiny-duration boundary guards
+- `video_two_pass_commands_constructed_correctly` — arg-order contract: pass 1 `-an -f mp4 NUL|/dev/null -pass 1 -passlogfile prefix`; pass 2 `-c:a aac -b:a 128k -pass 2`
+- `video_progress_parses_time_and_out_time_ms` — pure fn: both formats, µs units, garbage lines ignored, multi-line
+- `video_progress_percent_clamped_0_to_100` — clamping boundary
+- `video_over_target_steps_resolution_1080_720_480` — ladder applies to both passes; passlogfile isolation per attempt (fresh prefix)
+- `video_crf_floor_28_best_effort` — smallest-output selection (never last-wins)
+- `video_cancel_mid_encode_kills_ffmpeg_and_removes_passlogs` — kill + temp dir empty after cancel (orphan passlogs = regression)
+- `video_mov_input_produces_mp4_output` — AC2 output extension logic
+- `video_ffprobe_nonzero_exit_fails_with_engine_error` — "File may be corrupt" (spec §6)
+- `video_already_under_target_skips_sidecars` — under-target copy-as-is (5 MB file vs 10 MB target wastes minutes if recompressed)
+- `video_windows_nul_dev_null_gated` — cfg-gated constant assert (release insurance)
+
 - [ ] **Step 2: Register VideoProcessor in mod.rs**
 
 - [ ] **Step 3: Bundle ffmpeg + ffprobe sidecar binaries**
@@ -274,6 +327,13 @@ Add to `src-tauri/Cargo.toml`:
 zip = "2"
 ```
 
+**Acceptance Criteria:**
+- Version conflict resolved BEFORE execution: plan pins `zip = "2"`; the repo stack note says `zip 8.6` — pin against the REAL current crate (latest is 2.x) and confirm the API surface (`ZipArchive`, `ZipWriter`, `CompressionMethod::Deflated`, `compression_level(9)`) compiles against the pinned version; fix AGENTS.md stack note if it's stale
+- Compile gate green: `yarn build && yarn test && cd src-tauri && cargo test` (new dep expands lockfile; hermetic crates.io fetch assumed)
+
+**Required Tests:**
+- Compile gate is the test for a one-line dep change — no named unit tests required; `cargo test` green after pin confirms the API surface (`ZipArchive`, `ZipWriter`, `CompressionMethod::Deflated`, `compression_level(9)`) against the real crate version
+
 ### Task 2: Create DocumentProcessor
 
 **Files:**
@@ -292,6 +352,35 @@ Implement:
 4. For non-media files: copy as-is
 5. Write new ZIP with `CompressionMethod::Deflated` + `compression_level(9)` using `zip::ZipWriter`
 6. Measure output size — if over target, lower media quality and retry
+
+**Acceptance Criteria:**
+- Media identification is EXACT: only `word/media/`, `ppt/media/`, `xl/media/` entries recompressed; near-miss paths pass through untouched (`word/embeddings/`, root-level `media/`, `word/media/image1.png` caught — near-misses here corrupt the doc or miss savings)
+- Non-media entries round-trip BYTE-IDENTICAL (document.xml, [Content_Types].xml, docProps/), entry order preserved ([Content_Types].xml first — some strict readers care)
+- Re-zip uses `CompressionMethod::Deflated` + `compression_level(9)` — verified by re-reading the produced zip
+- Media binary search floor wired through settings (`qualityFloors.document.minMediaQuality=40`), NOT hardcoded
+- Outer retry loop: over target → lower media quality → retry (Step 1.6)
+- EMF/WMF embedded images skipped WITHOUT error — job still Done, not partial-failure (AC7)
+- vips fails on ONE media file → keep that entry's ORIGINAL bytes + re-zip (NOT fail the whole job, NOT drop the entry — dropped = broken document in Word)
+- Zero-media DOCX: output ≈ input size, valid zip written, no crash on empty media list
+- Corrupt ZIP → "File may be corrupt", original preserved (spec §6)
+- Already-under-target: no re-zip churn on small docx (spec §6 optimization)
+- Cancel mid-recompress cleans temp entries
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `document_media_path_identification` — exact dirs recompressed; near-miss paths untouched (bug = corrupt doc or missed savings)
+- `document_non_media_entries_copied_byte_identical` — structure round-trip + entry order ([Content_Types].xml first)
+- `document_rezip_uses_deflate_level_9` — method + level verified by re-reading produced zip (unzip -v or zip crate)
+- `document_media_binary_search_floors_at_q40` — floor from settings actually wired, not hardcoded
+- `document_over_target_lowers_quality_and_retries` — outer retry loop
+- `document_emf_wmf_skipped_without_error` — WMF passes through untouched, job Done
+- `document_vips_fails_on_media_copies_original_entry` — odd PNG edge: original bytes kept + re-zip, job not failed, entry not dropped
+- `document_zero_media_docx_pure_rezip_or_pass_through` — empty media list, valid zip, no crash
+- `document_corrupt_zip_fails_gracefully` — "File may be corrupt", original preserved
+- `document_already_under_target` — no re-zip churn
+- `document_cancel_mid_recompress_cleans_temp_entries` — temp cleanup on cancel
+- `document_output_opens_valid` — structural check: re-read output via ZipArchive, entry count + names match input
 
 - [ ] **Step 2: Register DocumentProcessor in mod.rs**
 
@@ -341,6 +430,24 @@ Show a small × button (red) for files with status "compressing". Clicking calls
 
 Show a folder icon button (hover-reveal) for files with status "done" or "best_effort" or "already_under_target". Clicking calls `revealInFolder(outputPath)`.
 
+**Acceptance Criteria:**
+- ALL THREE steps already shipped in Slice 4 Task 7 (commits `f1ab850`, `06449cc`, `0f3b493`) — this task is VERIFY ONLY, no new work
+- Progress bar: `FileList.tsx:160-175` (`role="progressbar"`, aria-value*, `percent`% width) under StatusBadge for compressing rows; fed by `progress` prop (:24, :126)
+- Per-file cancel: `FileList.tsx:197-207` — cancel button replaces remove for compressing rows; full chain cancelFile → invoke('cancel_file') → command → token cancel; token inserted BEFORE status flip (cancel never misses)
+- Reveal: `FileList.tsx:185-196` hover-reveal (`opacity-0 group-hover:opacity-100 focus:opacity-100`), gated on `RESULT_STATUSES` (:30) + outputPath; → invoke('reveal_in_folder')
+- Existing tests stay green (no rewrites needed): FileList.test.tsx:93-227 covers all three steps incl. negative cases (reveal hidden w/o handler, remove-disabled gating)
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `renders progress bar from progressByFile while compressing` — existing (FileList.test.tsx:93-108)
+- `compressing row shows cancel instead of remove` — existing (:110-127)
+- `per-file cancel button calls onCancel with id` — existing
+- `reveal button calls onReveal with output path` — existing (:176-188)
+- `reveal button renders for best_effort rows` — NEW cheap parametric addition (Task 1 Step 3 exercises one status only today)
+- `reveal button hidden when no onReveal handler passed` — existing (:218-227)
+- `remove button disabled for pending rows while compressing` — existing (:202-216)
+
 ### Task 2: Add batch summary footer + Cancel All button
 
 **Files:**
@@ -362,6 +469,22 @@ Display: "6 files · 2 done · 1 compressing · 1 pending · 1 warning · 1 skip
 - [ ] **Step 2: Add Cancel All button**
 
 Show "Cancel All" button (destructive variant) when `isCompressing` is true. Clicking calls `cancelAll()`.
+
+**Acceptance Criteria:**
+- Step 2 (Cancel All) ALREADY SHIPPED (`CompressView.tsx:73-77`, destructive iff `isCompressing`, full chain → queue.rs:151-158 cancels batch + file tokens; batch-cancel gate marks remaining Pending Cancelled + emits file:cancelled) — no new work
+- Step 1 (batch summary) GENUINELY NEW: shipped footer (`CompressView.tsx:87-97`) renders only `{files.length} files · {doneCount} done · {pendingCount} pending` — MISSING `compressing`, `warning` (best_effort), `skipped` (unsupported) counts required by spec §4 L232 and the Step 1 snippet above
+- DECIDE + TEST the failed count: spec's status table has `Failed` (destructive) but the summary snippet omits a `failed` count entirely — either add it or document its omission, then pin the exact AC4 string in a test
+- Summary updates live: file:complete/file:error events shift counts during compression
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `batch_summary_counts_mixed_statuses` — one file per status rendered → assert the exact AC4 string "6 files · 2 done · 1 compressing · 1 pending · 1 warning · 1 skipped" (regressions: best_effort miscounted as done, unsupported dropped, failed missing)
+- `failed files counted in summary` — Failed status represented per the decision above
+- `summary updates live during compression` — event-driven count shift
+- `cancel all click calls cancelAll with batch id` — invocation verified (only visibility tested today)
+- `cancel all button visible during compression only` — existing (CompressView.test.tsx:100-113)
+- `cancelled files represented in summary` — AC3 "marked Cancelled" (no cancelled count/row assertion anywhere today)
 
 ### Task 3: Add toast notifications
 
@@ -392,6 +515,21 @@ On `file:error` events, accumulate error count. On `batch:complete`, if errorCou
 toast.error(`${errorCount} files could not reach target.`)
 ```
 
+**Acceptance Criteria:**
+- Step 1 (Toaster) ALREADY SHIPPED (`App.tsx:131` → `src/components/ui/sonner.tsx`) — no new work
+- Step 2 (batch complete toast) ALREADY SHIPPED with favorable substitution — toast lives in the VIEW layer via `onBatchComplete` callback (`CompressView.tsx:39-40`: `Compressed ${count} files. Saved ${formatSavedBytes(saved)} total.`), hook fires `onBatchComplete(totalSavedBytes, processedCount)` on batch:complete (suppressed at 0 processed — cancelled-only batch). Cosmetic drift from this plan's hook-inline snippet (fixed-MB units + doneCount): adaptive human sizes are BETTER — pin the view-layer message in a test
+- Step 3 (error-count toast) GENUINELY NEW: no aggregation of `file:error` events exists today (`useCompression.ts:130-143` only sets row failed + dropProgress); the AC6 message "N files could not reach target." is nowhere in the codebase — implement accumulation + end-of-batch toast per the snippet above
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `batch complete toast shows total saved bytes` — existing (CompressView.test.tsx:133-151)
+- `batch error toast shows message` — existing (:153-160)
+- `error_count_toast_shows_count_when_errors_accumulated` — NEW: accumulate file:error count → "2 files could not reach target." at batch end
+- `toast_success_says_compressed_N_files_with_done_count` — doneCount vs total-files distinction (10 dropped, 2 unsupported → 8 done)
+- `toast.error on cancel/reveal command failures` — existing (useCompression.test.ts:336-358)
+- `StrictMode duplicate-fire guard` — existing (:386-406)
+
 ### Task 4: Verify stale temp cleanup on launch
 
 **Files:**
@@ -406,6 +544,20 @@ toast.error(`${errorCount} files could not reach target.`)
    touch -t $(date -v-2d +%Y%m%d0000) /tmp/file-compressor/*/some_temp_file
    ```
 3. Restart app → verify stale temp files are deleted
+
+**Acceptance Criteria:**
+- Implementation ALREADY SHIPPED + unit-tested above plan bar: `temp.rs:30-108` (`STALE_AFTER_SECS = 86_400`, mtime-based, injectable `now`), launch hook `lib.rs:43` in `.setup()`, per-job cleanup even on error/cancel (`queue.rs:304-305`)
+- Unit coverage ALREADY COMPLETE (temp.rs:110-243): tree removal, missing-path no-op, idempotency, 86401/86400 exact boundary, stale-vs-fresh regular files, future-mtime keep, missing-dir safety — the plan's Step 1 manual procedure is REDUNDANT with these except the restart phase
+- Manual restart verification stays as the only remaining check: follow the `touch -t` procedure above once (compress → cancel mid-job → age the temp files → restart → verify deleted)
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `cleanup_stale_temp_files_removes_only_dirs_older_than_24h` — existing
+- `cleanup_stale_temp_files_keeps_dir_at_exact_24h_boundary` — existing
+- `cleanup_stale_temp_files_removes_stale_regular_files_not_fresh_ones` — existing
+- `cleanup_temp_dir_removes_directory_tree` / `no_op_on_missing_path` / `idempotent_after_removal` — existing
+- `cleanup_stale_temp_files_safe_when_app_temp_missing` — existing
 
 ### Task 5: Output folder writability pre-check
 
@@ -440,6 +592,23 @@ let _ = std::fs::remove_file(&test_file);
 
 In `useCompression` hook, listen for `batch:error` and show toast error.
 
+**Acceptance Criteria:**
+- BOTH steps ALREADY SHIPPED (with favorable substitutions over the plan's literal snippets — no new work):
+- Rust preflight: `queue.rs:179-189` runs `ensure_output_folder_writable` FIRST inside `process_batch` before any file; impl at `:384-397` (create_dir_all if missing + `.write-probe` write/remove test); failure removes batch token + emits `batch:error` with `{ "batchId", "errorMessage" }` camelCase keys — the plan's snippet used an `"error"` key + `.write_test` probe, which would NOT have worked with the shipped frontend; message text "Output folder not writable: {e}" matches spec §6 L391. Sidecar-worker-down also emits batch:error (:136-141).
+- Frontend batch:error: `useCompression.ts:168-174` listens `{ batchId, errorMessage }` → resets `isCompressing` + processedCount → `onBatchError(msg)` → `CompressView.tsx:41` `toast.error(message)`
+- One downstream residual to keep in mind: preflight failure leaves queued-not-started files Pending (no file:cancelled per file) — covered by the batch summary work in Task 2
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `queue_batch_unwritable_folder_emits_batch_error_and_processes_nothing` — NEW: preflight runs BEFORE first job; assert zero jobs started (partial-mismatch state otherwise)
+- `queue_batch_creates_missing_output_folder` — NEW: folder-deleted-between-runs is a real user scenario (USB unplugged)
+- `queue_batch_create_dir_fails_emits_cannot_create_error` — NEW
+- `write_test_file_removed_after_preflight` — NEW: probe file cleanup asserted (leftover = user-visible litter in Documents; no double-remove panic on write-fail path)
+- `preflight_skips_when_folder_already_writable` — NEW: no spurious event
+- `useCompression batch:error resets state` — existing (useCompression.test.ts:195-204)
+- `batch error toast shows message` — existing (CompressView.test.tsx:153-160)
+
 ### Task 6: Acceptance check
 
 - [ ] **Step 1: Test all acceptance criteria**
@@ -451,6 +620,20 @@ In `useCompression` hook, listen for `batch:error` and show toast error.
 5. ✅ Toast on batch complete
 6. ✅ Toast on errors
 7. ✅ Stale temp cleanup on launch
+
+**Acceptance Criteria:**
+- Slices 5-7 processors land first (mixed-format ACs involving PDF/video/document fail by construction until then)
+- Every AC above maps to a concrete test or E2E procedure — NO hand-waved ✅: enumerate per criterion which test/flow proves it (composite table; cite the Required Tests names from Tasks 1-5 above)
+- Slice-8-only ACs (per-file cancel, cancel-all, summary counts, toasts, stale cleanup) mostly already shipped except: full AC4 count string (Task 2), AC6 error-count toast (Task 3)
+- Production build green: `yarn tauri build` (both `.app/.dmg`, `.msi/.exe`, `.deb/.AppImage` bundles produced per platform)
+- Sidecar audit gate PASS before final commit: `bash scripts/audit-sidecars.sh`
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `real_vips_compresses_oversized_jpeg_to_target` — existing ignored smoke (AC pattern for real-vips E2E)
+- Composite AC table pinned: each of the 13 plan-level criteria → its proving test/flow (executor cannot hand-wave)
+- `bash scripts/audit-sidecars.sh` → `sidecar audit: PASS` before final commit
 
 - [ ] **Step 2: Run production build**
 
