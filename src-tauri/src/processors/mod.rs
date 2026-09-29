@@ -28,19 +28,20 @@ pub struct ProcessorRegistry {
 
 impl ProcessorRegistry {
     pub fn new() -> Self {
-        let mut processors: HashMap<Category, Box<dyn CompressionProcessor>> = HashMap::new();
-        let mut extension_map: HashMap<String, Category> = HashMap::new();
+        let mut registry = ProcessorRegistry {
+            processors: HashMap::new(),
+            extension_map: HashMap::new(),
+        };
+        registry.register(Box::new(image::ImageProcessor::new()));
+        registry
+    }
 
-        let image_proc = image::ImageProcessor::new();
-        for ext in image_proc.supported_extensions() {
-            extension_map.insert(ext.to_lowercase(), Category::Image);
+    fn register(&mut self, processor: Box<dyn CompressionProcessor>) {
+        let category = processor.category();
+        for ext in processor.supported_extensions() {
+            self.extension_map.insert(ext.to_lowercase(), category);
         }
-        processors.insert(Category::Image, Box::new(image_proc));
-
-        ProcessorRegistry {
-            processors,
-            extension_map,
-        }
+        self.processors.insert(category, processor);
     }
 
     pub fn get_processor(&self, category: Category) -> Option<&dyn CompressionProcessor> {
@@ -49,6 +50,12 @@ impl ProcessorRegistry {
 
     pub fn lookup(&self, ext: &str) -> Option<Category> {
         self.extension_map.get(&ext.to_lowercase()).copied()
+    }
+}
+
+impl Default for ProcessorRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

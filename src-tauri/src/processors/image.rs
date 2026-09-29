@@ -27,6 +27,13 @@ pub struct ImageProcessor;
 
 const MAX_SEARCH_ITERATIONS: u32 = 8;
 const SCALE_FLOOR_PERCENT: u32 = 50;
+const STDERR_TAIL_CHARS: usize = 500;
+
+impl Default for ImageProcessor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl ImageProcessor {
     pub fn new() -> Self {
@@ -34,10 +41,7 @@ impl ImageProcessor {
     }
 
     fn get_output_extension(input: &Path) -> String {
-        let ext = input
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("");
         match ext.to_lowercase().as_str() {
             "jpg" | "jpeg" => "jpg".to_string(),
             "png" => "png".to_string(),
@@ -65,32 +69,23 @@ impl ImageProcessor {
         quality: u32,
         cancel_token: &CancellationToken,
     ) -> Result<(), CompressionError> {
-        let mut child = std::process::Command::new(sidecar_path)
+        // stdout is discarded (null — nothing to drain), stderr is collected
+        // for diagnostics; both must be handled or the child can block on a
+        // full pipe while we wait on it forever.
+        let child = std::process::Command::new(sidecar_path)
             .arg("copy")
             .arg(input)
-            .arg(format!("{}{}", output.display(), Self::save_options(ext, quality)))
-            .stdout(std::process::Stdio::piped())
+            .arg(format!(
+                "{}{}",
+                output.display(),
+                Self::save_options(ext, quality)
+            ))
+            .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| {
-                CompressionError::SidecarFailed(format!("Failed to start vips: {}", e))
-            })?;
+            .map_err(|e| CompressionError::SidecarFailed(format!("Failed to start vips: {}", e)))?;
 
-        let status = child
-            .wait()
-            .map_err(|e| CompressionError::SidecarFailed(format!("vips wait failed: {}", e)))?;
-
-        if !status.success() {
-            // Cancelled beats exit-code (kill surfaces as non-zero exit)
-            if cancel_token.is_cancelled() {
-                return Err(CompressionError::Cancelled);
-            }
-            return Err(CompressionError::SidecarFailed(format!(
-                "vips exited with code {:?}",
-                status.code()
-            )));
-        }
-        Ok(())
+        Self::wait_sidecar(child, "vips", cancel_token)
     }
 
     /// Dimension reduction via `vips resize` — scale is a float factor (0.9 = 90%).
@@ -104,29 +99,64 @@ impl ImageProcessor {
         scale_factor: f64,
         cancel_token: &CancellationToken,
     ) -> Result<(), CompressionError> {
-        let mut child = std::process::Command::new(sidecar_path)
+        let child = std::process::Command::new(sidecar_path)
             .arg("resize")
             .arg(input)
-            .arg(format!("{}{}", output.display(), Self::save_options(ext, quality)))
+            .arg(format!(
+                "{}{}",
+                output.display(),
+                Self::save_options(ext, quality)
+            ))
             .arg(format!("{}", scale_factor))
-            .stdout(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| {
                 CompressionError::SidecarFailed(format!("Failed to start vips resize: {}", e))
             })?;
 
-        let status = child
-            .wait()
-            .map_err(|e| CompressionError::SidecarFailed(format!("vips wait failed: {}", e)))?;
+        Self::wait_sidecar(child, "vips resize", cancel_token)
+    }
 
-        if !status.success() {
+    /// Reaps a sidecar child, draining stderr so a chatty tool can never
+    /// deadlock on a full pipe. Cancelled beats exit-code — a kill surfaces
+    /// as a non-zero exit, so the token is checked before reporting it.
+    fn wait_sidecar(
+        child: std::process::Child,
+        label: &str,
+        cancel_token: &CancellationToken,
+    ) -> Result<(), CompressionError> {
+        let output = child.wait_with_output().map_err(|e| {
+            if cancel_token.is_cancelled() {
+                return CompressionError::Cancelled;
+            }
+            CompressionError::SidecarFailed(format!("{} wait failed: {}", label, e))
+        })?;
+
+        if !output.status.success() {
             if cancel_token.is_cancelled() {
                 return Err(CompressionError::Cancelled);
             }
+            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+            let tail: String = {
+                let count = stderr.chars().count();
+                if count > STDERR_TAIL_CHARS {
+                    stderr.chars().skip(count - STDERR_TAIL_CHARS).collect()
+                } else {
+                    stderr
+                }
+            };
+            let detail = tail.trim_end();
+            let detail = if detail.is_empty() {
+                "<no stderr>"
+            } else {
+                detail
+            };
             return Err(CompressionError::SidecarFailed(format!(
-                "vips resize exited with code {:?}",
-                status.code()
+                "{} exited with code {:?}: {}",
+                label,
+                output.status.code(),
+                detail
             )));
         }
         Ok(())
@@ -145,6 +175,7 @@ fn binary_search_quality(
     progress: &ProgressSender,
     attempt: &mut dyn FnMut(u32) -> Result<(u64, PathBuf), CompressionError>,
 ) -> Result<Option<(u32, u64, PathBuf)>, CompressionError> {
+    debug_assert!(lo <= hi, "binary_search_quality requires lo <= hi");
     let mut lo = lo;
     let mut hi = hi;
     let mut best: Option<(u32, u64, PathBuf)> = None;
@@ -158,7 +189,7 @@ fn binary_search_quality(
         }
 
         let mid = (lo + hi) / 2;
-        progress.send_progress((iteration * 100 / MAX_SEARCH_ITERATIONS).min(90));
+        progress.send_progress((iteration * 100 / max_iterations).min(90));
 
         let (size, path) = attempt(mid)?;
         if size <= target_bytes {
@@ -219,7 +250,7 @@ impl CompressionProcessor for ImageProcessor {
                        quality: u32,
                        scale: Option<f64>|
          -> Result<(u64, PathBuf), CompressionError> {
-            let temp_file = temp_dir.join(format!("attempt-{}.{}", n, ext));
+            let temp_file = temp_dir.join(format!("attempt-{n}.{ext}"));
             match scale {
                 None => Self::run_vips(
                     sidecar_path,
@@ -241,26 +272,46 @@ impl CompressionProcessor for ImageProcessor {
             }
             let size = std::fs::metadata(&temp_file)
                 .map(|m| m.len())
-                .map_err(|e| CompressionError::InputFileError(e.to_string()))?;
+                .map_err(|e| {
+                    CompressionError::OutputFileError(format!(
+                        "attempt-{n} ({}): {e}",
+                        temp_file.display()
+                    ))
+                })?;
             Ok((size, temp_file))
         };
 
-        // Phase 1: binary search on quality (PNG loses here — save_options
-        // ignores quality for png, so the search converges after floor hits).
+        // Smallest over-target attempt across quality search + dims search —
+        // the best-effort fallback (spec §5 step 7).
+        let mut smallest: Option<(u32, u64, PathBuf)> = None;
         let mut attempt_n: u32 = 0;
-        let quality_search = binary_search_quality(
-            min_quality,
-            95,
-            MAX_SEARCH_ITERATIONS,
-            target_bytes,
-            &cancel_token,
-            &progress,
-            &mut |q| {
-                let r = attempt(attempt_n, q, None)?;
-                attempt_n += 1;
-                Ok(r)
-            },
-        )?;
+
+        // PNG: pngsave has no lossy Q, so the quality search would only spawn
+        // identical outputs — go straight to dimension reduction at the floor.
+        let png_output = ext == "png";
+
+        let quality_search = if png_output {
+            None
+        } else {
+            binary_search_quality(
+                min_quality,
+                95,
+                MAX_SEARCH_ITERATIONS,
+                target_bytes,
+                &cancel_token,
+                &progress,
+                &mut |q| {
+                    let r = attempt(attempt_n, q, None)?;
+                    attempt_n += 1;
+                    if r.0 > target_bytes
+                        && smallest.as_ref().map(|(_, s, _)| r.0 < *s).unwrap_or(true)
+                    {
+                        smallest = Some((q, r.0, r.1.clone()));
+                    }
+                    Ok(r)
+                },
+            )?
+        };
 
         if let Some((quality, size, path)) = quality_search {
             std::fs::copy(&path, output)
@@ -277,7 +328,6 @@ impl CompressionProcessor for ImageProcessor {
 
         // Phase 2: dimension reduction in 10% steps, floor at SCALE_FLOOR_PERCENT
         progress.send_progress(92);
-        let mut smallest: Option<(u32, u64, PathBuf)> = None;
         let mut scale_percent = 90;
         while scale_percent >= SCALE_FLOOR_PERCENT {
             if cancel_token.is_cancelled() {
@@ -291,12 +341,17 @@ impl CompressionProcessor for ImageProcessor {
                 std::fs::copy(&r.1, output)
                     .map_err(|e| CompressionError::OutputFileError(e.to_string()))?;
                 progress.send_progress(100);
+                let strategy_used = if png_output {
+                    format!("palette,dims={}%", scale_percent)
+                } else {
+                    format!("quality={},dims={}%", min_quality, scale_percent)
+                };
                 return Ok(CompressionResult {
                     output_path: output.to_path_buf(),
                     compressed_size: r.0,
                     quality_used: min_quality,
                     met_target: true,
-                    strategy_used: format!("quality={},dims={}%", min_quality, scale_percent),
+                    strategy_used,
                 });
             }
             if smallest.as_ref().map(|(_, s, _)| r.0 < *s).unwrap_or(true) {
@@ -310,12 +365,17 @@ impl CompressionProcessor for ImageProcessor {
             std::fs::copy(&path, output)
                 .map_err(|e| CompressionError::OutputFileError(e.to_string()))?;
             progress.send_progress(100);
+            let strategy_used = if png_output {
+                "palette,best-effort".to_string()
+            } else {
+                format!("quality={},best-effort", quality)
+            };
             return Ok(CompressionResult {
                 output_path: output.to_path_buf(),
                 compressed_size: size,
                 quality_used: quality,
                 met_target: false,
-                strategy_used: format!("quality={},best-effort", quality),
+                strategy_used,
             });
         }
 
@@ -344,8 +404,14 @@ mod tests {
 
     #[test]
     fn get_output_extension_preserves_png_jpg_webp() {
-        assert_eq!(ImageProcessor::get_output_extension(Path::new("p/a.png")), "png");
-        assert_eq!(ImageProcessor::get_output_extension(Path::new("p/a.JPG")), "jpg");
+        assert_eq!(
+            ImageProcessor::get_output_extension(Path::new("p/a.png")),
+            "png"
+        );
+        assert_eq!(
+            ImageProcessor::get_output_extension(Path::new("p/a.JPG")),
+            "jpg"
+        );
         assert_eq!(
             ImageProcessor::get_output_extension(Path::new("p/a.webp")),
             "webp"
@@ -354,18 +420,32 @@ mod tests {
 
     #[test]
     fn get_output_extension_defaults_unknown_to_jpg() {
-        assert_eq!(ImageProcessor::get_output_extension(Path::new("p/a.tiff")), "jpg");
-        assert_eq!(ImageProcessor::get_output_extension(Path::new("p/a")), "jpg");
+        assert_eq!(
+            ImageProcessor::get_output_extension(Path::new("p/a.tiff")),
+            "jpg"
+        );
+        assert_eq!(
+            ImageProcessor::get_output_extension(Path::new("p/a")),
+            "jpg"
+        );
     }
 
     #[test]
     fn binary_search_finds_highest_quality_meeting_target() {
-        // size shrinks as quality drops; exactly Q<=80 fits target
+        // size is a flat 120_000 plateau at Q<=80 and grows 1500 per step
+        // above it — exactly Q<=80 fits the target
         let attempt = |q: u32| {
-            Ok::<(u64, PathBuf), CompressionError>((u64::from(q.max(80)) * 1500, PathBuf::from("t")))
+            Ok::<(u64, PathBuf), CompressionError>((
+                u64::from(q.max(80)) * 1500,
+                PathBuf::from("t"),
+            ))
         };
         let result = binary_search_quality(
-            30, 95, MAX_SEARCH_ITERATIONS, 120_000, &CancellationToken::new(),
+            30,
+            95,
+            MAX_SEARCH_ITERATIONS,
+            120_000,
+            &CancellationToken::new(),
             &ProgressSender::test_stub(),
             &mut |q| attempt(q),
         )
@@ -380,8 +460,12 @@ mod tests {
         // 256-wide window needs exactly 8 halvings to exhaust — verifies the cap
         let count = std::cell::Cell::new(0u32);
         let result = binary_search_quality(
-            0, 255, MAX_SEARCH_ITERATIONS, 1, // target 1 byte — nothing fits
-            &CancellationToken::new(), &ProgressSender::test_stub(),
+            0,
+            255,
+            MAX_SEARCH_ITERATIONS,
+            1, // target 1 byte — nothing fits
+            &CancellationToken::new(),
+            &ProgressSender::test_stub(),
             &mut |_q| {
                 count.set(count.get() + 1);
                 Ok((u64::MAX, PathBuf::from("t")))
@@ -396,8 +480,12 @@ mod tests {
     fn binary_search_exhausts_real_range_within_cap() {
         let count = std::cell::Cell::new(0u32);
         let result = binary_search_quality(
-            30, 95, MAX_SEARCH_ITERATIONS, 1,
-            &CancellationToken::new(), &ProgressSender::test_stub(),
+            30,
+            95,
+            MAX_SEARCH_ITERATIONS,
+            1,
+            &CancellationToken::new(),
+            &ProgressSender::test_stub(),
             &mut |_q| {
                 count.set(count.get() + 1);
                 Ok((u64::MAX, PathBuf::from("t")))
@@ -414,8 +502,12 @@ mod tests {
         token.cancel();
         let count = std::cell::Cell::new(0u32);
         let result = binary_search_quality(
-            30, 95, MAX_SEARCH_ITERATIONS, 100,
-            &token, &ProgressSender::test_stub(),
+            30,
+            95,
+            MAX_SEARCH_ITERATIONS,
+            100,
+            &token,
+            &ProgressSender::test_stub(),
             &mut |_q| {
                 count.set(count.get() + 1);
                 Ok((1, PathBuf::from("t")))
@@ -430,8 +522,12 @@ mod tests {
         let token = CancellationToken::new();
         let count = std::cell::Cell::new(0u32);
         let result = binary_search_quality(
-            30, 95, MAX_SEARCH_ITERATIONS, 100,
-            &token, &ProgressSender::test_stub(),
+            30,
+            95,
+            MAX_SEARCH_ITERATIONS,
+            100,
+            &token,
+            &ProgressSender::test_stub(),
             &mut |_q| {
                 count.set(count.get() + 1);
                 if count.get() == 3 {
@@ -450,15 +546,18 @@ mod tests {
         let output = dir.path().join("out.jpg");
         fs::write(&input, b"tiny").unwrap();
 
-        let result = ImageProcessor.compress_to_target(
-            &input, &output, 200 * 1024,
-            &crate::settings::QualityFloors::default(),
-            CancellationToken::new(),
-            ProgressSender::test_stub(),
-            "/bin/false", // must never be invoked
-            &dir.path().join("tmp"),
-        )
-        .unwrap();
+        let result = ImageProcessor
+            .compress_to_target(
+                &input,
+                &output,
+                200 * 1024,
+                &crate::settings::QualityFloors::default(),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                "/bin/false", // must never be invoked
+                &dir.path().join("tmp"),
+            )
+            .unwrap();
 
         assert!(result.met_target);
         assert_eq!(result.strategy_used, "already-under-target");
@@ -531,17 +630,18 @@ esac
         // target 56320 (55 KB): quality search (always 100_000) fails; resizes
         // 0.9→90k, 0.8→80k, 0.7→70k, 0.6→60k all exceed 56320,
         // resize 0.5 → 50_000 fits
-        let result = ImageProcessor.compress_to_target(
-            &input,
-            &dir.path().join("out.jpg"),
-            55 * 1024,
-            &crate::settings::QualityFloors::default(),
-            CancellationToken::new(),
-            ProgressSender::test_stub(),
-            &fake,
-            &tmp,
-        )
-        .unwrap();
+        let result = ImageProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.jpg"),
+                55 * 1024,
+                &crate::settings::QualityFloors::default(),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &fake,
+                &tmp,
+            )
+            .unwrap();
 
         assert!(result.met_target);
         assert!(
@@ -550,6 +650,38 @@ esac
             result.strategy_used
         );
         assert_eq!(result.compressed_size, 50_000);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn png_output_skips_quality_search_and_fits_via_palette_dims() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = write_fake_vips(&dir.path()); // resize 0.6 → 60_000 B
+        let input = dir.path().join("in.png");
+        fs::write(&input, vec![0u8; 300 * 1024]).unwrap();
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        // target 60 KB: palette resize 0.9→0.7 fail, 0.6 → 60_000 ≤ 61_440
+        // fits; the quality phase must never run (pngsave has no lossy Q)
+        let result = ImageProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.png"),
+                60 * 1024,
+                &crate::settings::QualityFloors::default(),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &fake,
+                &tmp,
+            )
+            .unwrap();
+
+        assert!(result.met_target);
+        let strategy = &result.strategy_used;
+        assert!(strategy.contains("palette"), "got: {}", strategy);
+        assert!(strategy.contains("dims=60%"), "got: {}", strategy);
+        assert_eq!(result.compressed_size, 60_000);
     }
 
     #[test]
@@ -563,17 +695,18 @@ esac
         fs::create_dir_all(&tmp).unwrap();
 
         // target 10 KB: nothing ever fits (smallest possible = 50_000)
-        let result = ImageProcessor.compress_to_target(
-            &input,
-            &dir.path().join("out.jpg"),
-            10 * 1024,
-            &crate::settings::QualityFloors::default(),
-            CancellationToken::new(),
-            ProgressSender::test_stub(),
-            &fake,
-            &tmp,
-        )
-        .unwrap();
+        let result = ImageProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.jpg"),
+                10 * 1024,
+                &crate::settings::QualityFloors::default(),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &fake,
+                &tmp,
+            )
+            .unwrap();
 
         assert!(!result.met_target);
         assert!(result.strategy_used.contains("best-effort"));
