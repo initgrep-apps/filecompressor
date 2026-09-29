@@ -315,4 +315,46 @@ mod tests {
             text
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn sidecars_are_self_contained() {
+        let script = format!(
+            "{}/../scripts/audit-sidecars.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let out = std::process::Command::new("bash")
+            .arg(&script)
+            .output()
+            .expect("audit-sidecars.sh runs");
+        assert!(
+            out.status.success(),
+            "self-contained audit failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let summary = stdout
+            .lines()
+            .find(|line| line.starts_with("sidecar audit: PASS"))
+            .expect("audit PASS summary line present");
+        let counts = summary
+            .trim_start_matches("sidecar audit: PASS (")
+            .trim_end_matches(')');
+        let mut parts = counts.split(", ");
+        let binaries: usize = parts
+            .next()
+            .expect("binaries count present")
+            .trim_end_matches(" binaries")
+            .parse()
+            .expect("binaries count parses");
+        let dylibs: usize = parts
+            .next()
+            .expect("framework dylibs count present")
+            .trim_end_matches(" framework dylibs")
+            .parse()
+            .expect("framework dylibs count parses");
+        assert!(binaries > 0, "audit covered 0 binaries");
+        assert!(dylibs > 0, "audit covered 0 framework dylibs");
+    }
 }
