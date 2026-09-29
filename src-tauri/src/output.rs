@@ -1,14 +1,9 @@
 use std::path::{Path, PathBuf};
 
-fn path_is_free(path: &Path) -> bool {
-    match path.try_exists() {
-        Ok(false) => true,
-        Ok(true) => false,
-        Err(e) => {
-            eprintln!("output path check failed for {}: {e}", path.display());
-            false
-        }
-    }
+fn path_is_free(path: &Path) -> Result<bool, String> {
+    path.try_exists()
+        .map(|exists| !exists)
+        .map_err(|e| format!("cannot check {}: {e}", path.display()))
 }
 
 pub(crate) fn resolve_output_path(output_folder: &str, filename: &str) -> PathBuf {
@@ -40,31 +35,50 @@ pub(crate) fn resolve_output_path(output_folder: &str, filename: &str) -> PathBu
         }),
     };
 
-    let mut candidate = folder.join(filename);
+    let mut fs_broken = false;
 
-    if path_is_free(&candidate) {
-        return candidate;
-    }
-
-    for i in 1..1000 {
-        let name = if ext.is_empty() {
-            format!("{}-{}", stem, i)
-        } else {
-            format!("{}-{}.{}", stem, i, ext)
-        };
-        candidate = folder.join(name);
-        if path_is_free(&candidate) {
-            return candidate;
+    match path_is_free(&folder.join(filename)) {
+        Ok(true) => return folder.join(filename),
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("output path check failed, skipping collision loop: {e}");
+            fs_broken = true;
         }
     }
 
-    let overflow = if ext.is_empty() {
-        folder.join(format!("{}-overflow", stem))
-    } else {
-        folder.join(format!("{}-overflow.{}", stem, ext))
-    };
-    if path_is_free(&overflow) {
-        return overflow;
+    if !fs_broken {
+        for i in 1..1000 {
+            let name = if ext.is_empty() {
+                format!("{}-{}", stem, i)
+            } else {
+                format!("{}-{}.{}", stem, i, ext)
+            };
+            match path_is_free(&folder.join(&name)) {
+                Ok(true) => return folder.join(name),
+                Ok(false) => {}
+                Err(e) => {
+                    eprintln!("output path check failed, skipping collision loop: {e}");
+                    fs_broken = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if !fs_broken {
+        let overflow = if ext.is_empty() {
+            folder.join(format!("{}-overflow", stem))
+        } else {
+            folder.join(format!("{}-overflow.{}", stem, ext))
+        };
+        match path_is_free(&overflow) {
+            Ok(true) => return overflow,
+            Ok(false) => {}
+            Err(e) => {
+                eprintln!("output path check failed for overflow path: {e}");
+                fs_broken = true;
+            }
+        }
     }
 
     let unique = uuid::Uuid::new_v4().simple().to_string();
@@ -81,7 +95,7 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_no_collision() {
+    fn fresh_dir_returns_unchanged_filename() {
         let dir = tempdir().unwrap();
         let path = resolve_output_path(dir.path().to_str().unwrap(), "photo.jpg");
         assert_eq!(path.file_name().unwrap(), "photo.jpg");
@@ -133,6 +147,25 @@ mod tests {
         let name = path.file_name().unwrap().to_str().unwrap();
         assert!(name.starts_with("photo-overflow-"), "got: {}", name);
         assert!(name.ends_with(".jpg"), "got: {}", name);
+    }
+
+    #[test]
+    fn collision_overflow_taken_without_extension_returns_unique_nonexistent_path() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("README"), b"x").unwrap();
+        for i in 1..1000 {
+            std::fs::write(dir.path().join(format!("README-{}", i)), b"x").unwrap();
+        }
+        std::fs::write(dir.path().join("README-overflow"), b"x").unwrap();
+
+        let path = resolve_output_path(dir.path().to_str().unwrap(), "README");
+        assert!(
+            !path.exists(),
+            "returned path must not clobber an existing file, got: {}",
+            path.display()
+        );
+        let name = path.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("README-overflow-"), "got: {}", name);
     }
 
     #[test]

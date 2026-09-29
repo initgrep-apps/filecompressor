@@ -21,20 +21,18 @@ pub(crate) fn create_temp_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub(crate) fn cleanup_temp_dir(path: &Path) {
-    if path.exists() {
-        let _ = std::fs::remove_dir_all(path);
-    }
+    let _ = std::fs::remove_dir_all(path);
 }
 
 /// Removes entries under `app_temp` whose mtime is older than 24 hours.
 /// Directories are removed recursively; regular files with `remove_file`.
 /// `now` is injectable so the 24h boundary is testable without a Tauri harness.
 pub(crate) fn cleanup_stale_temp_files_in(app_temp: &Path, now: SystemTime) {
-    if !app_temp.exists() {
+    if matches!(app_temp.try_exists(), Ok(false)) {
         return;
     }
 
-    let entries = match std::fs::read_dir(app_temp) {
+    let mut entries = match std::fs::read_dir(app_temp) {
         Ok(entries) => entries,
         Err(e) => {
             eprintln!(
@@ -44,8 +42,18 @@ pub(crate) fn cleanup_stale_temp_files_in(app_temp: &Path, now: SystemTime) {
             return;
         }
     };
+    while let Some(entry) = entries.next() {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                eprintln!(
+                    "temp cleanup: cannot read next entry in {}: {e}",
+                    app_temp.display()
+                );
+                continue;
+            }
+        };
 
-    for entry in entries.flatten() {
         let path = entry.path();
 
         let metadata = match entry.metadata() {
@@ -136,6 +144,43 @@ mod tests {
         assert!(
             remaining.is_empty(),
             "no entries should appear: {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn cleanup_temp_dir_idempotent_after_removal() {
+        let parent = tempfile::tempdir().unwrap();
+        let session = parent.path().join("session");
+        fs::create_dir_all(session.join("nested")).unwrap();
+        fs::write(session.join("nested").join("attempt-1.jpg"), b"x").unwrap();
+
+        cleanup_temp_dir(&session);
+        assert!(!session.exists(), "session dir must be gone after cleanup");
+
+        cleanup_temp_dir(&session);
+        assert!(!session.exists(), "second cleanup is a no-op");
+
+        assert!(parent.path().exists(), "parent tempdir must survive");
+        let remaining: Vec<_> = fs::read_dir(parent.path()).unwrap().flatten().collect();
+        assert!(
+            remaining.is_empty(),
+            "second cleanup must not recreate anything: {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn cleanup_stale_temp_files_keeps_dir_with_future_mtime() {
+        let base = tempfile::tempdir().unwrap();
+        let future = base.path().join("future-session");
+        fs::create_dir_all(&future).unwrap();
+
+        let now = SystemTime::now();
+        set_age_secs(&future, now, -3_600);
+
+        cleanup_stale_temp_files_in(base.path(), now);
+        assert!(
+            future.exists(),
+            "future mtime must keep the dir (duration_since errs on negative)"
         );
     }
 
