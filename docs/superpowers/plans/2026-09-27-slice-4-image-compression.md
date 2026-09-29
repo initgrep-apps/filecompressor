@@ -480,7 +480,7 @@ git commit -m "feat: add output path collision handling + temp file management"
 **Required Tests:**
 - `compression_error_display_strings_match_spec_wording` — table test over all 7 variants asserting exact Display strings (spec §6 copy is user-facing; a refactor must not silently change UX wording)
 
-- [ ] **Step 1: Create engine/result.rs**
+- [x] **Step 1: Create engine/result.rs**
 
 ```rust
 use std::path::PathBuf;
@@ -543,7 +543,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Create engine/progress.rs**
+- [x] **Step 2: Create engine/progress.rs**
 
 Closure-based emitter — the seam that makes the whole engine testable without a Tauri harness (Task 4's `ProgressSender::test_stub()` depends on this):
 
@@ -581,7 +581,7 @@ impl ProgressSender {
 
 Payload field names are camelCase (`fileId`) per project convention (`#[serde(rename_all = "camelCase")]` for IPC structs, AGENTS.md) — the TS hook in Task 7 reads `e.payload.fileId`. (Spec §7 event table writes `file_id`; convention overrides the table.)
 
-- [ ] **Step 3: Create engine/processor.rs**
+- [x] **Step 3: Create engine/processor.rs**
 
 ```rust
 use std::path::Path;
@@ -609,7 +609,7 @@ pub trait CompressionProcessor: Send + Sync {
 }
 ```
 
-- [ ] **Step 4: Create engine/mod.rs**
+- [x] **Step 4: Create engine/mod.rs**
 
 ```rust
 pub mod processor;
@@ -621,14 +621,14 @@ pub use result::{CompressionResult, CompressionError};
 pub use progress::ProgressSender;
 ```
 
-- [ ] **Step 5: Add tokio-util dependency**
+- [x] **Step 5: Add tokio-util dependency**
 
 Add to `src-tauri/Cargo.toml`:
 ```toml
 tokio-util = "0.7"
 ```
 
-- [ ] **Step 6: Add tokio dependency (direct)**
+- [x] **Step 6: Add tokio dependency (direct)**
 
 Queue.rs (Task 5) uses `tokio::spawn` and `tokio::sync::mpsc`. Tauri does not re-export tokio, so add the direct dependency now:
 
@@ -636,17 +636,17 @@ Queue.rs (Task 5) uses `tokio::spawn` and `tokio::sync::mpsc`. Tauri does not re
 tokio = { version = "1", features = ["sync", "rt", "macros"] }
 ```
 
-- [ ] **Step 7: Register module in lib.rs**
+- [x] **Step 7: Register module in lib.rs**
 
 Add `mod engine;` to `src-tauri/src/lib.rs`.
 
-- [ ] **Step 8: Run tests**
+- [x] **Step 8: Run tests**
 
 ```bash
 cd src-tauri && cargo test engine::
 ```
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add -A
