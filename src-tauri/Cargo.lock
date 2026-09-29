@@ -980,6 +980,8 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-store",
  "tempfile",
+ "tokio",
+ "tokio-util",
  "uuid",
 ]
 
