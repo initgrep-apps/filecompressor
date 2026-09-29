@@ -6,6 +6,12 @@
 
 **Architecture:** Each new processor follows the same pattern as `ImageProcessor`: implement `CompressionProcessor` trait, bundle sidecar binary, register in `ProcessorRegistry`. The engine, job queue, and IPC events from Slice 4 are reused unchanged.
 
+## Global Constraints
+
+- **Every sidecar binary must be self-contained per platform** — never ship a binary that resolves dylibs from absolute non-system paths (e.g. `/opt/homebrew`). macOS: bundle transitive dylibs + rewrite load commands to `@rpath` via `scripts/bundle-vips-macos.sh` (extend per-engine as needed); Windows: official static builds; Linux: musl static or AppImage.
+- **Audit gate is part of the project gate** — `bash scripts/audit-sidecars.sh` must pass (invoked via the Rust test `sidecars_are_self_contained` in `src-tauri/src/sidecar.rs`, runs in `cargo test`); every new engine bundle step MUST re-run the audit and show PASS before commit.
+- **Bundled dylibs are committed** under `src-tauri/frameworks/` and wired via `bundle.macOS.frameworks` in `src-tauri/tauri.conf.json` (merge into existing keys, keep valid JSON).
+
 ## Slice Dependencies
 
 ```
@@ -138,7 +144,12 @@ processors.insert(Category::Pdf, Box::new(pdf_proc));
 
 - [ ] **Step 5: Bundle qpdf + gs sidecar binaries**
 
-Download qpdf and gs binaries for the current platform. Place in `src-tauri/binaries/` with target triple suffix. Add to `tauri.conf.json` `externalBin`:
+Download qpdf and gs binaries for the current platform. Place in `src-tauri/binaries/` with target triple suffix. **Self-contained requirement (Global Constraints):** macOS — run the dylib-bundling flow (collect transitive non-system dylibs into `src-tauri/frameworks/`, rewrite all load commands to `@rpath`, ad-hoc sign; pattern: `scripts/bundle-vips-macos.sh`) before commit; Windows: official static builds only; Linux: musl static or AppImage. Then run the audit and show PASS:
+
+```bash
+bash scripts/audit-sidecars.sh
+```
+Expected: `sidecar audit: PASS`. Add to `tauri.conf.json` `externalBin`:
 
 ```json
 "externalBin": [
@@ -206,6 +217,13 @@ Download from:
 - macOS: `evermeet.cx/ffmpeg/`
 - Windows: `github.com/BtbN/FFmpeg-Builds/releases`
 - Linux: `johnvansickle.com/ffmpeg/`
+
+**Self-contained requirement (Global Constraints):** macOS — collect transitive non-system dylibs into `src-tauri/frameworks/`, rewrite all load commands to `@rpath`, ad-hoc sign (pattern: `scripts/bundle-vips-macos.sh`); Windows: BtbN builds are static — verify; Linux: johnvansickle builds are static — verify. Then run the audit and show PASS:
+
+```bash
+bash scripts/audit-sidecars.sh
+```
+Expected: `sidecar audit: PASS`.
 
 Add to `tauri.conf.json` externalBin:
 ```json
