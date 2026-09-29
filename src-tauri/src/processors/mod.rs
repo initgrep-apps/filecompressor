@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 pub mod image;
+pub mod pdf;
 
 use std::collections::HashMap;
 
@@ -33,6 +34,7 @@ impl ProcessorRegistry {
             extension_map: HashMap::new(),
         };
         registry.register(Box::new(image::ImageProcessor::new()));
+        registry.register(Box::new(pdf::PdfProcessor::new()));
         registry
     }
 
@@ -79,10 +81,17 @@ mod tests {
     }
 
     #[test]
-    fn registry_lookup_returns_none_for_non_image_categories() {
+    fn registry_maps_pdf_extension_to_pdf_category() {
+        let registry = ProcessorRegistry::new();
+        assert_eq!(registry.lookup("pdf"), Some(Category::Pdf));
+        assert_eq!(registry.lookup("PDF"), Some(Category::Pdf));
+        assert!(registry.get_processor(Category::Pdf).is_some());
+    }
+
+    #[test]
+    fn registry_lookup_returns_none_for_unregistered_categories() {
         let registry = ProcessorRegistry::new();
         assert!(registry.get_processor(Category::Video).is_none());
-        assert!(registry.get_processor(Category::Pdf).is_none());
         assert!(registry.get_processor(Category::Document).is_none());
         assert!(registry.get_processor(Category::Other).is_none());
     }

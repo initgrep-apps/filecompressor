@@ -19,7 +19,9 @@ use std::path::{Path, PathBuf};
 use tokio_util::sync::CancellationToken;
 
 use crate::engine::result::STRATEGY_ALREADY_UNDER_TARGET;
-use crate::engine::{CompressionError, CompressionProcessor, CompressionResult, ProgressSender};
+use crate::engine::{
+    CompressionError, CompressionProcessor, CompressionResult, ProgressSender, SidecarPaths,
+};
 use crate::models::Category;
 use crate::settings::QualityFloors;
 
@@ -220,7 +222,7 @@ impl CompressionProcessor for ImageProcessor {
         quality_floor: &QualityFloors,
         cancel_token: CancellationToken,
         progress: ProgressSender,
-        sidecar_path: &str,
+        sidecar_paths: &SidecarPaths,
         temp_dir: &Path,
     ) -> Result<CompressionResult, CompressionError> {
         let input_size = std::fs::metadata(input)
@@ -243,6 +245,7 @@ impl CompressionProcessor for ImageProcessor {
 
         let ext = Self::get_output_extension(input);
         let min_quality = quality_floor.image.min_quality;
+        let sidecar_path = sidecar_paths.require("vips")?;
 
         // Distinct temp file per attempt — a later attempt must never
         // overwrite the file recorded as the best one.
@@ -389,6 +392,16 @@ impl CompressionProcessor for ImageProcessor {
 mod tests {
     use super::*;
     use std::fs;
+
+    fn sidecar_paths(path: &str) -> SidecarPaths {
+        SidecarPaths {
+            vips: Some(path.to_string()),
+            ffmpeg: None,
+            ffprobe: None,
+            gs: None,
+            qpdf: None,
+        }
+    }
 
     #[test]
     fn get_output_extension_maps_heic_heif_to_jpg() {
@@ -554,7 +567,7 @@ mod tests {
                 &crate::settings::QualityFloors::default(),
                 CancellationToken::new(),
                 ProgressSender::test_stub(),
-                "/bin/false", // must never be invoked
+                &sidecar_paths("/bin/false"),
                 &dir.path().join("tmp"),
             )
             .unwrap();
@@ -581,7 +594,7 @@ mod tests {
             &crate::settings::QualityFloors::default(),
             CancellationToken::new(),
             ProgressSender::test_stub(),
-            "/bin/false",
+            &sidecar_paths("/bin/false"),
             &dir.path().join("tmp"),
         );
         match result {
@@ -720,7 +733,7 @@ esac
                 &crate::settings::QualityFloors::default(),
                 CancellationToken::new(),
                 ProgressSender::test_stub(),
-                &fake,
+                &sidecar_paths(&fake),
                 &tmp,
             )
             .unwrap();
@@ -754,7 +767,7 @@ esac
                 &crate::settings::QualityFloors::default(),
                 CancellationToken::new(),
                 ProgressSender::test_stub(),
-                &fake,
+                &sidecar_paths(&fake),
                 &tmp,
             )
             .unwrap();
@@ -804,7 +817,7 @@ esac
                 &crate::settings::QualityFloors::default(),
                 CancellationToken::new(),
                 ProgressSender::test_stub(),
-                &fake,
+                &sidecar_paths(&fake),
                 &tmp,
             )
             .unwrap();
@@ -857,7 +870,7 @@ esac
                 &crate::settings::QualityFloors::default(),
                 CancellationToken::new(),
                 ProgressSender::test_stub(),
-                &sidecar,
+                &sidecar_paths(&sidecar),
                 &tmp,
             )
             .unwrap();

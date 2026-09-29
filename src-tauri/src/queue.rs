@@ -286,18 +286,19 @@ impl QueueState {
                     let output_filename = output_file_name(&entry.name);
                     let output_path = resolve_output_path(&output_folder, &output_filename);
 
-                    let run = match sidecar::get_sidecar_path(app, "vips") {
-                        Ok(sidecar_path) => processor.compress_to_target(
+                    let run = match sidecar::resolve_all_sidecar_paths() {
+                        Ok(sidecar_paths) => processor.compress_to_target(
                             std::path::Path::new(&entry.path),
                             &output_path,
                             entry.target_bytes,
                             &settings.quality_floors,
                             cancel_token,
                             progress,
-                            &sidecar_path,
+                            &sidecar_paths,
                             &temp_dir,
                         ),
-                        // get_sidecar_path already formats "Engine error: … not available"
+                        // current-exe resolution failures already carry the
+                        // "Engine error: …" wording
                         Err(e) => Err(CompressionError::Unknown(e)),
                     };
 
