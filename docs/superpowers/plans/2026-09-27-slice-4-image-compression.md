@@ -97,7 +97,7 @@ Also test-covered: `#[cfg(test)]` modules in sidecar.rs / output.rs / temp.rs, a
 - `sidecar_filename_errors_on_unsupported_platform` — `("solaris", "sparc")` → `Err` containing "Unsupported platform"
 - `sidecar_filename_includes_exe_suffix_on_windows` — `("windows", "x86_64")` → filename ends with `.exe`
 
-- [ ] **Step 1: Create sidecar.rs**
+- [x] **Step 1: Create sidecar.rs**
 
 ```rust
 use tauri::{AppHandle, Manager};
@@ -167,17 +167,17 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Register module in lib.rs**
+- [x] **Step 2: Register module in lib.rs**
 
 Add `mod sidecar;` to `src-tauri/src/lib.rs`.
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 ```bash
 cd src-tauri && cargo test sidecar
 ```
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
