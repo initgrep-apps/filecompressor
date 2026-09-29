@@ -79,6 +79,8 @@ pub(crate) fn get_sidecar_path(app: &AppHandle, name: &str) -> Result<String, St
 mod tests {
     use super::*;
 
+    const EXTERNAL_BIN: &str = "binaries/vips";
+
     #[test]
     fn target_triple_returns_triple_per_platform() {
         assert_eq!(
@@ -256,8 +258,8 @@ mod tests {
             .as_array()
             .expect("bundle.externalBin array");
         assert!(
-            bins.iter().any(|b| b.as_str() == Some("binaries/vips")),
-            "externalBin must list binaries/vips, got: {:?}",
+            bins.iter().any(|b| b.as_str() == Some(EXTERNAL_BIN)),
+            "externalBin must list {EXTERNAL_BIN}, got: {:?}",
             bins
         );
     }
@@ -267,11 +269,50 @@ mod tests {
     fn sidecar_binary_exists_for_current_target_triple() {
         let manifest = env!("CARGO_MANIFEST_DIR");
         let filename = sidecar_filename("vips").unwrap();
-        let path = format!("{}/binaries/{}", manifest, filename);
+        let (dir, name) = EXTERNAL_BIN.rsplit_once('/').unwrap();
+        assert_eq!(name, "vips", "EXTERNAL_BIN must name the vips sidecar");
+        let path = format!("{}/{}/{}", manifest, dir, filename);
+        let bin = std::path::Path::new(&path);
         assert!(
-            std::path::Path::new(&path).exists(),
+            bin.exists(),
             "sidecar missing at {} — run Task 6 Step 1",
             path
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(bin).unwrap().permissions().mode();
+            assert!(
+                mode & 0o111 != 0,
+                "sidecar at {} is not executable (mode {:o})",
+                path,
+                mode
+            );
+        }
+
+        let output = std::process::Command::new(bin)
+            .arg("--version")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .expect("spawn sidecar --version");
+        assert!(
+            output.status.success(),
+            "sidecar --version failed at {}: {}",
+            path,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            text.contains("vips"),
+            "sidecar --version output did not mention vips at {}: {}",
+            path,
+            text
         );
     }
 }
