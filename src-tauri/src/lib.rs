@@ -20,12 +20,15 @@ mod engine;
 mod models;
 mod output;
 mod processors;
+mod queue;
 mod settings;
 mod sidecar;
 mod temp;
 
 use commands::FileListState;
+use queue::QueueState;
 use std::sync::Mutex;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -34,6 +37,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .manage(FileListState(Mutex::new(Vec::new())))
+        .setup(|app| {
+            let handle = app.handle().clone();
+            app.manage(QueueState::new(handle));
+            temp::cleanup_stale_temp_files(app.handle());
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::add_files,
             commands::remove_file,
@@ -41,6 +50,10 @@ pub fn run() {
             commands::get_settings,
             commands::save_settings,
             commands::reset_settings,
+            commands::compress_all,
+            commands::cancel_file,
+            commands::cancel_all,
+            commands::reveal_in_folder,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

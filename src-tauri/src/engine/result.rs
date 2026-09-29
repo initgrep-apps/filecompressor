@@ -27,6 +27,12 @@ pub struct CompressionResult {
     pub strategy_used: String,
 }
 
+impl CompressionResult {
+    pub fn is_already_under_target(&self) -> bool {
+        self.strategy_used == STRATEGY_ALREADY_UNDER_TARGET
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum CompressionError {
     Cancelled,

@@ -1317,7 +1317,7 @@ git commit -m "feat: implement ImageProcessor with vips binary search"
 - `output_file_name_handles_name_without_extension`
 - Queue orchestration (sequential order, mid-batch cancel, preflight) is verified via Task 7 hook tests + Task 8 manual acceptance — direct unit testing requires a Tauri harness (documented limitation)
 
-- [ ] **Step 1: Create queue.rs**
+- [x] **Step 1: Create queue.rs**
 
 ```rust
 use std::collections::HashMap;
@@ -1703,7 +1703,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Add commands for compress/cancel/reveal**
+- [x] **Step 2: Add commands for compress/cancel/reveal**
 
 Add to `src-tauri/src/commands.rs`:
 
@@ -1760,7 +1760,7 @@ pub fn reveal_in_folder(file_path: String, app: AppHandle) -> Result<(), String>
 
 Uses the already-installed `tauri-plugin-opener` (`reveal_item_in_dir` reveals the file in the OS file manager). No shell plugin, no new capabilities — `opener:default` is already granted.
 
-- [ ] **Step 3: Register queue + new commands in lib.rs**
+- [x] **Step 3: Register queue + new commands in lib.rs**
 
 Update `src-tauri/src/lib.rs` — **keeps** the opener plugin and graceful startup:
 
@@ -1813,11 +1813,11 @@ pub fn run() {
 }
 ```
 
-- [ ] **Step 4: Verify capabilities unchanged**
+- [x] **Step 4: Verify capabilities unchanged**
 
 `src-tauri/capabilities/default.json` already contains `opener:default` — confirm it is still there; add nothing (no shell plugin).
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```bash
 cd src-tauri && cargo test queue::
@@ -1825,7 +1825,7 @@ cd src-tauri && cargo test queue::
 
 Expected: `decide_result_status` (3) + `output_file_name` (3) tests pass.
 
-- [ ] **Step 6: Verify compilation**
+- [x] **Step 6: Verify compilation**
 
 ```bash
 yarn tauri dev
@@ -1833,7 +1833,7 @@ yarn tauri dev
 
 Expected: App launches without errors.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A

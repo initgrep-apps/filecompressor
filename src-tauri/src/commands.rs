@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::models::{Category, FileEntry};
+use crate::models::{Category, FileEntry, FileStatus};
 use std::sync::Mutex;
 use tauri::State;
 use tauri_plugin_store::StoreExt;
@@ -167,6 +167,73 @@ pub fn clear_list(state: State<FileListState>) {
         e.into_inner()
     });
     clear_list_core(&mut list)
+}
+
+#[tauri::command]
+pub fn compress_all(
+    app: tauri::AppHandle,
+    state: State<'_, FileListState>,
+    queue: State<'_, crate::queue::QueueState>,
+) -> String {
+    let list = state.0.lock().unwrap_or_else(|e| {
+        eprintln!("warn: file list mutex was poisoned, recovering: {e}");
+        e.into_inner()
+    });
+    let pending_ids: Vec<String> = list
+        .iter()
+        .filter(|e| e.status == FileStatus::Pending)
+        .map(|e| e.id.clone())
+        .collect();
+    drop(list);
+
+    // Empty batch: no work to queue — skip preflight/worker round-trip
+    if pending_ids.is_empty() {
+        return String::new();
+    }
+
+    let batch_id = uuid::Uuid::new_v4().to_string();
+    queue.start_batch(&app, batch_id.clone(), pending_ids);
+    batch_id
+}
+
+#[tauri::command]
+pub fn cancel_file(
+    app: tauri::AppHandle,
+    file_id: String,
+    state: State<'_, FileListState>,
+    queue: State<'_, crate::queue::QueueState>,
+) {
+    queue.cancel_file(&file_id);
+    // Not-yet-started file has no token — mark Cancelled so the worker skips it
+    let cancelled = {
+        let mut list = state.0.lock().unwrap_or_else(|e| {
+            eprintln!("warn: file list mutex was poisoned, recovering: {e}");
+            e.into_inner()
+        });
+        match list.iter_mut().find(|e| e.id == file_id) {
+            Some(e) if e.status == FileStatus::Pending => {
+                e.status = FileStatus::Cancelled;
+                true
+            }
+            _ => false,
+        }
+    };
+    if cancelled {
+        crate::queue::emit_file_cancelled(&app, &file_id);
+    }
+}
+
+#[tauri::command]
+pub fn cancel_all(queue: State<'_, crate::queue::QueueState>) {
+    queue.cancel_all();
+}
+
+#[tauri::command]
+pub fn reveal_in_folder(file_path: String, app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .reveal_item_in_dir(&file_path)
+        .map_err(|e| format!("Could not reveal file {}: {}", file_path, e))
 }
 
 #[cfg(test)]
