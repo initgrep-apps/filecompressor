@@ -12,13 +12,18 @@
 # 3. Adds rpaths for both layouts: bundled (Contents/MacOS → ../Frameworks)
 #    and dev (src-tauri/target/<profile> → ../../frameworks).
 # 4. Ad-hoc signs everything (install_name_tool invalidates signatures).
-# Re-runnable: already-bundled state is detected and left untouched (the
+# Re-runnable: when the sidecars are already self-contained, collection and
+# install-id rewriting of committed dylibs is skipped, but load commands and
+# rpaths are still re-verified and everything is re-signed on every run (the
 # audit verifies final state). Basename collisions between distinct dylibs
 # abort with a fingerprint mismatch instead of silently unifying.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/src-tauri/binaries"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=sidecar-bundle.common.sh
+source "$SCRIPT_DIR/sidecar-bundle.common.sh"
+
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FRAMEWORKS="$ROOT/src-tauri/frameworks"
 TRIPLE="$(rustc -Vv | grep '^host:' | sed 's/host: //')"
 ENGINES=("$ROOT/src-tauri/binaries/qpdf-$TRIPLE" "$ROOT/src-tauri/binaries/gs-$TRIPLE")
@@ -28,26 +33,14 @@ for sidecar in "${ENGINES[@]}"; do
 done
 [ "$(uname)" = "Darwin" ] || { printf 'FAIL macOS only\n'; exit 1; }
 
-system_path() {
-  case "$1" in
-    /usr/lib/system/*|/System/Library/*|/usr/lib/*|@*) return 0 ;;
-    /*) return 1 ;;
-    *) return 0 ;;
-  esac
-}
-
-fingerprint() {
-  {
-    otool -D "$1" | tail -n +2 | awk '{print $1}' | awk -F/ '{print $NF}'
-    otool -L "$1" | tail -n +2 | awk '{print $1}' | awk -F/ '{print $NF}' | sort -u
-  } | sort -u
-}
-
 find_in_brew() {
   local base="$1" hit
   for prefix in /opt/homebrew /usr/local; do
     for hit in "$prefix"/opt/*/lib/"$base" "$prefix"/lib/"$base"; do
-      [ -f "$hit" ] && { printf '%s\n' "$hit"; return 0; }
+      [ -f "$hit" ] || continue
+      printf 'note: resolved %s from brew: %s\n' "$base" "$hit" >&2
+      printf '%s\n' "$hit"
+      return 0
     done
   done
   return 1
@@ -77,7 +70,6 @@ collect_deps_of() {
     case "$dep" in
       @rpath/*)
         depbase="${dep#@rpath/}"
-        [ -f "$FRAMEWORKS/$depbase" ] && continue
         found=""
         while IFS= read -r rp; do
           [ -z "$rp" ] && continue
@@ -91,6 +83,10 @@ collect_deps_of() {
         done < <(otool -l "$src" | grep -A3 LC_RPATH | awk '$1 == "path" {print $2}')
         if [ -z "$found" ]; then
           found="$(find_in_brew "$depbase")" || {
+            if [ -f "$FRAMEWORKS/$depbase" ]; then
+              printf 'FAIL %s is in frameworks but cannot be re-resolved to fingerprint from %s — restore both binaries and frameworks/ from git\n' "$dep" "$src"
+              exit 1
+            fi
             printf 'FAIL cannot resolve %s (dep of %s)\n' "$dep" "$src"
             exit 1
           }
@@ -100,24 +96,6 @@ collect_deps_of() {
       /*) system_path "$dep" || collect "$dep" ;;
     esac
   done
-}
-
-rewrite() {
-  local file="$1"
-  chmod u+w "$file"
-  for dep in $(otool -L "$file" | tail -n +2 | awk '{print $1}'); do
-    system_path "$dep" || install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$file"
-  done
-}
-
-has_rpath() {
-  local file="$1" rpath="$2"
-  otool -l "$file" | awk -v p="$rpath" '$1 == "path" && $2 == p { found = 1 } END { exit !found }'
-}
-
-ensure_rpath() {
-  local file="$1" rpath="$2"
-  has_rpath "$file" "$rpath" || install_name_tool -add_rpath "$rpath" "$file"
 }
 
 needs_bundle=0
@@ -130,6 +108,15 @@ for sidecar in "${ENGINES[@]}"; do
     esac
   done
 done
+
+if [ "$needs_bundle" -eq 0 ]; then
+  # Sidecars already rewritten but the committed frameworks/ dylibs are
+  # missing — the bundle would abort on @rpath deps at load time.
+  if [ ! -d "$FRAMEWORKS" ] || ! ls "$FRAMEWORKS"/*.dylib >/dev/null 2>&1; then
+    printf 'FAIL sidecars already rewritten but frameworks/ missing — restore both from git\n'
+    exit 1
+  fi
+fi
 
 if [ "$needs_bundle" -eq 1 ]; then
   for sidecar in "${ENGINES[@]}"; do

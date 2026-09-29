@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn tauri_conf_json_lists_vips_as_external_bin() {
+    fn tauri_conf_json_lists_all_sidecar_engines_as_external_bin() {
         let manifest = env!("CARGO_MANIFEST_DIR");
         let conf = std::fs::read_to_string(format!("{}/tauri.conf.json", manifest))
             .expect("tauri.conf.json readable from src-tauri");
@@ -300,23 +300,7 @@ mod tests {
         let bins = value["bundle"]["externalBin"]
             .as_array()
             .expect("bundle.externalBin array");
-        assert!(
-            bins.iter().any(|b| b.as_str() == Some(EXTERNAL_BIN)),
-            "externalBin must list {EXTERNAL_BIN}, got: {:?}",
-            bins
-        );
-    }
-
-    #[test]
-    fn tauri_conf_json_lists_qpdf_and_gs_as_external_bin() {
-        let manifest = env!("CARGO_MANIFEST_DIR");
-        let conf = std::fs::read_to_string(format!("{}/tauri.conf.json", manifest))
-            .expect("tauri.conf.json readable from src-tauri");
-        let value: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
-        let bins = value["bundle"]["externalBin"]
-            .as_array()
-            .expect("bundle.externalBin array");
-        for required in ["binaries/qpdf", "binaries/gs"] {
+        for required in ["binaries/vips", "binaries/qpdf", "binaries/gs"] {
             assert!(
                 bins.iter().any(|b| b.as_str() == Some(required)),
                 "externalBin must list {required}, got: {:?}",

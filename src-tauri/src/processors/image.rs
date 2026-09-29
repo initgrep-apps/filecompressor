@@ -20,7 +20,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::engine::result::STRATEGY_ALREADY_UNDER_TARGET;
 use crate::engine::{
-    CompressionError, CompressionProcessor, CompressionResult, ProgressSender, SidecarPaths,
+    BestAttempt, CompressionError, CompressionProcessor, CompressionResult, ProgressSender,
+    SidecarName, SidecarPaths,
 };
 use crate::models::Category;
 use crate::settings::QualityFloors;
@@ -245,7 +246,7 @@ impl CompressionProcessor for ImageProcessor {
 
         let ext = Self::get_output_extension(input);
         let min_quality = quality_floor.image.min_quality;
-        let sidecar_path = sidecar_paths.require("vips")?;
+        let sidecar_path = sidecar_paths.require(SidecarName::Vips)?;
 
         // Distinct temp file per attempt — a later attempt must never
         // overwrite the file recorded as the best one.
@@ -286,7 +287,7 @@ impl CompressionProcessor for ImageProcessor {
 
         // Smallest over-target attempt across quality search + dims search —
         // the best-effort fallback (spec §5 step 7).
-        let mut smallest: Option<(u32, u64, PathBuf)> = None;
+        let mut smallest: Option<BestAttempt> = None;
         let mut attempt_n: u32 = 0;
 
         // PNG: pngsave has no lossy Q, so the quality search would only spawn
@@ -306,10 +307,16 @@ impl CompressionProcessor for ImageProcessor {
                 &mut |q| {
                     let r = attempt(attempt_n, q, None)?;
                     attempt_n += 1;
-                    if r.0 > target_bytes
-                        && smallest.as_ref().map(|(_, s, _)| r.0 < *s).unwrap_or(true)
-                    {
-                        smallest = Some((q, r.0, r.1.clone()));
+                    if r.0 > target_bytes {
+                        BestAttempt::keep_smaller_in(
+                            &mut smallest,
+                            BestAttempt {
+                                size: r.0,
+                                path: r.1.clone(),
+                                strategy: format!("quality={}", q),
+                                quality: q,
+                            },
+                        );
                     }
                     Ok(r)
                 },
@@ -357,28 +364,31 @@ impl CompressionProcessor for ImageProcessor {
                     strategy_used,
                 });
             }
-            if smallest.as_ref().map(|(_, s, _)| r.0 < *s).unwrap_or(true) {
-                smallest = Some((min_quality, r.0, r.1));
+            if r.0 > target_bytes {
+                BestAttempt::keep_smaller_in(
+                    &mut smallest,
+                    BestAttempt {
+                        size: r.0,
+                        path: r.1.clone(),
+                        strategy: format!("quality={}", min_quality),
+                        quality: min_quality,
+                    },
+                );
             }
             scale_percent -= 10;
         }
 
         // Phase 3: best effort — smallest attempt wins (spec §5 step 7)
-        if let Some((quality, size, path)) = smallest {
-            std::fs::copy(&path, output)
+        if let Some(best) = smallest {
+            std::fs::copy(&best.path, output)
                 .map_err(|e| CompressionError::OutputFileError(e.to_string()))?;
             progress.send_progress(100);
-            let strategy_used = if png_output {
-                "palette,best-effort".to_string()
-            } else {
-                format!("quality={},best-effort", quality)
-            };
             return Ok(CompressionResult {
                 output_path: output.to_path_buf(),
-                compressed_size: size,
-                quality_used: quality,
+                compressed_size: best.size,
+                quality_used: best.quality,
                 met_target: false,
-                strategy_used,
+                strategy_used: format!("{},best-effort", best.strategy),
             });
         }
 
@@ -567,7 +577,7 @@ mod tests {
                 &crate::settings::QualityFloors::default(),
                 CancellationToken::new(),
                 ProgressSender::test_stub(),
-                &sidecar_paths("/bin/false"),
+                &sidecar_paths("/bin/false"), // must never be invoked
                 &dir.path().join("tmp"),
             )
             .unwrap();
@@ -576,6 +586,47 @@ mod tests {
         assert_eq!(result.strategy_used, "already-under-target");
         assert_eq!(result.compressed_size, 4);
         assert_eq!(fs::read(&output).unwrap(), b"tiny");
+    }
+
+    #[test]
+    fn missing_vips_fails_fast_without_temp_litter() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in.jpg");
+        fs::write(&input, vec![0u8; 300 * 1024]).unwrap();
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        let result = ImageProcessor.compress_to_target(
+            &input,
+            &dir.path().join("out.jpg"),
+            200 * 1024,
+            &crate::settings::QualityFloors::default(),
+            CancellationToken::new(),
+            ProgressSender::test_stub(),
+            &SidecarPaths {
+                vips: None,
+                ffmpeg: None,
+                ffprobe: None,
+                gs: None,
+                qpdf: None,
+            },
+            &tmp,
+        );
+        match result {
+            Err(e) => {
+                assert!(
+                    matches!(e, CompressionError::SidecarNotFound(ref n) if n == "vips"),
+                    "expected SidecarNotFound(vips), got {:?}",
+                    e
+                );
+            }
+            Ok(r) => panic!("missing vips must fail, got {:?}", r.strategy_used),
+        }
+        assert_eq!(
+            fs::read_dir(&tmp).unwrap().count(),
+            0,
+            "no attempt files may be written when the engine is missing"
+        );
     }
 
     #[test]

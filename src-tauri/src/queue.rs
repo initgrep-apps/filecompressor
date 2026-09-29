@@ -237,7 +237,7 @@ impl QueueState {
 
             let result = match registry.get_processor(entry.category) {
                 None => {
-                    // No processor registered (Video/Pdf/Document in this slice):
+                    // No processor registered (Video/Document in this slice):
                     // skip as Unsupported — NOT Failed (spec §3/§6)
                     {
                         let mut list = poison_recover(state.0.lock());
@@ -297,8 +297,14 @@ impl QueueState {
                             &sidecar_paths,
                             &temp_dir,
                         ),
-                        // current-exe resolution failures already carry the
-                        // "Engine error: …" wording
+                        // resolve_all_sidecar_paths already carries the
+                        // "Engine error: …" wording; Unknown only re-labels
+                        // pre-formatted text. A portable test trigger is
+                        // hard: happy-path exe dirs always resolve, and
+                        // simulating a broken current_exe() (no parent dir,
+                        // non-UTF-8 cwd) is not feasible from a spawned test
+                        // binary — the failure shape is pinned indirectly via
+                        // sidecar.rs resolve/resolve_for unit tests.
                         Err(e) => Err(CompressionError::Unknown(e)),
                     };
 
