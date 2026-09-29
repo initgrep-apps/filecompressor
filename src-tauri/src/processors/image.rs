@@ -595,9 +595,79 @@ mod tests {
         }
     }
 
+    /// Writes a fake sidecar that prints >STDERR_TAIL_CHARS chars to stderr
+    /// ("HEAD_START" + 585 filler + "TAIL_END") and exits 1 — lets the
+    /// tail-truncation and cancelled-beats-exit-code branches of
+    /// wait_sidecar be pinned without vips.
+    #[cfg(unix)]
+    fn write_stderr_chatter_failer(dir: &Path) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("chatty-fail");
+        let script =
+            "#!/bin/bash\nprintf 'HEAD_START%0585d' 0 >&2\nprintf 'TAIL_END\\n' >&2\nexit 1\n";
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().to_string()
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn wait_sidecar_reports_truncated_stderr_tail_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = write_stderr_chatter_failer(&dir.path());
+        let child = std::process::Command::new(&fake)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let result = ImageProcessor::wait_sidecar(child, "vips", &CancellationToken::new());
+        match result {
+            Err(CompressionError::SidecarFailed(msg)) => {
+                assert!(msg.contains("exited with code Some(1)"), "msg: {}", msg);
+                assert!(
+                    msg.contains("TAIL_END"),
+                    "last ~500 chars must be retained: {}",
+                    msg
+                );
+                assert!(
+                    !msg.contains("HEAD_START"),
+                    "head beyond 500 chars must be truncated: {}",
+                    msg
+                );
+            }
+            other => panic!("expected SidecarFailed, got {:?}", other.map(|_| ())),
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn wait_sidecar_cancelled_beats_exit_code() {
+        if !Path::new("/bin/false").exists() {
+            return;
+        }
+        let token = CancellationToken::new();
+        token.cancel();
+        let child = std::process::Command::new("/bin/false")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let result = ImageProcessor::wait_sidecar(child, "vips", &token);
+        assert!(
+            matches!(result, Err(CompressionError::Cancelled)),
+            "cancelled must beat the exit code, got {:?}",
+            result.err().map(|e| e.to_string())
+        );
+    }
+
     /// Writes a deterministic bash fake of the vips CLI:
     /// `copy IN OUT[opts]`         → file of exactly 100_000 bytes
     /// `resize IN OUT[opts] SCALE` → file of exactly 100_000 * SCALE bytes
+    /// Every invocation appends `op|save-string` to `invocations.log` next to
+    /// the script (lets tests observe which ops ran and pin the save string);
+    /// any `.png` save whose options lack `palette` fails with exit 1.
     /// Lets the dims-reduction + best-effort paths be tested end-to-end
     /// without libvips. Skipped on non-unix (needs bash + chmod).
     #[cfg(unix)]
@@ -606,7 +676,19 @@ mod tests {
         let path = dir.join("fake-vips");
         let script = r#"#!/bin/bash
 op="$1"; out="$3"
+echo "$op|$3" >> "$(dirname "$0")/invocations.log"
 base="${out%%\[*}"
+case "$op" in
+  copy|resize)
+    case "$base" in
+      *.png)
+        opts="${out#*\[}"; opts="${opts%\]}"
+        case ",$opts," in
+          *",palette,"*) ;;
+          *) echo "png save without palette: $out" >&2; exit 1 ;;
+        esac ;;
+    esac ;;
+esac
 case "$op" in
   copy)   head -c 100000 /dev/zero > "$base" ;;
   resize) head -c "$(awk -v s="$4" 'BEGIN { printf "%d", 100000 * s }')" /dev/zero > "$base" ;;
@@ -682,6 +764,25 @@ esac
         assert!(strategy.contains("palette"), "got: {}", strategy);
         assert!(strategy.contains("dims=60%"), "got: {}", strategy);
         assert_eq!(result.compressed_size, 60_000);
+
+        let log = fs::read_to_string(dir.path().join("invocations.log")).unwrap();
+        let lines: Vec<&str> = log.lines().collect();
+        assert!(!lines.is_empty(), "fake sidecar was never invoked");
+        assert!(
+            lines.iter().all(|l| !l.starts_with("copy|")),
+            "quality phase ran for png — short-circuit regressed: {:?}",
+            lines
+        );
+        for line in &lines {
+            let save_string = line.split_once('|').expect("log line format").1;
+            let opts = save_string.split_once('[').expect("save string options").1;
+            let opts = opts.strip_suffix(']').expect("closing bracket");
+            assert!(
+                opts.contains("palette") && opts.contains("strip"),
+                "save string missing palette/strip: {}",
+                line
+            );
+        }
     }
 
     #[test]
