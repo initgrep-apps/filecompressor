@@ -697,7 +697,7 @@ git commit -m "feat: add CompressionProcessor trait + engine types"
 - `unachievable_returns_best_effort_with_smallest_attempt` — fake sidecar, nothing fits → smallest attempt copied, `met_target: false`
 - `sidecar_nonzero_exit_marks_job_failed_with_exit_code` — fake sidecar `/bin/false` (cfg unix)
 
-- [ ] **Step 1: Create processors/mod.rs**
+- [x] **Step 1: Create processors/mod.rs**
 
 ```rust
 pub mod image;
@@ -758,7 +758,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Create processors/image.rs**
+- [x] **Step 2: Create processors/image.rs**
 
 ```rust
 use std::path::{Path, PathBuf};
@@ -1258,17 +1258,17 @@ esac
 
 Fake-sidecar tests note: `quality_floor_reached_triggers_dimension_reduction` proves the dims loop runs only after the full quality search fails (copy always emits 100 000 B > 60 KB target), and `unachievable_returns_best_effort_with_smallest_attempt` pins the "smallest wins" rule — the last quality attempt is Q≈33-ish at 100 000 B while the winning attempt is the 0.5-scale 50 000 B file.
 
-- [ ] **Step 3: Register module in lib.rs**
+- [x] **Step 3: Register module in lib.rs**
 
 Add `mod processors;` to `src-tauri/src/lib.rs`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 cd src-tauri && cargo test processors::
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
