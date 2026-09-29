@@ -59,20 +59,42 @@ fn resolve_sidecar_path(path: &std::path::Path, name: &str) -> Result<String, St
         .map(|s| s.to_string())
 }
 
-fn get_sidecar_path_from(resource_dir: &std::path::Path, name: &str) -> Result<String, String> {
-    let filename = sidecar_filename(name)?;
-    let path = resource_dir.join(&filename);
+fn sidecar_candidates(exe_dir: &std::path::Path, name: &str) -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(filename) = sidecar_filename(name) {
+        candidates.push(exe_dir.join(&filename));
+    }
+    candidates.push(exe_dir.join(name));
+    candidates
+}
 
-    resolve_sidecar_path(&path, name)
+fn resolve_sidecar_candidate(exe_dir: &std::path::Path, name: &str) -> Result<String, String> {
+    let mut first_error: Option<String> = None;
+
+    for path in sidecar_candidates(exe_dir, name) {
+        match resolve_sidecar_path(&path, name) {
+            Ok(resolved) => return Ok(resolved),
+            Err(e) => {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
+        }
+    }
+
+    Err(first_error.unwrap_or_else(|| {
+        format!("Engine error: {} not available", name)
+    }))
 }
 
 pub(crate) fn get_sidecar_path(app: &AppHandle, name: &str) -> Result<String, String> {
-    let resource_path = app
-        .path()
-        .resolve("binaries", tauri::path::BaseDirectory::Resource)
-        .map_err(|e| format!("Failed to resolve binaries dir: {}", e))?;
+    let exe_path = std::env::current_exe()
+        .map_err(|e| format!("Engine error: failed to resolve executable path: {}", e))?;
+    let exe_dir = exe_path
+        .parent()
+        .ok_or_else(|| "Engine error: executable has no parent directory".to_string())?;
 
-    get_sidecar_path_from(&resource_path, name)
+    resolve_sidecar_candidate(exe_dir, name)
 }
 
 #[cfg(test)]
@@ -203,13 +225,29 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_candidates_prefer_triple_then_plain_name() {
+        let dir = std::path::PathBuf::from("/opt/engine");
+        let candidates = sidecar_candidates(&dir, "vips");
+
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(
+            candidates[0],
+            std::path::PathBuf::from("/opt/engine/vips-aarch64-apple-darwin")
+        );
+        assert_eq!(
+            candidates[1],
+            std::path::PathBuf::from("/opt/engine/vips")
+        );
+    }
+
+    #[test]
     fn get_sidecar_path_from_returns_path_for_existing_sidecar() {
         let dir = tempfile::TempDir::new().unwrap();
         let full = dir.path().join(sidecar_filename("vips").unwrap());
         std::fs::write(&full, b"stub").unwrap();
 
         assert_eq!(
-            get_sidecar_path_from(dir.path(), "vips").unwrap(),
+            resolve_sidecar_candidate(dir.path(), "vips").unwrap(),
             full.to_str().unwrap()
         );
     }
@@ -218,7 +256,7 @@ mod tests {
     fn get_sidecar_path_from_returns_spec_error_for_missing_sidecar() {
         let dir = tempfile::TempDir::new().unwrap();
 
-        let err = get_sidecar_path_from(dir.path(), "vips").unwrap_err();
+        let err = resolve_sidecar_candidate(dir.path(), "vips").unwrap_err();
         assert_eq!(err, "Engine error: vips not available");
     }
 
