@@ -19,10 +19,14 @@ fn exe_suffix(os: &str) -> &'static str {
     }
 }
 
-pub(crate) fn sidecar_filename(name: &str) -> Result<String, String> {
-    let target_triple = target_triple(std::env::consts::OS, std::env::consts::ARCH)?;
-    let suffix = exe_suffix(std::env::consts::OS);
+pub(crate) fn sidecar_filename_for(os: &str, arch: &str, name: &str) -> Result<String, String> {
+    let target_triple = target_triple(os, arch)?;
+    let suffix = exe_suffix(os);
     Ok(format!("{}-{}{}", name, target_triple, suffix))
+}
+
+pub(crate) fn sidecar_filename(name: &str) -> Result<String, String> {
+    sidecar_filename_for(std::env::consts::OS, std::env::consts::ARCH, name)
 }
 
 fn resolve_sidecar_path(path: &std::path::Path, name: &str) -> Result<String, String> {
@@ -55,16 +59,20 @@ fn resolve_sidecar_path(path: &std::path::Path, name: &str) -> Result<String, St
         .map(|s| s.to_string())
 }
 
+fn get_sidecar_path_from(resource_dir: &std::path::Path, name: &str) -> Result<String, String> {
+    let filename = sidecar_filename(name)?;
+    let path = resource_dir.join(&filename);
+
+    resolve_sidecar_path(&path, name)
+}
+
 pub(crate) fn get_sidecar_path(app: &AppHandle, name: &str) -> Result<String, String> {
     let resource_path = app
         .path()
         .resolve("binaries", tauri::path::BaseDirectory::Resource)
         .map_err(|e| format!("Failed to resolve binaries dir: {}", e))?;
 
-    let filename = sidecar_filename(name)?;
-    let path = resource_path.join(&filename);
-
-    resolve_sidecar_path(&path, name)
+    get_sidecar_path_from(&resource_path, name)
 }
 
 #[cfg(test)]
@@ -127,6 +135,38 @@ mod tests {
     }
 
     #[test]
+    fn sidecar_filename_for_returns_exact_name_per_platform() {
+        assert_eq!(
+            sidecar_filename_for("macos", "aarch64", "vips"),
+            Ok("vips-aarch64-apple-darwin".to_string())
+        );
+        assert_eq!(
+            sidecar_filename_for("macos", "x86_64", "vips"),
+            Ok("vips-x86_64-apple-darwin".to_string())
+        );
+        assert_eq!(
+            sidecar_filename_for("windows", "x86_64", "vips"),
+            Ok("vips-x86_64-pc-windows-msvc.exe".to_string())
+        );
+        assert_eq!(
+            sidecar_filename_for("linux", "x86_64", "vips"),
+            Ok("vips-x86_64-unknown-linux-gnu".to_string())
+        );
+        assert_eq!(
+            sidecar_filename_for("linux", "aarch64", "vips"),
+            Ok("vips-aarch64-unknown-linux-gnu".to_string())
+        );
+    }
+
+    #[test]
+    fn sidecar_filename_for_errors_on_unsupported_platform() {
+        assert_eq!(
+            sidecar_filename_for("solaris", "sparc", "vips"),
+            Err("Unsupported platform: solaris sparc".to_string())
+        );
+    }
+
+    #[test]
     fn resolve_sidecar_path_returns_path_for_existing_file() {
         let dir = tempfile::TempDir::new().unwrap();
         let file_path = dir.path().join("vips-binary");
@@ -158,6 +198,26 @@ mod tests {
     }
 
     #[test]
+    fn get_sidecar_path_from_returns_path_for_existing_sidecar() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let full = dir.path().join(sidecar_filename("vips").unwrap());
+        std::fs::write(&full, b"stub").unwrap();
+
+        assert_eq!(
+            get_sidecar_path_from(dir.path(), "vips").unwrap(),
+            full.to_str().unwrap()
+        );
+    }
+
+    #[test]
+    fn get_sidecar_path_from_returns_spec_error_for_missing_sidecar() {
+        let dir = tempfile::TempDir::new().unwrap();
+
+        let err = get_sidecar_path_from(dir.path(), "vips").unwrap_err();
+        assert_eq!(err, "Engine error: vips not available");
+    }
+
+    #[test]
     fn resolve_sidecar_path_returns_io_error_for_other_io_failures() {
         let dir = tempfile::TempDir::new().unwrap();
         let file_path = dir.path().join("vips-regular");
@@ -179,5 +239,7 @@ mod tests {
 
         let err = resolve_sidecar_path(&file_path, "vips").unwrap_err();
         assert!(err.starts_with("Engine error: vips not available (non-UTF-8 path: "));
+        assert!(err.contains(&format!("{:?}", file_path)));
+        assert!(err.ends_with(')'));
     }
 }
