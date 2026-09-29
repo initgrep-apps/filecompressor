@@ -14,18 +14,25 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
-use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
-use tauri::{AppHandle, Emitter, Manager};
 use crate::commands::FileListState;
-use crate::engine::{CompressionResult, CompressionError, ProgressSender, STRATEGY_ALREADY_UNDER_TARGET};
+use crate::engine::{CompressionError, CompressionResult, ProgressSender};
 use crate::models::{FileEntry, FileStatus};
 use crate::output::resolve_output_path;
 use crate::processors::ProcessorRegistry;
 use crate::sidecar;
 use crate::temp;
+use std::collections::HashMap;
+use std::sync::{LockResult, Mutex, MutexGuard};
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
+fn poison_recover<T>(lock: LockResult<MutexGuard<'_, T>>) -> MutexGuard<'_, T> {
+    lock.unwrap_or_else(|e| {
+        eprintln!("warn: queue state mutex was poisoned, recovering: {e}");
+        e.into_inner()
+    })
+}
 
 /// HEIC/HEIF input → .jpg output filename (spec §3), case-insensitive.
 pub(crate) fn output_file_name(name: &str) -> String {
@@ -43,7 +50,7 @@ pub(crate) fn output_file_name(name: &str) -> String {
 pub(crate) fn decide_result_status(result: &CompressionResult) -> FileStatus {
     if !result.met_target {
         FileStatus::BestEffort
-    } else if result.strategy_used == STRATEGY_ALREADY_UNDER_TARGET {
+    } else if result.is_already_under_target() {
         FileStatus::AlreadyUnderTarget
     } else {
         FileStatus::Done
@@ -93,7 +100,7 @@ struct BatchCompletePayload<'a> {
 /// mpsc channel, whose receiver is busy inside process_batch.
 pub struct QueueState {
     token_map: Mutex<HashMap<String, CancellationToken>>,
-    batch_token: Mutex<Option<CancellationToken>>,
+    batch_tokens: Mutex<HashMap<String, CancellationToken>>,
     sender: mpsc::UnboundedSender<BatchMessage>,
 }
 
@@ -108,39 +115,60 @@ impl QueueState {
         });
         QueueState {
             token_map: Mutex::new(HashMap::new()),
-            batch_token: Mutex::new(None),
+            batch_tokens: Mutex::new(HashMap::new()),
             sender,
         }
     }
 
-    /// Called by compress_all: registers a fresh batch token then queues work.
-    pub fn start_batch(&self, batch_id: String, file_ids: Vec<String>) {
-        *self.batch_token.lock().unwrap_or_else(|e| e.into_inner()) = Some(CancellationToken::new());
-        let _ = self.sender.send(BatchMessage { batch_id, file_ids });
+    /// Called by compress_all: registers the batch token then queues work.
+    pub fn start_batch(&self, app: &AppHandle, batch_id: String, file_ids: Vec<String>) {
+        let token = CancellationToken::new();
+        poison_recover(self.batch_tokens.lock()).insert(batch_id.clone(), token);
+
+        if self
+            .sender
+            .send(BatchMessage {
+                batch_id: batch_id.clone(),
+                file_ids,
+            })
+            .is_err()
+        {
+            eprintln!("warn: job worker unavailable, batch dropped: {batch_id}");
+            let _ = app.emit(
+                "batch:error",
+                serde_json::json!({ "batchId": batch_id, "errorMessage": "Job worker unavailable" }),
+            );
+            poison_recover(self.batch_tokens.lock()).remove(&batch_id);
+        }
     }
 
     pub fn cancel_file(&self, file_id: &str) {
-        if let Some(token) = self.token_map.lock().unwrap_or_else(|e| e.into_inner()).get(file_id) {
+        if let Some(token) = poison_recover(self.token_map.lock()).get(file_id) {
             token.cancel();
         }
     }
 
     pub fn cancel_all(&self) {
-        if let Some(token) = self.batch_token.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        for token in poison_recover(self.batch_tokens.lock()).values() {
             token.cancel();
         }
-        for token in self.token_map.lock().unwrap_or_else(|e| e.into_inner()).values() {
+        for token in poison_recover(self.token_map.lock()).values() {
             token.cancel();
         }
     }
 
-    fn batch_cancelled(&self) -> bool {
-        self.batch_token
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .map(|t| t.is_cancelled())
-            .unwrap_or(false)
+    fn batch_cancelled(&self, batch_id: &str) -> bool {
+        poison_recover(self.batch_tokens.lock())
+            .get(batch_id)
+            .is_some_and(|t| t.is_cancelled())
+    }
+
+    fn insert_token(&self, file_id: &str, token: CancellationToken) {
+        poison_recover(self.token_map.lock()).insert(file_id.to_string(), token);
+    }
+
+    fn remove_token(&self, file_id: &str) {
+        poison_recover(self.token_map.lock()).remove(file_id);
     }
 
     async fn process_batch(app: &AppHandle, batch_id: String, file_ids: Vec<String>) {
@@ -152,6 +180,7 @@ impl QueueState {
         let settings = crate::commands::load_settings(app);
         let output_folder = settings.output_folder.clone();
         if let Err(e) = ensure_output_folder_writable(&output_folder) {
+            poison_recover(queue.batch_tokens.lock()).remove(&batch_id);
             let _ = app.emit(
                 "batch:error",
                 serde_json::json!({ "batchId": batch_id, "errorMessage": e }),
@@ -163,19 +192,19 @@ impl QueueState {
 
         for file_id in file_ids {
             // Cancel-all stops the remaining queue
-            if queue.batch_cancelled() {
-                let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+            if queue.batch_cancelled(&batch_id) {
+                let mut list = poison_recover(state.0.lock());
                 if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
                     if e.status == FileStatus::Pending {
                         e.status = FileStatus::Cancelled;
                     }
                 }
-                let _ = app.emit("file:cancelled", FileCancelledPayload { file_id: &file_id });
+                emit_file_cancelled(app, &file_id);
                 continue;
             }
 
             let entry: Option<FileEntry> = {
-                let list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+                let list = poison_recover(state.0.lock());
                 list.iter().find(|e| e.id == file_id).cloned()
             };
             let Some(entry) = entry else { continue };
@@ -187,14 +216,10 @@ impl QueueState {
             // Re-check status after inserting: a concurrent cancel_file may
             // have marked the entry Cancelled between the clone and now.
             let cancel_token = CancellationToken::new();
-            queue
-                .token_map
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(file_id.clone(), cancel_token.clone());
+            queue.insert_token(&file_id, cancel_token.clone());
 
             let flipped = {
-                let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+                let mut list = poison_recover(state.0.lock());
                 match list.iter_mut().find(|e| e.id == file_id) {
                     Some(e) if e.status == FileStatus::Pending => {
                         e.status = FileStatus::Compressing;
@@ -204,11 +229,7 @@ impl QueueState {
                 }
             };
             if !flipped {
-                queue
-                    .token_map
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .remove(&file_id);
+                queue.remove_token(&file_id);
                 continue;
             }
 
@@ -218,30 +239,46 @@ impl QueueState {
                 None => {
                     // No processor registered (Video/Pdf/Document in this slice):
                     // skip as Unsupported — NOT Failed (spec §3/§6)
-                    let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
-                    if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
-                        e.status = FileStatus::Unsupported;
+                    {
+                        let mut list = poison_recover(state.0.lock());
+                        if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
+                            e.status = FileStatus::Unsupported;
+                        }
                     }
-                    queue
-                        .token_map
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .remove(&file_id);
+                    let _ = app.emit(
+                        "file:complete",
+                        FileCompletePayload {
+                            file_id: &file_id,
+                            output_path: String::new(),
+                            original_size: entry.original_size,
+                            compressed_size: 0,
+                            status: FileStatus::Unsupported,
+                            met_target: false,
+                        },
+                    );
+                    queue.remove_token(&file_id);
                     continue;
                 }
                 Some(processor) => {
                     let temp_dir = match temp::create_temp_dir(app) {
                         Ok(d) => d,
                         Err(e) => {
-                            let _ = app.emit("file:error", FileErrorPayload {
-                                file_id: &file_id,
-                                error_message: e,
-                            });
-                            queue
-                                .token_map
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .remove(&file_id);
+                            let error_msg = e.clone();
+                            {
+                                let mut list = poison_recover(state.0.lock());
+                                if let Some(e2) = list.iter_mut().find(|e2| e2.id == file_id) {
+                                    e2.status = FileStatus::Failed;
+                                    e2.error = Some(error_msg.clone());
+                                }
+                            }
+                            let _ = app.emit(
+                                "file:error",
+                                FileErrorPayload {
+                                    file_id: &file_id,
+                                    error_message: error_msg,
+                                },
+                            );
+                            queue.remove_token(&file_id);
                             continue;
                         }
                     };
@@ -272,73 +309,89 @@ impl QueueState {
 
             match result {
                 Ok(compression_result) => {
-                    let saved = entry.original_size.saturating_sub(compression_result.compressed_size);
+                    let saved = entry
+                        .original_size
+                        .saturating_sub(compression_result.compressed_size);
                     total_saved += saved;
                     let status = decide_result_status(&compression_result);
+                    let out_path = compression_result.output_path.to_string_lossy().to_string();
 
                     {
-                        let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+                        let mut list = poison_recover(state.0.lock());
                         if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
                             e.status = status;
                             e.compressed_size = Some(compression_result.compressed_size);
-                            e.output_path = Some(compression_result.output_path.to_string_lossy().to_string());
+                            e.output_path = Some(out_path.clone());
                         }
                     }
 
-                    let _ = app.emit("file:complete", FileCompletePayload {
-                        file_id: &file_id,
-                        output_path: compression_result.output_path.to_string_lossy().to_string(),
-                        original_size: entry.original_size,
-                        compressed_size: compression_result.compressed_size,
-                        status,
-                        met_target: compression_result.met_target,
-                    });
+                    let _ = app.emit(
+                        "file:complete",
+                        FileCompletePayload {
+                            file_id: &file_id,
+                            output_path: out_path,
+                            original_size: entry.original_size,
+                            compressed_size: compression_result.compressed_size,
+                            status,
+                            met_target: compression_result.met_target,
+                        },
+                    );
                 }
                 Err(CompressionError::Cancelled) => {
-                    let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut list = poison_recover(state.0.lock());
                     if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
                         e.status = FileStatus::Cancelled;
                     }
-                    let _ = app.emit("file:cancelled", FileCancelledPayload { file_id: &file_id });
+                    emit_file_cancelled(app, &file_id);
                 }
                 Err(e) => {
                     let error_msg = e.to_string();
-                    let mut list = state.0.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut list = poison_recover(state.0.lock());
                     if let Some(e2) = list.iter_mut().find(|e2| e2.id == file_id) {
                         e2.status = FileStatus::Failed;
                         e2.error = Some(error_msg.clone());
                     }
-                    let _ = app.emit("file:error", FileErrorPayload {
-                        file_id: &file_id,
-                        error_message: error_msg,
-                    });
+                    let _ = app.emit(
+                        "file:error",
+                        FileErrorPayload {
+                            file_id: &file_id,
+                            error_message: error_msg,
+                        },
+                    );
                 }
             }
 
-            queue
-                .token_map
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&file_id);
+            queue.remove_token(&file_id);
         }
 
-        let _ = app.emit("batch:complete", BatchCompletePayload {
-            batch_id: &batch_id,
-            total_saved_bytes: total_saved,
-        });
+        poison_recover(queue.batch_tokens.lock()).remove(&batch_id);
+
+        let _ = app.emit(
+            "batch:complete",
+            BatchCompletePayload {
+                batch_id: &batch_id,
+                total_saved_bytes: total_saved,
+            },
+        );
     }
+}
+
+/// Emits the file:cancelled event (used by the worker and the cancel command).
+pub(crate) fn emit_file_cancelled(app: &AppHandle, file_id: &str) {
+    let _ = app.emit("file:cancelled", FileCancelledPayload { file_id });
 }
 
 fn ensure_output_folder_writable(folder: &str) -> Result<(), String> {
     let path = std::path::Path::new(folder);
     if !path.exists() {
-        std::fs::create_dir_all(path)
-            .map_err(|e| format!("Output folder not writable: {}", e))?;
+        std::fs::create_dir_all(path).map_err(|e| format!("Output folder not writable: {}", e))?;
     }
     let probe = path.join(".write-probe");
     std::fs::write(&probe, b"ok")
         .map(|_| {
-            let _ = std::fs::remove_file(&probe);
+            if let Err(e) = std::fs::remove_file(&probe) {
+                eprintln!("warn: failed to remove write-probe file: {e}");
+            }
         })
         .map_err(|e| format!("Output folder not writable: {}", e))
 }
@@ -368,12 +421,26 @@ mod tests {
 
     #[test]
     fn decide_result_status_maps_met_target_to_done() {
-        assert_eq!(decide_result_status(&result(true, "quality=75")), FileStatus::Done);
+        assert_eq!(
+            decide_result_status(&result(true, "quality=75")),
+            FileStatus::Done
+        );
     }
 
     #[test]
     fn decide_result_status_maps_unmet_target_to_best_effort() {
-        assert_eq!(decide_result_status(&result(false, "quality=30,best-effort")), FileStatus::BestEffort);
+        assert_eq!(
+            decide_result_status(&result(false, "quality=30,best-effort")),
+            FileStatus::BestEffort
+        );
+    }
+
+    #[test]
+    fn decide_result_status_unmet_target_beats_already_under_strategy() {
+        assert_eq!(
+            decide_result_status(&result(false, "already-under-target")),
+            FileStatus::BestEffort
+        );
     }
 
     #[test]
@@ -393,5 +460,10 @@ mod tests {
     #[test]
     fn output_file_name_handles_name_without_extension() {
         assert_eq!(output_file_name("heicfile"), "heicfile");
+    }
+
+    #[test]
+    fn output_file_name_handles_dot_heic_stem_only_name() {
+        assert_eq!(output_file_name(".heic"), ".jpg");
     }
 }
