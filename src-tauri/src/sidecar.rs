@@ -315,4 +315,23 @@ mod tests {
             text
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn sidecars_are_self_contained() {
+        let script = format!(
+            "{}/../scripts/audit-sidecars.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let out = std::process::Command::new("bash")
+            .arg(&script)
+            .output()
+            .expect("audit-sidecars.sh runs");
+        assert!(
+            out.status.success(),
+            "self-contained audit failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+    }
 }
