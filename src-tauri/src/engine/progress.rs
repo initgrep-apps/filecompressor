@@ -17,6 +17,8 @@
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
+pub(crate) const PROGRESS_EVENT: &str = "file:progress";
+
 pub(crate) fn progress_payload(file_id: &str, percent: u32) -> serde_json::Value {
     serde_json::json!({ "fileId": file_id, "percent": percent })
 }
@@ -32,7 +34,7 @@ impl ProgressSender {
             // Event-emit failures are non-actionable: serialization is
             // infallible for the fixed two-field payload; a missing listener
             // is normal in early lifecycle.
-            let _ = app.emit("file:progress", progress_payload(&file_id, percent));
+            let _ = app.emit(PROGRESS_EVENT, progress_payload(&file_id, percent));
         }))
     }
 
@@ -55,16 +57,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn new_with_emitter_passes_percent_through() {
+    fn send_progress_preserves_in_range_values() {
         let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
         let sink = Arc::clone(&seen);
         let sender = ProgressSender::new_with_emitter(Arc::new(move |percent| {
             sink.lock().unwrap().push(percent);
         }));
-        sender.send_progress(0);
-        sender.send_progress(45);
-        sender.send_progress(100);
-        assert_eq!(*seen.lock().unwrap(), vec![0, 45, 100]);
+        sender.send_progress(1);
+        sender.send_progress(50);
+        sender.send_progress(99);
+        assert_eq!(*seen.lock().unwrap(), vec![1, 50, 99]);
     }
 
     #[test]
@@ -74,9 +76,13 @@ mod tests {
         let sender = ProgressSender::new_with_emitter(Arc::new(move |percent| {
             sink.lock().unwrap().push(percent);
         }));
+        sender.send_progress(0);
+        sender.send_progress(45);
+        sender.send_progress(100);
+        sender.send_progress(101);
         sender.send_progress(150);
         sender.send_progress(7);
-        assert_eq!(*seen.lock().unwrap(), vec![100, 7]);
+        assert_eq!(*seen.lock().unwrap(), vec![0, 45, 100, 100, 100, 7]);
     }
 
     #[test]
@@ -91,5 +97,10 @@ mod tests {
             "snake_case key would break the TS hook"
         );
         assert_eq!(payload["percent"], 72);
+    }
+
+    #[test]
+    fn progress_event_topic_is_pinned() {
+        assert_eq!(PROGRESS_EVENT, "file:progress");
     }
 }

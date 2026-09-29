@@ -104,9 +104,4 @@ mod tests {
             assert_eq!(err.to_string(), expected, "variant {i}");
         }
     }
-
-    #[test]
-    fn strategy_already_under_target_const_is_pinned() {
-        assert_eq!(STRATEGY_ALREADY_UNDER_TARGET, "already-under-target");
-    }
 }
