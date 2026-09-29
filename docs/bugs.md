@@ -41,7 +41,7 @@
 ## PR Review — 2026-09-27-slice-4-image-compression
 **Date:** 2026-09-29 | **PR:** #31 (Task 6)
 
-1. RESOLVED (slice-4b): vips sidecar is self-contained — transitive dylibs collected into src-tauri/frameworks/ (committed, bundled via bundle.macOS.frameworks), all load commands rewritten to @rpath, rpaths added to sidecar + every dylib, ad-hoc signed. Audit gate scripts/audit-sidecars.sh runs in cargo test (sidecars_are_self_contained) and also checks dangling @rpath refs + tauri.conf.json/frameworks sync. Clean-VM launch verification still manual before release. Source: PR #31.
+1. RESOLVED (PR #34): vips sidecar is self-contained — transitive dylibs collected into src-tauri/frameworks/ (committed, bundled via bundle.macOS.frameworks), all load commands rewritten to @rpath, rpaths added to sidecar + every dylib, ad-hoc signed. Audit gate scripts/audit-sidecars.sh runs in cargo test (sidecars_are_self_contained) and also checks dangling @rpath refs + tauri.conf.json/frameworks sync. Clean-VM launch verification still manual before release. Source: PR #31.
 
 ## Implementation Drift — 2026-09-29-slice-4b-self-contained-sidecars
 **Date:** 2026-09-29 | **Plan:** docs/superpowers/plans/2026-09-29-slice-4b-self-contained-sidecars.md
