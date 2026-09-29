@@ -21,7 +21,7 @@ use tokio_util::sync::CancellationToken;
 use crate::engine::result::STRATEGY_ALREADY_UNDER_TARGET;
 use crate::engine::{
     BestAttempt, CompressionError, CompressionProcessor, CompressionResult, ProgressSender,
-    SidecarName, SidecarPaths,
+    SidecarName, SidecarPaths, deliver_output, run_sidecar, strict_exit,
 };
 use crate::models::Category;
 use crate::settings::QualityFloors;
@@ -30,7 +30,6 @@ pub struct ImageProcessor;
 
 const MAX_SEARCH_ITERATIONS: u32 = 8;
 const SCALE_FLOOR_PERCENT: u32 = 50;
-const STDERR_TAIL_CHARS: usize = 500;
 
 impl Default for ImageProcessor {
     fn default() -> Self {
@@ -72,23 +71,16 @@ impl ImageProcessor {
         quality: u32,
         cancel_token: &CancellationToken,
     ) -> Result<(), CompressionError> {
-        // stdout is discarded (null — nothing to drain), stderr is collected
-        // for diagnostics; both must be handled or the child can block on a
-        // full pipe while we wait on it forever.
-        let child = std::process::Command::new(sidecar_path)
-            .arg("copy")
-            .arg(input)
-            .arg(format!(
-                "{}{}",
-                output.display(),
-                Self::save_options(ext, quality)
-            ))
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| CompressionError::SidecarFailed(format!("Failed to start vips: {}", e)))?;
-
-        Self::wait_sidecar(child, "vips", cancel_token)
+        Self::wait_sidecar(
+            sidecar_path,
+            "vips",
+            vec![
+                "copy".to_string(),
+                input.display().to_string(),
+                format!("{}{}", output.display(), Self::save_options(ext, quality)),
+            ],
+            cancel_token,
+        )
     }
 
     /// Dimension reduction via `vips resize` — scale is a float factor (0.9 = 90%).
@@ -102,67 +94,34 @@ impl ImageProcessor {
         scale_factor: f64,
         cancel_token: &CancellationToken,
     ) -> Result<(), CompressionError> {
-        let child = std::process::Command::new(sidecar_path)
-            .arg("resize")
-            .arg(input)
-            .arg(format!(
-                "{}{}",
-                output.display(),
-                Self::save_options(ext, quality)
-            ))
-            .arg(format!("{}", scale_factor))
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                CompressionError::SidecarFailed(format!("Failed to start vips resize: {}", e))
-            })?;
-
-        Self::wait_sidecar(child, "vips resize", cancel_token)
+        Self::wait_sidecar(
+            sidecar_path,
+            "vips resize",
+            vec![
+                "resize".to_string(),
+                input.display().to_string(),
+                format!("{}{}", output.display(), Self::save_options(ext, quality)),
+                format!("{}", scale_factor),
+            ],
+            cancel_token,
+        )
     }
 
-    /// Reaps a sidecar child, draining stderr so a chatty tool can never
-    /// deadlock on a full pipe. Cancelled beats exit-code — a kill surfaces
-    /// as a non-zero exit, so the token is checked before reporting it.
+    /// Reaps a vips sidecar via the shared engine runner: stderr is drained
+    /// on a reader thread so a chatty tool can never deadlock on a full
+    /// pipe, and the cancel token is polled — a cancel SIGKILLs the child
+    /// and surfaces as `Cancelled` (cancelled beats exit code). The earlier
+    /// direct-child `wait_with_output` blocked for the child's full runtime,
+    /// so a cancel arriving during the final fitting pass was lost (exit 0
+    /// → Done without a token re-check); the engine poll loop closes that
+    /// gap, and no success path returns without a fresh token check.
     fn wait_sidecar(
-        child: std::process::Child,
-        label: &str,
+        sidecar_path: &str,
+        label: &'static str,
+        args: Vec<String>,
         cancel_token: &CancellationToken,
     ) -> Result<(), CompressionError> {
-        let output = child.wait_with_output().map_err(|e| {
-            if cancel_token.is_cancelled() {
-                return CompressionError::Cancelled;
-            }
-            CompressionError::SidecarFailed(format!("{} wait failed: {}", label, e))
-        })?;
-
-        if !output.status.success() {
-            if cancel_token.is_cancelled() {
-                return Err(CompressionError::Cancelled);
-            }
-            let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-            let tail: String = {
-                let count = stderr.chars().count();
-                if count > STDERR_TAIL_CHARS {
-                    stderr.chars().skip(count - STDERR_TAIL_CHARS).collect()
-                } else {
-                    stderr
-                }
-            };
-            let detail = tail.trim_end();
-            let detail = if detail.is_empty() {
-                "<no stderr>"
-            } else {
-                detail
-            };
-            return Err(CompressionError::SidecarFailed(format!(
-                "{} exited with code {:?}: {}",
-                label,
-                output.status.code(),
-                detail
-            )));
-        }
-        Ok(())
+        run_sidecar(sidecar_path, label, &args, cancel_token, strict_exit)
     }
 }
 
@@ -232,16 +191,15 @@ impl CompressionProcessor for ImageProcessor {
 
         // Already under target — copy as-is (spec §6)
         if input_size <= target_bytes {
-            std::fs::copy(input, output)
-                .map_err(|e| CompressionError::OutputFileError(e.to_string()))?;
-            progress.send_progress(100);
-            return Ok(CompressionResult {
-                output_path: output.to_path_buf(),
-                compressed_size: input_size,
-                quality_used: 100,
-                met_target: true,
-                strategy_used: STRATEGY_ALREADY_UNDER_TARGET.to_string(),
-            });
+            return deliver_output(
+                input,
+                output,
+                input_size,
+                STRATEGY_ALREADY_UNDER_TARGET.to_string(),
+                100,
+                true,
+                &progress,
+            );
         }
 
         let ext = Self::get_output_extension(input);
@@ -282,6 +240,15 @@ impl CompressionProcessor for ImageProcessor {
                         temp_file.display()
                     ))
                 })?;
+            // Spec §6: an exit 0 alone is not success — a zero-byte output is
+            // a failed attempt, never a Done (0 ≤ target would deliver an
+            // empty file). Same class of validation as the PDF processor's
+            // output check.
+            if size == 0 {
+                return Err(CompressionError::SidecarFailed(format!(
+                    "vips produced an empty output (attempt-{n})"
+                )));
+            }
             Ok((size, temp_file))
         };
 
@@ -313,7 +280,14 @@ impl CompressionProcessor for ImageProcessor {
                             BestAttempt {
                                 size: r.0,
                                 path: r.1.clone(),
-                                strategy: format!("quality={}", q),
+                                // save_options("png") has no Q knob (palette
+                                // quantization), so a recorded strategy must
+                                // never claim a quality that was not applied.
+                                strategy: if png_output {
+                                    "palette".to_string()
+                                } else {
+                                    format!("quality={}", q)
+                                },
                                 quality: q,
                             },
                         );
@@ -324,16 +298,15 @@ impl CompressionProcessor for ImageProcessor {
         };
 
         if let Some((quality, size, path)) = quality_search {
-            std::fs::copy(&path, output)
-                .map_err(|e| CompressionError::OutputFileError(e.to_string()))?;
-            progress.send_progress(100);
-            return Ok(CompressionResult {
-                output_path: output.to_path_buf(),
-                compressed_size: size,
-                quality_used: quality,
-                met_target: true,
-                strategy_used: format!("quality={}", quality),
-            });
+            return deliver_output(
+                &path,
+                output,
+                size,
+                format!("quality={}", quality),
+                quality,
+                true,
+                &progress,
+            );
         }
 
         // Phase 2: dimension reduction in 10% steps, floor at SCALE_FLOOR_PERCENT
@@ -348,21 +321,20 @@ impl CompressionProcessor for ImageProcessor {
             attempt_n += 1;
 
             if r.0 <= target_bytes {
-                std::fs::copy(&r.1, output)
-                    .map_err(|e| CompressionError::OutputFileError(e.to_string()))?;
-                progress.send_progress(100);
                 let strategy_used = if png_output {
                     format!("palette,dims={}%", scale_percent)
                 } else {
                     format!("quality={},dims={}%", min_quality, scale_percent)
                 };
-                return Ok(CompressionResult {
-                    output_path: output.to_path_buf(),
-                    compressed_size: r.0,
-                    quality_used: min_quality,
-                    met_target: true,
+                return deliver_output(
+                    &r.1,
+                    output,
+                    r.0,
                     strategy_used,
-                });
+                    min_quality,
+                    true,
+                    &progress,
+                );
             }
             if r.0 > target_bytes {
                 BestAttempt::keep_smaller_in(
@@ -370,7 +342,11 @@ impl CompressionProcessor for ImageProcessor {
                     BestAttempt {
                         size: r.0,
                         path: r.1.clone(),
-                        strategy: format!("quality={}", min_quality),
+                        strategy: if png_output {
+                            "palette".to_string()
+                        } else {
+                            format!("quality={}", min_quality)
+                        },
                         quality: min_quality,
                     },
                 );
@@ -380,16 +356,15 @@ impl CompressionProcessor for ImageProcessor {
 
         // Phase 3: best effort — smallest attempt wins (spec §5 step 7)
         if let Some(best) = smallest {
-            std::fs::copy(&best.path, output)
-                .map_err(|e| CompressionError::OutputFileError(e.to_string()))?;
-            progress.send_progress(100);
-            return Ok(CompressionResult {
-                output_path: output.to_path_buf(),
-                compressed_size: best.size,
-                quality_used: best.quality,
-                met_target: false,
-                strategy_used: format!("{},best-effort", best.strategy),
-            });
+            return deliver_output(
+                &best.path,
+                output,
+                best.size,
+                format!("{},best-effort", best.strategy),
+                best.quality,
+                false,
+                &progress,
+            );
         }
 
         Err(CompressionError::SidecarFailed(
@@ -402,6 +377,16 @@ impl CompressionProcessor for ImageProcessor {
 mod tests {
     use super::*;
     use std::fs;
+
+    /// Writes an executable bash fake (chmod 755) — unix only.
+    #[cfg(unix)]
+    fn make_executable_script(dir: &Path, name: &str, script: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path.to_string_lossy().to_string()
+    }
 
     fn sidecar_paths(path: &str) -> SidecarPaths {
         SidecarPaths {
@@ -679,13 +664,8 @@ mod tests {
     fn wait_sidecar_reports_truncated_stderr_tail_on_failure() {
         let dir = tempfile::tempdir().unwrap();
         let fake = write_stderr_chatter_failer(&dir.path());
-        let child = std::process::Command::new(&fake)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
 
-        let result = ImageProcessor::wait_sidecar(child, "vips", &CancellationToken::new());
+        let result = ImageProcessor::wait_sidecar(&fake, "vips", vec![], &CancellationToken::new());
         match result {
             Err(CompressionError::SidecarFailed(msg)) => {
                 assert!(msg.contains("exited with code Some(1)"), "msg: {}", msg);
@@ -712,13 +692,8 @@ mod tests {
         }
         let token = CancellationToken::new();
         token.cancel();
-        let child = std::process::Command::new("/bin/false")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
 
-        let result = ImageProcessor::wait_sidecar(child, "vips", &token);
+        let result = ImageProcessor::wait_sidecar("/bin/false", "vips", vec![], &token);
         assert!(
             matches!(result, Err(CompressionError::Cancelled)),
             "cancelled must beat the exit code, got {:?}",
@@ -882,6 +857,152 @@ esac
         assert_eq!(
             fs::metadata(&dir.path().join("out.jpg")).unwrap().len(),
             50_000
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn png_unachievable_best_effort_strategy_claims_palette_not_quality() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = write_fake_vips(&dir.path()); // smallest possible resize 0.5 → 50_000 B
+        let input = dir.path().join("in.png");
+        fs::write(&input, vec![0u8; 300 * 1024]).unwrap();
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        // target 10 KB: nothing fits — best effort must describe the actual
+        // png save (palette), never a quality value pngsave ignores
+        let result = ImageProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.png"),
+                10 * 1024,
+                &crate::settings::QualityFloors::default(),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &sidecar_paths(&fake),
+                &tmp,
+            )
+            .unwrap();
+
+        assert!(!result.met_target);
+        assert!(
+            result.strategy_used.contains("palette"),
+            "png best-effort strategy must cite the palette save, got: {}",
+            result.strategy_used
+        );
+        assert!(
+            !result.strategy_used.contains("quality="),
+            "pngsave has no Q knob — a quality=N claim would be false, got: {}",
+            result.strategy_used
+        );
+        assert!(result.strategy_used.contains("best-effort"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn zero_byte_vips_output_is_rejected_not_delivered() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = r#"#!/bin/bash
+op="$1"; out="$3"
+base="${out%%\[*}"
+: > "$base"
+"#;
+        let fake = make_executable_script(&dir.path(), "fake-vips", script);
+        let input = dir.path().join("in.jpg");
+        fs::write(&input, vec![0u8; 300 * 1024]).unwrap();
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        // exit 0 + 0-byte output: 0 ≤ target would deliver an empty file as
+        // Done — it must be a failed attempt instead (spec §6)
+        let result = ImageProcessor.compress_to_target(
+            &input,
+            &dir.path().join("out.jpg"),
+            200 * 1024,
+            &crate::settings::QualityFloors::default(),
+            CancellationToken::new(),
+            ProgressSender::test_stub(),
+            &sidecar_paths(&fake),
+            &tmp,
+        );
+        match result {
+            Err(CompressionError::SidecarFailed(msg)) => {
+                assert!(
+                    msg.contains("empty output"),
+                    "zero-byte attempt must be rejected, got: {}",
+                    msg
+                );
+            }
+            Ok(r) => panic!(
+                "zero-byte exit-0 output must never be Done, got {} ({})",
+                r.strategy_used, r.compressed_size
+            ),
+            Err(other) => panic!("expected SidecarFailed, got {:?}", other),
+        }
+        assert!(
+            !dir.path().join("out.jpg").exists(),
+            "no empty output may be delivered"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn cancel_during_final_fitting_pass_yields_cancelled_not_done() {
+        let dir = tempfile::tempdir().unwrap();
+        // The final resize (0.4) sleeps 5s before writing its (fitting)
+        // output; cancel lands 300ms into that pass. The reaper must poll
+        // the token, kill the child, and return Cancelled — never deliver
+        // Done for a pass that was cancelled mid-flight.
+        let script = r#"#!/bin/bash
+op="$1"; out="$3"
+base="${out%%\[*}"
+case "$op" in
+  copy)   head -c 100000 /dev/zero > "$base" ;;
+  resize)
+    case "$base" in
+      *attempt-1*) sleep 5; head -c 20000 /dev/zero > "$base" ;;
+      *)           head -c 100000 /dev/zero > "$base" ;;
+    esac ;;
+esac
+"#;
+        let fake = make_executable_script(&dir.path(), "fake-vips", script);
+        let input = dir.path().join("in.jpg");
+        fs::write(&input, vec![0u8; 300 * 1024]).unwrap();
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        let token = CancellationToken::new();
+        let worker_token = token.clone();
+        let worker_input = input.clone();
+        let worker_output = dir.path().join("out.jpg");
+        let worker_tmp = tmp.clone();
+        let worker_fake = fake.clone();
+
+        let handle = std::thread::spawn(move || {
+            ImageProcessor.compress_to_target(
+                &worker_input,
+                &worker_output,
+                25 * 1024,
+                &crate::settings::QualityFloors::default(),
+                worker_token,
+                ProgressSender::test_stub(),
+                &sidecar_paths(&worker_fake),
+                &worker_tmp,
+            )
+        });
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        token.cancel();
+        let result = handle.join().unwrap();
+
+        assert!(
+            matches!(result, Err(CompressionError::Cancelled)),
+            "cancel during the final fitting pass must surface as Cancelled, got {:?}",
+            result.map(|r| (r.strategy_used, r.compressed_size))
+        );
+        assert!(
+            !dir.path().join("out.jpg").exists(),
+            "no Done delivery after cancel"
         );
     }
 

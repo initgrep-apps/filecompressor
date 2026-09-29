@@ -19,8 +19,14 @@ use crate::engine::result::{CompressionError, CompressionResult};
 use crate::models::Category;
 use crate::settings::QualityFloors;
 use crate::sidecar::resolve_sidecar_candidate;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+
+const WAIT_POLL_MILLIS: u64 = 30;
+const STDERR_TAIL_CHARS: usize = 500;
+const STDERR_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Exhaustive registry of engines a processor may require. Taking this enum
 /// instead of a `&str` makes `require` total: there is no stringly-typed
@@ -112,6 +118,174 @@ impl BestAttempt {
             *best = Some(candidate);
         }
         replaces
+    }
+}
+
+/// Copies `from` to the final output path and reports completion. One
+/// enforcement point for the fs::copy + send_progress(100) + result triple
+/// shared by every processor's deliverable paths (early exit, fitting pass,
+/// best-effort).
+pub fn deliver_output(
+    from: &Path,
+    output: &Path,
+    size: u64,
+    strategy_used: String,
+    quality_used: u32,
+    met_target: bool,
+    progress: &ProgressSender,
+) -> Result<CompressionResult, CompressionError> {
+    std::fs::copy(from, output)
+        .map_err(|e| CompressionError::OutputFileError(e.to_string()))?;
+    progress.send_progress(100);
+    Ok(CompressionResult {
+        output_path: output.to_path_buf(),
+        compressed_size: size,
+        quality_used,
+        met_target,
+        strategy_used,
+    })
+}
+
+/// Last ~`STDERR_TAIL_CHARS` characters of sidecar stderr — the failure
+/// reason is almost always the last thing printed.
+fn stderr_tail(bytes: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(bytes).into_owned();
+    let tail: String = {
+        let count = stderr.chars().count();
+        if count > STDERR_TAIL_CHARS {
+            stderr.chars().skip(count - STDERR_TAIL_CHARS).collect()
+        } else {
+            stderr
+        }
+    };
+    let detail = tail.trim_end();
+    if detail.is_empty() {
+        "<no stderr>".to_string()
+    } else {
+        detail.to_string()
+    }
+}
+
+/// A sidecar exit code that, for this engine, still counts as pass success
+/// and leaves output validation to the caller (e.g. qpdf exit 2 = "warnings,
+/// output still valid"). Exit-code policy is per-engine, so the engine layer
+/// takes it as a predicate instead of hardcoding tool quirks.
+pub type ToleratedExit = fn(&str, Option<i32>) -> bool;
+
+/// No tolerated exit codes: any non-zero exit fails the pass. Default for
+/// engines whose tools have no "warning" exit code (vips, gs, ffmpeg).
+pub fn strict_exit(_label: &str, _code: Option<i32>) -> bool {
+    false
+}
+
+/// Runs a sidecar to completion, draining stderr on a reader thread so a
+/// chatty tool can never deadlock on a full pipe. Polls the cancel token:
+/// a cancel SIGKILLs the child process first, then surfaces as `Cancelled`
+/// — cancelled beats exit code.
+///
+/// SIGKILL trade-off: only the direct child is killed, so grandchild
+/// processes it spawned survive and hold the stderr pipe open. On cancel
+/// the drain thread is therefore abandoned, not joined (it self-terminates
+/// once the stragglers exit). On a normal exit the join is bounded: a
+/// lingering grandchild that outlives `STDERR_JOIN_TIMEOUT` forces a warned
+/// diagnostic loss instead of an indefinite block, since the child itself
+/// is already reaped and the pass result must not depend on stragglers.
+pub fn run_sidecar(
+    sidecar_path: &str,
+    label: &'static str,
+    args: &[String],
+    cancel_token: &CancellationToken,
+    tolerated_exit: ToleratedExit,
+) -> Result<(), CompressionError> {
+    let mut child = std::process::Command::new(sidecar_path)
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            CompressionError::SidecarFailed(format!("Failed to start {}: {}", label, e))
+        })?;
+
+    let mut stderr_pipe = child.stderr.take();
+    let stderr_reader = std::thread::spawn(move || {
+        let mut buffer = Vec::new();
+        if let Some(pipe) = stderr_pipe.as_mut() {
+            if let Err(e) = pipe.read_to_end(&mut buffer) {
+                eprintln!("warn: {label}: stderr drain failed, diagnostics partial: {e}");
+            }
+        }
+        buffer
+    });
+
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if cancel_token.is_cancelled() {
+                    // Grandchildren survive SIGKILL and hold the stderr
+                    // pipe — the drain thread is abandoned, not joined.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(CompressionError::Cancelled);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(WAIT_POLL_MILLIS));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(CompressionError::SidecarFailed(format!(
+                    "{} wait failed: {}",
+                    label, e
+                )));
+            }
+        }
+    };
+
+    // A cancel racing the final poll must not be lost: the child exits 0,
+    // the caller would deliver Done, and no one re-checks the token. Verify
+    // once more after reaping — cancelled beats exit code.
+    if cancel_token.is_cancelled() {
+        return Err(CompressionError::Cancelled);
+    }
+    let stderr_bytes = match recv_stderr_bounded(stderr_reader) {
+        Some(bytes) => bytes,
+        None => {
+            eprintln!(
+                "warn: {label} stderr drain did not finish within {:?} after exit \
+                 (lingering grandchild); diagnostics unavailable",
+                STDERR_JOIN_TIMEOUT
+            );
+            b"<stderr unreadable>".to_vec()
+        }
+    };
+
+    if !status.success() && !tolerated_exit(label, status.code()) {
+        if cancel_token.is_cancelled() {
+            return Err(CompressionError::Cancelled);
+        }
+        return Err(CompressionError::SidecarFailed(format!(
+            "{} exited with code {:?}: {}",
+            label,
+            status.code(),
+            stderr_tail(&stderr_bytes)
+        )));
+    }
+    Ok(())
+}
+
+/// Bounded wait on the drain thread: poll `is_finished`, then join. A
+/// `None` return means "abandoned" — dropping the handle detaches the
+/// thread, which self-terminates once the pipe closes.
+fn recv_stderr_bounded(handle: std::thread::JoinHandle<Vec<u8>>) -> Option<Vec<u8>> {
+    let deadline = std::time::Instant::now() + STDERR_JOIN_TIMEOUT;
+    loop {
+        if handle.is_finished() {
+            return handle.join().ok();
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(WAIT_POLL_MILLIS));
     }
 }
 

@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 use crate::engine::result::STRATEGY_ALREADY_UNDER_TARGET;
 use crate::engine::{
     BestAttempt, CompressionError, CompressionProcessor, CompressionResult, ProgressSender,
-    SidecarName, SidecarPaths,
+    SidecarName, SidecarPaths, ToleratedExit, deliver_output, run_sidecar, strict_exit,
 };
 use crate::models::Category;
 use crate::settings::QualityFloors;
@@ -30,13 +30,18 @@ use crate::settings::QualityFloors;
 pub struct PdfProcessor;
 
 const PDF_MAGIC: &[u8] = b"%PDF-";
-const STDERR_TAIL_CHARS: usize = 500;
-const WAIT_POLL_MILLIS: u64 = 30;
 const QPDF_JPEG_QUALITY: u32 = 75;
 const GS_SCREEN_QUALITY: u32 = 72;
 const GS_SCREEN_JPEGQ_FLOOR: u32 = 15;
 const PDF_DPI_RUNGS: [u32; 4] = [100, 72, 50, 36];
 const PDF_JPEGQ_RUNGS: [u32; 4] = [60, 40, 25, 15];
+
+/// qpdf exit 2 = "warnings, output still valid"; its output is validated by
+/// `measure_output` instead of failing the pass here. Other engines (and
+/// other exit codes) fail the pass.
+fn qpdf_tolerated_exit(label: &str, code: Option<i32>) -> bool {
+    label == "qpdf" && code == Some(2)
+}
 
 impl Default for PdfProcessor {
     fn default() -> Self {
@@ -49,15 +54,6 @@ enum PdfPass {
     QpdfImageOpt,
     GsScreen,
     GsLadder { dpi: u32, jpegq: u32 },
-}
-
-impl PdfPass {
-    fn sidecar_name(&self) -> SidecarName {
-        match self {
-            Self::QpdfLossless | Self::QpdfImageOpt => SidecarName::Qpdf,
-            Self::GsScreen | Self::GsLadder { .. } => SidecarName::Gs,
-        }
-    }
 }
 
 struct PassSpec {
@@ -145,121 +141,6 @@ impl PdfProcessor {
         }
     }
 
-    /// Runs a sidecar to completion, draining stderr on a reader thread so a
-    /// chatty tool can never deadlock on a full pipe. Polls the cancel token:
-    /// a cancel SIGKILLs the child process first, then surfaces as
-    /// `Cancelled` — cancelled beats exit code.
-    ///
-    /// SIGKILL trade-off: only the direct child is killed, so grandchild
-    /// processes it spawned survive and hold the stderr pipe open — the
-    /// drain thread is therefore NOT joined on cancel (it self-terminates
-    /// once the stragglers exit). gs's own /tmp/gs_* litter is reclaimed by
-    /// the OS; the app temp dir is cleaned by the queue after each job.
-    fn run_sidecar(
-        sidecar_path: &str,
-        label: &'static str,
-        args: &[String],
-        cancel_token: &CancellationToken,
-    ) -> Result<(), CompressionError> {
-        let mut child = std::process::Command::new(sidecar_path)
-            .args(args)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                CompressionError::SidecarFailed(format!("Failed to start {}: {}", label, e))
-            })?;
-
-        let mut stderr_pipe = child.stderr.take();
-        let stderr_reader = std::thread::spawn(move || {
-            let mut buffer = Vec::new();
-            if let Some(pipe) = stderr_pipe.as_mut() {
-                if let Err(e) = pipe.read_to_end(&mut buffer) {
-                    eprintln!("warn: {label}: stderr drain failed, diagnostics partial: {e}");
-                }
-            }
-            buffer
-        });
-
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => {
-                    if cancel_token.is_cancelled() {
-                        // Grandchildren survive SIGKILL and hold the stderr
-                        // pipe — the drain thread is skipped, not joined.
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(CompressionError::Cancelled);
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(WAIT_POLL_MILLIS));
-                }
-                Err(e) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(CompressionError::SidecarFailed(format!(
-                        "{} wait failed: {}",
-                        label, e
-                    )));
-                }
-            }
-        };
-
-        let stderr_bytes = match stderr_reader.join() {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                eprintln!("warn: {label} stderr reader panicked; diagnostics unavailable");
-                b"<stderr unreadable>".to_vec()
-            }
-        };
-        // qpdf exit 2 = "warnings, output still valid"; its output is
-        // validated by measure_output instead of failing the pass here.
-        let tolerated = label == "qpdf" && status.code() == Some(2);
-        if !status.success() && !tolerated {
-            if cancel_token.is_cancelled() {
-                return Err(CompressionError::Cancelled);
-            }
-            return Err(Self::sidecar_failure(
-                label,
-                status.code(),
-                Self::stderr_tail(&stderr_bytes),
-            ));
-        }
-        Ok(())
-    }
-
-    fn stderr_tail(bytes: &[u8]) -> String {
-        let stderr = String::from_utf8_lossy(bytes).into_owned();
-        let tail: String = {
-            let count = stderr.chars().count();
-            if count > STDERR_TAIL_CHARS {
-                stderr.chars().skip(count - STDERR_TAIL_CHARS).collect()
-            } else {
-                stderr
-            }
-        };
-        let detail = tail.trim_end();
-        if detail.is_empty() {
-            "<no stderr>".to_string()
-        } else {
-            detail.to_string()
-        }
-    }
-
-    /// A non-zero exit alone does not prove the INPUT was corrupt — it proves
-    /// the pass failed. The "File may be corrupt" wording is reserved for
-    /// invalid output (see `measure_output`).
-    fn sidecar_failure(
-        label: &str,
-        exit_code: Option<i32>,
-        stderr_tail: String,
-    ) -> CompressionError {
-        CompressionError::SidecarFailed(format!(
-            "{} exited with code {:?}: {}",
-            label, exit_code, stderr_tail
-        ))
-    }
-
     /// A sidecar exit 0 is not success on its own — an empty or non-PDF
     /// output must never copy through as Done (spec §6). The output must be
     /// non-empty and start with the `%PDF-` header.
@@ -306,30 +187,6 @@ impl PdfProcessor {
         }
     }
 
-    /// Copies `from` to the final output path and reports completion. One
-    /// enforcement point for the fs::copy + send_progress(100) + result
-    /// triple shared by the early-exit and best-effort deliverables.
-    fn deliver_output(
-        from: &Path,
-        output: &Path,
-        size: u64,
-        strategy_used: String,
-        quality_used: u32,
-        met_target: bool,
-        progress: &ProgressSender,
-    ) -> Result<CompressionResult, CompressionError> {
-        std::fs::copy(from, output)
-            .map_err(|e| CompressionError::OutputFileError(e.to_string()))?;
-        progress.send_progress(100);
-        Ok(CompressionResult {
-            output_path: output.to_path_buf(),
-            compressed_size: size,
-            quality_used,
-            met_target,
-            strategy_used,
-        })
-    }
-
     fn ladder_passes(quality_floor: &QualityFloors) -> Vec<PdfPass> {
         let mut passes = vec![PdfPass::QpdfLossless, PdfPass::QpdfImageOpt];
         let min_dpi = quality_floor.pdf.min_dpi;
@@ -374,7 +231,7 @@ impl CompressionProcessor for PdfProcessor {
 
         // Already under target — copy as-is (spec §6)
         if input_size <= target_bytes {
-            return Self::deliver_output(
+            return deliver_output(
                 input,
                 output,
                 input_size,
@@ -403,28 +260,31 @@ impl CompressionProcessor for PdfProcessor {
             let temp_file = temp_dir.join(format!("attempt-{}.pdf", index));
             attempt_paths.push(temp_file.clone());
             let spec = Self::pass_spec(pass, input, &temp_file);
-            let sidecar_path = match pass.sidecar_name() {
-                SidecarName::Qpdf => qpdf_path,
-                SidecarName::Gs => gs_path,
-                SidecarName::Vips | SidecarName::Ffmpeg | SidecarName::Ffprobe => unreachable!(
-                    "pdf passes may only resolve qpdf/gs engines"
-                ),
+            let sidecar_path = match pass {
+                PdfPass::QpdfLossless | PdfPass::QpdfImageOpt => qpdf_path,
+                PdfPass::GsScreen | PdfPass::GsLadder { .. } => gs_path,
             };
 
             progress.send_progress(((index * 95) / total) as u32);
 
-            let attempt = Self::run_sidecar(
+            let attempt = run_sidecar(
                 sidecar_path,
                 spec.label,
                 &spec.args,
                 &cancel_token,
+                match pass {
+                    PdfPass::QpdfLossless | PdfPass::QpdfImageOpt => {
+                        qpdf_tolerated_exit as ToleratedExit
+                    }
+                    PdfPass::GsScreen | PdfPass::GsLadder { .. } => strict_exit as ToleratedExit,
+                },
             )
             .and_then(|_| Self::measure_output(&temp_file));
 
             match attempt {
                 Ok(size) => {
                     if size <= target_bytes {
-                        return Self::deliver_output(
+                        return deliver_output(
                             &temp_file,
                             output,
                             size,
@@ -461,7 +321,7 @@ impl CompressionProcessor for PdfProcessor {
         }
 
         if let Some(best) = smallest {
-            return Self::deliver_output(
+            return deliver_output(
                 &best.path,
                 output,
                 best.size,
@@ -719,6 +579,7 @@ esac
     }
 
     #[test]
+    #[cfg(unix)]
     fn pdf_pass1_qpdf_lossless_stops_early_when_under_target() {
         let dir = tempfile::tempdir().unwrap();
         let fake_qpdf = fake_qpdf(&dir.path(), 1000, 1000);
@@ -1177,10 +1038,10 @@ exit 3
 
         let cancelled = CancellationToken::new();
         assert!(
-            PdfProcessor::run_sidecar(&warn, "qpdf", &[], &cancelled).is_ok(),
+            run_sidecar(&warn, "qpdf", &[], &cancelled, qpdf_tolerated_exit).is_ok(),
             "qpdf exit 2 = warnings; output validity is decided by measure_output"
         );
-        match PdfProcessor::run_sidecar(&fail3, "qpdf", &[], &cancelled) {
+        match run_sidecar(&fail3, "qpdf", &[], &cancelled, qpdf_tolerated_exit) {
             Err(CompressionError::SidecarFailed(msg)) => {
                 assert!(msg.contains("exited with code Some(3)"), "msg: {}", msg);
                 assert!(
@@ -1191,7 +1052,7 @@ exit 3
             }
             other => panic!("expected failure, got {:?}", other.as_ref().map(|_| ())),
         }
-        match PdfProcessor::run_sidecar(&warn, "gs", &[], &cancelled) {
+        match run_sidecar(&warn, "gs", &[], &cancelled, strict_exit) {
             Err(CompressionError::SidecarFailed(msg)) => {
                 assert!(msg.contains("exited with code Some(2)"), "msg: {}", msg);
                 assert!(

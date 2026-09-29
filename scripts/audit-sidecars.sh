@@ -70,9 +70,14 @@ audit_macho() {
         ;;
     esac
   done <<< "$deps"
-  if [ "$has_rpath_loads" -eq 1 ] && ! otool -l "$file" | grep -q "LC_RPATH"; then
-    printf 'FAIL %s: @rpath loads but no LC_RPATH entry\n' "$file"
-    failures+=("$file")
+  if [ "$has_rpath_loads" -eq 1 ]; then
+    # grep -A3 mirrors bundle-pdf's LC_RPATH section extraction; a plain
+    # `otool -l | grep -q` is a SIGPIPE false-FAIL risk under pipefail when
+    # grep exits before otool finishes writing a long load listing.
+    if ! otool -l "$file" | grep -A3 "LC_RPATH" >/dev/null; then
+      printf 'FAIL %s: @rpath loads but no LC_RPATH entry\n' "$file"
+      failures+=("$file")
+    fi
   fi
   require_tool codesign
   if ! codesign --verify "$file" >/dev/null 2>&1; then
@@ -94,6 +99,8 @@ if [ ! -d "$BIN_DIR" ]; then
   printf 'FAIL binaries dir missing: %s\n' "$BIN_DIR"
   exit 1
 fi
+
+require_tool file
 
 for f in "$BIN_DIR"/*; do
   [ -f "$f" ] || continue

@@ -18,6 +18,9 @@ pub mod processor;
 pub mod progress;
 pub mod result;
 
-pub use processor::{BestAttempt, CompressionProcessor, SidecarName, SidecarPaths};
+pub use processor::{
+    BestAttempt, CompressionProcessor, SidecarName, SidecarPaths, ToleratedExit, deliver_output,
+    run_sidecar, strict_exit,
+};
 pub use progress::ProgressSender;
 pub use result::{CompressionError, CompressionResult};
