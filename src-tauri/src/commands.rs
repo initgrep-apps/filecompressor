@@ -169,6 +169,59 @@ pub fn clear_list(state: State<FileListState>) {
     clear_list_core(&mut list)
 }
 
+#[tauri::command]
+pub fn compress_all(
+    state: State<'_, FileListState>,
+    queue: State<'_, crate::queue::QueueState>,
+) -> String {
+    let list = state.0.lock().unwrap_or_else(|e| {
+        eprintln!("warn: file list mutex was poisoned, recovering: {e}");
+        e.into_inner()
+    });
+    let pending_ids: Vec<String> = list
+        .iter()
+        .filter(|e| e.status == crate::models::FileStatus::Pending)
+        .map(|e| e.id.clone())
+        .collect();
+    drop(list);
+
+    let batch_id = uuid::Uuid::new_v4().to_string();
+    queue.start_batch(batch_id.clone(), pending_ids);
+    batch_id
+}
+
+#[tauri::command]
+pub fn cancel_file(
+    file_id: String,
+    state: State<'_, FileListState>,
+    queue: State<'_, crate::queue::QueueState>,
+) {
+    queue.cancel_file(&file_id);
+    // Not-yet-started file has no token — mark Cancelled so the worker skips it
+    let mut list = state.0.lock().unwrap_or_else(|e| {
+        eprintln!("warn: file list mutex was poisoned, recovering: {e}");
+        e.into_inner()
+    });
+    if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
+        if e.status == crate::models::FileStatus::Pending {
+            e.status = crate::models::FileStatus::Cancelled;
+        }
+    }
+}
+
+#[tauri::command]
+pub fn cancel_all(queue: State<'_, crate::queue::QueueState>) {
+    queue.cancel_all();
+}
+
+#[tauri::command]
+pub fn reveal_in_folder(file_path: String, app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .reveal_item_in_dir(&file_path)
+        .map_err(|e| format!("Could not reveal file: {}", e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

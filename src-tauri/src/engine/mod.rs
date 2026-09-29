@@ -20,4 +20,4 @@ pub mod result;
 
 pub use processor::CompressionProcessor;
 pub use progress::ProgressSender;
-pub use result::{CompressionError, CompressionResult};
+pub use result::{CompressionError, CompressionResult, STRATEGY_ALREADY_UNDER_TARGET};
