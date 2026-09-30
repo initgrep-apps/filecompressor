@@ -51,7 +51,7 @@ Slices 5, 6, 7 are independent — can be done in any order.
 - Create: `src-tauri/src/processors/pdf.rs`
 - Modify: `src-tauri/src/processors/mod.rs` (register PdfProcessor)
 
-- [ ] **Step 1: Create pdf.rs implementing CompressionProcessor**
+- [x] **Step 1: Create pdf.rs implementing CompressionProcessor**
 
 The processor must implement the 4-pass strategy from the spec:
 1. qpdf lossless: `qpdf --linearize --object-streams=generate --compression-level=9 input.pdf output.pdf`
@@ -70,7 +70,7 @@ The processor needs two sidecar paths: `qpdf` and `gs`. Update `sidecar.rs` if n
 >
 > **Recommended:** Option A — modify the trait to pass a `&SidecarPaths` struct containing all resolved paths. Update `ImageProcessor` to use `paths.vips`. This is a small change to Slice 4 code.
 
-- [ ] **Step 2: Modify trait to accept SidecarPaths**
+- [x] **Step 2: Modify trait to accept SidecarPaths**
 
 Update `src-tauri/src/engine/processor.rs` (the merged trait file — `engine/trait.rs` is an invalid Rust filename, `trait` is a keyword; this is the same correction slice-4 made):
 
@@ -129,7 +129,7 @@ Update `queue.rs` to resolve all sidecar paths and pass `SidecarPaths` to the pr
 - `pdf_sidecar_stderr_tail_in_error_message` — GS error diagnostics visible (reuse image.rs fake-sidecar pattern)
 - `pdf_zero_byte_output_rejected` — "measure output" rejects 0-byte gs outputs (exit 0 + empty file ≠ Done)
 
-- [ ] **Step 3: Implement PdfProcessor::compress_to_target**
+- [x] **Step 3: Implement PdfProcessor::compress_to_target**
 
 ```rust
 impl CompressionProcessor for PdfProcessor {
@@ -157,7 +157,7 @@ impl CompressionProcessor for PdfProcessor {
 }
 ```
 
-- [ ] **Step 4: Register PdfProcessor in mod.rs**
+- [x] **Step 4: Register PdfProcessor in mod.rs**
 
 ```rust
 let pdf_proc = pdf::PdfProcessor::new();
@@ -167,7 +167,7 @@ for ext in pdf_proc.supported_extensions() {
 processors.insert(Category::Pdf, Box::new(pdf_proc));
 ```
 
-- [ ] **Step 5: Bundle qpdf + gs sidecar binaries**
+- [x] **Step 5: Bundle qpdf + gs sidecar binaries**
 
 Download qpdf and gs binaries for the current platform. Place in `src-tauri/binaries/` with target triple suffix. **Self-contained requirement (Global Constraints):** macOS — run the dylib-bundling flow (collect transitive non-system dylibs into `src-tauri/frameworks/`, rewrite all load commands to `@rpath`, ad-hoc sign; pattern: `scripts/bundle-vips-macos.sh`) before commit; Windows: official static builds only; Linux: musl static or AppImage. Then run the audit and show PASS:
 
@@ -184,11 +184,11 @@ Expected: `sidecar audit: PASS`. Add to `tauri.conf.json` `externalBin`:
 ]
 ```
 
-- [ ] **Step 6: Test end-to-end**
+- [x] **Step 6: Test end-to-end**
 
 Drop a large PDF → compress → verify output is ≤ 2 MB (or "Best effort"). Verify output PDF opens correctly.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add -A
