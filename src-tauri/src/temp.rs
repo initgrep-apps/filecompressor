@@ -4,7 +4,7 @@ use tauri::{AppHandle, Manager};
 
 const STALE_AFTER_SECS: u64 = 86_400;
 
-pub(crate) fn create_temp_dir(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn create_temp_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let temp_base = app
         .path()
         .temp_dir()

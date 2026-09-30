@@ -29,7 +29,7 @@ pub struct ProgressSender {
 }
 
 impl ProgressSender {
-    pub fn new(app: AppHandle, file_id: String) -> Self {
+    pub fn new<R: tauri::Runtime>(app: AppHandle<R>, file_id: String) -> Self {
         Self::new_with_emitter(Arc::new(move |percent| {
             // Event-emit failures are non-actionable: serialization is
             // infallible for the fixed two-field payload; a missing listener

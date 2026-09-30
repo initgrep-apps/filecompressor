@@ -23,7 +23,7 @@ use crate::sidecar;
 use crate::temp;
 use std::collections::HashMap;
 use std::sync::{LockResult, Mutex, MutexGuard};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -107,14 +107,16 @@ struct BatchCompletePayload<'a> {
 /// Managed state shared by commands and the worker task.
 /// Cancellation goes through this struct directly — NOT through the
 /// mpsc channel, whose receiver is busy inside process_batch.
-pub struct QueueState {
+/// Runtime-generic so tests can drive it on tauri's MockRuntime.
+pub struct QueueState<R: Runtime = tauri::Wry> {
     token_map: Mutex<HashMap<String, CancellationToken>>,
     batch_tokens: Mutex<HashMap<String, CancellationToken>>,
     sender: mpsc::UnboundedSender<BatchMessage>,
+    _runtime: std::marker::PhantomData<fn() -> R>,
 }
 
-impl QueueState {
-    pub fn new(app: AppHandle) -> Self {
+impl<R: Runtime> QueueState<R> {
+    pub fn new(app: AppHandle<R>) -> Self {
         let (sender, mut receiver) = mpsc::unbounded_channel::<BatchMessage>();
         let worker_app = app.clone();
         tauri::async_runtime::spawn(async move {
@@ -126,11 +128,12 @@ impl QueueState {
             token_map: Mutex::new(HashMap::new()),
             batch_tokens: Mutex::new(HashMap::new()),
             sender,
+            _runtime: std::marker::PhantomData,
         }
     }
 
     /// Called by compress_all: registers the batch token then queues work.
-    pub fn start_batch(&self, app: &AppHandle, batch_id: String, file_ids: Vec<String>) {
+    pub fn start_batch(&self, app: &AppHandle<R>, batch_id: String, file_ids: Vec<String>) {
         let token = CancellationToken::new();
         poison_recover(self.batch_tokens.lock()).insert(batch_id.clone(), token);
 
@@ -180,8 +183,13 @@ impl QueueState {
         poison_recover(self.token_map.lock()).remove(file_id);
     }
 
-    async fn process_batch(app: &AppHandle, batch_id: String, file_ids: Vec<String>) {
-        let queue = app.state::<QueueState>();
+    #[cfg(test)]
+    fn batch_token_present(&self, batch_id: &str) -> bool {
+        poison_recover(self.batch_tokens.lock()).contains_key(batch_id)
+    }
+
+    async fn process_batch(app: &AppHandle<R>, batch_id: String, file_ids: Vec<String>) {
+        let queue = app.state::<QueueState<R>>();
         let registry = ProcessorRegistry::new();
         let state = app.state::<FileListState>();
 
@@ -394,7 +402,7 @@ impl QueueState {
 }
 
 /// Emits the file:cancelled event (used by the worker and the cancel command).
-pub(crate) fn emit_file_cancelled(app: &AppHandle, file_id: &str) {
+pub(crate) fn emit_file_cancelled<R: tauri::Runtime>(app: &AppHandle<R>, file_id: &str) {
     let _ = app.emit("file:cancelled", FileCancelledPayload { file_id });
 }
 
@@ -535,5 +543,203 @@ mod tests {
             &output_file_name("clip.mov"),
         );
         assert_eq!(resolved.file_name().unwrap(), "clip.mp4");
+    }
+
+    #[test]
+    fn preflight_skips_when_folder_already_writable() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        assert!(
+            ensure_output_folder_writable(dir.path().to_str().unwrap()).is_ok(),
+            "an existing writable folder must pass the preflight unchanged"
+        );
+        assert!(
+            !dir.path().join(".write-probe").exists(),
+            "no probe file may be left behind"
+        );
+    }
+
+    #[test]
+    fn write_test_file_removed_after_preflight() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let folder = dir.path().to_str().unwrap().to_string();
+        assert!(ensure_output_folder_writable(&folder).is_ok());
+        assert!(!dir.path().join(".write-probe").exists());
+
+        #[cfg(unix)]
+        {
+            // Running as root (UID 0) bypasses DAC permission bits, so a
+            // 0o500 folder would still accept the probe and this assertion
+            // would fail deterministically in root CI/container runs. Skip
+            // the read-only-dir branch there; the success-path assertions
+            // above still run everywhere.
+            let is_root = unsafe { libc::geteuid() } == 0;
+            if !is_root {
+                use std::os::unix::fs::PermissionsExt;
+                let read_only = dir.path().join("read-only");
+                std::fs::create_dir(&read_only).unwrap();
+                let mode = |m: u32| {
+                    let mut perms = std::fs::metadata(&read_only).unwrap().permissions();
+                    perms.set_mode(m);
+                    perms
+                };
+                std::fs::set_permissions(&read_only, mode(0o500)).unwrap();
+
+                let err = ensure_output_folder_writable(read_only.to_str().unwrap());
+                assert!(
+                    err.is_err(),
+                    "a read-only folder must fail the writability probe"
+                );
+                assert!(
+                    !read_only.join(".write-probe").exists(),
+                    "failed probe must also be cleaned up"
+                );
+
+                std::fs::set_permissions(&read_only, mode(0o755)).unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn queue_batch_creates_missing_output_folder() {
+        use tempfile::tempdir;
+
+        let root = tempdir().unwrap();
+        let missing = root.path().join("fresh-folder");
+        assert!(ensure_output_folder_writable(missing.to_str().unwrap()).is_ok());
+        assert!(
+            missing.is_dir(),
+            "a folder deleted between runs must be recreated by preflight"
+        );
+        assert!(!missing.join(".write-probe").exists());
+    }
+
+    #[test]
+    fn queue_batch_create_dir_fails_emits_cannot_create_error() {
+        use tempfile::tempdir;
+
+        let root = tempdir().unwrap();
+        let blocker = root.path().join("blocker.txt");
+        std::fs::write(&blocker, b"regular file").unwrap();
+        let blocked = blocker.join("child");
+
+        let err = ensure_output_folder_writable(blocked.to_str().unwrap());
+        let msg = err.expect_err("create_dir_all under a regular file must fail");
+        assert_eq!(
+            msg,
+            format!(
+                "Output folder not writable: {}",
+                std::fs::create_dir_all(&blocked).unwrap_err()
+            ),
+            "shipped user-facing copy is 'Output folder not writable: <io error>' (spec §6) — plan snippet's 'Cannot create output folder' was substituted; do not regress wording"
+        );
+        assert!(
+            !blocker.parent().unwrap().join(".write-probe").exists(),
+            "failed preflight must not leave a probe in the parent"
+        );
+    }
+
+    #[test]
+    fn queue_batch_unwritable_folder_emits_batch_error_and_processes_nothing() {
+        use tauri::{Listener, Manager};
+        use tempfile::TempDir;
+
+        let root = TempDir::new().unwrap();
+        let blocker = root.path().join("blocker.txt");
+        std::fs::write(&blocker, b"regular file").unwrap();
+        let output_folder = blocker.join("unwritable-child");
+
+        let settings_store = root.path().join("settings.json");
+        std::fs::write(
+            &settings_store,
+            serde_json::json!({ "settings": { "outputFolder": output_folder.to_str().unwrap() } })
+                .to_string(),
+        )
+        .unwrap();
+
+        let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
+        ctx.config_mut().app.app_directories_override =
+            Some(tauri::utils::config::AppDirectoriesOverride::Root(
+                root.path().to_path_buf(),
+            ));
+        ctx.config_mut().identifier = "com.app.test".into();
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_store::Builder::default().build())
+            .manage(FileListState(std::sync::Mutex::new(Vec::new())))
+            .build(ctx)
+            .unwrap();
+        app.manage(QueueState::new(app.handle().clone()));
+
+        let (tx, rx) = std::sync::mpsc::channel::<(String, serde_json::Value)>();
+        let event_sink = |topic: &'static str| {
+            let tx = tx.clone();
+            move |event: tauri::Event| {
+                let _ = tx.send((
+                    topic.to_string(),
+                    serde_json::from_str(event.payload()).unwrap(),
+                ));
+            }
+        };
+        let _ = app.listen("batch:error", event_sink("batch:error"));
+        let _ = app.listen("file:error", event_sink("file:error"));
+        let _ = app.listen("file:complete", event_sink("file:complete"));
+
+        let entry = crate::models::FileEntry::new(
+            "does-not-matter.jpg",
+            crate::detection::default_target_bytes(crate::models::Category::Image),
+        );
+        {
+            let state = app.state::<FileListState>();
+            let mut list = state.0.lock().unwrap();
+            list.push(entry.clone());
+        }
+        let batch_id = "test-batch-id".to_string();
+
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(
+            queue.inner(),
+            &app.handle(),
+            batch_id.clone(),
+            vec![entry.id.clone()],
+        );
+
+        for _ in 0..250 {
+            let worker_idle = !queue.batch_token_present(&batch_id);
+            if worker_idle {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+
+        let (topic, payload) = rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("preflight failure must emit batch:error");
+        assert_eq!(topic, "batch:error");
+        assert_eq!(payload["batchId"], batch_id);
+        assert!(
+            payload["errorMessage"]
+                .as_str()
+                .unwrap()
+                .starts_with("Output folder not writable:"),
+            "errorMessage must carry the shipped preflight copy: {payload}"
+        );
+
+        let state = app.state::<FileListState>();
+        let list = state.0.lock().unwrap();
+        assert!(
+            list.iter().all(|e| e.status == crate::models::FileStatus::Pending),
+            "preflight must run before the first job — file statuses: {:?}",
+            list.iter().map(|e| e.status).collect::<Vec<_>>()
+        );
+        drop(list);
+
+        let _ = rx
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .map(|(topic, _)| {
+                panic!("zero jobs may start — unexpected extra event: {topic}");
+            });
     }
 }
