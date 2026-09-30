@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# Audits every sidecar binary in src-tauri/binaries/ and every collected dylib
-# in src-tauri/frameworks/: absolute non-system dylib paths are a release bug
-# (dev-only paths like /opt/homebrew abort on end-user machines).
+# Audits every Mach-O sidecar binary in src-tauri/binaries/ (PE32/Windows
+# binaries skipped — the audit covers macOS and Linux ELF targets) and every
+# collected dylib in src-tauri/frameworks/: absolute non-system dylib paths
+# are a release bug (dev-only paths like /opt/homebrew abort on end-user
+# machines).
 # A Mach-O image fails the audit when it: is not parseable by otool, carries
 # no dylib load commands, loads an absolute non-system or relative path, loads
 # @rpath/<name> without <name> present in frameworks/, has @rpath loads but
 # no LC_RPATH of its own, or has an invalid/missing code signature.
-# @loader_path/* and @executable_path/* load commands pass: they resolve
-# relative to the loading image itself, so they are self-contained by
-# construction.
+# @loader_path/* and @executable_path/* load commands pass: @loader_path
+# resolves relative to the loading image itself, while @executable_path
+# resolves relative to the process's main executable (NOT each loading
+# image) — both land inside the app bundle our sidecars ship in, so they are
+# self-contained by construction.
 # Tool absence is fail-closed: otool/codesign are required whenever a Mach-O
 # is audited, ldd whenever an ELF is audited.
 # Exit 0 = self-contained. Exit 1 = findings printed.
@@ -66,9 +70,14 @@ audit_macho() {
         ;;
     esac
   done <<< "$deps"
-  if [ "$has_rpath_loads" -eq 1 ] && ! otool -l "$file" | grep -q "LC_RPATH"; then
-    printf 'FAIL %s: @rpath loads but no LC_RPATH entry\n' "$file"
-    failures+=("$file")
+  if [ "$has_rpath_loads" -eq 1 ]; then
+    # grep -A3 mirrors bundle-pdf's LC_RPATH section extraction; a plain
+    # `otool -l | grep -q` is a SIGPIPE false-FAIL risk under pipefail when
+    # grep exits before otool finishes writing a long load listing.
+    if ! otool -l "$file" | grep -A3 "LC_RPATH" >/dev/null; then
+      printf 'FAIL %s: @rpath loads but no LC_RPATH entry\n' "$file"
+      failures+=("$file")
+    fi
   fi
   require_tool codesign
   if ! codesign --verify "$file" >/dev/null 2>&1; then
@@ -90,6 +99,8 @@ if [ ! -d "$BIN_DIR" ]; then
   printf 'FAIL binaries dir missing: %s\n' "$BIN_DIR"
   exit 1
 fi
+
+require_tool file
 
 for f in "$BIN_DIR"/*; do
   [ -f "$f" ] || continue

@@ -1,5 +1,3 @@
-use tauri::{AppHandle, Manager};
-
 pub(crate) fn target_triple(os: &str, arch: &str) -> Result<&'static str, String> {
     match (os, arch) {
         ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
@@ -68,7 +66,10 @@ fn sidecar_candidates(exe_dir: &std::path::Path, name: &str) -> Vec<std::path::P
     candidates
 }
 
-fn resolve_sidecar_candidate(exe_dir: &std::path::Path, name: &str) -> Result<String, String> {
+pub(crate) fn resolve_sidecar_candidate(
+    exe_dir: &std::path::Path,
+    name: &str,
+) -> Result<String, String> {
     let mut first_error: Option<String> = None;
 
     for path in sidecar_candidates(exe_dir, name) {
@@ -87,14 +88,18 @@ fn resolve_sidecar_candidate(exe_dir: &std::path::Path, name: &str) -> Result<St
     }))
 }
 
-pub(crate) fn get_sidecar_path(app: &AppHandle, name: &str) -> Result<String, String> {
+pub(crate) fn current_exe_dir() -> Result<std::path::PathBuf, String> {
     let exe_path = std::env::current_exe()
         .map_err(|e| format!("Engine error: failed to resolve executable path: {}", e))?;
-    let exe_dir = exe_path
+    exe_path
         .parent()
-        .ok_or_else(|| "Engine error: executable has no parent directory".to_string())?;
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| "Engine error: executable has no parent directory".to_string())
+}
 
-    resolve_sidecar_candidate(exe_dir, name)
+pub(crate) fn resolve_all_sidecar_paths() -> Result<crate::engine::SidecarPaths, String> {
+    let exe_dir = current_exe_dir()?;
+    Ok(crate::engine::SidecarPaths::resolve_for(&exe_dir))
 }
 
 #[cfg(test)]
@@ -287,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    fn tauri_conf_json_lists_vips_as_external_bin() {
+    fn tauri_conf_json_lists_all_sidecar_engines_as_external_bin() {
         let manifest = env!("CARGO_MANIFEST_DIR");
         let conf = std::fs::read_to_string(format!("{}/tauri.conf.json", manifest))
             .expect("tauri.conf.json readable from src-tauri");
@@ -295,10 +300,37 @@ mod tests {
         let bins = value["bundle"]["externalBin"]
             .as_array()
             .expect("bundle.externalBin array");
+        for required in ["binaries/vips", "binaries/qpdf", "binaries/gs"] {
+            assert!(
+                bins.iter().any(|b| b.as_str() == Some(required)),
+                "externalBin must list {required}, got: {:?}",
+                bins
+            );
+        }
+    }
+
+    #[test]
+    fn sidecar_paths_reaches_both_qpdf_and_gs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let qpdf_path = dir.path().join(sidecar_filename("qpdf").unwrap());
+        let gs_path = dir.path().join(sidecar_filename("gs").unwrap());
+        std::fs::write(&qpdf_path, b"stub").unwrap();
+        std::fs::write(&gs_path, b"stub").unwrap();
+
+        let paths = crate::engine::SidecarPaths::resolve_for(dir.path());
+        assert_eq!(
+            paths.qpdf.as_deref(),
+            qpdf_path.to_str(),
+            "qpdf must resolve to the exe-dir triple-suffixed binary"
+        );
+        assert_eq!(
+            paths.gs.as_deref(),
+            gs_path.to_str(),
+            "gs must resolve to the exe-dir triple-suffixed binary"
+        );
         assert!(
-            bins.iter().any(|b| b.as_str() == Some(EXTERNAL_BIN)),
-            "externalBin must list {EXTERNAL_BIN}, got: {:?}",
-            bins
+            paths.vips.is_none() && paths.ffmpeg.is_none() && paths.ffprobe.is_none(),
+            "missing engines must resolve to None (collected), not abort resolution"
         );
     }
 

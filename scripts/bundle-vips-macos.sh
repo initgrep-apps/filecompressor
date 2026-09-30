@@ -20,29 +20,17 @@
 # mismatch instead of silently unifying.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/src-tauri/binaries"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=sidecar-bundle.common.sh
+source "$SCRIPT_DIR/sidecar-bundle.common.sh"
+
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FRAMEWORKS="$ROOT/src-tauri/frameworks"
 TRIPLE="$(rustc -Vv | grep '^host:' | sed 's/host: //')"
-SIDECAR="$BIN/vips-$TRIPLE"
+SIDECAR="$ROOT/src-tauri/binaries/vips-$TRIPLE"
 
 [ -f "$SIDECAR" ] || { printf 'FAIL sidecar missing: %s\n' "$SIDECAR"; exit 1; }
 [ "$(uname)" = "Darwin" ] || { printf 'FAIL macOS only\n'; exit 1; }
-
-system_path() {
-  case "$1" in
-    /usr/lib/system/*|/System/Library/*|/usr/lib/*|@*) return 0 ;;
-    /*) return 1 ;;
-    *) return 0 ;;
-  esac
-}
-
-fingerprint() {
-  {
-    otool -D "$1" | tail -n +2 | awk '{print $1}' | awk -F/ '{print $NF}'
-    otool -L "$1" | tail -n +2 | awk '{print $1}' | awk -F/ '{print $NF}' | sort -u
-  } | sort -u
-}
 
 collect() {
   local src="$1"
@@ -89,24 +77,6 @@ collect_deps_of() {
       /*) system_path "$dep" || collect "$dep" ;;
     esac
   done
-}
-
-rewrite() {
-  local file="$1"
-  chmod u+w "$file"
-  for dep in $(otool -L "$file" | tail -n +2 | awk '{print $1}'); do
-    system_path "$dep" || install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$file"
-  done
-}
-
-has_rpath() {
-  local file="$1" rpath="$2"
-  otool -l "$file" | awk -v p="$rpath" '$1 == "path" && $2 == p { found = 1 } END { exit !found }'
-}
-
-ensure_rpath() {
-  local file="$1" rpath="$2"
-  has_rpath "$file" "$rpath" || install_name_tool -add_rpath "$rpath" "$file"
 }
 
 needs_bundle=0

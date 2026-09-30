@@ -21,7 +21,13 @@ pub(crate) fn create_temp_dir(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 pub(crate) fn cleanup_temp_dir(path: &Path) {
-    let _ = std::fs::remove_dir_all(path);
+    // Non-fatal: a stuck temp dir must not fail the caller. NotFound is the
+    // already-cleaned idempotency case — silent; anything else warns.
+    if let Err(e) = std::fs::remove_dir_all(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            eprintln!("warn: temp cleanup failed for {}: {e}", path.display());
+        }
+    }
 }
 
 /// Removes entries under `app_temp` whose mtime is older than 24 hours.
