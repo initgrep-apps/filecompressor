@@ -47,6 +47,20 @@ impl ProgressSender {
         Self::new_with_emitter(Arc::new(|_| {}))
     }
 
+    /// Test double that records every emitted percent. Shared by processor
+    /// tests asserting monotonicity, slice coverage, and terminal progress.
+    #[cfg(test)]
+    pub fn test_collector() -> (Self, Arc<std::sync::Mutex<Vec<u32>>>) {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = Arc::clone(&seen);
+        (
+            Self::new_with_emitter(Arc::new(move |percent| {
+                sink.lock().unwrap().push(percent);
+            })),
+            seen,
+        )
+    }
+
     pub fn send_progress(&self, percent: u32) {
         (self.emit)(percent.clamp(0, 100));
     }

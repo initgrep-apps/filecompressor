@@ -14,16 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
 use crate::engine::result::{CompressionError, CompressionResult, STRATEGY_ALREADY_UNDER_TARGET};
 use crate::engine::{
     BestAttempt, CompressionProcessor, ProgressSender, SidecarName, SidecarPaths, deliver_output,
+    recv_stderr_bounded as recv_bounded, stderr_tail,
 };
 use crate::models::Category;
 use crate::settings::QualityFloors;
@@ -37,17 +38,22 @@ impl Default for VideoProcessor {
 }
 
 /// Resolution ladder per spec §5: 1080p → 720p → 480p. Each rung is the
-/// target height; the scale filter derives width from the aspect ratio.
-const RESOLUTION_RUNGS: [u32; 3] = [1080, 720, 480];
-const RESOLUTION_WIDTHS: [u32; 3] = [1920, 1280, 854];
+/// 16:9-equivalent height paired with its cap width; the scale filter
+/// implements each rung as a width cap (`min(iw,<width>)`) so a smaller
+/// input is never upscaled, and height follows the input aspect ratio.
+const RESOLUTION_RUNGS: [(u32, u32); 3] = [(1080, 1920), (720, 1280), (480, 854)];
 /// CRF walk ascends toward the quality floor (higher CRF = smaller file).
 const BASE_CRF_RUNGS: [u32; 2] = [23, 28];
 /// Durations below this cannot yield a sane two-pass bitrate.
 const MIN_DURATION_SECS: f64 = 0.5;
 const AUDIO_BITRATE_K: u32 = 128;
 const WAIT_POLL_MILLIS: u64 = 30;
-const STDERR_TAIL_CHARS: usize = 500;
-const STDERR_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
+/// Cap ffmpeg's stderr is allowed to burst per read chunk.
+const PROGRESS_CHUNK_SIZE: usize = 4096;
+/// Bounded wait for the stderr reader thread to finish after ffmpeg exits.
+const FFMPEG_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
+/// Stderr bytes retained for failure diagnostics (drained halfway on overflow).
+const TAIL_KEEP_BYTES: usize = 2048;
 
 /// Pass 1 discards its output. Windows has no `/dev/null`; cmd's `NUL`
 /// device is the equivalent sink.
@@ -94,17 +100,27 @@ impl VideoProcessor {
     }
 
     /// `HH:MM:SS.ms` (also accepts `MM:SS` / bare seconds) to seconds.
+    /// Negative timestamps (exotic containers, `time=-00:00:05`) are
+    /// rejected — any negative component means the token is malformed, and
+    /// a negative duration share would be nonsense.
     fn parse_time_hms(token: &str) -> Option<f64> {
         let parts: Vec<f64> = token
             .split(':')
             .map(|p| p.trim().parse::<f64>().ok())
             .collect::<Option<Vec<_>>>()?;
-        match parts.len() {
+        if parts.iter().any(|p| p.is_sign_negative()) {
+            return None;
+        }
+        let secs = match parts.len() {
             3 => Some(parts[0] * 3600.0 + parts[1] * 60.0 + parts[2]),
             2 => Some(parts[0] * 60.0 + parts[1]),
             1 => Some(parts[0]),
             _ => None,
+        }?;
+        if !secs.is_finite() {
+            return None;
         }
+        Some(secs)
     }
 
     /// Extracts the encode position from one ffmpeg stderr line. Accepts both
@@ -130,30 +146,37 @@ impl VideoProcessor {
         best
     }
 
-    /// Percent of `duration_secs` reached, from the maximum timestamp seen in
-    /// the whole stderr. Clamped to 0..=100 — a `time=01:00:01` line on a
-    /// 01:00:00 video must never emit 100.001%.
-    #[allow(dead_code)]
-    fn parse_progress_percent(stderr: &str, duration_secs: f64) -> u32 {
+    /// Percent of `duration_secs` reached at `secs`, clamped to 0..=100 —
+    /// a `time=01:00:01` line on a 01:00:00 video must never emit 100.001%.
+    fn seconds_to_percent(secs: f64, duration_secs: f64) -> u32 {
         if duration_secs <= 0.0 || !duration_secs.is_finite() {
             return 0;
         }
+        ((secs / duration_secs) * 100.0).clamp(0.0, 100.0) as u32
+    }
+
+    /// Percent of `duration_secs` reached, from the maximum timestamp in the
+    /// whole stderr. Test-side parser: the live reader thread consumes the
+    /// same pieces per line (`progress_line_seconds` + `seconds_to_percent`)
+    /// instead of batch-parsing after the fact.
+    #[cfg(test)]
+    fn parse_progress_percent(stderr: &str, duration_secs: f64) -> u32 {
         let max = stderr
             .lines()
             .filter_map(Self::progress_line_seconds)
             .fold(0.0f64, f64::max);
-        ((max / duration_secs) * 100.0).clamp(0.0, 100.0) as u32
+        Self::seconds_to_percent(max, duration_secs)
     }
 
     /// Resolution rungs allowed by the settings floor (`"480p"` → 480).
     /// Unparseable floors do not restrict the ladder.
-    fn resolution_rungs(min_resolution: &str) -> Vec<u32> {
+    fn resolution_rungs(min_resolution: &str) -> Vec<(u32, u32)> {
         let digits: String = min_resolution.chars().filter(|c| c.is_ascii_digit()).collect();
         let min = digits.parse::<u32>().unwrap_or(0);
         RESOLUTION_RUNGS
             .iter()
             .copied()
-            .filter(|r| *r >= min)
+            .filter(|(height, _)| *height >= min)
             .collect()
     }
 
@@ -173,8 +196,10 @@ impl VideoProcessor {
     }
 
     fn scale_args(scale_width: Option<u32>) -> Vec<String> {
+        // `min(iw,…)` means the ladder only ever DOWNSCALES — an input
+        // narrower than a rung's cap passes through untouched.
         match scale_width {
-            Some(w) => vec!["-vf".to_string(), format!("scale={w}:-2")],
+            Some(w) => vec!["-vf".to_string(), format!("scale=min(iw\\,{w}):-2")],
             None => Vec::new(),
         }
     }
@@ -334,7 +359,12 @@ impl VideoProcessor {
         let name = name.to_string_lossy().into_owned();
         let entries = match std::fs::read_dir(temp_dir) {
             Ok(entries) => entries,
-            Err(_) => return,
+            Err(e) => {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!("warn: passlog cleanup read_dir({}) failed: {e}", temp_dir.display());
+                }
+                return;
+            }
         };
         for entry in entries.flatten() {
             if entry.file_name().to_string_lossy().starts_with(&name) {
@@ -350,19 +380,34 @@ impl VideoProcessor {
         }
     }
 
-    fn stderr_tail(bytes: &[u8]) -> String {
-        let stderr = String::from_utf8_lossy(bytes).into_owned();
-        let count = stderr.chars().count();
-        let tail: String = if count > STDERR_TAIL_CHARS {
-            stderr.chars().skip(count - STDERR_TAIL_CHARS).collect()
-        } else {
-            stderr
-        };
-        let detail = tail.trim_end();
-        if detail.is_empty() {
-            "<no stderr>".to_string()
-        } else {
-            detail.to_string()
+    /// Polls a dispatched child to completion. Cancel SIGKILLs the child and
+    /// surfaces as `Cancelled`; a `try_wait` failure kills, reaps, and
+    /// surfaces as a sidecar failure. Shared poll loop for ffprobe and the
+    /// progress-reader ffmpeg (which need pipes run_sidecar cannot provide).
+    fn poll_child_exit(
+        child: &mut std::process::Child,
+        cancel_token: &CancellationToken,
+        label: &str,
+    ) -> Result<std::process::ExitStatus, CompressionError> {
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return Ok(status),
+                Ok(None) => {
+                    if cancel_token.is_cancelled() {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(CompressionError::Cancelled);
+                    }
+                    std::thread::sleep(Duration::from_millis(WAIT_POLL_MILLIS));
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(CompressionError::SidecarFailed(format!(
+                        "{label} wait failed: {e}"
+                    )));
+                }
+            }
         }
     }
 
@@ -406,31 +451,14 @@ impl VideoProcessor {
         let stderr_reader = std::thread::spawn(move || {
             let mut buffer = Vec::new();
             if let Some(pipe) = stderr_pipe.as_mut() {
-                let _ = pipe.read_to_end(&mut buffer);
+                if let Err(e) = pipe.read_to_end(&mut buffer) {
+                    eprintln!("warn: ffprobe stderr drain failed, diagnostics partial: {e}");
+                }
             }
             buffer
         });
 
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => {
-                    if cancel_token.is_cancelled() {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(CompressionError::Cancelled);
-                    }
-                    std::thread::sleep(Duration::from_millis(WAIT_POLL_MILLIS));
-                }
-                Err(e) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(CompressionError::SidecarFailed(format!(
-                        "ffprobe wait failed: {e}"
-                    )));
-                }
-            }
-        };
+        let status = Self::poll_child_exit(&mut child, cancel_token, "ffprobe")?;
         if cancel_token.is_cancelled() {
             return Err(CompressionError::Cancelled);
         }
@@ -441,7 +469,7 @@ impl VideoProcessor {
             return Err(CompressionError::SidecarFailed(format!(
                 "File may be corrupt (ffprobe exited with code {:?}): {}",
                 status.code(),
-                Self::stderr_tail(&stderr)
+                stderr_tail(&stderr)
             )));
         }
         Ok(String::from_utf8_lossy(&stdout).into_owned())
@@ -474,58 +502,59 @@ impl VideoProcessor {
         let progress_for_thread = progress.clone();
         let reader = std::thread::spawn(move || {
             let mut max_percent: u32 = 0;
-            let mut tail: Vec<String> = Vec::new();
+            let mut tail: Vec<u8> = Vec::new();
             if let Some(pipe) = stderr_pipe.as_mut() {
-                let mut lines = BufReader::new(pipe);
-                let mut line = String::new();
-                loop {
-                    line.clear();
-                    match lines.read_line(&mut line) {
-                        Ok(0) | Err(_) => break,
-                        Ok(_) => {
-                            if let Some(secs) = Self::progress_line_seconds(line.trim()) {
-                                let pct = if duration_secs > 0.0 && duration_secs.is_finite() {
-                                    ((secs / duration_secs) * 100.0).clamp(0.0, 100.0) as u32
-                                } else {
-                                    0
-                                };
-                                max_percent = max_percent.max(pct);
-                                if range_span > 0 {
-                                    progress_for_thread
-                                        .send_progress(range_base + (pct * range_span) / 100);
-                                }
-                            }
-                            tail.push(line.trim_end().to_string());
-                            if tail.len() > 20 {
-                                tail.remove(0);
+                // Read raw bytes and lossy-convert per complete line: a
+                // non-UTF-8 filename embedded in stderr must neither freeze
+                // progress (read_line's silent error break) nor truncate
+                // diagnostics. Only complete lines are parsed — a progress
+                // token straddling chunks is never misread; the fragment is
+                // held over and parsed once its newline arrives.
+                let parse_and_record = |bytes: &[u8], max_percent: &mut u32| {
+                    let text = String::from_utf8_lossy(bytes);
+                    for line in text.lines() {
+                        if let Some(secs) = Self::progress_line_seconds(line.trim()) {
+                            let pct = Self::seconds_to_percent(secs, duration_secs);
+                            *max_percent = (*max_percent).max(pct);
+                            if range_span > 0 {
+                                progress_for_thread
+                                    .send_progress(range_base + (pct * range_span) / 100);
                             }
                         }
                     }
+                };
+                let mut chunk = [0u8; PROGRESS_CHUNK_SIZE];
+                let mut pending: Vec<u8> = Vec::new();
+                loop {
+                    match pipe.read(&mut chunk) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            pending.extend_from_slice(&chunk[..n]);
+                            if let Some(pos) = pending.iter().rposition(|b| *b == b'\n') {
+                                let complete: Vec<u8> = pending.drain(..=pos).collect();
+                                parse_and_record(&complete, &mut max_percent);
+                                tail.extend_from_slice(&complete);
+                            }
+                            if tail.len() > TAIL_KEEP_BYTES {
+                                tail.drain(..tail.len() - TAIL_KEEP_BYTES / 2);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("warn: ffmpeg stderr drain failed, progress partial: {e}");
+                            break;
+                        }
+                    }
+                }
+                // EOF: whatever has no trailing newline is still real output.
+                if !pending.is_empty() {
+                    parse_and_record(&pending, &mut max_percent);
+                    tail.extend_from_slice(&pending);
                 }
             }
-            (max_percent, tail.join("\n"))
+            (max_percent, tail)
         });
 
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) => {
-                    if cancel_token.is_cancelled() {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        return Err(CompressionError::Cancelled);
-                    }
-                    std::thread::sleep(Duration::from_millis(WAIT_POLL_MILLIS));
-                }
-                Err(e) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(CompressionError::SidecarFailed(format!(
-                        "ffmpeg wait failed: {e}"
-                    )));
-                }
-            }
-        };
+        let status = Self::poll_child_exit(&mut child, cancel_token, "ffmpeg")?;
         if cancel_token.is_cancelled() {
             return Err(CompressionError::Cancelled);
         }
@@ -533,10 +562,10 @@ impl VideoProcessor {
             Some(pair) => pair,
             None => {
                 eprintln!(
-                    "warn: ffmpeg stderr drain did not finish within {STDERR_JOIN_TIMEOUT:?}; \
+                    "warn: ffmpeg stderr drain did not finish within {FFMPEG_JOIN_TIMEOUT:?}; \
                      diagnostics unavailable"
                 );
-                (0, "<stderr unreadable>".to_string())
+                (0, b"<stderr unreadable>".to_vec())
             }
         };
 
@@ -544,37 +573,24 @@ impl VideoProcessor {
             return Err(CompressionError::SidecarFailed(format!(
                 "ffmpeg exited with code {:?}: {}",
                 status.code(),
-                Self::stderr_tail(tail.as_bytes())
+                stderr_tail(&tail)
             )));
         }
         if range_span > 0 {
-            let scaled = (max_percent as u32 * range_span) / 100;
+            let scaled = (max_percent * range_span) / 100;
             progress.send_progress(range_base + scaled);
         }
         Ok(())
     }
 }
 
-/// Bounded wait on a drain-thread handle: poll `is_finished`, then join.
-/// `None` = abandoned (detached; the thread self-terminates at pipe close).
-fn recv_bounded<T: Send + 'static>(
-    handle: std::thread::JoinHandle<T>,
-) -> Option<T> {
-    let deadline = Instant::now() + STDERR_JOIN_TIMEOUT;
-    loop {
-        if handle.is_finished() {
-            return handle.join().ok();
-        }
-        if Instant::now() >= deadline {
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(WAIT_POLL_MILLIS));
-    }
-}
-
 enum VideoAttempt {
     TwoPass {
         scale_width: Option<u32>,
+        /// Passlogfile prefix — TwoPass MUST carry one (no passlog means a
+        /// missing pass-2 input, not a recoverable failure). Held by the
+        /// variant so there is no `Option` param that invites a panic.
+        passlog_prefix: PathBuf,
     },
     Crf {
         crf: u32,
@@ -585,7 +601,7 @@ enum VideoAttempt {
 impl VideoAttempt {
     fn strategy(&self, bitrate_k: u64) -> String {
         match self {
-            VideoAttempt::TwoPass { scale_width } => match scale_width {
+            VideoAttempt::TwoPass { scale_width, .. } => match scale_width {
                 Some(w) => format!("two-pass h264 b={bitrate_k}k scale={w}"),
                 None => format!("two-pass h264 b={bitrate_k}k"),
             },
@@ -662,8 +678,11 @@ impl CompressionProcessor for VideoProcessor {
             },
         )?;
 
-        // MOV input → MP4 output (spec §3 format table).
-        let final_output = output.with_extension("mp4");
+        // The .mov → .mp4 output naming is applied by the queue (spec §3
+        // format table) BEFORE collision resolution, so the path already
+        // ends .mp4 here — overwriting an existing file would never be
+        // caught as a rename collision.
+        let final_output = output.to_path_buf();
 
         let res_rungs = Self::resolution_rungs(&quality_floor.video.min_resolution);
         let crf_values = Self::crf_rungs(quality_floor.video.min_crf);
@@ -684,15 +703,16 @@ impl CompressionProcessor for VideoProcessor {
         };
 
         let run_attempt = |attempt: &VideoAttempt,
-                               temp_output: &Path,
-                               passlog_prefix: Option<&Path>,
-                               base: u32|
+                           temp_output: &Path,
+                           base: u32|
          -> Result<u64, CompressionError> {
             match attempt {
-                VideoAttempt::TwoPass { scale_width } => {
-                    let prefix = passlog_prefix.expect("two-pass requires a passlog prefix");
+                VideoAttempt::TwoPass {
+                    scale_width,
+                    passlog_prefix,
+                } => {
                     let half = (span / 2) as u32;
-                    let pass1 = Self::pass1_args(input, bitrate_k, *scale_width, prefix);
+                    let pass1 = Self::pass1_args(input, bitrate_k, *scale_width, passlog_prefix);
                     Self::run_ffmpeg_with_progress(
                         ffmpeg_path,
                         &pass1,
@@ -703,7 +723,7 @@ impl CompressionProcessor for VideoProcessor {
                         duration_secs,
                     )?;
                     let pass2 =
-                        Self::pass2_args(input, temp_output, bitrate_k, *scale_width, prefix);
+                        Self::pass2_args(input, temp_output, bitrate_k, *scale_width, passlog_prefix);
                     Self::run_ffmpeg_with_progress(
                         ffmpeg_path,
                         &pass2,
@@ -730,30 +750,25 @@ impl CompressionProcessor for VideoProcessor {
             Self::measure_output(temp_output)
         };
 
-        for (res_index, height) in res_rungs.iter().enumerate() {
+        for (res_index, (_, cap_width)) in res_rungs.iter().enumerate() {
             if cancel_token.is_cancelled() {
                 cancel_cleanup(&attempt_outputs, &passlog_prefixes);
                 return Err(CompressionError::Cancelled);
             }
 
-            let scale_width = RESOLUTION_WIDTHS
-                .get(RESOLUTION_RUNGS.iter().position(|r| r == height).unwrap_or(0))
-                .copied();
-            let attempt = VideoAttempt::TwoPass { scale_width };
             let temp_output = temp_dir.join(format!("attempt-{attempt_index}.mp4"));
             let passlog_prefix = temp_dir.join(format!("passlog-attempt-{attempt_index}"));
             attempt_index += 1;
             attempt_outputs.push(temp_output.clone());
             passlog_prefixes.push(passlog_prefix.clone());
+            let attempt = VideoAttempt::TwoPass {
+                scale_width: Some(*cap_width),
+                passlog_prefix: passlog_prefix.clone(),
+            };
             let base = (res_index * span) as u32;
             progress.send_progress(base);
 
-            let outcome = run_attempt(
-                &attempt,
-                &temp_output,
-                Some(&passlog_prefix),
-                base,
-            );
+            let outcome = run_attempt(&attempt, &temp_output, base);
 
             match outcome {
                 Ok(size) => {
@@ -793,14 +808,7 @@ impl CompressionProcessor for VideoProcessor {
 
         // CRF fallback at the lowest allowed resolution: quality descends
         // (CRF ascends) until the floor. Single-pass — no passlog files.
-        let fallback_width = res_rungs
-            .last()
-            .and_then(|h| {
-                RESOLUTION_RUNGS
-                    .iter()
-                    .position(|r| r == h)
-                    .map(|i| RESOLUTION_WIDTHS[i])
-            });
+        let fallback_width = res_rungs.last().map(|(_, cap_width)| *cap_width);
         for (crf_index, crf) in crf_values.iter().enumerate() {
             if cancel_token.is_cancelled() {
                 cancel_cleanup(&attempt_outputs, &passlog_prefixes);
@@ -817,7 +825,7 @@ impl CompressionProcessor for VideoProcessor {
             let base = ((res_rungs.len() + crf_index) * span) as u32;
             progress.send_progress(base);
 
-            let outcome = run_attempt(&attempt, &temp_output, None, base);
+            let outcome = run_attempt(&attempt, &temp_output, base);
 
             match outcome {
                 Ok(size) => {
@@ -876,6 +884,7 @@ impl CompressionProcessor for VideoProcessor {
 mod tests {
     use super::*;
     use std::fs;
+    use std::time::Instant;
 
     #[cfg(unix)]
     fn make_executable_script(dir: &Path, name: &str, script: &str) -> String {
@@ -1123,10 +1132,11 @@ exit 1
             .map(String::from)
             .collect::<Vec<_>>()
         );
-        // Scale rung lands on BOTH passes, before the -pass flags.
+        // Scale rung lands on BOTH passes, before the -pass flags. The cap
+        // filter never upscales: min(iw,<width>).
         let pass1_scaled = VideoProcessor::pass1_args(input, 1328, Some(1280), prefix);
         let vf_pos = pass1_scaled.iter().position(|a| a == "-vf").unwrap();
-        assert_eq!(pass1_scaled[vf_pos + 1], "scale=1280:-2");
+        assert_eq!(pass1_scaled[vf_pos + 1], "scale=min(iw\\,1280):-2");
         assert!(pass1_scaled.iter().position(|a| a == "-pass").unwrap() > vf_pos);
         let pass2_scaled = VideoProcessor::pass2_args(
             input,
@@ -1136,7 +1146,7 @@ exit 1
             prefix,
         );
         let vf_pos2 = pass2_scaled.iter().position(|a| a == "-vf").unwrap();
-        assert_eq!(pass2_scaled[vf_pos2 + 1], "scale=1280:-2");
+        assert_eq!(pass2_scaled[vf_pos2 + 1], "scale=min(iw\\,1280):-2");
         assert!(pass2_scaled.iter().position(|a| a == "-pass").unwrap() > vf_pos2);
     }
 
@@ -1157,6 +1167,16 @@ exit 1
             VideoProcessor::progress_line_seconds("time=00:00:10.00"),
             Some(10.0)
         );
+        // MM:SS variant.
+        assert_eq!(
+            VideoProcessor::progress_line_seconds("frame= 4 time=00:30.00"),
+            Some(30.0)
+        );
+        // Bare seconds.
+        assert_eq!(VideoProcessor::progress_line_seconds("time=42"), Some(42.0));
+        // Negative tokens are malformed, never progress.
+        assert_eq!(VideoProcessor::progress_line_seconds("time=-00:00:05"), None);
+        assert_eq!(VideoProcessor::progress_line_seconds("time=-5"), None);
         // Garbage / partial / unrelated lines are ignored.
         assert_eq!(VideoProcessor::progress_line_seconds("Press [q] to stop"), None);
         assert_eq!(VideoProcessor::progress_line_seconds("frame= 12 fps= 5"), None);
@@ -1222,9 +1242,9 @@ exit 1
         // 3 resolution rungs × 2 passes + 1 fitting CRF pass = 7 invocations.
         assert_eq!(log.len(), 7, "log: {log:?}");
         let count = |needle: &str| log.iter().filter(|l| l.contains(needle)).count();
-        assert_eq!(count("scale=1920"), 2, "1080p on both passes: {log:?}");
-        assert_eq!(count("scale=1280"), 2, "720p on both passes: {log:?}");
-        assert_eq!(count("scale=854"), 3, "480p on both passes + crf fallback: {log:?}");
+        assert_eq!(count("scale=min(iw\\,1920)"), 2, "1080p on both passes: {log:?}");
+        assert_eq!(count("scale=min(iw\\,1280)"), 2, "720p on both passes: {log:?}");
+        assert_eq!(count("scale=min(iw\\,854)"), 3, "480p on both passes + crf fallback: {log:?}");
         // Passlog isolation: every two-pass invocation gets a fresh prefix.
         let prefixes: Vec<String> = log
             .iter()
@@ -1307,6 +1327,7 @@ exit 1
 
         let token = CancellationToken::new();
         let output_path = dir.path().join("out.mp4");
+        let started = Instant::now();
         let handle = std::thread::spawn({
             let token = token.clone();
             let ffmpeg = ffmpeg.clone();
@@ -1327,14 +1348,36 @@ exit 1
             }
         });
 
-        std::thread::sleep(Duration::from_millis(500));
+        // Wait until pass 1 has actually spawned (the sleeper logs its
+        // invocation immediately) so the cancel is guaranteed to land
+        // mid-encode; a fixed sleep races thread startup under load.
+        let mut spawned = false;
+        for _ in 0..400 {
+            if !ffmpeg_log(&dir.path()).is_empty() {
+                spawned = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert!(spawned, "pass 1 never started");
         token.cancel();
         let result = handle.join().unwrap();
+        // The fake sleeps 60s in pass 1; returning near-instantly after the
+        // cancel proves the child was SIGKILLed, not waited out (an orphan
+        // sleeper would hang CI instead of failing loudly).
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "cancel must kill the sleeper child, elapsed: {:?}",
+            started.elapsed()
+        );
 
         assert!(
             matches!(result, Err(CompressionError::Cancelled)),
             "got: {result:?}"
         );
+        // Cancel fired mid-pass-1: exactly ONE ffmpeg invocation was made.
+        let log = ffmpeg_log(&dir.path());
+        assert_eq!(log.len(), 1, "pass 2 must never spawn after cancel: {log:?}");
         // Temp dir must be EMPTY — no orphan passlogs, no partial attempts.
         let leftovers: Vec<_> = fs::read_dir(&tmp).unwrap().flatten().collect();
         assert!(leftovers.is_empty(), "orphaned temp files: {leftovers:?}");
@@ -1342,17 +1385,24 @@ exit 1
 
     #[test]
     #[cfg(unix)]
-    fn video_mov_input_produces_mp4_output() {
+    fn video_mov_input_delivers_queue_resolved_mp4_output() {
         let dir = tempfile::tempdir().unwrap();
         let ffmpeg = fake_ffmpeg(&dir.path(), 100, 100, "  *) size=100 ;;");
         let ffprobe = fake_ffprobe(&dir.path(), "1.0\n");
         let input = oversized_input(&dir.path(), "clip.mov");
         let tmp = temp_dir_under(&dir.path());
 
+        // queue.rs output_file_name resolves clip.mov → clip.mp4 (with
+        // collision suffixes) BEFORE the processor runs; the processor must
+        // deliver to the resolved path untouched. See
+        // queue::output_file_name_rewrites_mov_to_mp4 and
+        // queue::mov_collision_uses_real_output_name for the naming half.
+        let output = dir.path().join("clip.mp4");
+
         let result = VideoProcessor
             .compress_to_target(
                 &input,
-                &dir.path().join("clip.mov"),
+                &output,
                 2000,
                 &QualityFloors::default(),
                 CancellationToken::new(),
@@ -1363,6 +1413,7 @@ exit 1
             .unwrap();
 
         assert!(result.met_target);
+        assert_eq!(result.output_path, output, "processor must not re-derive the output name");
         assert_eq!(result.output_path.extension().unwrap(), "mp4");
         assert!(result.output_path.exists());
     }
@@ -1505,9 +1556,9 @@ exit 1
 
         let log = ffmpeg_log(&dir.path());
         // 720p floor: no 480p (854) attempt may appear.
-        assert_eq!(log.iter().filter(|l| l.contains("scale=854")).count(), 0);
-        assert_eq!(log.iter().filter(|l| l.contains("scale=1920")).count(), 2);
-        assert_eq!(log.iter().filter(|l| l.contains("scale=1280")).count(), 3);
+        assert_eq!(log.iter().filter(|l| l.contains("scale=min(iw\\,854)")).count(), 0);
+        assert_eq!(log.iter().filter(|l| l.contains("scale=min(iw\\,1920)")).count(), 2);
+        assert_eq!(log.iter().filter(|l| l.contains("scale=min(iw\\,1280)")).count(), 3);
         assert!(result.strategy_used.contains("crf=23"));
         // CRF floor 23: only rung 23, never 28.
         for line in &log {
@@ -1532,5 +1583,252 @@ exit 1
         assert_eq!(PASS1_SINK, "NUL");
         #[cfg(not(windows))]
         assert_eq!(PASS1_SINK, "/dev/null");
+    }
+
+    /// Review round 1: a failing attempt (non-zero ffmpeg exit, or a corrupt
+    /// output behind exit 0) must fall through to later rungs instead of
+    /// killing the job, and the failed attempt's temp file must be removed.
+    #[test]
+    #[cfg(unix)]
+    fn video_failed_first_rung_falls_through_to_later_rungs() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = make_executable_script(
+            &dir.path(),
+            "fake-ffmpeg",
+            r#"#!/bin/bash
+echo "ffmpeg $*" >> "$(dirname "$0")/ffmpeg.log"
+pass=""; pl=""; w=""; crf=""
+prev=""
+for a in "$@"; do
+  case "$prev" in
+    -pass) pass="$a" ;;
+    -passlogfile) pl="$a" ;;
+    -vf) w="${a#scale=}"; w="${w%%:*}" ;;
+    -crf) crf="$a" ;;
+  esac
+  prev="$a"
+done
+if [ "$w" = "min(iw\,1920)" ]; then
+  echo "x264: crash at $w" >&2
+  exit 1
+fi
+if [ "$pass" = "1" ]; then
+  if [ -n "$pl" ]; then printf 'x' > "${pl}-0.log"; printf 'x' > "${pl}-0.log.mbtree"; fi
+  exit 0
+fi
+out="${@: -1}"
+size=9000
+if [ -n "$crf" ]; then size=100; fi
+printf '\x00\x00\x00\x18ftypmp42' > "$out"
+head -c $(( size - 12 )) /dev/zero >> "$out"
+"#,
+        );
+        let ffprobe = fake_ffprobe(&dir.path(), "1.0\n");
+        let input = oversized_input(&dir.path(), "in.mp4");
+        let tmp = temp_dir_under(&dir.path());
+
+        let result = VideoProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.mp4"),
+                2000,
+                &QualityFloors::default(),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &test_sidecar_paths(Some(ffmpeg), Some(ffprobe)),
+                &tmp,
+            )
+            .unwrap();
+
+        let log = ffmpeg_log(&dir.path());
+        // Rung 1 (1080p) fails on pass 1; later rungs still ran: 720p pass
+        // pair, 480p pass pair, and the fitting CRF fallback (later two-pass
+        // outputs are oversized so nothing but the CRF rung fits).
+        assert_eq!(log.iter().filter(|l| l.contains("min(iw\\,1920)")).count(), 1, "only the failed pass-1: {log:?}");
+        assert_eq!(log.iter().filter(|l| l.contains("min(iw\\,1280)")).count(), 2, "{log:?}");
+        assert_eq!(log.iter().filter(|l| l.contains("min(iw\\,854)")).count(), 3, "{log:?}");
+        assert!(result.met_target, "later rungs must still fit: {}", result.strategy_used);
+        assert!(result.strategy_used.contains("crf=23"), "got: {}", result.strategy_used);
+        // The failed attempt's temp output was removed, not leaked.
+        let attempt_files: Vec<String> = fs::read_dir(&tmp)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !attempt_files.iter().any(|n| n == "attempt-0.mp4"),
+            "failed attempt-0 output must be removed: {attempt_files:?}"
+        );
+    }
+
+    /// Review round 1: total failure must surface the LAST attempt's error
+    /// (last_error propagation), not a generic message.
+    #[test]
+    #[cfg(unix)]
+    fn video_total_failure_surfaces_last_attempt_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = make_executable_script(
+            &dir.path(),
+            "fake-ffmpeg",
+            r#"#!/bin/bash
+echo "ffmpeg $*" >> "$(dirname "$0")/ffmpeg.log"
+w=""
+prev=""
+for a in "$@"; do
+  case "$prev" in
+    -vf) w="${a#scale=}"; w="${w%%:*}" ;;
+  esac
+  prev="$a"
+done
+echo "x264: $w exploded" >&2
+exit 1
+"#,
+        );
+        let ffprobe = fake_ffprobe(&dir.path(), "1.0\n");
+        let input = oversized_input(&dir.path(), "in.mp4");
+        let tmp = temp_dir_under(&dir.path());
+
+        let result = VideoProcessor.compress_to_target(
+            &input,
+            &dir.path().join("out.mp4"),
+            2000,
+            &QualityFloors::default(),
+            CancellationToken::new(),
+            ProgressSender::test_stub(),
+            &test_sidecar_paths(Some(ffmpeg), Some(ffprobe)),
+            &tmp,
+        );
+
+        let err = result.unwrap_err();
+        // The last attempt is the final CRF rung at the 480p cap width.
+        assert!(
+            err.to_string().contains("min(iw\\,854) exploded"),
+            "last_error must carry the final rung's stderr: {err}"
+        );
+    }
+
+    /// Review round 1: ffmpeg exit 0 is NOT success — a garbage, empty, or
+    /// truncated output must reject the attempt and continue the ladder.
+    #[test]
+    #[cfg(unix)]
+    fn video_corrupt_attempt_outputs_rejected_ladder_continues() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = make_executable_script(
+            &dir.path(),
+            "fake-ffmpeg",
+            r#"#!/bin/bash
+echo "ffmpeg $*" >> "$(dirname "$0")/ffmpeg.log"
+pass=""; pl=""; w=""
+prev=""
+for a in "$@"; do
+  case "$prev" in
+    -pass) pass="$a" ;;
+    -passlogfile) pl="$a" ;;
+    -vf) w="${a#scale=}"; w="${w%%:*}" ;;
+  esac
+  prev="$a"
+done
+if [ "$pass" = "1" ]; then
+  if [ -n "$pl" ]; then printf 'x' > "${pl}-0.log"; printf 'x' > "${pl}-0.log.mbtree"; fi
+  exit 0
+fi
+out="${@: -1}"
+if [ "$w" = "min(iw\,1920)" ]; then
+  printf 'GARBAGE-GARBAGE' > "$out"
+  exit 0
+fi
+if [ "$w" = "min(iw\,1280)" ]; then
+  : > "$out"
+  exit 0
+fi
+printf '\x00\x00\x00\x18ftypmp42' > "$out"
+head -c 88 /dev/zero >> "$out"
+"#,
+        );
+        let ffprobe = fake_ffprobe(&dir.path(), "1.0\n");
+        let input = oversized_input(&dir.path(), "in.mp4");
+        let tmp = temp_dir_under(&dir.path());
+
+        let result = VideoProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.mp4"),
+                2000,
+                &QualityFloors::default(),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &test_sidecar_paths(Some(ffmpeg), Some(ffprobe)),
+                &tmp,
+            )
+            .unwrap();
+
+        let log = ffmpeg_log(&dir.path());
+        // Rung 1 emitted a garbage-but-exit-0 output, rung 2 an empty one —
+        // both rejected by measure_output. Rung 3's valid output delivered.
+        assert_eq!(log.iter().filter(|l| l.contains("min(iw\\,1920)")).count(), 2, "exit-0 garbage pass must still run: {log:?}");
+        assert_eq!(log.iter().filter(|l| l.contains("min(iw\\,1280)")).count(), 2, "{log:?}");
+        assert!(result.met_target, "valid rung must deliver: {}", result.strategy_used);
+        assert!(result.strategy_used.contains("scale=854"), "got: {}", result.strategy_used);
+        assert_eq!(result.compressed_size, 100);
+    }
+
+    /// Review round 1: progress events must be monotonically non-decreasing,
+    /// stay within 0..=100, and end at 100 (delivery) on success.
+    #[test]
+    #[cfg(unix)]
+    fn video_progress_monotonic_and_ends_at_100() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = make_executable_script(
+            &dir.path(),
+            "fake-ffmpeg",
+            r#"#!/bin/bash
+echo "ffmpeg $*" >> "$(dirname "$0")/ffmpeg.log"
+pass=""; pl=""; w=""
+prev=""
+for a in "$@"; do
+  case "$prev" in
+    -pass) pass="$a" ;;
+    -passlogfile) pl="$a" ;;
+    -vf) w="${a#scale=}"; w="${w%%:*}" ;;
+  esac
+  prev="$a"
+done
+if [ "$pass" = "1" ]; then
+  if [ -n "$pl" ]; then printf 'x' > "${pl}-0.log"; printf 'x' > "${pl}-0.log.mbtree"; fi
+  echo "time=00:00:00.40" >&2
+  exit 0
+fi
+echo "time=00:00:00.95" >&2
+out="${@: -1}"
+printf '\x00\x00\x00\x18ftypmp42' > "$out"
+head -c 88 /dev/zero >> "$out"
+"#,
+        );
+        let ffprobe = fake_ffprobe(&dir.path(), "1.0\n");
+        let input = oversized_input(&dir.path(), "in.mp4");
+        let tmp = temp_dir_under(&dir.path());
+        let (progress, seen) = ProgressSender::test_collector();
+
+        let result = VideoProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.mp4"),
+                2000,
+                &QualityFloors::default(),
+                CancellationToken::new(),
+                progress,
+                &test_sidecar_paths(Some(ffmpeg), Some(ffprobe)),
+                &tmp,
+            )
+            .unwrap();
+
+        assert!(result.met_target);
+        let events = seen.lock().unwrap().clone();
+        assert!(!events.is_empty(), "progress events must exist");
+        assert!(events.iter().all(|&p| (0..=100).contains(&p)), "{events:?}");
+        for pair in events.windows(2) {
+            assert!(pair[0] <= pair[1], "regressed: {events:?}");
+        }
+        assert!(*events.last().unwrap() >= 95, "last event must be terminal: {events:?}");
     }
 }

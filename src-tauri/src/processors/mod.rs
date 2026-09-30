@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    fn registry_lookup_returns_none_for_unregistered_categories() {
+    fn registry_lookup_matches_category() {
         let registry = ProcessorRegistry::new();
         assert!(registry.get_processor(Category::Video).is_some());
         assert!(registry.get_processor(Category::Document).is_none());
