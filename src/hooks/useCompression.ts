@@ -54,7 +54,7 @@ interface BatchErrorPayload {
 }
 
 export interface CompressionCallbacks {
-  onBatchComplete?: (totalSavedBytes: number, processedCount: number) => void
+  onBatchComplete?: (totalSavedBytes: number, processedCount: number, errorCount: number) => void
   onBatchError?: (errorMessage: string) => void
 }
 
@@ -69,6 +69,7 @@ export function useCompression(
   const [isCompressing, setIsCompressing] = useState(false)
   const [progressByFile, setProgressByFile] = useState<Record<string, number>>({})
   const processedCountRef = useRef(0)
+  const errorCountRef = useRef(0)
 
   const filesRef = useRef(files)
   filesRef.current = files
@@ -131,6 +132,7 @@ export function useCompression(
       const { fileId, errorMessage } = e.payload
       if (filesRef.current.some((f) => f.id === fileId)) {
         processedCountRef.current += 1
+        errorCountRef.current += 1
       }
       dropProgress(fileId)
       setFiles((prev) =>
@@ -157,9 +159,11 @@ export function useCompression(
     listen<BatchCompletePayload>('batch:complete', (e) => {
       setIsCompressing(false)
       const processed = processedCountRef.current
+      const errors = errorCountRef.current
       processedCountRef.current = 0
+      errorCountRef.current = 0
       if (processed > 0) {
-        callbacksRef.current?.onBatchComplete?.(e.payload.totalSavedBytes, processed)
+        callbacksRef.current?.onBatchComplete?.(e.payload.totalSavedBytes, processed, errors)
       }
     })
       .then(done)
@@ -168,6 +172,7 @@ export function useCompression(
     listen<BatchErrorPayload>('batch:error', (e) => {
       setIsCompressing(false)
       processedCountRef.current = 0
+      errorCountRef.current = 0
       callbacksRef.current?.onBatchError?.(e.payload.errorMessage)
     })
       .then(done)

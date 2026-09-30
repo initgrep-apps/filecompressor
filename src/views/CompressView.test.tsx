@@ -226,6 +226,58 @@ describe('CompressView', () => {
     const message = vi.mocked(toast.success).mock.calls[0][0] as string
     expect(message).toContain('Compressed 1 files')
     expect(message).toContain('Saved 2 KB total')
+    expect(toast.error).not.toHaveBeenCalled()
+  })
+
+  it('error count toast shows count when errors accumulated', async () => {
+    const user = userEvent.setup()
+    render(<CompressView />)
+    await addFilesInView([
+      { name: 'x1.jpg', id: 'f1' },
+      { name: 'x2.jpg', id: 'f2' },
+      { name: 'd1.jpg', id: 'f3' },
+    ])
+    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    emit('file:error', { fileId: 'f1', errorMessage: 'boom' })
+    emit('file:error', { fileId: 'f2', errorMessage: 'boom' })
+    emit('file:complete', {
+      fileId: 'f3',
+      outputPath: '/o/d1.jpg',
+      originalSize: 10,
+      compressedSize: 5,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
+    expect(toast.error).toHaveBeenCalledWith('2 files could not reach target.')
+    expect(toast.success).toHaveBeenCalledTimes(1)
+  })
+
+  it('toast success says compressed N files with done count', async () => {
+    const user = userEvent.setup()
+    render(<CompressView />)
+    await addFilesInView(
+      Array.from({ length: 10 }, (_, i) => ({
+        id: `f${i}`,
+        name: `f${i}.jpg`,
+        ...(i >= 8 ? { status: 'unsupported' as const } : {}),
+      }))
+    )
+    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    for (let i = 0; i < 8; i++) {
+      emit('file:complete', {
+        fileId: `f${i}`,
+        outputPath: `/o/f${i}.jpg`,
+        originalSize: 10,
+        compressedSize: 5,
+        status: 'done',
+        metTarget: true,
+      })
+    }
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 24 })
+    const message = vi.mocked(toast.success).mock.calls[0][0] as string
+    expect(message).toContain('Compressed 8 files')
+    expect(message).not.toContain('10')
   })
 
   it('batch error toast shows message', async () => {
