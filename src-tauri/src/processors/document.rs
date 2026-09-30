@@ -113,20 +113,33 @@ fn snapshot_archive(input: &Path) -> Result<Vec<ZipEntry>, CompressionError> {
     const CORRUPT: &str = "File may be corrupt (not a readable OOXML zip container)";
     let file = std::fs::File::open(input)
         .map_err(|e| CompressionError::InputFileError(format!("{}: {e}", input.display())))?;
-    let mut archive = zip::ZipArchive::new(file)
-        .map_err(|_| CompressionError::SidecarFailed(CORRUPT.to_string()))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| {
+        eprintln!(
+            "warn: cannot read {} as zip container: {e}",
+            input.display()
+        );
+        CompressionError::SidecarFailed(CORRUPT.to_string())
+    })?;
     let mut entries = Vec::with_capacity(archive.len());
     for index in 0..archive.len() {
-        let mut entry = archive
-            .by_index(index)
-            .map_err(|_| CompressionError::SidecarFailed(CORRUPT.to_string()))?;
+        let mut entry = archive.by_index(index).map_err(|e| {
+            eprintln!(
+                "warn: cannot read entry {index} of {}: {e}",
+                input.display()
+            );
+            CompressionError::SidecarFailed(CORRUPT.to_string())
+        })?;
         let name = entry.name().to_string();
         let is_dir = entry.is_dir();
         let mut content = Vec::new();
         if !is_dir {
-            entry
-                .read_to_end(&mut content)
-                .map_err(|_| CompressionError::SidecarFailed(CORRUPT.to_string()))?;
+            entry.read_to_end(&mut content).map_err(|e| {
+                eprintln!(
+                    "warn: cannot read zip entry {name} of {}: {e}",
+                    input.display()
+                );
+                CompressionError::SidecarFailed(CORRUPT.to_string())
+            })?;
         }
         let disposition = if is_dir {
             MediaDisposition::NotMedia
@@ -185,6 +198,41 @@ fn remove_all(paths: &[PathBuf]) {
             }
         }
     }
+}
+
+/// Delivers a pending output only while the job is still live. Every
+/// delivery window (found pass, best effort, zero-media rezip) funnels
+/// through here so a cancel that lands after the last sidecar spawn —
+/// during the final rezip or between search completion and delivery —
+/// cannot produce a Done result. Cancels clean the temp paths and, if the
+/// copy already happened, remove the delivered output. Non-cancel errors
+/// also clean up (the queue backstop would eventually, but immediate
+/// removal keeps the temp dir honest).
+fn deliver_or_cancel(
+    pending: Result<(PathBuf, u64, String, u32, bool), CompressionError>,
+    output: &Path,
+    cancel_token: &CancellationToken,
+    temp_paths: &[PathBuf],
+    progress: &ProgressSender,
+) -> Result<CompressionResult, CompressionError> {
+    if cancel_token.is_cancelled() {
+        remove_all(temp_paths);
+        return Err(CompressionError::Cancelled);
+    }
+    let (path, size, strategy, quality, met_target) = match pending {
+        Ok(deliverable) => deliverable,
+        Err(e) => {
+            remove_all(temp_paths);
+            return Err(e);
+        }
+    };
+    let result = deliver_output(&path, output, size, strategy, quality, met_target, progress);
+    if result.is_ok() && cancel_token.is_cancelled() {
+        remove_all(temp_paths);
+        let _ = std::fs::remove_file(output);
+        return Err(CompressionError::Cancelled);
+    }
+    result
 }
 
 fn per_media_progress(pass: u32, media_done: usize, media_total: usize) -> u32 {
@@ -266,7 +314,14 @@ impl CompressionProcessor for DocumentProcessor {
         }
 
         let sidecar = sidecar_paths.require(SidecarName::Vips)?;
-        let min_quality = quality_floor.document.min_media_quality;
+        // A floor above the search start would invert the binary-search
+        // window (lo > hi → zero attempts, misleading failure). Clamp so
+        // the search always runs at least one attempt — same rung
+        // treatment as the video processor's CRF walk.
+        let min_quality = quality_floor
+            .document
+            .min_media_quality
+            .min(START_QUALITY);
         let ext = std::path::Path::new(input)
             .extension()
             .and_then(|e| e.to_str())
@@ -289,21 +344,15 @@ impl CompressionProcessor for DocumentProcessor {
         if media_total == 0 {
             let attempt_path = temp_dir.join(format!("attempt-0.{ext}"));
             temp_paths.push(attempt_path.clone());
-            let size = write_rezip(&entries, &HashMap::new(), &attempt_path)?;
-            let (met_target, strategy) = if size <= target_bytes {
-                (true, "rezip-deflate9".to_string())
-            } else {
-                (false, "rezip-deflate9,best-effort".to_string())
-            };
-            return deliver_output(
-                &attempt_path,
-                output,
-                size,
-                strategy,
-                100,
-                met_target,
-                &progress,
-            );
+            let pending = write_rezip(&entries, &HashMap::new(), &attempt_path).map(|size| {
+                let (met_target, strategy) = if size <= target_bytes {
+                    (true, "rezip-deflate9".to_string())
+                } else {
+                    (false, "rezip-deflate9,best-effort".to_string())
+                };
+                (attempt_path, size, strategy, 100, met_target)
+            });
+            return deliver_or_cancel(pending, output, &cancel_token, &temp_paths, &progress);
         }
 
         // One pass = recompress every JPEG/PNG media entry at the pass
@@ -401,28 +450,35 @@ impl CompressionProcessor for DocumentProcessor {
 
         match search {
             Ok(Some((quality, size, path))) => {
-                deliver_output(
-                    &path,
-                    output,
-                    size,
-                    format!("quality={quality}"),
-                    quality,
-                    true,
-                    &progress,
-                )
+                let pending = if cancel_token.is_cancelled() {
+                    Err(CompressionError::Cancelled)
+                } else {
+                    Ok((path, size, format!("quality={quality}"), quality, true))
+                };
+                deliver_or_cancel(pending, output, &cancel_token, &temp_paths, &progress)
             }
             Ok(None) => {
                 if let Some(best) = smallest {
-                    return deliver_output(
-                        &best.path,
+                    let pending = if cancel_token.is_cancelled() {
+                        Err(CompressionError::Cancelled)
+                    } else {
+                        Ok((
+                            best.path,
+                            best.size,
+                            format!("{},best-effort", best.strategy),
+                            best.quality,
+                            false,
+                        ))
+                    };
+                    return deliver_or_cancel(
+                        pending,
                         output,
-                        best.size,
-                        format!("{},best-effort", best.strategy),
-                        best.quality,
-                        false,
+                        &cancel_token,
+                        &temp_paths,
                         &progress,
                     );
                 }
+                remove_all(&temp_paths);
                 Err(CompressionError::SidecarFailed(
                     "Could not compress document".to_string(),
                 ))
@@ -431,7 +487,10 @@ impl CompressionProcessor for DocumentProcessor {
                 remove_all(&temp_paths);
                 Err(CompressionError::Cancelled)
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                remove_all(&temp_paths);
+                Err(e)
+            }
         }
     }
 }
@@ -856,6 +915,53 @@ awk -v n="$n" 'BEGIN { s = 12345; for (i = 0; i < n; i++) { s = (s * 16807 + 11)
     }
 
     #[test]
+    #[cfg(unix)]
+    fn document_floor_above_start_quality_clamped_to_one_attempt() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = write_fake_vips(&dir.path());
+        let input = dir.path().join("in.docx");
+        build_docx(
+            &input,
+            &[
+                ("[Content_Types].xml", CONTENT_TYPES.to_vec()),
+                ("word/document.xml", DOCUMENT_XML.to_vec()),
+                ("word/media/image1.jpg", noise_bytes(8000)),
+            ],
+        );
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        // Floor 99 exceeds START_QUALITY 95 — the search window must clamp
+        // to [95, 95]: exactly one attempt at the start quality and a
+        // best-effort delivery, never a zero-attempt collapse.
+        let result = DocumentProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.docx"),
+                100,
+                &floors_with(99),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &test_sidecar_paths(Some(fake)),
+                &tmp,
+            )
+            .unwrap();
+
+        assert!(!result.met_target, "strategy: {}", result.strategy_used);
+        let log = read_q_log(&dir.path());
+        assert_eq!(
+            log,
+            vec![95],
+            "clamped window must run exactly one attempt at q=95, got {log:?}"
+        );
+        assert!(
+            result.strategy_used.contains("best-effort"),
+            "strategy: {}",
+            result.strategy_used
+        );
+    }
+
+    #[test]
     fn document_over_target_lowers_quality_and_retries() {
         let dir = tempfile::tempdir().unwrap();
         let fake = write_fake_vips(&dir.path());
@@ -1197,21 +1303,111 @@ exit 1
         );
     }
 
+    /// Waits until the fake vips q.log records at least `count` entries,
+    /// then returns — a deterministic cancel trigger keyed to observed
+    /// compressor progress, never wall-clock sleeps.
+    #[cfg(unix)]
+    fn wait_for_q_entries(dir: &Path, count: usize) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if read_q_log(dir).len() >= count {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "q.log never reached {count} entries in time"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
     #[test]
+    #[cfg(unix)]
+    fn document_cancel_before_delivery_no_output_no_temp_litter() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = write_fake_vips(&dir.path());
+        let input = dir.path().join("in.docx");
+        build_docx(
+            &input,
+            &[
+                ("[Content_Types].xml", CONTENT_TYPES.to_vec()),
+                ("word/document.xml", DOCUMENT_XML.to_vec()),
+                ("word/media/a.jpg", noise_bytes(2000)),
+                ("word/media/b.jpg", noise_bytes(2000)),
+            ],
+        );
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        let token = CancellationToken::new();
+        let worker_token = token.clone();
+        let worker_input = input.clone();
+        let worker_output = dir.path().join("out.docx");
+        let worker_tmp = tmp.clone();
+        let worker_fake = fake.clone();
+
+        let handle = std::thread::spawn(move || {
+            DocumentProcessor.compress_to_target(
+                &worker_input,
+                &worker_output,
+                100,
+                &floors_with(40),
+                worker_token,
+                ProgressSender::test_stub(),
+                &test_sidecar_paths(Some(worker_fake)),
+                &worker_tmp,
+            )
+        });
+
+        // Deterministic trigger: cancel the instant the first vips
+        // invocation is logged. With the fix, every delivery window
+        // re-checks the token — the run completes no pass and never
+        // delivers. Without the re-checks, the in-flight search can walk
+        // to a fitting pass (100-byte media outputs at absurd q) and
+        // deliver Done after cancel.
+        wait_for_q_entries(&dir.path(), 1);
+        token.cancel();
+        let result = handle.join().unwrap();
+
+        assert!(
+            matches!(result, Err(CompressionError::Cancelled)),
+            "cancel before delivery must surface Cancelled, got {:?}",
+            result.map(|r| (r.strategy_used, r.compressed_size))
+        );
+        assert!(
+            !dir.path().join("out.docx").exists(),
+            "no Done delivery after cancel: output file must not exist"
+        );
+        let remaining: Vec<_> = fs::read_dir(&tmp).unwrap().flatten().collect();
+        assert!(
+            remaining.is_empty(),
+            "temp entries must be cleaned after cancel, found: {:?}",
+            remaining.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            fs::read(&input).unwrap().len(),
+            fs::metadata(&input).map(|m| m.len() as usize).unwrap(),
+            "input file must be untouched"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn document_cancel_mid_recompress_cleans_temp_entries() {
         let dir = tempfile::tempdir().unwrap();
-        // media-1 recompresses instantly; media-2 sleeps 5s mid-write so the
-        // cancel lands inside the second vips spawn.
+        // Second media (b.jpg, index 3) sleeps 5s inside vips so the cancel
+        // lands inside a live sidecar spawn deterministically.
         let fake = make_executable_script(
             dir.path(),
             "fake-vips-sleep",
             r#"#!/bin/bash
 out="$3"
 base="${out%%\[*}"
+base="${base##*/}"
 q="${out#*\[Q=}"; q="${q%,*}"
 echo "$q" >> "$(dirname "$0")/q.log"
 case "$base" in
-  *media-0-1*) sleep 5 ;;
+  *media-0-3*) sleep 5 ;;
 esac
 n=$(( q * 100 ))
 awk -v n="$n" 'BEGIN { for (i = 0; i < n; i++) printf "%c", i % 251 }' > "$base"
@@ -1249,7 +1445,10 @@ awk -v n="$n" 'BEGIN { for (i = 0; i < n; i++) printf "%c", i % 251 }' > "$base"
                 &worker_tmp,
             )
         });
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        // Deterministic trigger: both medias of pass 0 have entered vips
+        // (a.jpg finished, b.jpg sleeping) — cancel lands inside the live
+        // sidecar spawn, never wall-clock tuned.
+        wait_for_q_entries(&dir.path(), 2);
         token.cancel();
         let result = handle.join().unwrap();
 
@@ -1261,6 +1460,94 @@ awk -v n="$n" 'BEGIN { for (i = 0; i < n; i++) printf "%c", i % 251 }' > "$base"
         assert!(
             !dir.path().join("out.docx").exists(),
             "no Done delivery after cancel"
+        );
+        let remaining: Vec<_> = fs::read_dir(&tmp).unwrap().flatten().collect();
+        assert!(
+            remaining.is_empty(),
+            "temp entries must be cleaned after cancel, found: {:?}",
+            remaining.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
+    }
+
+    /// Waits until `name` appears in `dir` — deterministic trigger keyed to
+    /// observed worker progress, never wall-clock sleeps.
+    fn wait_for_file(dir: &Path, name: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if dir.join(name).exists() {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{name} never appeared in {} in time",
+                dir.display()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn document_cancel_during_zero_media_rezip_no_output_no_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = write_fake_vips(&dir.path());
+        // Many entries so the rezip takes long enough for the cancel to
+        // land inside it: attempt-0.docx is created the instant the rezip
+        // starts, long before delivery.
+        let mut entries: Vec<(String, Vec<u8>)> =
+            vec![("[Content_Types].xml".to_string(), CONTENT_TYPES.to_vec())];
+        for i in 0..1200 {
+            entries.push((format!("part{i}.xml"), varied_text(40)));
+        }
+        let entries: Vec<(&str, Vec<u8>)> = entries
+            .iter()
+            .map(|(n, c)| (n.as_str(), c.clone()))
+            .collect();
+        let input = dir.path().join("in.docx");
+        build_docx(&input, &entries);
+        let input_size = fs::metadata(&input).unwrap().len();
+        assert!(
+            input_size > 24 * 1024,
+            "input {input_size} must exceed the target so the rezip path runs"
+        );
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        let token = CancellationToken::new();
+        let worker_token = token.clone();
+        let (worker_input, worker_output, worker_tmp, worker_fake) =
+            (input.clone(), dir.path().join("out.docx"), tmp.clone(), fake.clone());
+
+        let handle = std::thread::spawn(move || {
+            DocumentProcessor.compress_to_target(
+                &worker_input,
+                &worker_output,
+                24 * 1024,
+                &floors_with(40),
+                worker_token,
+                ProgressSender::test_stub(),
+                &test_sidecar_paths(Some(worker_fake)),
+                &worker_tmp,
+            )
+        });
+
+        // Deterministic: cancel the instant attempt-0.docx appears — that
+        // is the first statement of the rezip, with delivery minutes of
+        // deflate work still ahead. The deliver window must re-check the
+        // token; without that check the rezip finishes and Done is
+        // delivered despite the cancel.
+        wait_for_file(&tmp, "attempt-0.docx");
+        token.cancel();
+        let result = handle.join().unwrap();
+
+        assert!(
+            matches!(result, Err(CompressionError::Cancelled)),
+            "cancel during zero-media rezip must surface Cancelled, got {:?}",
+            result.map(|r| (r.strategy_used, r.compressed_size))
+        );
+        assert!(
+            !dir.path().join("out.docx").exists(),
+            "no Done delivery after cancel: output file must not exist"
         );
         let remaining: Vec<_> = fs::read_dir(&tmp).unwrap().flatten().collect();
         assert!(
@@ -1312,6 +1599,465 @@ awk -v n="$n" 'BEGIN { for (i = 0; i < n; i++) printf "%c", i % 251 }' > "$base"
         assert_eq!(
             output_names, input_names,
             "output must open as a valid zip with identical entry count and names"
+        );
+    }
+
+    /// Fake vips with a deliberately non-monotonic size curve: q ≥ 65 →
+    /// 9000 bytes; q ≤ 54 → 9000 bytes; only 55..=64 → 6000 bytes. With
+    /// floor 50 the search hits 72, 60, 54, 51, 50 — first, last, and
+    /// lowest-quality passes are all 9000, only the mid pass (q=60) is the
+    /// smallest (6000).
+    #[cfg(unix)]
+    fn write_fake_vips_bump(dir: &Path) -> String {
+        make_executable_script(
+            dir,
+            "fake-vips-bump",
+            r#"#!/bin/bash
+out="$3"
+base="${out%%\[*}"
+q="${out#*\[Q=}"; q="${q%,*}"; q="${q%%\]*}"
+echo "$q" >> "$(dirname "$0")/q.log"
+n=6000
+if [ "$q" -ge 65 ]; then n=9000; fi
+if [ "$q" -le 54 ]; then n=9000; fi
+awk -v n="$n" 'BEGIN { s = 12345; for (i = 0; i < n; i++) { s = (s * 16807 + 11) % 2147483647; printf "%c", int(s / 32768) % 255 + 1 } }' > "$base"
+"#,
+        )
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn document_best_effort_delivers_smallest_over_target_attempt() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = write_fake_vips_bump(&dir.path());
+        let input = dir.path().join("in.docx");
+        build_docx(
+            &input,
+            &[
+                ("[Content_Types].xml", CONTENT_TYPES.to_vec()),
+                ("word/document.xml", DOCUMENT_XML.to_vec()),
+                ("word/media/image1.jpg", noise_bytes(8000)),
+            ],
+        );
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        // Target smaller than every possible attempt outcome; all passes
+        // are best-effort candidates, none fits.
+        let result = DocumentProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.docx"),
+                100,
+                &floors_with(50),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &test_sidecar_paths(Some(fake)),
+                &tmp,
+            )
+            .unwrap();
+
+        assert!(
+            !result.met_target,
+            "unreachable target must be best-effort, strategy: {}",
+            result.strategy_used
+        );
+        assert_eq!(
+            result.strategy_used, "quality=60,best-effort",
+            "the smallest pass (q=60) must be the delivered strategy"
+        );
+
+        let log = read_q_log(&dir.path());
+        assert_eq!(
+            *log.iter().min().unwrap(),
+            50,
+            "floor attempt must have run, got {log:?}"
+        );
+        assert!(
+            log.iter().all(|q| *q >= 50),
+            "no attempt may go below the floor 50, got {log:?}"
+        );
+
+        // First (q=72), last (q=50), and lowest-quality (q=50) passes all
+        // produce 9000 bytes — only the mid q=60 pass is smallest. The
+        // delivered media must be the smallest attempt's bytes.
+        let output = read_zip_contents(&dir.path().join("out.docx"));
+        let media_entry = output
+            .iter()
+            .find(|(n, _)| n == "word/media/image1.jpg")
+            .expect("media entry must survive");
+        assert_eq!(
+            media_entry.1,
+            noise_bytes(6000),
+            "delivered media must be the SMALLEST attempt's bytes, not a later/bigger pass"
+        );
+        assert!(
+            result.compressed_size <= 7000,
+            "delivered size {} must track the smallest attempt, not a bigger one",
+            result.compressed_size
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn document_progress_monotonic_within_bounds_ends_at_100() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = write_fake_vips(&dir.path());
+        let input = dir.path().join("in.docx");
+        build_docx(
+            &input,
+            &[
+                ("[Content_Types].xml", CONTENT_TYPES.to_vec()),
+                ("word/document.xml", DOCUMENT_XML.to_vec()),
+                ("word/media/a.jpg", noise_bytes(2000)),
+                ("word/media/b.jpg", noise_bytes(2000)),
+            ],
+        );
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+        let (progress, seen) = ProgressSender::test_collector();
+
+        let result = DocumentProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.docx"),
+                6144,
+                &floors_with(40),
+                CancellationToken::new(),
+                progress,
+                &test_sidecar_paths(Some(fake)),
+                &tmp,
+            )
+            .unwrap();
+
+        assert!(result.met_target, "strategy: {}", result.strategy_used);
+        let events = seen.lock().unwrap().clone();
+        assert!(!events.is_empty(), "progress events must exist");
+        for pair in events.windows(2) {
+            assert!(
+                pair[0] <= pair[1],
+                "progress must be monotonically non-decreasing: {events:?}"
+            );
+        }
+        let pre_delivery = &events[..events.len() - 1];
+        assert!(
+            pre_delivery.iter().all(|&p| p <= 90),
+            "pre-delivery events must stay <= 90: {events:?}"
+        );
+        assert_eq!(
+            *events.last().unwrap(),
+            100,
+            "delivery must emit terminal 100: {events:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn document_vips_exit0_empty_output_keeps_original() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = make_executable_script(
+            dir.path(),
+            "fake-vips-empty",
+            r#"#!/bin/bash
+out="$3"
+base="${out%%\[*}"
+: > "$base"
+"#,
+        );
+        let original = noise_bytes(8000);
+        let input = dir.path().join("in.docx");
+        build_docx(
+            &input,
+            &[
+                ("[Content_Types].xml", CONTENT_TYPES.to_vec()),
+                ("word/document.xml", DOCUMENT_XML.to_vec()),
+                ("word/media/image1.png", original.clone()),
+            ],
+        );
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        DocumentProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.docx"),
+                9 * 1024,
+                &floors_with(40),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &test_sidecar_paths(Some(fake)),
+                &tmp,
+            )
+            .unwrap();
+
+        let output = read_zip_contents(&dir.path().join("out.docx"));
+        let png_entry = output
+            .iter()
+            .find(|(n, _)| n == "word/media/image1.png")
+            .expect("media entry must survive");
+        assert_eq!(
+            png_entry.1, original,
+            "exit-0 empty vips output must keep the ORIGINAL media bytes"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn document_vips_exit0_unreadable_output_keeps_original() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = make_executable_script(
+            dir.path(),
+            "fake-vips-vanish",
+            r#"#!/bin/bash
+out="$3"
+base="${out%%\[*}"
+printf 'x' > "$base"
+rm "$base"
+"#,
+        );
+        let original = noise_bytes(8000);
+        let input = dir.path().join("in.docx");
+        build_docx(
+            &input,
+            &[
+                ("[Content_Types].xml", CONTENT_TYPES.to_vec()),
+                ("word/document.xml", DOCUMENT_XML.to_vec()),
+                ("word/media/image1.png", original.clone()),
+            ],
+        );
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        DocumentProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.docx"),
+                9 * 1024,
+                &floors_with(40),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &test_sidecar_paths(Some(fake)),
+                &tmp,
+            )
+            .unwrap();
+
+        let output = read_zip_contents(&dir.path().join("out.docx"));
+        let png_entry = output
+            .iter()
+            .find(|(n, _)| n == "word/media/image1.png")
+            .expect("media entry must survive");
+        assert_eq!(
+            png_entry.1, original,
+            "unreadable (deleted) vips output must keep the ORIGINAL media bytes"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn document_sidecar_spawn_failure_keeps_original_media_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        // Non-executable file at the sidecar path — spawn fails outright.
+        let sidecar = dir.path().join("not-executable-vips");
+        fs::write(&sidecar, b"definitely not a program").unwrap();
+        let sidecar = sidecar.to_string_lossy().to_string();
+        let original = noise_bytes(8000);
+        let input = dir.path().join("in.docx");
+        build_docx(
+            &input,
+            &[
+                ("[Content_Types].xml", CONTENT_TYPES.to_vec()),
+                ("word/document.xml", DOCUMENT_XML.to_vec()),
+                ("word/media/image1.png", original.clone()),
+            ],
+        );
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        DocumentProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.docx"),
+                9 * 1024,
+                &floors_with(40),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &test_sidecar_paths(Some(sidecar)),
+                &tmp,
+            )
+            .unwrap();
+
+        let output = read_zip_contents(&dir.path().join("out.docx"));
+        let png_entry = output
+            .iter()
+            .find(|(n, _)| n == "word/media/image1.png")
+            .expect("media entry must survive");
+        assert_eq!(
+            png_entry.1, original,
+            "spawn failure must keep the ORIGINAL media bytes and continue"
+        );
+    }
+
+    #[test]
+    fn document_rezip_duplicate_entry_names_fail_gracefully() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = write_fake_vips(&dir.path());
+        let input = dir.path().join("in.docx");
+        build_raw_stored_zip(
+            &input,
+            &[
+                ("[Content_Types].xml", CONTENT_TYPES.to_vec()),
+                ("word/media/image1.jpg", noise_bytes(8000)),
+                ("word/media/image1.jpg", b"second copy".to_vec()),
+            ],
+        );
+        let input_bytes = fs::read(&input).unwrap();
+        let input_size = input_bytes.len() as u64;
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        // The zip crate's writer rejects duplicate filenames, so a
+        // duplicate-entry archive can never round-trip once recompression
+        // is attempted. Whatever stage rejects it, the guarantee is: no
+        // crash, no delivery, and the original file preserved. The target
+        // sits below the input size so the already-under-target copy path
+        // cannot silently absorb the case.
+        let result = DocumentProcessor.compress_to_target(
+            &input,
+            &dir.path().join("out.docx"),
+            input_size - 486,
+            &floors_with(40),
+            CancellationToken::new(),
+            ProgressSender::test_stub(),
+            &test_sidecar_paths(Some(fake)),
+            &tmp,
+        );
+
+        assert!(
+            result.is_err(),
+            "duplicate-entry zip must not deliver, got {:?}",
+            result.map(|r| (r.strategy_used, r.compressed_size))
+        );
+        assert!(
+            !dir.path().join("out.docx").exists(),
+            "no output may be produced for duplicate-entry input"
+        );
+        assert_eq!(
+            fs::read(&input).unwrap(),
+            input_bytes,
+            "original file must be preserved"
+        );
+    }
+
+    fn crc32(data: &[u8]) -> u32 {
+        let mut table = [0u32; 256];
+        for i in 0..256u32 {
+            let mut c = i;
+            for _ in 0..8 {
+                c = if c & 1 != 0 {
+                    0xEDB8_8320 ^ (c >> 1)
+                } else {
+                    c >> 1
+                };
+            }
+            table[i as usize] = c;
+        }
+        let mut crc = 0xFFFF_FFFFu32;
+        for &b in data {
+            crc = table[((crc ^ u32::from(b)) & 0xFF) as usize] ^ (crc >> 8);
+        }
+        crc ^ 0xFFFF_FFFF
+    }
+
+    /// Hand-rolled stored-method zip — for archives the ZipWriter refuses
+    /// to create (duplicate entry names).
+    fn build_raw_stored_zip(path: &Path, entries: &[(&str, Vec<u8>)]) {
+        let mut buf: Vec<u8> = Vec::new();
+        let mut central: Vec<u8> = Vec::new();
+        for (name, content) in entries {
+            let offset = buf.len() as u32;
+            let crc = crc32(content);
+            buf.extend_from_slice(&[0x50, 0x4b, 0x03, 0x04]);
+            buf.extend_from_slice(&20u16.to_le_bytes());
+            buf.extend_from_slice(&0u16.to_le_bytes());
+            buf.extend_from_slice(&0u16.to_le_bytes());
+            buf.extend_from_slice(&0u16.to_le_bytes());
+            buf.extend_from_slice(&0u16.to_le_bytes());
+            buf.extend_from_slice(&crc.to_le_bytes());
+            buf.extend_from_slice(&(content.len() as u32).to_le_bytes());
+            buf.extend_from_slice(&(content.len() as u32).to_le_bytes());
+            buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            buf.extend_from_slice(&0u16.to_le_bytes());
+            buf.extend_from_slice(name.as_bytes());
+            buf.extend_from_slice(content);
+
+            central.extend_from_slice(&[0x50, 0x4b, 0x01, 0x02]);
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&20u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&crc.to_le_bytes());
+            central.extend_from_slice(&(content.len() as u32).to_le_bytes());
+            central.extend_from_slice(&(content.len() as u32).to_le_bytes());
+            central.extend_from_slice(&(name.len() as u16).to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u16.to_le_bytes());
+            central.extend_from_slice(&0u32.to_le_bytes());
+            central.extend_from_slice(&offset.to_le_bytes());
+            central.extend_from_slice(name.as_bytes());
+        }
+        let central_offset = buf.len() as u32;
+        buf.extend_from_slice(&central);
+        buf.extend_from_slice(&[0x50, 0x4b, 0x05, 0x06]);
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        buf.extend_from_slice(&(entries.len() as u16).to_le_bytes());
+        buf.extend_from_slice(&(central.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&central_offset.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        fs::write(path, &buf).unwrap();
+    }
+
+    #[test]
+    fn document_empty_archive_rezip_produces_valid_eocd() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake = write_fake_vips(&dir.path());
+        let input = dir.path().join("in.docx");
+        build_docx(&input, &[]);
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        let input_size = fs::metadata(&input).unwrap().len();
+        let result = DocumentProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.docx"),
+                24 * 1024,
+                &floors_with(40),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &test_sidecar_paths(Some(fake)),
+                &tmp,
+            )
+            .unwrap();
+
+        assert!(
+            result.met_target,
+            "empty zip must fit a 24 KB target, strategy: {}",
+            result.strategy_used
+        );
+        assert_eq!(
+            result.compressed_size, input_size,
+            "empty archive rezipped at level 9 must stay byte-identical in size"
+        );
+        let out_path = dir.path().join("out.docx");
+        assert_eq!(fs::metadata(&out_path).unwrap().len(), input_size);
+        assert!(
+            zip::ZipArchive::new(fs::File::open(&out_path).unwrap()).is_ok(),
+            "round-trip must still be a readable zip (valid EOCD, no crash)"
         );
     }
 
