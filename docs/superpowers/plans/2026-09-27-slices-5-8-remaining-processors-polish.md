@@ -453,7 +453,7 @@ Show a folder icon button (hover-reveal) for files with status "done" or "best_e
 **Files:**
 - Modify: `src/views/CompressView.tsx`
 
-- [ ] **Step 1: Add batch summary**
+- [x] **Step 1: Add batch summary**
 
 Compute counts from file list:
 ```typescript
@@ -466,7 +466,7 @@ const skipped = files.filter(f => f.status === 'unsupported').length
 
 Display: "6 files · 2 done · 1 compressing · 1 pending · 1 warning · 1 skipped"
 
-- [ ] **Step 2: Add Cancel All button**
+- [x] **Step 2: Add Cancel All button**
 
 Show "Cancel All" button (destructive variant) when `isCompressing` is true. Clicking calls `cancelAll()`.
 
