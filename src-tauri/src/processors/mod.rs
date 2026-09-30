@@ -16,6 +16,7 @@
 
 pub mod image;
 pub mod pdf;
+pub mod video;
 
 use std::collections::HashMap;
 
@@ -35,6 +36,7 @@ impl ProcessorRegistry {
         };
         registry.register(Box::new(image::ImageProcessor::new()));
         registry.register(Box::new(pdf::PdfProcessor::new()));
+        registry.register(Box::new(video::VideoProcessor::new()));
         registry
     }
 
@@ -89,9 +91,17 @@ mod tests {
     }
 
     #[test]
+    fn registry_maps_video_extensions_to_video_category() {
+        let registry = ProcessorRegistry::new();
+        assert_eq!(registry.lookup("mp4"), Some(Category::Video));
+        assert_eq!(registry.lookup("MOV"), Some(Category::Video));
+        assert!(registry.get_processor(Category::Video).is_some());
+    }
+
+    #[test]
     fn registry_lookup_returns_none_for_unregistered_categories() {
         let registry = ProcessorRegistry::new();
-        assert!(registry.get_processor(Category::Video).is_none());
+        assert!(registry.get_processor(Category::Video).is_some());
         assert!(registry.get_processor(Category::Document).is_none());
         assert!(registry.get_processor(Category::Other).is_none());
     }

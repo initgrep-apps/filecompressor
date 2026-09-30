@@ -32,7 +32,9 @@
       "externalBin": [
         "binaries/vips",
         "binaries/qpdf",
-        "binaries/gs"
+        "binaries/gs",
+        "binaries/ffmpeg",
+        "binaries/ffprobe"
       ],
       "macOS": {
         "frameworks": [

@@ -300,7 +300,7 @@ mod tests {
         let bins = value["bundle"]["externalBin"]
             .as_array()
             .expect("bundle.externalBin array");
-        for required in ["binaries/vips", "binaries/qpdf", "binaries/gs"] {
+        for required in ["binaries/vips", "binaries/qpdf", "binaries/gs", "binaries/ffmpeg", "binaries/ffprobe"] {
             assert!(
                 bins.iter().any(|b| b.as_str() == Some(required)),
                 "externalBin must list {required}, got: {:?}",
