@@ -193,7 +193,7 @@ git commit -m "feat(settings): performance.maxConcurrent with auto core-based re
 - `reserved_registry_disk_collision_still_suffixes` — on-disk `photo.jpg` + fresh registry → `photo-1.jpg` (fs check still applies)
 - existing 7 output.rs tests stay green untouched
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `src-tauri/src/output.rs` test module add:
 
@@ -230,12 +230,12 @@ In `src-tauri/src/output.rs` test module add:
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd src-tauri && cargo test reserved_registry`
 Expected: FAIL — `ReservedNames` not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src-tauri/src/output.rs`, add above `resolve_output_path`:
 
@@ -357,12 +357,12 @@ pub(crate) fn resolve_output_path(output_folder: &str, filename: &str) -> PathBu
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd src-tauri && cargo test output`
 Expected: PASS (3 new + existing 7).
 
-- [ ] **Step 5: Run gate + commit**
+- [x] **Step 5: Run gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: pass.
