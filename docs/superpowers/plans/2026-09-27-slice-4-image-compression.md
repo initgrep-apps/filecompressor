@@ -2283,7 +2283,7 @@ git commit -m "feat: wire up compression end-to-end with progress + results"
 - Full gate run: `yarn build && yarn test && cd src-tauri && cargo test` — must pass clean before final commit
 - `cargo test -- --ignored` (manual, optional) — real-vips sidecar presence + HEIC smoke if a sample file is available
 
-- [ ] **Step 1: Run all 13 acceptance criteria**
+- [x] **Step 1: Run all 13 acceptance criteria** — AC→test map in `2026-09-27-slice-4-acceptance-table.md`; GUI-runtime-only phases listed as manual smoke (deferred)
 
 1. ✅ JPEG > 200 KB → compresses to ≤ 200 KB, "Done"
 2. ✅ Before/after sizes shown
@@ -2299,13 +2299,13 @@ git commit -m "feat: wire up compression end-to-end with progress + results"
 12. ✅ Filename collision → -1 suffix
 13. ✅ Multiple files: sequential, individual progress
 
-- [ ] **Step 2: Run full gate**
+- [x] **Step 2: Run full gate** — `yarn build` clean · `yarn test` 116/116 · `cargo test` 194 passed / 0 failed / 4 ignored
 
 ```bash
 yarn build && yarn test && cd src-tauri && cargo test
 ```
 
-- [ ] **Step 3: Final commit**
+- [x] **Step 3: Final commit**
 
 ```bash
 git add -A
