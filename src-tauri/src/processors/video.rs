@@ -476,8 +476,9 @@ impl VideoProcessor {
         Ok(String::from_utf8_lossy(&stdout).into_owned())
     }
 
-    /// Drains an ffmpeg stderr pipe into progress events. Returns the max
-    /// mapped percent and the retained diagnostics tail.
+    /// Drains an ffmpeg stderr pipe into progress events. Returns the
+    /// retained diagnostics tail. Live percent tracking happens entirely in
+    /// the caller's `line_sink`; this function does not parse progress.
     ///
     /// Lines end at `\n` OR `\r`: ffmpeg marks every `-stats` frame update
     /// with a carriage return and emits a single `\n` only for the final
@@ -496,8 +497,7 @@ impl VideoProcessor {
     pub(crate) fn drain_stderr_for_progress<R: std::io::Read>(
         pipe: &mut R,
         line_sink: &mut dyn FnMut(&[u8]),
-    ) -> (u32, Vec<u8>) {
-        let mut max_percent: u32 = 0;
+    ) -> Vec<u8> {
         let mut tail: Vec<u8> = Vec::new();
         let mut chunk = [0u8; PROGRESS_CHUNK_SIZE];
         let mut pending: Vec<u8> = Vec::new();
@@ -517,7 +517,11 @@ impl VideoProcessor {
                         tail.drain(..tail.len() - TAIL_KEEP_BYTES / 2);
                     }
                 }
-                Err(_) => {
+                Err(e) => {
+                    if e.kind() == std::io::ErrorKind::Interrupted {
+                        continue;
+                    }
+                    eprintln!("warn: ffmpeg stderr drain failed, progress partial: {e}");
                     // Keep the tail already drained; diagnostics stay partial.
                     break;
                 }
@@ -528,7 +532,7 @@ impl VideoProcessor {
             line_sink(&pending);
             tail.extend_from_slice(&pending);
         }
-        (max_percent, tail)
+        tail
     }
 
     /// Runs one ffmpeg invocation with live progress: stderr is streamed line
@@ -578,9 +582,7 @@ impl VideoProcessor {
                     }
                 };
                 let mut drain_sink = |bytes: &[u8]| parse_and_record(bytes, &mut max_percent);
-                let (drained_max, drained_tail) =
-                    Self::drain_stderr_for_progress(pipe, &mut drain_sink);
-                max_percent = max_percent.max(drained_max);
+                let drained_tail = Self::drain_stderr_for_progress(pipe, &mut drain_sink);
                 tail = drained_tail;
             }
             (max_percent, tail)
@@ -951,19 +953,42 @@ mod tests {
         }
     }
 
+    /// Wraps a reader so one specific `read` call fails with `Interrupted`,
+    /// simulating the transient errors real pipes produce.
+    #[cfg(test)]
+    struct InterruptingReader<R> {
+        inner: R,
+        fail_on: usize,
+        calls: usize,
+    }
+
+    #[cfg(test)]
+    impl<R: std::io::Read> std::io::Read for InterruptingReader<R> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.calls += 1;
+            if self.calls == self.fail_on {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "simulated interrupt",
+                ));
+            }
+            self.inner.read(buf)
+        }
+    }
+
     /// Collects drained lines as owned strings for sequence assertions.
     #[cfg(test)]
     fn drain_lines<R: std::io::Read>(
         pipe: &mut R,
-    ) -> (Vec<String>, u32) {
+    ) -> Vec<String> {
         let mut lines: Vec<String> = Vec::new();
-        let (max_percent, _tail) = {
+        {
             let mut sink = |bytes: &[u8]| {
                 lines.push(String::from_utf8_lossy(bytes).into_owned());
             };
-            VideoProcessor::drain_stderr_for_progress(pipe, &mut sink)
-        };
-        (lines, max_percent)
+            VideoProcessor::drain_stderr_for_progress(pipe, &mut sink);
+        }
+        lines
     }
 
     #[cfg(unix)]
@@ -1995,7 +2020,7 @@ exit 1
         // individual lines. Real shape: \r-separated stats, one \n summary,
         // trailing \r\n. Nothing may be dropped or duplicated.
         let mut pipe = ChunkedReader::new(&[b"frame= 1 time=00:00:01.00\rframe= 2 time=00:00:02.00\rframes=2\ntime=00:00:03.00\r\n"]);
-        let (lines, _) = drain_lines(&mut pipe);
+        let lines = drain_lines(&mut pipe);
         let joined = lines.join("");
         for token in ["time=00:00:01.00", "time=00:00:02.00", "time=00:00:03.00"] {
             assert!(joined.contains(token), "lost {token}: {lines:?}");
@@ -2018,7 +2043,7 @@ exit 1
         // whole line must peel once its terminator arrives.
         let line = b"frame= 12 time=00:00:24.00 bitrate=600.0kbits/s\r";
         let mut pipe = ChunkedReader::new(&[&line[..20], &line[20..]]);
-        let (lines, _) = drain_lines(&mut pipe);
+        let lines = drain_lines(&mut pipe);
         assert_eq!(lines.len(), 1, "one line despite chunk split: {lines:?}");
         // The straddled token survived the chunk boundary intact.
         assert!(
@@ -2035,7 +2060,7 @@ exit 1
         // where it is parsed once rather than dropped.
         let burst = b"a\rframe= 1 time=00:00:09.00\rb\nframe= 2 time=00:00:18.00\nfrag";
         let mut pipe = ChunkedReader::new(&[burst]);
-        let (lines, _) = drain_lines(&mut pipe);
+        let lines = drain_lines(&mut pipe);
         assert!(
             lines.iter().flat_map(|l| l.lines()).any(|l| l.contains("time=00:00:09")),
             "first CR line parsed from burst: {lines:?}"
@@ -2051,11 +2076,11 @@ exit 1
     }
 
     #[test]
-    fn drain_max_percent_accumulates_across_calls_in_order() {
+    fn drain_sink_receives_lines_in_stream_order_across_chunks() {
         // The line sink is the ONLY parse point: per-line peeling means the
         // sink sees lines in stream order (useful for progress emission).
         let mut pipe = ChunkedReader::new(&[b"time=00:00:02.00\r", b"time=00:00:08.00\r\n"]);
-        let (lines, _) = drain_lines(&mut pipe);
+        let lines = drain_lines(&mut pipe);
         assert_eq!(lines.len(), 2, "{lines:?}");
         assert!(lines[0].contains("00:00:02"), "{lines:?}");
         assert!(lines[1].contains("00:00:08"), "{lines:?}");
@@ -2065,8 +2090,24 @@ exit 1
     fn drain_dirty_input_is_lossy_not_frozen() {
         // Non-UTF-8 bytes inside a line are replaced, not panic or hang.
         let mut pipe = ChunkedReader::new(&[b"frame= 1 time=00:00:05.00 \xff\xfe junk\r"]);
-        let (lines, _) = drain_lines(&mut pipe);
+        let lines = drain_lines(&mut pipe);
         assert!(lines[0].contains("time=00:00:05.00"), "{lines:?}");
+    }
+
+    #[test]
+    fn drain_retries_when_read_returns_interrupted() {
+        // An Interrupted read is transient: the drain loop must retry and
+        // keep draining what follows, not drop the rest of the stream.
+        let inner = ChunkedReader::new(&[b"time=00:00:01.00\r", b"time=00:00:02.00\r"]);
+        let mut pipe = InterruptingReader { inner, fail_on: 1, calls: 0 };
+        let lines = drain_lines(&mut pipe);
+        assert_eq!(
+            lines.len(),
+            2,
+            "data after Interrupted read must still drain: {lines:?}"
+        );
+        assert!(lines[0].contains("00:00:01"), "{lines:?}");
+        assert!(lines[1].contains("00:00:02"), "{lines:?}");
     }
 }
 
