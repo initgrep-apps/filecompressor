@@ -611,7 +611,9 @@ In `useCompression` hook, listen for `batch:error` and show toast error.
 
 ### Task 6: Acceptance check
 
-- [ ] **Step 1: Test all acceptance criteria**
+Composite AC table: `docs/superpowers/plans/2026-09-27-slices-5-8-acceptance-table.md` (all 32 plan-level criteria → proving tests; 6 GUI-runtime-only manual smokes honestly deferred).
+
+- [x] **Step 1: Test all acceptance criteria**
 
 1. ✅ Per-file Cancel works
 2. ✅ Cancel All works
@@ -635,13 +637,13 @@ In `useCompression` hook, listen for `batch:error` and show toast error.
 - Composite AC table pinned: each of the 13 plan-level criteria → its proving test/flow (executor cannot hand-wave)
 - `bash scripts/audit-sidecars.sh` → `sidecar audit: PASS` before final commit
 
-- [ ] **Step 2: Run production build**
+- [x] **Step 2: Run production build**
 
 ```bash
 yarn tauri build
 ```
 
-- [ ] **Step 3: Final commit**
+- [x] **Step 3: Final commit**
 
 ```bash
 git add -A
