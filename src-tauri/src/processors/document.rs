@@ -1403,7 +1403,6 @@ exit 1
             r#"#!/bin/bash
 out="$3"
 base="${out%%\[*}"
-base="${base##*/}"
 q="${out#*\[Q=}"; q="${q%,*}"
 echo "$q" >> "$(dirname "$0")/q.log"
 case "$base" in
