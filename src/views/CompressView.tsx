@@ -17,7 +17,7 @@
 import { useFileList } from '@/hooks/useFileList'
 import { useCompression } from '@/hooks/useCompression'
 import { DropZone } from '@/components/DropZone'
-import { FileList, formatSize, RESULT_STATUSES } from '@/components/FileList'
+import { FileList, formatSize } from '@/components/FileList'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
 import type { FileStatus } from '@/types'
@@ -44,7 +44,8 @@ export function CompressView() {
 
   const hasFiles = files.length > 0
   const pendingCount = files.filter((f) => f.status === 'pending').length
-  const doneCount = files.filter((f) => RESULT_STATUSES.includes(f.status)).length
+  const doneCount = files.filter((f) => f.status === 'done' || f.status === 'already_under_target')
+    .length
   const canCompress = pendingCount > 0 && !isCompressing
 
   const statusCount = (status: FileStatus) =>

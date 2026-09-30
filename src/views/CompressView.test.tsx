@@ -146,7 +146,7 @@ describe('CompressView', () => {
       { name: 's1.jpg', id: 'f6', status: 'unsupported' },
     ])
     expect(screen.getByTestId('batch-summary').textContent).toBe(
-      '7 files · 4 done · 1 compressing · 1 pending · 1 warning · 1 skipped'
+      '7 files · 3 done · 1 compressing · 1 pending · 1 warning · 1 skipped'
     )
   })
 
