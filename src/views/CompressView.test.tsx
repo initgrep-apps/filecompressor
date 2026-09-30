@@ -54,11 +54,15 @@ function entry(overrides: Partial<FileEntry> = {}): FileEntry {
 }
 
 async function addFileInView(overrides: Partial<FileEntry> = {}) {
+  return addFilesInView([overrides])
+}
+
+async function addFilesInView(entries: Array<Partial<FileEntry>>) {
   const user = userEvent.setup()
   vi.mocked(open).mockResolvedValueOnce('/t/a.jpg')
-  vi.mocked(invoke).mockResolvedValueOnce([entry(overrides)])
+  vi.mocked(invoke).mockResolvedValueOnce(entries.map((o) => entry(o)))
   await user.click(screen.getByRole('button', { name: /drop files/i }))
-  await screen.findByText('a.jpg')
+  await screen.findByText(entries[0].name ?? 'a.jpg')
 }
 
 describe('CompressView', () => {
@@ -128,6 +132,80 @@ describe('CompressView', () => {
     await user.click(screen.getByRole('button', { name: 'Compress' }))
     await screen.findByRole('button', { name: 'Cancel All' })
     expect(screen.getByRole('button', { name: 'Clear List' })).toBeDisabled()
+  })
+
+  it('batch summary counts mixed statuses', async () => {
+    render(<CompressView />)
+    await addFilesInView([
+      { name: 'd1.jpg', id: 'f1', status: 'done', compressedSize: 100, outputPath: '/o/d1.jpg' },
+      { name: 'd2.jpg', id: 'f2', status: 'done', compressedSize: 100, outputPath: '/o/d2.jpg' },
+      { name: 'c1.jpg', id: 'f3', status: 'compressing' },
+      { name: 'p1.jpg', id: 'f4', status: 'pending' },
+      { name: 'w1.jpg', id: 'f5', status: 'best_effort', compressedSize: 100, outputPath: '/o/w1.jpg' },
+      { name: 'exact.jpg', id: 'ex', status: 'already_under_target', compressedSize: 100, outputPath: '/o/exact.jpg' },
+      { name: 's1.jpg', id: 'f6', status: 'unsupported' },
+    ])
+    expect(screen.getByTestId('batch-summary').textContent).toBe(
+      '7 files · 3 done · 1 compressing · 1 pending · 1 warning · 1 skipped'
+    )
+  })
+
+  it('failed files counted in summary', async () => {
+    render(<CompressView />)
+    await addFilesInView([
+      { name: 'd1.jpg', id: 'f1', status: 'done', compressedSize: 100, outputPath: '/o/d1.jpg' },
+      { name: 'x1.jpg', id: 'f2', status: 'failed', error: 'boom' },
+    ])
+    expect(screen.getByTestId('batch-summary').textContent).toBe('2 files · 1 done · 1 failed')
+  })
+
+  it('cancelled files represented in summary', async () => {
+    render(<CompressView />)
+    await addFilesInView([
+      { name: 'p1.jpg', id: 'f1', status: 'pending' },
+      { name: 'x1.jpg', id: 'f2', status: 'cancelled' },
+    ])
+    expect(screen.getByTestId('batch-summary').textContent).toBe('2 files · 1 pending · 1 cancelled')
+  })
+
+  it('already under target counted as done in summary', async () => {
+    render(<CompressView />)
+    await addFilesInView([
+      { name: 'a1.jpg', id: 'f1', status: 'already_under_target', compressedSize: 100, outputPath: '/o/a1.jpg' },
+    ])
+    expect(screen.getByTestId('batch-summary').textContent).toBe('1 files · 1 done')
+  })
+
+  it('summary updates live during compression', async () => {
+    const user = userEvent.setup()
+    render(<CompressView />)
+    await addFileInView()
+    const summary = () => screen.getByTestId('batch-summary').textContent
+    expect(summary()).toBe('1 files · 1 pending')
+    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    await screen.findByRole('button', { name: 'Cancel All' })
+    emit('file:progress', { fileId: 'f1', percent: 40 })
+    await waitFor(() => expect(summary()).toBe('1 files · 1 compressing'))
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 1024,
+      compressedSize: 512,
+      status: 'done',
+      metTarget: true,
+    })
+    await waitFor(() => expect(summary()).toBe('1 files · 1 done'))
+  })
+
+  it('cancel all click invokes cancel_all', async () => {
+    const user = userEvent.setup()
+    render(<CompressView />)
+    await addFileInView()
+    vi.mocked(invoke).mockResolvedValue('b1')
+    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    await screen.findByRole('button', { name: 'Cancel All' })
+    await user.click(screen.getByRole('button', { name: 'Cancel All' }))
+    expect(invoke).toHaveBeenCalledWith('cancel_all')
   })
 
   it('batch complete toast shows total saved bytes', async () => {

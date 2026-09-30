@@ -17,9 +17,10 @@
 import { useFileList } from '@/hooks/useFileList'
 import { useCompression } from '@/hooks/useCompression'
 import { DropZone } from '@/components/DropZone'
-import { FileList, formatSize, RESULT_STATUSES } from '@/components/FileList'
+import { FileList, formatSize } from '@/components/FileList'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
+import type { FileStatus } from '@/types'
 
 function formatSavedBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -43,8 +44,29 @@ export function CompressView() {
 
   const hasFiles = files.length > 0
   const pendingCount = files.filter((f) => f.status === 'pending').length
-  const doneCount = files.filter((f) => RESULT_STATUSES.includes(f.status)).length
+  const doneCount = files.filter((f) => f.status === 'done' || f.status === 'already_under_target')
+    .length
   const canCompress = pendingCount > 0 && !isCompressing
+
+  const statusCount = (status: FileStatus) =>
+    files.filter((f) => f.status === status).length
+
+  const compressingCount = statusCount('compressing')
+  const warningCount = statusCount('best_effort')
+  const skippedCount = statusCount('unsupported')
+  const failedCount = statusCount('failed')
+  const cancelledCount = statusCount('cancelled')
+
+  const summarySegments: string[] = [`${files.length} files`]
+  if (doneCount > 0) summarySegments.push(`${doneCount} done`)
+  if (compressingCount > 0) summarySegments.push(`${compressingCount} compressing`)
+  if (pendingCount > 0) summarySegments.push(`${pendingCount} pending`)
+  if (warningCount > 0) summarySegments.push(`${warningCount} warning`)
+  if (skippedCount > 0) summarySegments.push(`${skippedCount} skipped`)
+  if (failedCount > 0) summarySegments.push(`${failedCount} failed`)
+  if (cancelledCount > 0) summarySegments.push(`${cancelledCount} cancelled`)
+
+  const summaryText = summarySegments.join(' · ')
 
   return (
     <div className="flex flex-1 flex-col gap-3.5 p-5 min-h-0 overflow-hidden">
@@ -85,12 +107,12 @@ export function CompressView() {
             removeDisabled={isCompressing}
           />
           <div className="flex justify-between items-center pt-0.5 shrink-0">
-            <span className="text-xs text-muted-foreground">
-              <strong className="text-foreground font-semibold">{files.length} files</strong>
-              <span className="ml-2 tabular-nums">
-                {doneCount} done · {pendingCount} pending
-              </span>
-            </span>
+            <div
+              data-testid="batch-summary"
+              className="text-xs text-muted-foreground tabular-nums"
+            >
+              {summaryText}
+            </div>
             <Button variant="ghost" size="sm" onClick={clearList} disabled={isCompressing}>
               Clear List
             </Button>
