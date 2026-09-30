@@ -201,21 +201,27 @@ impl Settings {
     }
 
     pub fn resolve_max_concurrent(&self) -> u32 {
-        let cores = std::thread::available_parallelism()
-            .map(|n| n.get() as u32)
-            .unwrap_or(1);
+        let cores = match std::thread::available_parallelism() {
+            Ok(n) => n.get() as u32,
+            Err(e) => {
+                eprintln!("warn: available_parallelism() failed, assuming 1 core: {e}");
+                1
+            }
+        };
         self.resolve_max_concurrent_from(cores)
     }
 
     pub fn resolve_max_concurrent_from(&self, cores: u32) -> u32 {
-        let half = (cores.max(1) / 2).max(1);
-        let auto = half.clamp(1, 4);
+        let auto = (cores.max(1) / 2).clamp(1, 4);
         match self.performance.max_concurrent.as_str() {
             "1" => 1,
             "2" => 2,
             "3" => 3,
             "auto" => auto,
-            _ => 1,
+            raw => {
+                eprintln!("warn: invalid performance.maxConcurrent {raw:?}, using 1");
+                1
+            }
         }
     }
 }
@@ -339,6 +345,13 @@ mod tests {
     fn performance_defaults_to_auto() {
         let s = Settings::default();
         assert_eq!(s.performance.max_concurrent, "auto");
+    }
+
+    #[test]
+    fn resolve_max_concurrent_auto_clamps_cores() {
+        let s = Settings::default();
+        assert_eq!(s.resolve_max_concurrent_from(1), 1);
+        assert_eq!(s.resolve_max_concurrent_from(2), 1);
         assert_eq!(s.resolve_max_concurrent_from(3), 1);
         assert_eq!(s.resolve_max_concurrent_from(4), 2);
         assert_eq!(s.resolve_max_concurrent_from(8), 4);
@@ -349,9 +362,13 @@ mod tests {
     #[test]
     fn resolve_max_concurrent_manual_verbatim() {
         let mut s = Settings::default();
-        for (raw, want) in [("1", 1), ("2", 2), ("3", 3), ("5", 1), ("", 1), ("auto", 4)] {
+        for (raw, want) in [("1", 1), ("2", 2), ("3", 3), ("5", 1), ("", 1)] {
             s.performance.max_concurrent = raw.to_string();
             assert_eq!(s.resolve_max_concurrent_from(16), want, "raw={raw}");
+        }
+        for (raw, want) in [("1", 1), ("2", 2), ("3", 3)] {
+            s.performance.max_concurrent = raw.to_string();
+            assert_eq!(s.resolve_max_concurrent_from(1), want, "raw={raw}");
         }
     }
 
@@ -369,6 +386,15 @@ mod tests {
         let partial = serde_json::json!({ "outputFolder": "/tmp/out" });
         let parsed = parse_settings_value(Some(partial));
         assert_eq!(parsed.performance.max_concurrent, "auto");
+    }
+
+    #[test]
+    fn parse_settings_value_corrupt_performance_fills_default() {
+        let corrupt = serde_json::json!({
+            "outputFolder": "/x",
+            "performance": {}
+        });
+        assert_eq!(parse_settings_value(Some(corrupt)), Settings::default());
     }
 
     #[test]
