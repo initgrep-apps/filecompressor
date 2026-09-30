@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 fn path_is_free(path: &Path) -> Result<bool, String> {
     path.try_exists()
@@ -6,7 +7,25 @@ fn path_is_free(path: &Path) -> Result<bool, String> {
         .map_err(|e| format!("cannot check {}: {e}", path.display()))
 }
 
-pub(crate) fn resolve_output_path(output_folder: &str, filename: &str) -> PathBuf {
+#[derive(Default)]
+pub(crate) struct ReservedNames(Mutex<std::collections::HashSet<String>>);
+
+impl ReservedNames {
+    pub(crate) fn new() -> Self {
+        ReservedNames(Mutex::new(std::collections::HashSet::new()))
+    }
+
+    fn claim(&self, name: String) -> bool {
+        let mut set = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        set.insert(name)
+    }
+}
+
+pub(crate) fn resolve_output_path_reserved(
+    output_folder: &str,
+    filename: &str,
+    reserved: &ReservedNames,
+) -> PathBuf {
     let folder = Path::new(output_folder);
     let stem = match Path::new(filename).file_stem() {
         Some(raw) => raw.to_str().unwrap_or_else(|| {
@@ -36,49 +55,54 @@ pub(crate) fn resolve_output_path(output_folder: &str, filename: &str) -> PathBu
     };
 
     let mut fs_broken = false;
+    let mut claimed: Option<String> = None;
 
-    match path_is_free(&folder.join(filename)) {
-        Ok(true) => return folder.join(filename),
-        Ok(false) => {}
-        Err(e) => {
-            eprintln!("output path check failed, skipping collision loop: {e}");
-            fs_broken = true;
+    let candidates = std::iter::once(filename.to_string()).chain((1..1000).map(|i| {
+        if ext.is_empty() {
+            format!("{}-{}", stem, i)
+        } else {
+            format!("{}-{}.{}", stem, i, ext)
+        }
+    }));
+
+    for candidate in candidates {
+        if !reserved.claim(candidate.clone()) {
+            continue;
+        }
+        match path_is_free(&folder.join(&candidate)) {
+            Ok(true) => {
+                claimed = Some(candidate);
+                break;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                eprintln!("output path check failed, skipping collision loop: {e}");
+                fs_broken = true;
+                break;
+            }
         }
     }
 
-    if !fs_broken {
-        for i in 1..1000 {
-            let name = if ext.is_empty() {
-                format!("{}-{}", stem, i)
-            } else {
-                format!("{}-{}.{}", stem, i, ext)
-            };
-            match path_is_free(&folder.join(&name)) {
-                Ok(true) => return folder.join(name),
+    if claimed.is_none() && !fs_broken {
+        let overflow = if ext.is_empty() {
+            format!("{}-overflow", stem)
+        } else {
+            format!("{}-overflow.{}", stem, ext)
+        };
+        if reserved.claim(overflow.clone()) {
+            match path_is_free(&folder.join(&overflow)) {
+                Ok(true) => claimed = Some(overflow),
                 Ok(false) => {}
                 Err(e) => {
-                    eprintln!("output path check failed, skipping collision loop: {e}");
+                    eprintln!("output path check failed for overflow path: {e}");
                     fs_broken = true;
-                    break;
                 }
             }
         }
     }
 
-    if !fs_broken {
-        let overflow = if ext.is_empty() {
-            folder.join(format!("{}-overflow", stem))
-        } else {
-            folder.join(format!("{}-overflow.{}", stem, ext))
-        };
-        match path_is_free(&overflow) {
-            Ok(true) => return overflow,
-            Ok(false) => {}
-            Err(e) => {
-                eprintln!("output path check failed for overflow path: {e}");
-                fs_broken = true;
-            }
-        }
+    if let Some(name) = claimed {
+        return folder.join(name);
     }
 
     let unique = uuid::Uuid::new_v4().simple().to_string();
@@ -87,6 +111,10 @@ pub(crate) fn resolve_output_path(output_folder: &str, filename: &str) -> PathBu
     } else {
         folder.join(format!("{}-overflow-{}.{}", stem, unique, ext))
     }
+}
+
+pub(crate) fn resolve_output_path(output_folder: &str, filename: &str) -> PathBuf {
+    resolve_output_path_reserved(output_folder, filename, &ReservedNames::new())
 }
 
 #[cfg(test)]
@@ -166,6 +194,37 @@ mod tests {
         );
         let name = path.file_name().unwrap().to_str().unwrap();
         assert!(name.starts_with("README-overflow-"), "got: {}", name);
+    }
+
+    #[test]
+    fn reserved_registry_two_claims_same_name_get_suffix() {
+        let dir = tempdir().unwrap();
+        let reserved = ReservedNames::new();
+        let first = resolve_output_path_reserved(dir.path().to_str().unwrap(), "photo.jpg", &reserved);
+        assert_eq!(first.file_name().unwrap(), "photo.jpg");
+        let second = resolve_output_path_reserved(dir.path().to_str().unwrap(), "photo.jpg", &reserved);
+        assert_eq!(second.file_name().unwrap(), "photo-1.jpg");
+        let third = resolve_output_path_reserved(dir.path().to_str().unwrap(), "photo.jpg", &reserved);
+        assert_eq!(third.file_name().unwrap(), "photo-2.jpg");
+    }
+
+    #[test]
+    fn reserved_registry_cross_batch_isolated() {
+        let dir = tempdir().unwrap();
+        let batch_a = ReservedNames::new();
+        let batch_b = ReservedNames::new();
+        resolve_output_path_reserved(dir.path().to_str().unwrap(), "photo.jpg", &batch_a);
+        let b = resolve_output_path_reserved(dir.path().to_str().unwrap(), "photo.jpg", &batch_b);
+        assert_eq!(b.file_name().unwrap(), "photo.jpg");
+    }
+
+    #[test]
+    fn reserved_registry_disk_collision_still_suffixes() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("photo.jpg"), b"x").unwrap();
+        let reserved = ReservedNames::new();
+        let path = resolve_output_path_reserved(dir.path().to_str().unwrap(), "photo.jpg", &reserved);
+        assert_eq!(path.file_name().unwrap(), "photo-1.jpg");
     }
 
     #[test]
