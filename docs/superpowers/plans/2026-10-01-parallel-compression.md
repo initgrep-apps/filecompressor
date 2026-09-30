@@ -48,7 +48,7 @@
 - `resolve_max_concurrent_auto_clamps_cores` — injectable cores: (1→1, 2→1, 4→2, 8→4, 16→4, error→1) — function takes `cores: Option<u32>` override or splits into `resolve_from_cores(cores)` pure fn + thin caller
 - `resolve_max_concurrent_manual_verbatim` — `"1"→1`, `"2"→2`, `"3"→3`, `"5"→1` (invalid → 1), `""→1`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `src-tauri/src/settings.rs` test module add:
 
@@ -90,12 +90,12 @@ In `src-tauri/src/settings.rs` test module add:
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd src-tauri && cargo test settings`
 Expected: FAIL — `no field 'performance' on Settings` / no method `resolve_max_concurrent_from`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src-tauri/src/settings.rs`, add after `DocumentQualityFloor` (line ~85):
 
@@ -152,12 +152,12 @@ impl Settings {
 
 Executor: if the cores math reads awkward, make it exact — `let half = (cores.max(1) / 2).max(1); auto = half.clamp(1, 4)` — truth table above is canonical (3→1: floor(3/2)=1; 4→2; 8→4; 16→4).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd src-tauri && cargo test settings`
 Expected: PASS (new + all existing settings tests).
 
-- [ ] **Step 5: Run gate + commit**
+- [x] **Step 5: Run gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: pass.
