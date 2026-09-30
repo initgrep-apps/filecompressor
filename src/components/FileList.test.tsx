@@ -215,6 +215,20 @@ describe('FileList', () => {
     expect(screen.getByRole('button', { name: /remove a\.jpg/i })).toBeEnabled()
   })
 
+  it.each(['done', 'best_effort', 'already_under_target'] as const)(
+    'reveal button renders for %s rows',
+    (status) => {
+      render(
+        <FileList
+          files={[entry({ status, compressedSize: 500, outputPath: '/o/a.jpg' } as FileEntry)]}
+          onRemove={vi.fn()}
+          onReveal={vi.fn()}
+        />
+      )
+      expect(screen.getByRole('button', { name: /reveal a\.jpg/i })).toBeInTheDocument()
+    }
+  )
+
   it('reveal button hidden when no onReveal handler passed', () => {
     render(
       <FileList
