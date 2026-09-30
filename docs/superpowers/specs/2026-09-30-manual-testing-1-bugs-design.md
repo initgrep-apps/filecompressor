@@ -60,38 +60,47 @@ lifetime, so compressing while browsing other views works.
 still there; re-dropping the same file stays deduped (single row); dropping a new file
 appends; compression continues across view switches.
 
-### 2.2 Number stepper (Bug 1) — shadcn InputGroup composition
+### 2.2 Number stepper (Bug 1) — Base UI `NumberField` wrapper
 
 **Root cause recap:** all 9 numeric controls are native `<Input type="number">`.
 WKWebView renders no visible stepper; spin arrows are a tiny invisible hover region at
 the corner, and corner clicks step the value — confirmed WebKit behavior.
 
-**Design:** reusable `NumberStepper` component at `src/components/NumberStepper.tsx`,
-composed from the `input-group` shadcn block (per skill rule: "buttons inside inputs use
-InputGroup + InputGroupAddon"):
+**Research verdict (2026-09-30):**
+- The `@shadcn` registry has **no** number-field item for this project's style
+  (`styles/base-rhea/number-field.json` → not found).
+- Base UI — which is this project's shadcn base (`components.json` → `base: "base"`,
+  `@base-ui-components/react` already a dependency) — ships a native
+  [`Number Field`](https://base-ui.com/react/components/number-field): *"A numeric input
+  element with increment and decrement buttons, and a scrub area"* with
+  `min`/`max`/`step`/`snapOnStep`/`allowOutOfRange`, clamped values, ArrowUp/ArrowDown
+  keyboard stepping, blur normalization, and disabled-at-bound buttons.
+
+**Design:** `NumberStepper` at `src/components/NumberStepper.tsx` — a thin shadcn-style
+wrapper around Base UI `NumberField` primitives, styled to match the project's
+`Input` component visuals (same border, radius, focus ring, semantic tokens — no raw
+colors). Standard stepper layout, buttons flanking the value:
 
 ```
-<InputGroup>
-  <InputGroupInput type="text" inputMode="numeric" ... />
-  <InputGroupAddon align="inline-start">
-    <InputGroupButton size="icon-xs" aria-label="Decrease X"><MinusIcon/></InputGroupButton>
-  </InputGroupAddon>
-  <InputGroupAddon align="inline-end">
-    <InputGroupButton size="icon-xs" aria-label="Increase X"><PlusIcon/></InputGroupButton>
-  </InputGroupAddon>
-</InputGroup>
+┌─────────────────────────────────┐
+│ [−] │        value         │ [+] │
+└─────┴──────────────────────┴─────┘
+  NumberField.Group
+    ├── NumberField.Decrement  (icon button, RiSubtractLine, aria "Decrease X")
+    ├── NumberField.Input      (typed + keyboard ↑/↓ + select-on-focus)
+    └── NumberField.Increment  (icon button, RiAddLine, aria "Increase X")
 ```
 
-- **Step: 1** everywhere (user decision: "keep it simple").
-- Manual typing always allowed: text input with `inputMode="numeric"`, value clamped to
-  `[min, max]` on change/blur (native `type="number"` is the bug source — not used).
-- `[−]`/`[+]` buttons disabled at min/max; buttons never push value out of bounds.
-- Integer-only: non-numeric/empty input resolves to current valid value on blur.
-- Props: `value: number, onChange: (n: number) => void, min: number, max: number,
-  ariaLabel: string, id?: string, className?: string`.
+- **Step: 1** everywhere (user decision); Base UI handles clamping to `[min, max]`,
+  blur normalization (invalid/empty → last valid value), and button disabled state at
+  bounds — no hand-rolled logic.
+- Manual typing always allowed (user decision: "can also manually change").
+- Icons from `@remixicon/react`; buttons follow the project `Button` visual treatment
+  with `data-icon` rule respected; no manual sizing classes on icons.
+- Props: `value: number, onValueChange: (n: number) => void, min: number, max: number,
+  ariaLabel: string, id?: string, className?: string` — mapped 1:1 onto `NumberField.Root`.
 - Replaces all 9 native number inputs in `SettingsView.tsx` (4 category targets +
   5 quality floors); `aria-label`s preserved verbatim.
-- Icons from the project icon library (`@remixicon/react`: `RiSubtractLine`, `RiAddLine`).
 
 ### 2.3 Scroll containment (4a + 4c) — flex `min-h-0` chain + ScrollArea
 
@@ -119,20 +128,27 @@ WebKitGTK). Same for the Settings form region.
 `minHeight: 400` so layouts never collapse below usable size. Desktop apps do not use
 breakpoint media queries; the flex/grid structure below is the responsive story.
 
-### 2.4 Shell alignment — sidebar-03 pattern (user-requested)
+### 2.4 Shell alignment — sidebar-03 block applied as base (user-required)
 
-From `https://ui.shadcn.com/blocks/sidebar#sidebar-03`:
+From `https://ui.shadcn.com/blocks/sidebar#sidebar-03` — **the block's page structure is
+the base this shell is built from**, applied with only the adjustments below (our app is
+a single-window 3-view app, no routes/data-fetching page needed):
 
+- Block structure applied verbatim: `SidebarProvider` → `AppSidebar` → `SidebarInset` →
+  `header` (`SidebarTrigger` · vertical `Separator` · `Breadcrumb`) → content column.
 - **Sidebar goes flush, full-height** — current `variant="floating"` (detached card look,
   `App.tsx:69`) is dropped; default variant attaches the sidebar edge-to-edge.
   `collapsible="icon"` stays.
-- **Header breadcrumb:** header becomes the sidebar-03 pattern —
-  `SidebarTrigger` · vertical `Separator` · `Breadcrumb` showing the current location
-  (`Optimizer / Compress`, `Optimizer / History`, `Optimizer / Settings`). Breadcrumb
-  follows `activeView`; gives orientation when the sidebar is collapsed to icons.
-  `breadcrumb.tsx` is already installed.
+- **Breadcrumb must be functional** (user-tested complaint): it renders the real current
+  location and **updates on every navigation** — `Optimizer` (link, non-clicking visual
+  root) / current view as `BreadcrumbPage` (`Compress`, `History`, `Settings`), driven by
+  `activeView` state so any sidebar click updates it. It remains visible and correct
+  while the sidebar is collapsed to icons — this is its purpose per the block. Clicking
+  breadcrumb items is a no-op (single-level location display, not navigation history).
 - **Per-view duplicate headings removed:** "Compress Files" / "Settings" h1 headings go
   away — the header breadcrumb is the title (History has no heading today; same rule).
+- Vertical `Separator` styling follows the block:
+  `mr-2 data-[orientation=vertical]:h-4`.
 
 ### 2.5 Card-based content (user decision: Cards everywhere)
 
@@ -208,17 +224,21 @@ Add via CLI (style/base auto-resolved from `components.json`, preset `b3T38WToP`
 base `base`, icons `remixicon`):
 
 ```
-npx shadcn@latest add card input-group field scroll-area select empty spinner
+npx shadcn@latest add card field scroll-area select empty spinner
 ```
 
 - `card` — §2.5
-- `input-group` — §2.2 (stepper)
 - `field` — Settings form rows migrate from raw div rows to
   `FieldGroup`/`Field`/`FieldLabel`/`FieldDescription` composition
 - `scroll-area` — §2.3 scroll regions
 - `select` — replaces the two raw native `<select>` elements (target unit, min resolution)
 - `empty` — History placeholder + compress-page empty list state
 - `spinner` — Compress button busy state (Button + Spinner + disabled)
+
+Not from the CLI: `NumberStepper` (§2.2) — no registry item exists for this style; it
+wraps Base UI `NumberField` primitives directly
+(`@base-ui-components/react/number-field`, already a project dependency via `base: "base"`),
+styled with the existing `input` component's token classes.
 
 Icon rule: icons inside buttons use `data-icon`, no manual sizing classes.
 
@@ -238,7 +258,7 @@ beyond keeping the existing gate green.
 | Area | Tests |
 |------|-------|
 | Provider (Bug 2) | add file → simulated view switch → return → row present; re-drop same path → still one row; new path → appended; listeners registered once (StrictMode-safe: existing duplicate-fire guard test ported to provider level) |
-| Stepper | click [−]/[+] steps ±1; typing works; clamp at min/max; buttons disabled at bounds; blur normalizes invalid input; Enter/Space unaffected |
+| Stepper | click [−]/[+] steps ±1; clamp at min/max (button disabled at bounds); typing works; blur normalizes invalid/empty input to last valid value; ArrowUp/ArrowDown keyboard step; Enter/Space unaffected |
 | Layout | structural assertions: drop zone + summary + action row outside the scroll container; Settings footer outside scroll region |
 | Drop zone | dragging/hover state classes; click opens browse; Enter/Space keyboard; drops call onDrop with paths |
 | Settings | Field/Select/Stepper composition renders; existing save/cancel/reset tests stay green |
@@ -258,8 +278,8 @@ Compress; only table scrolls.
 | `src/views/HistoryView.tsx` | Empty-state Card |
 | `src/components/DropZone.tsx` | Rewrite visuals (split panel), API unchanged |
 | `src/components/FileList.tsx` | ScrollArea wrap; summary/actions to CardFooter (in CompressView) |
-| `src/components/NumberStepper.tsx` | **Create** |
-| `src/components/ui/*` | Add via CLI: card, input-group, field, scroll-area, select, empty, spinner |
+| `src/components/NumberStepper.tsx` | **Create** — Base UI `NumberField` wrapper (stepper visuals, − / + flanking value) |
+| `src/components/ui/*` | Add via CLI: card, field, scroll-area, select, empty, spinner |
 | `src/hooks/useFileList.ts`, `src/hooks/useCompression.ts` | Unchanged implementations; called from provider |
 | `src-tauri/tauri.conf.json` | `minWidth: 480`, `minHeight: 400` |
 | Tests | `useCompression.test.ts` ported to provider mount; `CompressView.test.tsx` + `FileList.test.tsx` updated for context/Card markup; new NumberStepper tests |
@@ -268,8 +288,10 @@ Compress; only table scrolls.
 
 - **Listener lifetime change** is the riskiest move — mitigated by porting the existing
   StrictMode duplicate-fire guard and listener-registration-failure tests to provider level.
-- `InputGroup` + preset `base-rhea` composition is verified upstream (docs fetched
-  2026-09-30); `card`/`field`/`scroll-area`/`select`/`empty`/`spinner` come from the same
-  registry — CLI resolves style automatically.
+- `card`/`field`/`scroll-area`/`select`/`empty`/`spinner` come from the `@shadcn`
+  registry — CLI resolves style/base automatically (verified 2026-09-30). `NumberStepper`
+  wraps Base UI `NumberField` (v1.8.0, verified upstream 2026-09-30) — its
+  `value`/`onValueChange` contract must be pinned by unit tests so a Base UI upgrade
+  cannot silently change clamping semantics.
 - Settings draft/save flow untouched — only control components swap; `hasChanges` JSON
   comparison semantics preserved (NumberStepper always emits integers).
