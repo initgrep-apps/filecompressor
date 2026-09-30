@@ -491,7 +491,7 @@ Show "Cancel All" button (destructive variant) when `isCompressing` is true. Cli
 **Files:**
 - Modify: `src/views/CompressView.tsx` or `src/App.tsx`
 
-- [ ] **Step 1: Add sonner Toaster to App**
+- [x] **Step 1: Add sonner Toaster to App**
 
 ```tsx
 import { Toaster } from '@/components/ui/sonner'
@@ -500,7 +500,7 @@ import { Toaster } from '@/components/ui/sonner'
 <Toaster />
 ```
 
-- [ ] **Step 2: Show toast on batch complete**
+- [x] **Step 2: Show toast on batch complete**
 
 In `useCompression` hook, on `batch:complete` event:
 ```typescript
@@ -508,7 +508,7 @@ const totalSavedMB = (e.payload.totalSavedBytes / (1024 * 1024)).toFixed(1)
 toast.success(`Compressed ${doneCount} files. Saved ${totalSavedMB} MB total.`)
 ```
 
-- [ ] **Step 3: Show toast on errors**
+- [x] **Step 3: Show toast on errors**
 
 On `file:error` events, accumulate error count. On `batch:complete`, if errorCount > 0:
 ```typescript
