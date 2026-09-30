@@ -158,11 +158,12 @@ impl VideoProcessor {
     /// Percent of `duration_secs` reached, from the maximum timestamp in the
     /// whole stderr. Test-side parser: the live reader thread consumes the
     /// same pieces per line (`progress_line_seconds` + `seconds_to_percent`)
-    /// instead of batch-parsing after the fact.
+    /// instead of batch-parsing after the fact. Splits on both terminators
+    /// so CR-only stats streams behave identically.
     #[cfg(test)]
     fn parse_progress_percent(stderr: &str, duration_secs: f64) -> u32 {
         let max = stderr
-            .lines()
+            .split(|c| c == '\n' || c == '\r')
             .filter_map(Self::progress_line_seconds)
             .fold(0.0f64, f64::max);
         Self::seconds_to_percent(max, duration_secs)
@@ -475,10 +476,66 @@ impl VideoProcessor {
         Ok(String::from_utf8_lossy(&stdout).into_owned())
     }
 
+    /// Drains an ffmpeg stderr pipe into progress events. Returns the max
+    /// mapped percent and the retained diagnostics tail.
+    ///
+    /// Lines end at `\n` OR `\r`: ffmpeg marks every `-stats` frame update
+    /// with a carriage return and emits a single `\n` only for the final
+    /// post-exit summary, so draining on `\n` alone would hold every frame
+    /// update in `pending` until the process exits — no live progress for
+    /// the whole encode, and an unbounded buffer on long videos. Raw bytes
+    /// are lossy-converted per complete line, so a non-UTF-8 filename
+    /// embedded in stderr neither freezes progress nor truncates
+    /// diagnostics, and a progress token straddling read chunks is held
+    /// over until its terminator arrives.
+    ///
+    /// `line_sink` receives each complete line (terminator included) the
+    /// moment it is peeled off — the reader thread uses it to parse and
+    /// emit progress; tests use it to observe exactly when lines drain.
+    #[doc(hidden)]
+    pub(crate) fn drain_stderr_for_progress<R: std::io::Read>(
+        pipe: &mut R,
+        line_sink: &mut dyn FnMut(&[u8]),
+    ) -> (u32, Vec<u8>) {
+        let mut max_percent: u32 = 0;
+        let mut tail: Vec<u8> = Vec::new();
+        let mut chunk = [0u8; PROGRESS_CHUNK_SIZE];
+        let mut pending: Vec<u8> = Vec::new();
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    pending.extend_from_slice(&chunk[..n]);
+                    // Drain up to the LAST terminator so lines arriving as
+                    // one burst are each parsed separately.
+                    if let Some(pos) = pending.iter().rposition(|b| *b == b'\n' || *b == b'\r') {
+                        let complete: Vec<u8> = pending.drain(..=pos).collect();
+                        line_sink(&complete);
+                        tail.extend_from_slice(&complete);
+                    }
+                    if tail.len() > TAIL_KEEP_BYTES {
+                        tail.drain(..tail.len() - TAIL_KEEP_BYTES / 2);
+                    }
+                }
+                Err(_) => {
+                    // Keep the tail already drained; diagnostics stay partial.
+                    break;
+                }
+            }
+        }
+        // EOF: whatever has no trailing terminator is still real output.
+        if !pending.is_empty() {
+            line_sink(&pending);
+            tail.extend_from_slice(&pending);
+        }
+        (max_percent, tail)
+    }
+
     /// Runs one ffmpeg invocation with live progress: stderr is streamed line
-    /// by line, each line parsed for `time=` / `out_time_ms=`, mapped into
-    /// this pass's slice of the overall percent range and sent as it arrives.
-    /// Cancel SIGKILLs the child and surfaces as `Cancelled`.
+    /// by line (CR- or LF-terminated — ffmpeg `-stats` uses `\r` for frame
+    /// updates), each line parsed for `time=` / `out_time_ms=`, mapped into
+    /// this pass's slice of the overall percent range and sent as it
+    /// arrives. Cancel SIGKILLs the child and surfaces as `Cancelled`.
     #[allow(clippy::too_many_arguments)]
     fn run_ffmpeg_with_progress(
         ffmpeg_path: &str,
@@ -502,17 +559,14 @@ impl VideoProcessor {
         let progress_for_thread = progress.clone();
         let reader = std::thread::spawn(move || {
             let mut max_percent: u32 = 0;
-            let mut tail: Vec<u8> = Vec::new();
+            let mut tail = Vec::new();
             if let Some(pipe) = stderr_pipe.as_mut() {
-                // Read raw bytes and lossy-convert per complete line: a
-                // non-UTF-8 filename embedded in stderr must neither freeze
-                // progress (read_line's silent error break) nor truncate
-                // diagnostics. Only complete lines are parsed — a progress
-                // token straddling chunks is never misread; the fragment is
-                // held over and parsed once its newline arrives.
                 let parse_and_record = |bytes: &[u8], max_percent: &mut u32| {
                     let text = String::from_utf8_lossy(bytes);
-                    for line in text.lines() {
+                    // Split on both terminators: one drained chunk can carry
+                    // several \r-separated stats lines, and str::lines()
+                    // only walks \n.
+                    for line in text.split(|c| c == '\n' || c == '\r') {
                         if let Some(secs) = Self::progress_line_seconds(line.trim()) {
                             let pct = Self::seconds_to_percent(secs, duration_secs);
                             *max_percent = (*max_percent).max(pct);
@@ -523,37 +577,14 @@ impl VideoProcessor {
                         }
                     }
                 };
-                let mut chunk = [0u8; PROGRESS_CHUNK_SIZE];
-                let mut pending: Vec<u8> = Vec::new();
-                loop {
-                    match pipe.read(&mut chunk) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            pending.extend_from_slice(&chunk[..n]);
-                            if let Some(pos) = pending.iter().rposition(|b| *b == b'\n') {
-                                let complete: Vec<u8> = pending.drain(..=pos).collect();
-                                parse_and_record(&complete, &mut max_percent);
-                                tail.extend_from_slice(&complete);
-                            }
-                            if tail.len() > TAIL_KEEP_BYTES {
-                                tail.drain(..tail.len() - TAIL_KEEP_BYTES / 2);
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("warn: ffmpeg stderr drain failed, progress partial: {e}");
-                            break;
-                        }
-                    }
-                }
-                // EOF: whatever has no trailing newline is still real output.
-                if !pending.is_empty() {
-                    parse_and_record(&pending, &mut max_percent);
-                    tail.extend_from_slice(&pending);
-                }
+                let mut drain_sink = |bytes: &[u8]| parse_and_record(bytes, &mut max_percent);
+                let (drained_max, drained_tail) =
+                    Self::drain_stderr_for_progress(pipe, &mut drain_sink);
+                max_percent = max_percent.max(drained_max);
+                tail = drained_tail;
             }
             (max_percent, tail)
         });
-
         let status = Self::poll_child_exit(&mut child, cancel_token, "ffmpeg")?;
         if cancel_token.is_cancelled() {
             return Err(CompressionError::Cancelled);
@@ -886,6 +917,55 @@ mod tests {
     use std::fs;
     use std::time::Instant;
 
+    /// BufferedReader over explicit byte chunks with per-read delays: exact
+    /// chunk sizes reach `drain_stderr_for_progress` even when the data is
+    /// already sitting in the pipe buffer, so boundary/straddle cases are
+    /// deterministic.
+    #[cfg(test)]
+    struct ChunkedReader {
+        chunks: Vec<Vec<u8>>,
+        index: usize,
+    }
+
+    #[cfg(test)]
+    impl ChunkedReader {
+        fn new(chunks: &[&[u8]]) -> Self {
+            Self {
+                chunks: chunks.iter().map(|c| c.to_vec()).collect(),
+                index: 0,
+            }
+        }
+    }
+
+    #[cfg(test)]
+    impl std::io::Read for ChunkedReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.index >= self.chunks.len() {
+                return Ok(0);
+            }
+            let chunk = &self.chunks[self.index];
+            let n = chunk.len().min(buf.len());
+            buf[..n].copy_from_slice(&chunk[..n]);
+            self.index += 1;
+            Ok(n)
+        }
+    }
+
+    /// Collects drained lines as owned strings for sequence assertions.
+    #[cfg(test)]
+    fn drain_lines<R: std::io::Read>(
+        pipe: &mut R,
+    ) -> (Vec<String>, u32) {
+        let mut lines: Vec<String> = Vec::new();
+        let (max_percent, _tail) = {
+            let mut sink = |bytes: &[u8]| {
+                lines.push(String::from_utf8_lossy(bytes).into_owned());
+            };
+            VideoProcessor::drain_stderr_for_progress(pipe, &mut sink)
+        };
+        (lines, max_percent)
+    }
+
     #[cfg(unix)]
     fn make_executable_script(dir: &Path, name: &str, script: &str) -> String {
         use std::os::unix::fs::PermissionsExt;
@@ -1189,6 +1269,13 @@ exit 1
         // Mixed formats in one stream — both accepted.
         let mixed = "out_time_ms=3000000\ntime=00:00:05.00\n";
         assert_eq!(VideoProcessor::parse_progress_percent(mixed, 100.0), 5);
+        // Real ffmpeg `-stats` emits carriage-return-terminated lines; every
+        // terminator variant must peel into lines.
+        let cr = "frame= 4 time=00:00:02.00\rframe= 9 time=00:00:09.00\r";
+        assert_eq!(VideoProcessor::parse_progress_percent(cr, 20.0), 45);
+        // Interleaved terminators (a stray \n inside stats bursts still parses).
+        let mixed_terms = "time=00:00:01.00\r\ntime=00:00:03.00\ntime=00:00:15.00\r";
+        assert_eq!(VideoProcessor::parse_progress_percent(mixed_terms, 20.0), 75);
     }
 
     #[test]
@@ -1207,6 +1294,11 @@ exit 1
         // out_time_ms beyond duration also clamps.
         assert_eq!(
             VideoProcessor::parse_progress_percent("out_time_ms=999999999", 60.0),
+            100
+        );
+        // CR-terminated stream: same clamp semantics.
+        assert_eq!(
+            VideoProcessor::parse_progress_percent("time=01:00:01.00\r", 60.0),
             100
         );
     }
@@ -1831,4 +1923,150 @@ head -c 88 /dev/zero >> "$out"
         }
         assert!(*events.last().unwrap() >= 95, "last event must be terminal: {events:?}");
     }
+
+    /// Live progress MUST emit while ffmpeg still runs: real ffmpeg marks
+    /// each `-stats` frame update with a carriage return, so a reader that
+    /// drains only on `\n` goes silent for the whole encode. The fake
+    /// mirrors the real byte pattern — `\r`-terminated stats separated by
+    /// sleeps, one `\n` post-exit summary — and drives
+    /// `run_ffmpeg_with_progress` directly so pre-encode attempt-base
+    /// events cannot confound the observed sequence. Assertions are
+    /// sequence-based (not wall-clock): with the bug, 11 and 17 are never
+    /// emitted at all; with the fix they arrive during the sleeps.
+    #[test]
+    #[cfg(unix)]
+    fn video_progress_live_during_cr_only_stats() {
+        let dir = tempfile::tempdir().unwrap();
+        let ffmpeg = make_executable_script(
+            &dir.path(),
+            "fake-ffmpeg",
+            r#"#!/bin/bash
+pass=""
+sleep 1
+printf 'frame= 1 time=00:00:00.30\r' >&2
+sleep 1
+printf 'frame= 2 time=00:00:00.60\r' >&2
+sleep 1
+printf 'frame= 3 time=00:00:00.90\r' >&2
+sleep 1
+echo "frames=3 time=00:00:01.20" >&2
+exit 1
+"#,
+        );
+        let (progress, seen) = ProgressSender::test_collector();
+        let duration_secs = 5.0;
+
+        let result = VideoProcessor::run_ffmpeg_with_progress(
+            &ffmpeg,
+            &["-stats".to_string()],
+            &CancellationToken::new(),
+            &progress,
+            0,
+            95,
+            duration_secs,
+        );
+
+        assert!(result.is_err(), "code-1 exit must surface as failure");
+        let events = seen.lock().unwrap().clone();
+        for pair in events.windows(2) {
+            assert!(pair[0] <= pair[1], "regressed: {events:?}");
+        }
+        // 0.30/5.00=6%→scaled 5; 0.60→11; 0.90→17 — mid-run CR updates.
+        for expected in [5, 11, 17] {
+            assert!(
+                events.contains(&expected),
+                "live CR event {expected} missing: {events:?}"
+            );
+        }
+        // Terminating summary drains at EOF and lifts the final value.
+        assert_eq!(
+            *events.last().unwrap(),
+            22,
+            "final flush must end at the max parsed percent: {events:?}"
+        );
+    }
+
+    // ---------- drain_stderr_for_progress (byte-level reader) tests ----------
+
+    #[test]
+    fn drain_parses_lf_cr_and_mixed_terminated_lines() {
+        // Drain contract: each read ending in \n or \r peels to the LAST
+        // terminator; the sink's own lossy lines() walk resolves the
+        // individual lines. Real shape: \r-separated stats, one \n summary,
+        // trailing \r\n. Nothing may be dropped or duplicated.
+        let mut pipe = ChunkedReader::new(&[b"frame= 1 time=00:00:01.00\rframe= 2 time=00:00:02.00\rframes=2\ntime=00:00:03.00\r\n"]);
+        let (lines, _) = drain_lines(&mut pipe);
+        let joined = lines.join("");
+        for token in ["time=00:00:01.00", "time=00:00:02.00", "time=00:00:03.00"] {
+            assert!(joined.contains(token), "lost {token}: {lines:?}");
+        }
+        // Feeding the exact drained bytes through the production parser
+        // yields the max timestamp (3.00s) — no terminator confusion.
+        let max_secs = lines
+            .iter()
+            .flat_map(|l| l.lines())
+            .filter_map(|l| VideoProcessor::progress_line_seconds(l.trim()))
+            .fold(0.0f64, f64::max);
+        assert_eq!(max_secs, 3.0);
+    }
+
+    #[test]
+    fn drain_splits_stats_line_across_read_chunks_incl_cr_boundary() {
+        // A stats token straddling two read chunks with the CR arriving
+        // exactly at the boundary: first read ends mid-token (no terminator),
+        // the second delivers the rest + CR. Nothing may parse early; the
+        // whole line must peel once its terminator arrives.
+        let line = b"frame= 12 time=00:00:24.00 bitrate=600.0kbits/s\r";
+        let mut pipe = ChunkedReader::new(&[&line[..20], &line[20..]]);
+        let (lines, _) = drain_lines(&mut pipe);
+        assert_eq!(lines.len(), 1, "one line despite chunk split: {lines:?}");
+        // The straddled token survived the chunk boundary intact.
+        assert!(
+            lines[0].contains("time=00:00:24.00"),
+            "token must not be corrupted across chunks: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn drain_parses_multiple_lines_in_one_burst_and_holds_fragment() {
+        // One read delivers several lines; drain peels to the last
+        // terminator and the sink parses each line individually during the
+        // lossy lines() walk. Trailing fragment stays pending until EOF,
+        // where it is parsed once rather than dropped.
+        let burst = b"a\rframe= 1 time=00:00:09.00\rb\nframe= 2 time=00:00:18.00\nfrag";
+        let mut pipe = ChunkedReader::new(&[burst]);
+        let (lines, _) = drain_lines(&mut pipe);
+        assert!(
+            lines.iter().flat_map(|l| l.lines()).any(|l| l.contains("time=00:00:09")),
+            "first CR line parsed from burst: {lines:?}"
+        );
+        assert!(
+            lines.iter().flat_map(|l| l.lines()).any(|l| l.contains("time=00:00:18")),
+            "second LF line parsed from burst: {lines:?}"
+        );
+        // Terminated portion drained at read time; fragment flushed at EOF
+        // as a separate sink invocation.
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines.last().unwrap(), "frag");
+    }
+
+    #[test]
+    fn drain_max_percent_accumulates_across_calls_in_order() {
+        // The line sink is the ONLY parse point: per-line peeling means the
+        // sink sees lines in stream order (useful for progress emission).
+        let mut pipe = ChunkedReader::new(&[b"time=00:00:02.00\r", b"time=00:00:08.00\r\n"]);
+        let (lines, _) = drain_lines(&mut pipe);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(lines[0].contains("00:00:02"), "{lines:?}");
+        assert!(lines[1].contains("00:00:08"), "{lines:?}");
+    }
+
+    #[test]
+    fn drain_dirty_input_is_lossy_not_frozen() {
+        // Non-UTF-8 bytes inside a line are replaced, not panic or hang.
+        let mut pipe = ChunkedReader::new(&[b"frame= 1 time=00:00:05.00 \xff\xfe junk\r"]);
+        let (lines, _) = drain_lines(&mut pipe);
+        assert!(lines[0].contains("time=00:00:05.00"), "{lines:?}");
+    }
 }
+
