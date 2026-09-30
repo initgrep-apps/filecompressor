@@ -85,7 +85,7 @@ src/
 - `test_category_enum_serialization` — lowercase serialization matches frontend expectation
 - `test_file_status_enum_serialization` — snake_case serialization matches frontend expectation
 
-- [ ] **Step 1: Create models.rs**
+- [x] **Step 1: Create models.rs**
 
 ```rust
 use serde::{Deserialize, Serialize};
@@ -165,14 +165,14 @@ impl FileEntry {
 }
 ```
 
-- [ ] **Step 2: Add uuid dependency to Cargo.toml**
+- [x] **Step 2: Add uuid dependency to Cargo.toml**
 
 Add to `src-tauri/Cargo.toml` under `[dependencies]`:
 ```toml
 uuid = { version = "1", features = ["v4"] }
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add -A
@@ -214,7 +214,7 @@ git commit -m "feat: add Rust data models (Category, FileStatus, FileEntry)"
 - `test_category_label_all` — all 5 categories return correct label
 - `test_category_formats_all` — all 5 categories return correct format string
 
-- [ ] **Step 1: Create detection.rs**
+- [x] **Step 1: Create detection.rs**
 
 ```rust
 use crate::models::Category;
@@ -264,7 +264,7 @@ pub fn category_formats(category: Category) -> &'static str {
 }
 ```
 
-- [ ] **Step 2: Write unit tests for detection**
+- [x] **Step 2: Write unit tests for detection**
 
 Add at the bottom of `detection.rs`:
 
@@ -320,7 +320,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run:
 ```bash
@@ -329,7 +329,7 @@ cd src-tauri && cargo test detection -- --nocapture
 
 Expected: All 6 tests pass.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
@@ -370,7 +370,7 @@ git commit -m "feat: add category detection with extension registry + tests"
 - `test_concurrent_access` — multiple add_files calls don't corrupt state (Mutex)
 - `test_mutex_poison_recovery` — panic during lock doesn't poison permanently
 
-- [ ] **Step 1: Create commands.rs**
+- [x] **Step 1: Create commands.rs**
 
 ```rust
 use crate::models::{Category, FileEntry, FileStatus};
@@ -412,7 +412,7 @@ pub fn clear_list(state: State<FileListState>) {
 }
 ```
 
-- [ ] **Step 2: Register commands in lib.rs**
+- [x] **Step 2: Register commands in lib.rs**
 
 Replace `src-tauri/src/lib.rs`:
 
@@ -438,7 +438,7 @@ pub fn run() {
 }
 ```
 
-- [ ] **Step 3: Verify it compiles**
+- [x] **Step 3: Verify it compiles**
 
 Run:
 ```bash
@@ -447,7 +447,7 @@ yarn tauri dev
 
 Expected: App launches without errors. No visible change yet (no UI to call commands).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
@@ -478,14 +478,14 @@ git commit -m "feat: add Tauri commands for file list management"
 **Required Tests:**
 - (Configuration only — verified by integration in Task 6/10)
 
-- [ ] **Step 1: Add dialog plugin to Cargo.toml**
+- [x] **Step 1: Add dialog plugin to Cargo.toml**
 
 Add to `[dependencies]` in `src-tauri/Cargo.toml`:
 ```toml
 tauri-plugin-dialog = "2"
 ```
 
-- [ ] **Step 2: Register plugin in lib.rs**
+- [x] **Step 2: Register plugin in lib.rs**
 
 Update `src-tauri/src/lib.rs` — add `.plugin(tauri_plugin_dialog::init())` to the builder:
 
@@ -502,7 +502,7 @@ tauri::Builder::default()
     .expect("error while running tauri application");
 ```
 
-- [ ] **Step 3: Add dialog permissions to capabilities**
+- [x] **Step 3: Add dialog permissions to capabilities**
 
 Open `src-tauri/capabilities/default.json` and add `"dialog:default"` to the permissions array:
 
@@ -515,14 +515,14 @@ Open `src-tauri/capabilities/default.json` and add `"dialog:default"` to the per
 }
 ```
 
-- [ ] **Step 4: Install frontend dialog package**
+- [x] **Step 4: Install frontend dialog package**
 
 Run:
 ```bash
 yarn add @tauri-apps/plugin-dialog
 ```
 
-- [ ] **Step 5: Verify it compiles**
+- [x] **Step 5: Verify it compiles**
 
 Run:
 ```bash
@@ -531,7 +531,7 @@ yarn tauri dev
 
 Expected: App launches without errors.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
@@ -563,7 +563,7 @@ git commit -m "chore: add tauri-plugin-dialog for file picker"
 - `test_types_optional_fields_nullable` — compressedSize, outputPath, error accept null
 - `test_types_serialization_compatibility` — manual: Rust JSON ↔ TS interface match
 
-- [ ] **Step 1: Create types.ts**
+- [x] **Step 1: Create types.ts**
 
 ```typescript
 export type Category = 'image' | 'video' | 'pdf' | 'document' | 'other'
@@ -592,7 +592,7 @@ export interface FileEntry {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add -A
@@ -630,7 +630,7 @@ git commit -m "feat: add TypeScript types matching Rust models"
 - `test_useFileList_invoke_error_handling` — failed invoke doesn't corrupt state
 - `test_useFileList_rapid_addFiles` — multiple rapid calls don't cause race conditions
 
-- [ ] **Step 1: Create useFileList.ts**
+- [x] **Step 1: Create useFileList.ts**
 
 ```typescript
 import { useState, useCallback } from 'react'
@@ -671,7 +671,7 @@ export function useFileList() {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add -A
@@ -695,18 +695,18 @@ git commit -m "feat: add useFileList hook for file list state + IPC"
 **Required Tests:**
 - (Generated components — verified by integration in Task 9/10)
 
-- [ ] **Step 1: Add Table and Badge via shadcn CLI**
+- [x] **Step 1: Add Table and Badge via shadcn CLI**
 
 Run:
 ```bash
 yarn dlx shadcn@latest add table badge
 ```
 
-- [ ] **Step 2: Verify components exist**
+- [x] **Step 2: Verify components exist**
 
 Check that `src/components/ui/table.tsx` and `src/components/ui/badge.tsx` exist.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add -A
@@ -749,7 +749,7 @@ git commit -m "chore: add shadcn table and badge components"
 - `test_dropzone_keyboard_accessibility` — Enter/Space triggers onBrowse
 - `test_dropzone_aria_labels` — proper accessibility attributes
 
-- [ ] **Step 1: Create DropZone.tsx**
+- [x] **Step 1: Create DropZone.tsx**
 
 ```tsx
 import { useState, useCallback, useRef } from 'react'
@@ -826,7 +826,7 @@ export function DropZone({ onBrowse, onDrop }: DropZoneProps) {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add -A
@@ -873,7 +873,7 @@ git commit -m "feat: add DropZone component with drag-drop and browse"
 - `test_filelist_remove_button_calls_callback` — click calls onRemove with file.id
 - `test_filelist_long_filename_truncates` — max-w + truncate applied
 
-- [ ] **Step 1: Create FileList.tsx**
+- [x] **Step 1: Create FileList.tsx**
 
 ```tsx
 import type { FileEntry, Category, FileStatus } from '@/types'
@@ -1013,7 +1013,7 @@ export function FileList({ files, onRemove }: FileListProps) {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add -A
@@ -1055,7 +1055,7 @@ git commit -m "feat: add FileList component with category badges and status"
 - `test_compressview_append_files` — multiple drops append to list
 - `test_compressview_unsupported_dimmed` — unsupported files show opacity-40 + Unsupported status
 
-- [ ] **Step 1: Replace CompressView.tsx**
+- [x] **Step 1: Replace CompressView.tsx**
 
 ```tsx
 import { useFileList } from '@/hooks/useFileList'
@@ -1095,7 +1095,7 @@ export function CompressView() {
 }
 ```
 
-- [ ] **Step 2: Update DropZone to accept className**
+- [x] **Step 2: Update DropZone to accept className**
 
 The `DropZone` component needs to accept a `className` prop. Update `src/components/DropZone.tsx`:
 
@@ -1123,7 +1123,7 @@ export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
     >
 ```
 
-- [ ] **Step 3: Verify the app works end-to-end**
+- [x] **Step 3: Verify the app works end-to-end**
 
 Run:
 ```bash
@@ -1139,7 +1139,7 @@ Test:
 6. Click "Clear List" → list empties
 7. Drag more files → they append to existing list
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
@@ -1186,11 +1186,11 @@ git commit -m "feat: wire up CompressView with drop zone and file list"
 - `test_acceptance_criteria_11_clear_list` — manual: Clear List empties list
 - `test_acceptance_criteria_12_human_readable_sizes` — manual: KB/MB formatting correct
 
-- [ ] **Step 1: Run acceptance checklist**
+- [x] **Step 1: Run acceptance checklist**
 
 Go through each criterion. Test manually in the running app.
 
-- [ ] **Step 2: Run Rust unit tests**
+- [x] **Step 2: Run Rust unit tests**
 
 ```bash
 cd src-tauri && cargo test
@@ -1198,7 +1198,7 @@ cd src-tauri && cargo test
 
 Expected: All detection tests pass.
 
-- [ ] **Step 3: Final commit**
+- [x] **Step 3: Final commit**
 
 ```bash
 git add -A
