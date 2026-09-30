@@ -7,7 +7,6 @@ fn path_is_free(path: &Path) -> Result<bool, String> {
         .map_err(|e| format!("cannot check {}: {e}", path.display()))
 }
 
-#[derive(Default)]
 pub(crate) struct ReservedNames(Mutex<std::collections::HashSet<String>>);
 
 impl ReservedNames {
@@ -15,9 +14,12 @@ impl ReservedNames {
         ReservedNames(Mutex::new(std::collections::HashSet::new()))
     }
 
-    fn claim(&self, name: String) -> bool {
-        let mut set = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        set.insert(name)
+    fn claim(&self, folder: &str, name: &str) -> bool {
+        let mut set = self.0.lock().unwrap_or_else(|e| {
+            eprintln!("warn: reserved names mutex was poisoned, recovering: {e}");
+            e.into_inner()
+        });
+        set.insert(format!("{folder}\0{name}"))
     }
 }
 
@@ -66,7 +68,7 @@ pub(crate) fn resolve_output_path_reserved(
     }));
 
     for candidate in candidates {
-        if !reserved.claim(candidate.clone()) {
+        if !reserved.claim(output_folder, &candidate) {
             continue;
         }
         match path_is_free(&folder.join(&candidate)) {
@@ -89,7 +91,7 @@ pub(crate) fn resolve_output_path_reserved(
         } else {
             format!("{}-overflow.{}", stem, ext)
         };
-        if reserved.claim(overflow.clone()) {
+        if reserved.claim(output_folder, &overflow) {
             match path_is_free(&folder.join(&overflow)) {
                 Ok(true) => claimed = Some(overflow),
                 Ok(false) => {}
@@ -225,6 +227,62 @@ mod tests {
         let reserved = ReservedNames::new();
         let path = resolve_output_path_reserved(dir.path().to_str().unwrap(), "photo.jpg", &reserved);
         assert_eq!(path.file_name().unwrap(), "photo-1.jpg");
+    }
+
+    #[test]
+    fn reserved_registry_different_folders_isolated() {
+        let dir_a = tempdir().unwrap();
+        let dir_b = tempdir().unwrap();
+        let reserved = ReservedNames::new();
+        let a = resolve_output_path_reserved(dir_a.path().to_str().unwrap(), "photo.jpg", &reserved);
+        let b = resolve_output_path_reserved(dir_b.path().to_str().unwrap(), "photo.jpg", &reserved);
+        assert_eq!(a.file_name().unwrap(), "photo.jpg");
+        assert_eq!(b.file_name().unwrap(), "photo.jpg");
+    }
+
+    #[test]
+    fn reserved_registry_concurrent_claims_all_unique() {
+        let dir = tempdir().unwrap();
+        let folder = dir.path().to_str().unwrap().to_string();
+        let reserved = std::sync::Arc::new(ReservedNames::new());
+        let names = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let reserved = std::sync::Arc::clone(&reserved);
+            let names = std::sync::Arc::clone(&names);
+            let folder = folder.clone();
+            handles.push(std::thread::spawn(move || {
+                let path = resolve_output_path_reserved(&folder, "photo.jpg", &reserved);
+                names
+                    .lock()
+                    .unwrap()
+                    .push(path.file_name().unwrap().to_str().unwrap().to_string());
+            }));
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let names = names.lock().unwrap().clone();
+        let unique: std::collections::HashSet<&String> = names.iter().collect();
+        assert_eq!(unique.len(), 8, "names: {names:?}");
+        assert_eq!(names.len(), 8, "names: {names:?}");
+    }
+
+    #[test]
+    fn reserved_registry_fs_error_falls_back_to_uuid() {
+        let dir = tempdir().unwrap();
+        let blocker = dir.path().join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+        let reserved = ReservedNames::new();
+        let path = resolve_output_path_reserved(blocker.to_str().unwrap(), "photo.jpg", &reserved);
+        let name = path.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("photo-overflow-"), "got: {name}");
+        assert!(name.ends_with(".jpg"), "got: {name}");
+        assert!(!path.exists(), "uuid fallback must not create the file");
+        assert!(
+            !path.parent().unwrap().is_dir(),
+            "parent must remain the blocker file, not a directory"
+        );
     }
 
     #[test]
