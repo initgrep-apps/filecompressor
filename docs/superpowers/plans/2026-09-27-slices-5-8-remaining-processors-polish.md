@@ -564,7 +564,7 @@ toast.error(`${errorCount} files could not reach target.`)
 **Files:**
 - Modify: `src-tauri/src/queue.rs`
 
-- [ ] **Step 1: Add writability check before batch starts**
+- [x] **Step 1: Add writability check before batch starts**
 
 In `process_batch`, before processing any files:
 ```rust
@@ -588,7 +588,7 @@ if let Err(e) = std::fs::write(&test_file, b"test") {
 let _ = std::fs::remove_file(&test_file);
 ```
 
-- [ ] **Step 2: Handle batch:error in frontend**
+- [x] **Step 2: Handle batch:error in frontend**
 
 In `useCompression` hook, listen for `batch:error` and show toast error.
 
