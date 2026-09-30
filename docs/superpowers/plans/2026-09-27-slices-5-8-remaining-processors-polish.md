@@ -340,7 +340,7 @@ zip = "2"
 - Create: `src-tauri/src/processors/document.rs`
 - Modify: `src-tauri/src/processors/mod.rs` (register DocumentProcessor)
 
-- [ ] **Step 1: Create document.rs**
+- [x] **Step 1: Create document.rs**
 
 Implement:
 1. Read OOXML file as ZIP archive using `zip::ZipArchive`
@@ -382,13 +382,13 @@ Implement:
 - `document_cancel_mid_recompress_cleans_temp_entries` — temp cleanup on cancel
 - `document_output_opens_valid` — structural check: re-read output via ZipArchive, entry count + names match input
 
-- [ ] **Step 2: Register DocumentProcessor in mod.rs**
+- [x] **Step 2: Register DocumentProcessor in mod.rs**
 
-- [ ] **Step 3: Test end-to-end**
+- [x] **Step 3: Test end-to-end**
 
 Drop a DOCX with embedded images → compress → verify output ≤ 1 MB. Verify output opens in Word/LibreOffice. Test XLSX and PPTX.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
