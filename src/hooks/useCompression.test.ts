@@ -189,7 +189,7 @@ describe('useCompression event handling', () => {
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 1024 })
     expect(result.current.comp.isCompressing).toBe(false)
-    expect(onBatchComplete).toHaveBeenCalledWith(1024, 1)
+    expect(onBatchComplete).toHaveBeenCalledWith(1024, 1, 0)
   })
 
   it('batch:error resets isCompressing and fires onBatchError', async () => {
@@ -218,7 +218,7 @@ describe('useCompression event handling', () => {
       metTarget: true,
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
-    expect(onBatchComplete).toHaveBeenCalledWith(5, 1)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
   })
 
   it('cancelled files are not counted and a zero-count batch suppresses the success toast', async () => {
@@ -250,7 +250,7 @@ describe('useCompression event handling', () => {
       metTarget: true,
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
-    expect(onBatchComplete).toHaveBeenCalledWith(5, 1)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
   })
 
   it('processed count resets between batches', async () => {
@@ -270,7 +270,7 @@ describe('useCompression event handling', () => {
       metTarget: true,
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
-    expect(onBatchComplete).toHaveBeenLastCalledWith(5, 1)
+    expect(onBatchComplete).toHaveBeenLastCalledWith(5, 1, 0)
     emit('file:complete', {
       fileId: 'f2',
       outputPath: '/o/b.jpg',
@@ -280,7 +280,69 @@ describe('useCompression event handling', () => {
       metTarget: true,
     })
     emit('batch:complete', { batchId: 'b2', totalSavedBytes: 7 })
-    expect(onBatchComplete).toHaveBeenLastCalledWith(7, 1)
+    expect(onBatchComplete).toHaveBeenLastCalledWith(7, 1, 0)
+  })
+
+  it('error count accumulates file:error events and reaches onBatchComplete', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup(
+      [entry({ id: 'f1' }), entry({ id: 'f2', name: 'b.jpg' }), entry({ id: 'f3', name: 'c.jpg' })],
+      { onBatchComplete }
+    )
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('file:error', { fileId: 'f1', errorMessage: 'boom' })
+    emit('file:error', { fileId: 'f2', errorMessage: 'boom' })
+    emit('file:complete', {
+      fileId: 'f3',
+      outputPath: '/o/c.jpg',
+      originalSize: 10,
+      compressedSize: 5,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 3, 2)
+  })
+
+  it('error count ignores unknown fileIds', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('file:error', { fileId: 'ghost', errorMessage: 'boom' })
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 10,
+      compressedSize: 5,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
+  })
+
+  it('error count resets between batches', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry({ id: 'f1' }), entry({ id: 'f2', name: 'b.jpg' })], {
+      onBatchComplete,
+    })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('file:error', { fileId: 'f1', errorMessage: 'boom' })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
+    expect(onBatchComplete).toHaveBeenLastCalledWith(0, 1, 1)
+    emit('file:complete', {
+      fileId: 'f2',
+      outputPath: '/o/b.jpg',
+      originalSize: 10,
+      compressedSize: 3,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b2', totalSavedBytes: 7 })
+    expect(onBatchComplete).toHaveBeenLastCalledWith(7, 1, 0)
   })
 })
 
@@ -397,7 +459,7 @@ describe('useCompression listener lifecycle', () => {
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
     expect(onBatchComplete).toHaveBeenCalledTimes(1)
-    expect(onBatchComplete).toHaveBeenCalledWith(5, 1)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
     unmount()
     await flush()
     expect(unlistens.length).toBeGreaterThan(0)

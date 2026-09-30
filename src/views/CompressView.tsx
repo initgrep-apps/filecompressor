@@ -37,8 +37,10 @@ export function CompressView() {
     cancelAll,
     revealInFolder,
   } = useCompression(files, setFiles, {
-    onBatchComplete: (saved, count) =>
-      toast.success(`Compressed ${count} files. Saved ${formatSavedBytes(saved)} total.`),
+    onBatchComplete: (saved, count, errorCount) => {
+      toast.success(`Compressed ${count} files. Saved ${formatSavedBytes(saved)} total.`)
+      if (errorCount > 0) toast.error(`${errorCount} files could not reach target.`)
+    },
     onBatchError: (message) => toast.error(message),
   })
 
