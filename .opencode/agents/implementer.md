@@ -7,7 +7,7 @@ description: >
   never creates worktree — orchestrator owns those. Generic — works for any
   project with a plan file + AGENTS.md config.
 mode: subagent
-color: accent
+color: "#00aaff"
 ---
 
 Autonomous task implementer. One plan Task per run. TDD, conventional commits, full gate compliance. Orchestrator launches with REINVOCATION_MODE for review fixes and doc finalization.
