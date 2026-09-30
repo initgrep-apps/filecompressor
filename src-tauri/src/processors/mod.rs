@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+pub mod document;
 pub mod image;
 pub mod pdf;
 pub mod video;
@@ -37,6 +38,7 @@ impl ProcessorRegistry {
         registry.register(Box::new(image::ImageProcessor::new()));
         registry.register(Box::new(pdf::PdfProcessor::new()));
         registry.register(Box::new(video::VideoProcessor::new()));
+        registry.register(Box::new(document::DocumentProcessor::new()));
         registry
     }
 
@@ -102,7 +104,22 @@ mod tests {
     fn registry_lookup_matches_category() {
         let registry = ProcessorRegistry::new();
         assert!(registry.get_processor(Category::Video).is_some());
-        assert!(registry.get_processor(Category::Document).is_none());
+        assert!(registry.get_processor(Category::Document).is_some());
         assert!(registry.get_processor(Category::Other).is_none());
+    }
+
+    #[test]
+    fn registry_maps_document_extensions_to_document_category() {
+        let registry = ProcessorRegistry::new();
+        for ext in ["docx", "xlsx", "pptx"] {
+            assert_eq!(
+                registry.extension_map.get(ext),
+                Some(&Category::Document),
+                "ext: {}",
+                ext
+            );
+        }
+        assert_eq!(registry.lookup("DOCX"), Some(Category::Document));
+        assert!(registry.get_processor(Category::Document).is_some());
     }
 }

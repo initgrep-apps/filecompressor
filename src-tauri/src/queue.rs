@@ -246,8 +246,9 @@ impl QueueState {
 
             let result = match registry.get_processor(entry.category) {
                 None => {
-                    // No processor registered (Video/Document in this slice):
-                    // skip as Unsupported — NOT Failed (spec §3/§6)
+                    // No processor registered for this category (Other —
+                    // unsupported formats): skip as Unsupported — NOT
+                    // Failed (spec §3/§6)
                     {
                         let mut list = poison_recover(state.0.lock());
                         if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
