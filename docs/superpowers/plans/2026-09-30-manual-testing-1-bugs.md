@@ -1157,7 +1157,7 @@ Keep `categories`, `updateTarget`, `updateFloor`, `handleBrowse`, `handleSave`,
                         />
                         <Select
                           value={target.unit}
-                          onValueChange={(v) => updateTarget(cat.key, 'unit', v)}
+                          onValueChange={(v) => { if (v !== null) updateTarget(cat.key, 'unit', v) }}
                         >
                           <SelectTrigger
                             aria-label={`${cat.label} target unit`}
@@ -1235,7 +1235,7 @@ Keep `categories`, `updateTarget`, `updateFloor`, `handleBrowse`, `handleSave`,
                       <FieldLabel className="text-sm">Videos minimum resolution</FieldLabel>
                       <Select
                         value={draft.qualityFloors.video.minResolution}
-                        onValueChange={(v) => updateFloor('video.minResolution', v)}
+                        onValueChange={(v) => { if (v !== null) updateFloor('video.minResolution', v) }}
                       >
                         <SelectTrigger
                           aria-label="Videos minimum resolution"
