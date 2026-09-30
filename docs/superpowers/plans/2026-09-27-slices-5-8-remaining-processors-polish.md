@@ -220,7 +220,7 @@ git commit -m "feat: add PdfProcessor with qpdf + Ghostscript"
 - Create: `src-tauri/src/processors/video.rs`
 - Modify: `src-tauri/src/processors/mod.rs` (register VideoProcessor)
 
-- [ ] **Step 1: Create video.rs**
+- [x] **Step 1: Create video.rs**
 
 Implement:
 1. Get duration via ffprobe: `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 input.mp4`
@@ -263,9 +263,9 @@ For progress parsing: spawn ffmpeg with `stderr piped`, read lines, parse `time=
 - `video_already_under_target_skips_sidecars` — under-target copy-as-is (5 MB file vs 10 MB target wastes minutes if recompressed)
 - `video_windows_nul_dev_null_gated` — cfg-gated constant assert (release insurance)
 
-- [ ] **Step 2: Register VideoProcessor in mod.rs**
+- [x] **Step 2: Register VideoProcessor in mod.rs**
 
-- [ ] **Step 3: Bundle ffmpeg + ffprobe sidecar binaries**
+- [x] **Step 3: Bundle ffmpeg + ffprobe sidecar binaries**
 
 Download from:
 - macOS: `evermeet.cx/ffmpeg/`
@@ -290,11 +290,11 @@ Add to `tauri.conf.json` externalBin:
 ]
 ```
 
-- [ ] **Step 4: Test end-to-end**
+- [x] **Step 4: Test end-to-end**
 
 Drop an MP4 → compress → verify output ≤ 10 MB. Verify output plays. Drop a MOV → verify MP4 output.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
