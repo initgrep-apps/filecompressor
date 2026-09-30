@@ -124,9 +124,10 @@ never given a bounded height to scroll within.
 native scrolling consistent across all three Tauri WebViews (WKWebView / WebView2 /
 WebKitGTK). Same for the Settings form region.
 
-**Window minimums:** `tauri.conf.json` window config gains `minWidth: 480`,
-`minHeight: 400` so layouts never collapse below usable size. Desktop apps do not use
-breakpoint media queries; the flex/grid structure below is the responsive story.
+**Window minimums:** `tauri.conf.json:18-19` already pins `minWidth: 700`,
+`minHeight: 500` — kept as-is (stricter than the 480×400 first proposed). No config
+change needed. Desktop apps do not use breakpoint media queries; the flex/grid structure
+below is the responsive story.
 
 ### 2.4 Shell alignment — sidebar-03 block applied as base (user-required)
 
@@ -281,7 +282,7 @@ Compress; only table scrolls.
 | `src/components/NumberStepper.tsx` | **Create** — Base UI `NumberField` wrapper (stepper visuals, − / + flanking value) |
 | `src/components/ui/*` | Add via CLI: card, field, scroll-area, select, empty, spinner |
 | `src/hooks/useFileList.ts`, `src/hooks/useCompression.ts` | Unchanged implementations; called from provider |
-| `src-tauri/tauri.conf.json` | `minWidth: 480`, `minHeight: 400` |
+| `src-tauri/tauri.conf.json` | No change — `minWidth: 700`/`minHeight: 500` already present (§2.3) |
 | Tests | `useCompression.test.ts` ported to provider mount; `CompressView.test.tsx` + `FileList.test.tsx` updated for context/Card markup; new NumberStepper tests |
 
 ## 8. Risks
