@@ -418,15 +418,15 @@ git commit -m "feat: add DocumentProcessor with OOXML media recompression"
 **Files:**
 - Modify: `src/components/FileList.tsx`
 
-- [ ] **Step 1: Add progress bar for compressing files**
+- [x] **Step 1: Add progress bar for compressing files**
 
 For files with status "compressing", show a thin progress bar below the filename. Listen to `file:progress` events (already handled in `useCompression` hook from Slice 4).
 
-- [ ] **Step 2: Add per-file Cancel button for compressing files**
+- [x] **Step 2: Add per-file Cancel button for compressing files**
 
 Show a small × button (red) for files with status "compressing". Clicking calls `cancelFile(fileId)`.
 
-- [ ] **Step 3: Add Reveal in Folder button for done/best-effort files**
+- [x] **Step 3: Add Reveal in Folder button for done/best-effort files**
 
 Show a folder icon button (hover-reveal) for files with status "done" or "best_effort" or "already_under_target". Clicking calls `revealInFolder(outputPath)`.
 
@@ -536,7 +536,7 @@ toast.error(`${errorCount} files could not reach target.`)
 - Already implemented in `src-tauri/src/temp.rs` (`cleanup_stale_temp_files`)
 - Already called in `lib.rs` setup
 
-- [ ] **Step 1: Test stale cleanup**
+- [x] **Step 1: Test stale cleanup**
 
 1. Start app → compress a file → cancel mid-job → temp files exist in temp dir
 2. Manually set temp file modification time to >24h ago:
