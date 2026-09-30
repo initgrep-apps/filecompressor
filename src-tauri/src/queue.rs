@@ -571,27 +571,35 @@ mod tests {
 
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            let read_only = dir.path().join("read-only");
-            std::fs::create_dir(&read_only).unwrap();
-            let mode = |m: u32| {
-                let mut perms = std::fs::metadata(&read_only).unwrap().permissions();
-                perms.set_mode(m);
-                perms
-            };
-            std::fs::set_permissions(&read_only, mode(0o500)).unwrap();
+            // Running as root (UID 0) bypasses DAC permission bits, so a
+            // 0o500 folder would still accept the probe and this assertion
+            // would fail deterministically in root CI/container runs. Skip
+            // the read-only-dir branch there; the success-path assertions
+            // above still run everywhere.
+            let is_root = unsafe { libc::geteuid() } == 0;
+            if !is_root {
+                use std::os::unix::fs::PermissionsExt;
+                let read_only = dir.path().join("read-only");
+                std::fs::create_dir(&read_only).unwrap();
+                let mode = |m: u32| {
+                    let mut perms = std::fs::metadata(&read_only).unwrap().permissions();
+                    perms.set_mode(m);
+                    perms
+                };
+                std::fs::set_permissions(&read_only, mode(0o500)).unwrap();
 
-            let err = ensure_output_folder_writable(read_only.to_str().unwrap());
-            assert!(
-                err.is_err(),
-                "a read-only folder must fail the writability probe"
-            );
-            assert!(
-                !read_only.join(".write-probe").exists(),
-                "failed probe must also be cleaned up"
-            );
+                let err = ensure_output_folder_writable(read_only.to_str().unwrap());
+                assert!(
+                    err.is_err(),
+                    "a read-only folder must fail the writability probe"
+                );
+                assert!(
+                    !read_only.join(".write-probe").exists(),
+                    "failed probe must also be cleaned up"
+                );
 
-            std::fs::set_permissions(&read_only, mode(0o755)).unwrap();
+                std::fs::set_permissions(&read_only, mode(0o755)).unwrap();
+            }
         }
     }
 
