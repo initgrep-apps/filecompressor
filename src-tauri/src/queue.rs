@@ -34,15 +34,24 @@ fn poison_recover<T>(lock: LockResult<MutexGuard<'_, T>>) -> MutexGuard<'_, T> {
     })
 }
 
-/// HEIC/HEIF input → .jpg output filename (spec §3), case-insensitive.
+/// HEIC/HEIF input → .jpg output and MOV input → .mp4 output (spec §3),
+/// case-insensitive. Resolving the real output extension here is what makes
+/// collision detection apply before any processor touches the filename.
 pub(crate) fn output_file_name(name: &str) -> String {
     let lower = name.to_lowercase();
-    if lower.ends_with(".heic") || lower.ends_with(".heif") {
-        name.rsplit_once('.')
-            .map(|(stem, _)| format!("{}.jpg", stem))
-            .unwrap_or_else(|| format!("{}.jpg", name))
+    let output_ext: Option<&str> = if lower.ends_with(".heic") || lower.ends_with(".heif") {
+        Some("jpg")
+    } else if lower.ends_with(".mov") {
+        Some("mp4")
     } else {
-        name.to_string()
+        None
+    };
+    match output_ext {
+        Some(ext) => name.rsplit_once('.').map_or_else(
+            || format!("{name}.{ext}"),
+            |(stem, _)| format!("{stem}.{ext}"),
+        ),
+        None => name.to_string(),
     }
 }
 
@@ -459,9 +468,16 @@ mod tests {
     }
 
     #[test]
+    fn output_file_name_rewrites_mov_to_mp4() {
+        assert_eq!(output_file_name("clip.mov"), "clip.mp4");
+        assert_eq!(output_file_name("clip.MOV"), "clip.mp4");
+    }
+
+    #[test]
     fn output_file_name_keeps_non_heic_name() {
         assert_eq!(output_file_name("photo.png"), "photo.png");
         assert_eq!(output_file_name("doc.PDF"), "doc.PDF");
+        assert_eq!(output_file_name("clip.mp4"), "clip.mp4");
     }
 
     #[test]
@@ -472,5 +488,51 @@ mod tests {
     #[test]
     fn output_file_name_handles_dot_heic_stem_only_name() {
         assert_eq!(output_file_name(".heic"), ".jpg");
+    }
+
+    /// Regression (review round 1): the .mov → .mp4 rewrite used to happen
+    /// in VideoProcessor AFTER resolve_output_path had already deduped
+    /// "clip.mov", so a pre-existing clip.mp4 was silently clobbered and two
+    /// queued files could resolve to the same output. The rewrite happens
+    /// here, before collision resolution — the real output name is what gets
+    /// deduped.
+    #[test]
+    fn mov_collision_uses_real_output_name() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("clip.mp4"), b"pre-existing").unwrap();
+        std::fs::write(dir.path().join("clip.mov"), b"queued").unwrap();
+
+        let resolved = resolve_output_path(
+            dir.path().to_str().unwrap(),
+            &output_file_name("clip.mov"),
+        );
+        assert_eq!(
+            resolved.file_name().unwrap(),
+            "clip-1.mp4",
+            "collision detection must apply to the real mp4 name"
+        );
+        // Neither queued file may be overwritten at resolve time.
+        assert_eq!(
+            std::fs::read(dir.path().join("clip.mp4")).unwrap(),
+            b"pre-existing".to_vec()
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("clip.mov")).unwrap(),
+            b"queued".to_vec()
+        );
+    }
+
+    #[test]
+    fn mov_name_without_collision_resolves_unchanged() {
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let resolved = resolve_output_path(
+            dir.path().to_str().unwrap(),
+            &output_file_name("clip.mov"),
+        );
+        assert_eq!(resolved.file_name().unwrap(), "clip.mp4");
     }
 }

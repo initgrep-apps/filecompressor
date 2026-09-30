@@ -148,7 +148,7 @@ pub fn deliver_output(
 
 /// Last ~`STDERR_TAIL_CHARS` characters of sidecar stderr — the failure
 /// reason is almost always the last thing printed.
-fn stderr_tail(bytes: &[u8]) -> String {
+pub fn stderr_tail(bytes: &[u8]) -> String {
     let stderr = String::from_utf8_lossy(bytes).into_owned();
     let tail: String = {
         let count = stderr.chars().count();
@@ -276,7 +276,9 @@ pub fn run_sidecar(
 /// Bounded wait on the drain thread: poll `is_finished`, then join. A
 /// `None` return means "abandoned" — dropping the handle detaches the
 /// thread, which self-terminates once the pipe closes.
-fn recv_stderr_bounded(handle: std::thread::JoinHandle<Vec<u8>>) -> Option<Vec<u8>> {
+pub fn recv_stderr_bounded<T: Send + 'static>(
+    handle: std::thread::JoinHandle<T>,
+) -> Option<T> {
     let deadline = std::time::Instant::now() + STDERR_JOIN_TIMEOUT;
     loop {
         if handle.is_finished() {

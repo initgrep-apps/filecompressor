@@ -20,7 +20,7 @@ pub mod result;
 
 pub use processor::{
     BestAttempt, CompressionProcessor, SidecarName, SidecarPaths, ToleratedExit, deliver_output,
-    run_sidecar, strict_exit,
+    recv_stderr_bounded, run_sidecar, stderr_tail, strict_exit,
 };
 pub use progress::ProgressSender;
 pub use result::{CompressionError, CompressionResult};
