@@ -200,14 +200,29 @@ fn remove_all(paths: &[PathBuf]) {
     }
 }
 
+/// Removes one file, tolerating NotFound; anything else is warned but
+/// swallowed — best-effort cleanup must never mask the real result.
+fn remove_file_best_effort(path: &Path) {
+    if let Err(e) = std::fs::remove_file(path) {
+        if e.kind() != std::io::ErrorKind::NotFound {
+            eprintln!("warn: could not remove {}: {e}", path.display());
+        }
+    }
+}
+
 /// Delivers a pending output only while the job is still live. Every
 /// delivery window (found pass, best effort, zero-media rezip) funnels
 /// through here so a cancel that lands after the last sidecar spawn —
 /// during the final rezip or between search completion and delivery —
-/// cannot produce a Done result. Cancels clean the temp paths and, if the
-/// copy already happened, remove the delivered output. Non-cancel errors
-/// also clean up (the queue backstop would eventually, but immediate
-/// removal keeps the temp dir honest).
+/// cannot produce a Done result.
+///
+/// Ownership: the output path is resolved free by the queue before the
+/// job, but files can appear under it through an external race, so every
+/// cleanup choice is gated on a snapshot taken right before the copy:
+/// a path that was free pre-copy is fully ours (created or partially
+/// written by our deliver) and is removed — cancel or non-cancel
+/// failure alike; a path that was occupied pre-copy is never deleted
+/// (we cannot un-clobber, and removal could hit foreign data).
 fn deliver_or_cancel(
     pending: Result<(PathBuf, u64, String, u32, bool), CompressionError>,
     output: &Path,
@@ -226,11 +241,25 @@ fn deliver_or_cancel(
             return Err(e);
         }
     };
+    let output_was_free = !output.exists();
     let result = deliver_output(&path, output, size, strategy, quality, met_target, progress);
     if result.is_ok() && cancel_token.is_cancelled() {
         remove_all(temp_paths);
-        let _ = std::fs::remove_file(output);
+        if output_was_free {
+            remove_file_best_effort(output);
+        } else {
+            eprintln!(
+                "warn: cancel after delivery: {} was occupied before the copy, left in place",
+                output.display()
+            );
+        }
         return Err(CompressionError::Cancelled);
+    }
+    if result.is_err() {
+        remove_all(temp_paths);
+        if output_was_free {
+            remove_file_best_effort(output);
+        }
     }
     result
 }
@@ -314,14 +343,19 @@ impl CompressionProcessor for DocumentProcessor {
         }
 
         let sidecar = sidecar_paths.require(SidecarName::Vips)?;
-        // A floor above the search start would invert the binary-search
-        // window (lo > hi → zero attempts, misleading failure). Clamp so
-        // the search always runs at least one attempt — same rung
-        // treatment as the video processor's CRF walk.
-        let min_quality = quality_floor
-            .document
-            .min_media_quality
-            .min(START_QUALITY);
+        // Search window [lo, hi]: the settings floor is the WORST quality
+        // we may attempt. A floor at or below START_QUALITY searches the
+        // full [floor, START] range. A floor above the start would invert
+        // the window (lo > hi → zero attempts), so the search runs as a
+        // single attempt pinned exactly AT the floor — the user's minimum
+        // quality is honored, never silently relaxed (video CRF walk
+        // precedent: exact rung at the floor instead of clamping below it).
+        let floor = quality_floor.document.min_media_quality;
+        let (min_quality, max_quality) = if floor > START_QUALITY {
+            (floor, floor)
+        } else {
+            (floor, START_QUALITY)
+        };
         let ext = std::path::Path::new(input)
             .extension()
             .and_then(|e| e.to_str())
@@ -441,7 +475,7 @@ impl CompressionProcessor for DocumentProcessor {
 
         let search = search_quality(
             min_quality,
-            START_QUALITY,
+            max_quality,
             MAX_SEARCH_ITERATIONS,
             target_bytes,
             &cancel_token,
@@ -931,9 +965,11 @@ awk -v n="$n" 'BEGIN { s = 12345; for (i = 0; i < n; i++) { s = (s * 16807 + 11)
         let tmp = dir.path().join("tmp");
         fs::create_dir_all(&tmp).unwrap();
 
-        // Floor 99 exceeds START_QUALITY 95 — the search window must clamp
-        // to [95, 95]: exactly one attempt at the start quality and a
-        // best-effort delivery, never a zero-attempt collapse.
+        // Floor 99 exceeds START_QUALITY 95 — the search must not relax the
+        // floor (that would violate the user's minimum). Instead the window
+        // is the single point [99, 99]: exactly one attempt AT the floor,
+        // a best-effort delivery, never a zero-attempt collapse or a clamp
+        // below the user's floor.
         let result = DocumentProcessor
             .compress_to_target(
                 &input,
@@ -951,8 +987,12 @@ awk -v n="$n" 'BEGIN { s = 12345; for (i = 0; i < n; i++) { s = (s * 16807 + 11)
         let log = read_q_log(&dir.path());
         assert_eq!(
             log,
-            vec![95],
-            "clamped window must run exactly one attempt at q=95, got {log:?}"
+            vec![99],
+            "floor 99 must pin exactly one attempt at q=99 (the floor itself), got {log:?}"
+        );
+        assert_eq!(
+            result.quality_used, 99,
+            "delivered quality must be the floor, not the clamped start"
         );
         assert!(
             result.strategy_used.contains("best-effort"),
@@ -1336,6 +1376,7 @@ exit 1
                 ("word/media/b.jpg", noise_bytes(2000)),
             ],
         );
+        let input_bytes = fs::read(&input).unwrap();
         let tmp = dir.path().join("tmp");
         fs::create_dir_all(&tmp).unwrap();
 
@@ -1378,16 +1419,16 @@ exit 1
             !dir.path().join("out.docx").exists(),
             "no Done delivery after cancel: output file must not exist"
         );
+        assert_eq!(
+            fs::read(&input).unwrap(),
+            input_bytes,
+            "input file must be byte-identical after cancel"
+        );
         let remaining: Vec<_> = fs::read_dir(&tmp).unwrap().flatten().collect();
         assert!(
             remaining.is_empty(),
             "temp entries must be cleaned after cancel, found: {:?}",
             remaining.iter().map(|e| e.file_name()).collect::<Vec<_>>()
-        );
-        assert_eq!(
-            fs::read(&input).unwrap().len(),
-            fs::metadata(&input).map(|m| m.len() as usize).unwrap(),
-            "input file must be untouched"
         );
     }
 
@@ -1413,6 +1454,7 @@ awk -v n="$n" 'BEGIN { for (i = 0; i < n; i++) printf "%c", i % 251 }' > "$base"
 "#,
         );
         let input = dir.path().join("in.docx");
+        let input_bytes = noise_bytes(8400);
         build_docx(
             &input,
             &[
@@ -1422,9 +1464,9 @@ awk -v n="$n" 'BEGIN { for (i = 0; i < n; i++) printf "%c", i % 251 }' > "$base"
                 ("word/media/b.jpg", noise_bytes(8000)),
             ],
         );
+        let input_bytes = fs::read(&input).unwrap();
         let tmp = dir.path().join("tmp");
         fs::create_dir_all(&tmp).unwrap();
-
         let token = CancellationToken::new();
         let worker_token = token.clone();
         let worker_input = input.clone();
@@ -1460,6 +1502,11 @@ awk -v n="$n" 'BEGIN { for (i = 0; i < n; i++) printf "%c", i % 251 }' > "$base"
             !dir.path().join("out.docx").exists(),
             "no Done delivery after cancel"
         );
+        assert_eq!(
+            fs::read(&input).unwrap(),
+            input_bytes,
+            "input file must be byte-identical after mid-recompress cancel"
+        );
         let remaining: Vec<_> = fs::read_dir(&tmp).unwrap().flatten().collect();
         assert!(
             remaining.is_empty(),
@@ -1487,12 +1534,95 @@ awk -v n="$n" 'BEGIN { for (i = 0; i < n; i++) printf "%c", i % 251 }' > "$base"
 
     #[test]
     #[cfg(unix)]
-    fn document_cancel_during_zero_media_rezip_no_output_no_temp() {
+    fn document_cancel_during_rezip_preserves_preexisting_output_file() {
         let dir = tempfile::tempdir().unwrap();
         let fake = write_fake_vips(&dir.path());
         // Many entries so the rezip takes long enough for the cancel to
         // land inside it: attempt-0.docx is created the instant the rezip
         // starts, long before delivery.
+        let mut entries: Vec<(String, Vec<u8>)> =
+            vec![("[Content_Types].xml".to_string(), CONTENT_TYPES.to_vec())];
+        for i in 0..1200 {
+            entries.push((format!("part{i}.xml"), varied_text(40)));
+        }
+        let entries: Vec<(&str, Vec<u8>)> = entries
+            .iter()
+            .map(|(n, c)| (n.as_str(), c.clone()))
+            .collect();
+        let input = dir.path().join("in.docx");
+        build_docx(&input, &entries);
+        let input_size = fs::metadata(&input).unwrap().len();
+        assert!(
+            input_size > 100 * 1024,
+            "input {input_size} must exceed the target so the rezip path runs"
+        );
+        let tmp = dir.path().join("tmp");
+        fs::create_dir_all(&tmp).unwrap();
+
+        // A pre-existing file at the exact output path: an external race
+        // appeared under the resolved name between resolution and delivery.
+        // The exists-snapshot guard must treat it as foreign and NEVER
+        // delete it on late cancel.
+        let output_path = dir.path().join("out.docx");
+        fs::write(&output_path, b"precious-unrelated-content").unwrap();
+
+        let token = CancellationToken::new();
+        let worker_token = token.clone();
+        let (worker_input, worker_output, worker_tmp, worker_fake) =
+            (input.clone(), output_path.clone(), tmp.clone(), fake.clone());
+
+        let handle = std::thread::spawn(move || {
+            DocumentProcessor.compress_to_target(
+                &worker_input,
+                &worker_output,
+                24 * 1024,
+                &floors_with(40),
+                worker_token,
+                ProgressSender::test_stub(),
+                &test_sidecar_paths(Some(worker_fake)),
+                &worker_tmp,
+            )
+        });
+
+        wait_for_file(&tmp, "attempt-0.docx");
+        token.cancel();
+        let result = handle.join().unwrap();
+
+        assert!(
+            matches!(result, Err(CompressionError::Cancelled)),
+            "cancel during rezip must surface Cancelled, got {:?}",
+            result.map(|r| (r.strategy_used, r.compressed_size))
+        );
+        assert_eq!(
+            fs::read(&output_path).unwrap(),
+            b"precious-unrelated-content",
+            "a file occupied at the output path before our copy must never be deleted on cancel"
+        );
+        assert!(
+            !dir.path().join("out.docx.collided").exists(),
+            "collided delivery must not land (cancel wins over copy)"
+        );
+        let remaining: Vec<_> = fs::read_dir(&tmp).unwrap().flatten().collect();
+        assert!(
+            remaining.is_empty(),
+            "temp entries must be cleaned after cancel, found: {:?}",
+            remaining.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            fs::read(&input).unwrap().len(),
+            input_size as usize,
+            "input file must be untouched"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn document_cancel_during_zero_media_rezip_no_output_no_temp() {
+        // Same harness, uncontended output path: cancel during the zero-media
+        // rezip must surface Cancelled. (Naming kept for the temp-litter
+        // guarantee; the pre-existing-output case is the test above.)
+        let dir = tempfile::tempdir().unwrap();
+        let fake = write_fake_vips(&dir.path());
         let mut entries: Vec<(String, Vec<u8>)> =
             vec![("[Content_Types].xml".to_string(), CONTENT_TYPES.to_vec())];
         for i in 0..1200 {
@@ -2029,12 +2159,17 @@ rm "$base"
         let tmp = dir.path().join("tmp");
         fs::create_dir_all(&tmp).unwrap();
 
+        // Tiny target (below the 22-byte empty zip) so the already-under-target
+        // early exit cannot route this to the copy path — it must hit the
+        // real zero-media rezip. The rezip of an empty archive stays 22 bytes,
+        // over-target → deterministic best-effort strategy pin proving the
+        // routing (a copy path would deliver "already-under-target").
         let input_size = fs::metadata(&input).unwrap().len();
         let result = DocumentProcessor
             .compress_to_target(
                 &input,
                 &dir.path().join("out.docx"),
-                24 * 1024,
+                input_size.saturating_sub(1),
                 &floors_with(40),
                 CancellationToken::new(),
                 ProgressSender::test_stub(),
@@ -2043,10 +2178,13 @@ rm "$base"
             )
             .unwrap();
 
+        assert_eq!(
+            result.strategy_used, "rezip-deflate9,best-effort",
+            "empty archive must exercise the REZIP path, not the under-target copy"
+        );
         assert!(
-            result.met_target,
-            "empty zip must fit a 24 KB target, strategy: {}",
-            result.strategy_used
+            !result.met_target,
+            "21-byte target cannot fit the 22-byte rezipped empty archive"
         );
         assert_eq!(
             result.compressed_size, input_size,
