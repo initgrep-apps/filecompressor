@@ -69,15 +69,18 @@ the corner, and corner clicks step the value — confirmed WebKit behavior.
 **Research verdict (2026-09-30):**
 - The `@shadcn` registry has **no** number-field item for this project's style
   (`styles/base-rhea/number-field.json` → not found).
-- Base UI — which is this project's shadcn base (`components.json` → `base: "base"`,
-  `@base-ui-components/react` already a dependency) — ships a native
+- Base UI — which is this project's shadcn base (`@base-ui/react` 1.8.0 already a
+  dependency; existing `src/components/ui/*` import from `@base-ui/react/*`) — ships a
+  native
   [`Number Field`](https://base-ui.com/react/components/number-field): *"A numeric input
   element with increment and decrement buttons, and a scrub area"* with
   `min`/`max`/`step`/`snapOnStep`/`allowOutOfRange`, clamped values, ArrowUp/ArrowDown
   keyboard stepping, blur normalization, and disabled-at-bound buttons.
 
 **Design:** `NumberStepper` at `src/components/NumberStepper.tsx` — a thin shadcn-style
-wrapper around Base UI `NumberField` primitives, styled to match the project's
+wrapper around Base UI `NumberField` primitives (import path `@base-ui/react/number-field`
+— the installed package name; `@base-ui-components/react` does not exist in this repo),
+styled to match the project's
 `Input` component visuals (same border, radius, focus ring, semantic tokens — no raw
 colors). Standard stepper layout, buttons flanking the value:
 
@@ -221,8 +224,8 @@ App.tsx
 
 ## 4. shadcn Components
 
-Add via CLI (style/base auto-resolved from `components.json`, preset `b3T38WToP`,
-base `base`, icons `remixicon`):
+Add via CLI (style/base auto-resolved from `components.json` — which has `style:
+"base-rhea"`, `iconLibrary: "remixicon"`, and NO preset field):
 
 ```
 npx shadcn@latest add card field scroll-area select empty spinner
@@ -238,7 +241,7 @@ npx shadcn@latest add card field scroll-area select empty spinner
 
 Not from the CLI: `NumberStepper` (§2.2) — no registry item exists for this style; it
 wraps Base UI `NumberField` primitives directly
-(`@base-ui-components/react/number-field`, already a project dependency via `base: "base"`),
+(`@base-ui/react/number-field`, already a project dependency via the shadcn base),
 styled with the existing `input` component's token classes.
 
 Icon rule: icons inside buttons use `data-icon`, no manual sizing classes.
@@ -283,7 +286,7 @@ Compress; only table scrolls.
 | `src/components/ui/*` | Add via CLI: card, field, scroll-area, select, empty, spinner |
 | `src/hooks/useFileList.ts`, `src/hooks/useCompression.ts` | Unchanged implementations; called from provider |
 | `src-tauri/tauri.conf.json` | No change — `minWidth: 700`/`minHeight: 500` already present (§2.3) |
-| Tests | `useCompression.test.ts` ported to provider mount; `CompressView.test.tsx` + `FileList.test.tsx` updated for context/Card markup; new NumberStepper tests |
+| Tests | `useCompression.test.ts` / `useFileList.test.ts` kept as-is (hook-internals guard); `CompressionProvider.test.tsx` NEW; `CompressView.test.tsx` + `FileList.test.tsx` updated for context/Card markup; new `NumberStepper.test.tsx`, `App.test.tsx`, `HistoryView.test.tsx` |
 
 ## 8. Risks
 

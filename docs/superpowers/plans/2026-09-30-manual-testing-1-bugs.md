@@ -6,7 +6,7 @@
 
 **Architecture:** App-level `CompressionProvider` owns file-list + compression state (context survives view switches); `NumberStepper` wraps Base UI `NumberField`; flex `min-h-0` chain pins footers and contains scrolling; Card composition for all views.
 
-**Tech Stack:** React 19 + TypeScript + Vite, shadcn/ui (base `base`, style `base-rhea`, preset `b3T38WToP`, icons `@remixicon/react`), `@base-ui-components/react` v1.8 NumberField, Vitest + Testing Library, yarn.
+**Tech Stack:** React 19 + TypeScript + Vite, shadcn/ui (style `base-rhea`, icons `@remixicon/react`, `components.json` has NO preset field — CLI resolves via style), `@base-ui/react` v1.8 NumberField, Vitest + Testing Library, yarn.
 
 **Spec:** `docs/superpowers/specs/2026-09-30-manual-testing-1-bugs-design.md`
 
@@ -29,8 +29,16 @@
 - Create (via CLI): `src/components/ui/card.tsx`, `src/components/ui/field.tsx`, `src/components/ui/scroll-area.tsx`, `src/components/ui/select.tsx`, `src/components/ui/empty.tsx`, `src/components/ui/spinner.tsx`
 
 **Interfaces:**
-- Consumes: existing `components.json` (preset `b3T38WToP`, base `base`, iconLibrary `remixicon`).
+- Consumes: existing `components.json` (`style: "base-rhea"`, `iconLibrary: "remixicon"`, no preset field).
 - Produces: `@/components/ui/{card,field,scroll-area,select,empty,spinner}` — later tasks import from these exact aliases.
+
+**Acceptance Criteria:**
+- 6 files exist under `src/components/ui/`; all import primitives from `@base-ui/react/*` (installed package name — NOT `@base-ui-components/react/*`) and icons from `@remixicon/react`
+- No `lucide-react` imports in any added file
+- Gate passes clean: `yarn build && yarn test`
+
+**Required Tests:**
+- Compile gate is the test for a mechanical CLI add — no named unit tests required; `yarn build` green proves imports resolve
 
 - [ ] **Step 1: Add components via CLI**
 
@@ -44,7 +52,7 @@ Expected: 6 files created under `src/components/ui/`, no errors.
 
 - [ ] **Step 2: Read every added file and verify**
 
-Per the shadcn skill workflow — check: no missing sub-components, imports resolve (`@/lib/utils` etc.), icons come from `@remixicon/react` (project `iconLibrary`), no `lucide-react` leaks. Fix icon imports if any slipped through.
+Per the shadcn skill workflow — check: no missing sub-components, imports resolve (`@/lib/utils` etc.), primitives imported from `@base-ui/react/*` (the installed package; `@base-ui-components/react/*` would fail to resolve), icons from `@remixicon/react`, no `lucide-react` leaks. Fix icon/primitive imports if any slipped through. Record the `data-slot` attribute names used by `card.tsx` and `scroll-area.tsx` (needed by Task 6's structural test).
 
 - [ ] **Step 3: Verify gate**
 
@@ -66,10 +74,28 @@ git commit -m "feat(ui): add card, field, scroll-area, select, empty, spinner bl
 - Create: `src/providers/CompressionProvider.tsx`
 - Create: `src/providers/CompressionProvider.test.tsx`
 - Modify: `src/views/CompressView.tsx` (delete hook calls — full consumer rewrite lands in Task 6; here only swap hook usage to context so nothing breaks twice)
+- Modify: `src/App.tsx` (minimal wiring: wrap return tree in `CompressionProvider` so no commit leaves the app runtime-broken; shell changes stay in Task 3)
 
 **Interfaces:**
 - Consumes: `useFileList()` from `@/hooks/useFileList` (returns `{ files, error, addFiles, browseFiles, removeFile, clearList, setFiles }`); `useCompression(files, setFiles, callbacks)` from `@/hooks/useCompression` (returns `{ isCompressing, progressByFile, compressAll, cancelFile, cancelAll, revealInFolder }`); `formatSize(bytes: number): string` from `@/components/FileList`.
 - Produces: `CompressionProvider` (React component), `useCompressionContext()` returning exactly `{ files, error, addFiles, browseFiles, removeFile, clearList, isCompressing, progressByFile, compressAll, cancelFile, cancelAll, revealInFolder }`.
+
+**Acceptance Criteria:**
+- Provider mounts both hooks exactly once; consumer components remount freely without losing `files` state (Bug 2a)
+- Re-dropping an already-added path shows still ONE row; a new path appends (Bug 2b visibility — dedup is Rust-side, `commands.rs:41-43`, frontend concat must surface it)
+- Events fired while a consumer is unmounted reach the provider and the remounted consumer shows updated status/progress (latent bug: listeners live app-level)
+- Toast callbacks (`onBatchComplete`, `onBatchError`) live in the provider; `CompressView` imports no `sonner`
+- `useCompressionContext()` outside a provider throws
+- Existing hook tests (`useCompression.test.ts`, `useFileList.test.ts`) stay untouched and green
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test`
+
+**Required Tests:**
+- `shares list state across consumer remounts (view-switch survival)` — provider stays mounted, consumer remounts via `rerender`; row survives
+- `re-drop of same path keeps one row and new path appends` — Bug 2b: invoke returns 1 entry for same path, 2 entries for same+new; frontend renders 1 row then 2
+- `events fired while consumer unmounted update the remounted consumer` — rerender consumer away, emit `file:complete` + `file:progress`, rerender consumer back, assert updated status/progress (spec §2.1 latent bug)
+- `registers IPC listeners exactly once under StrictMode` — registry-style mock (Map<string, Set>), after flush each of the 6 event names has exactly ONE active handler (StrictMode double-mount must leave no duplicates)
+- `useCompressionContext throws outside provider` — cheap guard assertion
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -82,13 +108,20 @@ import { render, screen, act } from '@testing-library/react'
 import { invoke } from '@tauri-apps/api/core'
 import type { FileEntry } from '@/types'
 
-const eventListeners = new Map<string, (e: { payload: unknown }) => void>()
+const listeners = new Map<string, Set<(e: { payload: unknown }) => void>>()
+const unlistens: Array<() => void> = []
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn((event: string, handler: (e: { payload: unknown }) => void) => {
-    eventListeners.set(event, handler)
-    return Promise.resolve(() => {})
+    const set = listeners.get(event) ?? new Set()
+    set.add(handler)
+    listeners.set(event, set)
+    const unlisten = () => {
+      set.delete(handler)
+    }
+    unlistens.push(unlisten)
+    return Promise.resolve(unlisten)
   }),
 }))
 vi.mock('@tauri-apps/api/webview', () => ({
@@ -98,10 +131,13 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 import { CompressionProvider, useCompressionContext } from '@/providers/CompressionProvider'
+import { toast } from 'sonner'
+
+const flush = () => act(async () => {})
 
 const emit = (event: string, payload: unknown) =>
   act(() => {
-    eventListeners.get(event)?.({ payload })
+    listeners.get(event)?.forEach((h) => h({ payload }))
   })
 
 function entry(overrides: Partial<FileEntry> = {}): FileEntry {
@@ -120,21 +156,24 @@ function entry(overrides: Partial<FileEntry> = {}): FileEntry {
   }
 }
 
-function Row() {
+function Row({ paths }: { paths: string[] }) {
   const { files, addFiles } = useCompressionContext()
   return (
     <div>
       <button
         type="button"
         onClick={() =>
-          invoke<FileEntry[]>('add_files', { filePaths: ['/t/a.jpg'] }).then((e) => addFiles(e))
+          invoke<FileEntry[]>('add_files', { filePaths: paths }).then((e) => addFiles(e))
         }
       >
         add
       </button>
       <ul>
         {files.map((f) => (
-          <li key={f.id}>{f.name}</li>
+          <li key={f.id}>
+            {f.name}
+            {f.status !== 'pending' ? ` (${f.status})` : ''}
+          </li>
         ))}
       </ul>
     </div>
@@ -144,52 +183,129 @@ function Row() {
 describe('CompressionProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    eventListeners.clear()
+    listeners.clear()
+    unlistens.length = 0
   })
 
   it('shares list state across consumer remounts (view-switch survival)', async () => {
     vi.mocked(invoke).mockResolvedValue([entry()])
-    const { unmount } = render(
+    const { rerender } = render(
       <CompressionProvider>
-        <Row />
+        <Row paths={['/t/a.jpg']} />
       </CompressionProvider>
     )
-    await screen.findByRole('button', { name: 'add' })
+    await flush()
     await act(async () => {
       await screen.getByRole('button', { name: 'add' }).click()
     })
     expect(screen.getByText('a.jpg')).toBeInTheDocument()
-    // Simulate CompressView unmount/remount: old consumer dies, new one mounts.
-    unmount()
-    render(
+    // Simulate CompressView unmount/remount: consumer dies, provider persists.
+    rerender(<CompressionProvider>{null}</CompressionProvider>)
+    rerender(
       <CompressionProvider>
-        <Row />
+        <Row paths={['/t/a.jpg']} />
       </CompressionProvider>
     )
     expect(screen.getByText('a.jpg')).toBeInTheDocument()
   })
 
+  it('re-drop of same path keeps one row and a new path appends', async () => {
+    // First drop: backend accepts a.jpg.
+    vi.mocked(invoke).mockResolvedValueOnce([entry()])
+    // Second drop of the same path: backend dedups → returns nothing.
+    vi.mocked(invoke).mockResolvedValueOnce([])
+    // Third drop: same path + a new one → only the new entry comes back.
+    vi.mocked(invoke).mockResolvedValueOnce([entry({ id: 'f2', name: 'b.jpg', path: '/t/b.jpg' })])
+    const { rerender } = render(
+      <CompressionProvider>
+        <Row paths={['/t/a.jpg']} />
+      </CompressionProvider>
+    )
+    await flush()
+    const add = async (paths: string[]) => {
+      rerender(
+        <CompressionProvider>
+          <Row paths={paths} />
+        </CompressionProvider>
+      )
+      await act(async () => {
+        await screen.getByRole('button', { name: 'add' }).click()
+      })
+    }
+    await add(['/t/a.jpg'])
+    expect(screen.getAllByText('a.jpg')).toHaveLength(1)
+    // Dedup drop: backend returns [] — frontend must still show exactly one row.
+    await add(['/t/a.jpg'])
+    expect(screen.getAllByText('a.jpg')).toHaveLength(1)
+    // New file appends.
+    await add(['/t/a.jpg', '/t/b.jpg'])
+    expect(screen.getAllByText('a.jpg')).toHaveLength(1)
+    expect(screen.getByText('b.jpg')).toBeInTheDocument()
+  })
+
+  it('events fired while consumer unmounted update the remounted consumer', async () => {
+    vi.mocked(invoke).mockResolvedValue([entry()])
+    const { rerender } = render(
+      <CompressionProvider>
+        <Row paths={['/t/a.jpg']} />
+      </CompressionProvider>
+    )
+    await flush()
+    await act(async () => {
+      await screen.getByRole('button', { name: 'add' }).click()
+    })
+    expect(screen.getByText('a.jpg')).toBeInTheDocument()
+    // "Navigate away": unmount the consumer while the provider keeps listening.
+    rerender(<CompressionProvider>{null}</CompressionProvider>)
+    emit('file:progress', { fileId: 'f1', percent: 50 })
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 1024,
+      compressedSize: 512,
+      status: 'done',
+      metTarget: true,
+    })
+    // "Come back": consumer remounts and must see the final state.
+    rerender(
+      <CompressionProvider>
+        <Row paths={['/t/a.jpg']} />
+      </CompressionProvider>
+    )
+    expect(screen.getByText('a.jpg (done)')).toBeInTheDocument()
+  })
+
   it('registers IPC listeners exactly once under StrictMode', async () => {
-    const { listen } = await import('@tauri-apps/api/event')
     render(
       <StrictMode>
         <CompressionProvider>
-          <Row />
+          <Row paths={[]} />
         </CompressionProvider>
       </StrictMode>
     )
-    const registered = vi.mocked(listen).mock.calls.map((c) => c[0])
-    expect(new Set(registered).size).toBe(registered.length)
-    expect(registered).toEqual(
-      expect.arrayContaining([
-        'file:progress',
-        'file:complete',
-        'file:error',
-        'file:cancelled',
-        'batch:complete',
-        'batch:error',
-      ])
+    await flush()
+    // StrictMode double-invokes the mount effect (register → cleanup → register).
+    // Final active state: exactly one handler per event name.
+    const expected = [
+      'file:progress',
+      'file:complete',
+      'file:error',
+      'file:cancelled',
+      'batch:complete',
+      'batch:error',
+    ]
+    for (const name of expected) {
+      expect(listeners.get(name)?.size).toBe(1)
+    }
+    expect(listeners.size).toBe(expected.length)
+  })
+
+  it('useCompressionContext throws outside provider', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(() => render(<Row paths={[]} />)).toThrow(
+      /must be used within CompressionProvider/
     )
+    spy.mockRestore()
   })
 })
 ```
@@ -323,22 +439,44 @@ const renderView = (ui = <CompressView />) =>
   render(<CompressionProvider>{ui}</CompressionProvider>)
 ```
 
-and replace each `render(<CompressView />)` call with `renderView()`.
+and replace each of the 17 bare `render(<CompressView />)` calls with `renderView()`.
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 5: Minimal App wiring (keep runtime working between commits)**
+
+In `src/App.tsx` — import and wrap only (breadcrumb/sidebar/containment stay in Task 3):
+
+```tsx
+import { CompressionProvider } from '@/providers/CompressionProvider'
+```
+
+```tsx
+  return (
+    <CompressionProvider>
+      <SidebarProvider>
+```
+
+close with:
+
+```tsx
+      </SidebarProvider>
+    </CompressionProvider>
+  )
+```
+
+- [ ] **Step 6: Run tests to verify they pass**
 
 Run: `yarn test src/providers src/views/CompressView.test.tsx src/hooks`
 Expected: ALL PASS (provider tests + ported CompressView tests + untouched hook tests).
 
-- [ ] **Step 6: Run gate**
+- [ ] **Step 7: Run gate**
 
 Run: `yarn build && yarn test`
 Expected: pass.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add src/providers src/views/CompressView.tsx src/views/CompressView.test.tsx
+git add src/providers src/views/CompressView.tsx src/views/CompressView.test.tsx src/App.tsx
 git commit -m "fix(state): lift file list + compression state into app-level provider"
 ```
 
@@ -351,12 +489,27 @@ git commit -m "fix(state): lift file list + compression state into app-level pro
 - Create: `src/App.test.tsx`
 
 **Interfaces:**
-- Consumes: `CompressionProvider`/`useCompressionContext` (Task 2); existing `@/components/ui/{sidebar,breadcrumb,separator}`; `navItems` structure already in `App.tsx:46-62`.
-- Produces: shell other tasks render inside — `activeView` state stays in `App`; header breadcrumb shows current view; content wrapper constrains view height (`flex min-h-0 flex-1 flex-col overflow-hidden`).
+- Consumes: `CompressionProvider` (already wrapping the tree since Task 2 — do NOT re-wrap); existing `@/components/ui/{sidebar,breadcrumb,separator}`; `navItems` structure already in `App.tsx:46-62`.
+- Produces: shell other tasks render inside — `activeView` state stays in `App`; header breadcrumb shows current view; content wrapper carries `data-testid="view-container"` with `flex min-h-0 flex-1 flex-col overflow-hidden`.
+
+**Acceptance Criteria:**
+- Sidebar flush: `[data-slot="sidebar"]` has no `floating` variant (`data-variant` absent or ≠ floating); `collapsible="icon"` retained
+- Breadcrumb functional: header shows `Optimizer` root + current view page label; updates on every sidebar navigation; correct for all three views (Compress/History/Settings)
+- Content wrapper height-constrains views (`min-h-0 overflow-hidden`) so view-internal scroll regions engage
+- Per-view h1 headings ("Compress Files", "Settings") removed in Task 5/6 rewrites — App itself owns no per-view heading
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test`
+
+**Required Tests:**
+- `breadcrumb reflects the active view and updates on navigation` — navigate Compress → Settings → History → Compress; page label follows
+- `sidebar is flush (no floating variant)` — `[data-slot="sidebar"]` `data-variant` ≠ `floating`
+- `content wrapper constrains view height (min-h-0 chain)` — `data-testid="view-container"` classes contain `min-h-0` + `overflow-hidden`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `src/App.test.tsx`:
+Create `src/App.test.tsx`. Two jsdom pitfalls MUST be mocked before render:
+1. `window.matchMedia` — `SidebarProvider` → `useIsMobile()` calls it; jsdom lacks it.
+2. `sonner` mock must export `Toaster` (`@/components/ui/sonner` re-exports it; `App` renders `<Toaster />`).
 
 ```tsx
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -371,9 +524,27 @@ vi.mock('@tauri-apps/api/webview', () => ({
   getCurrentWebview: () => ({ onDragDropEvent: () => Promise.resolve(() => {}) }),
 }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+  Toaster: () => null,
+}))
+
+beforeAll(() => {
+  window.matchMedia = (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }) as MediaQueryList
+})
 
 import App from '@/App'
+
+const headerEl = () => document.querySelector('main')!.querySelector('header')!
 
 describe('App shell', () => {
   beforeEach(() => vi.clearAllMocks())
@@ -381,51 +552,48 @@ describe('App shell', () => {
   it('breadcrumb reflects the active view and updates on navigation', async () => {
     const user = userEvent.setup()
     render(<App />)
-    const breadcrumb = () => within(screen.getByRole('banner')).getAllByText(/compress|history|settings/i)
-    expect(breadcrumb().map((el) => el.textContent)).toEqual(
-      expect.arrayContaining(['Optimizer', 'Compress'])
-    )
+    // Initial view: Compress
+    expect(within(headerEl()).getByText('Optimizer')).toBeInTheDocument()
+    expect(within(headerEl()).getByText('Compress')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Settings' }))
-    expect(within(screen.getByRole('banner')).getByText('Settings')).toBeInTheDocument()
-    expect(within(screen.getByRole('banner')).queryByText('Compress')).not.toBeInTheDocument()
+    expect(within(headerEl()).getByText('Settings')).toBeInTheDocument()
+    expect(within(headerEl()).queryByText('Compress')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'History' }))
+    expect(within(headerEl()).getByText('History')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Compress' }))
-    expect(within(screen.getByRole('banner')).getByText('Compress')).toBeInTheDocument()
+    expect(within(headerEl()).getByText('Compress')).toBeInTheDocument()
+  })
+
+  it('sidebar is flush (no floating variant)', () => {
+    render(<App />)
+    const sidebar = document.querySelector('[data-slot="sidebar"]')
+    expect(sidebar).not.toBeNull()
+    expect(sidebar!.getAttribute('data-variant')).not.toBe('floating')
   })
 
   it('content wrapper constrains view height (min-h-0 chain)', () => {
-    const { container } = render(<App />)
-    const wrapper = container.querySelector('header')!.parentElement!
-      .querySelector(':scope > div')!
+    render(<App />)
+    const wrapper = screen.getByTestId('view-container')
     expect(wrapper.className).toContain('min-h-0')
     expect(wrapper.className).toContain('overflow-hidden')
   })
 })
 ```
 
+Note: `getByRole('button', { name: 'Settings' })` is unique here because the Settings
+view itself is not mounted at query time (conditional rendering); keep name-exact
+queries (no regex) to stay collision-safe.
+
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `yarn test src/App.test.tsx`
-Expected: FAIL — no breadcrumb / no `min-h-0` on wrapper.
+Expected: FAIL — no breadcrumb / no `data-testid="view-container"` / sidebar still floating.
 
 - [ ] **Step 3: Apply the shell changes**
 
-In `src/App.tsx`:
+The tree is already wrapped in `CompressionProvider` (Task 2) — leave that alone.
 
-1. Wrap the returned tree in the provider (import first):
-
-```tsx
-import { CompressionProvider } from '@/providers/CompressionProvider'
-```
-
-```tsx
-  return (
-    <CompressionProvider>
-      <SidebarProvider>
-```
-
-and close with `</SidebarProvider>\n    </CompressionProvider>`.
-
-2. Flush sidebar — `App.tsx:69`: change
+1. Flush sidebar — `App.tsx:69`: change
 
 ```tsx
 <Sidebar collapsible="icon" variant="floating">
@@ -437,7 +605,7 @@ to
 <Sidebar collapsible="icon">
 ```
 
-3. Functional breadcrumb header — `App.tsx:121-124` becomes (sidebar-03 pattern):
+2. Functional breadcrumb header — `App.tsx:121-124` becomes (sidebar-03 pattern):
 
 ```tsx
       <SidebarInset>
@@ -477,10 +645,10 @@ import {
 import { Separator } from '@/components/ui/separator'
 ```
 
-4. Height containment — `App.tsx:125` becomes:
+3. Height containment — `App.tsx:125` becomes:
 
 ```tsx
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div data-testid="view-container" className="flex min-h-0 flex-1 flex-col overflow-hidden">
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -509,19 +677,38 @@ git commit -m "feat(ui): flush sidebar, functional breadcrumb header, view heigh
 - Create: `src/components/NumberStepper.test.tsx`
 
 **Interfaces:**
-- Consumes: `NumberField` from `@base-ui-components/react/number-field` (Base UI v1.8, already a dependency); `RiAddLine`, `RiSubtractLine` from `@remixicon/react`; `cn` from `@/lib/utils`.
-- Produces: `NumberStepper({ value, onValueChange, min, max, ariaLabel, id?, className? })` — controlled stepper; `onValueChange` receives the clamped integer. SettingsView (Task 5) mounts 9 of these.
+- Consumes: `NumberField` from `@base-ui/react/number-field` (installed package name — Base UI v1.8, already a dependency; verify against `src/components/ui/accordion.tsx:1` import style); `RiAddLine`, `RiSubtractLine` from `@remixicon/react`; `cn` from `@/lib/utils`.
+- Produces: `NumberStepper({ value, onValueChange, min, max, ariaLabel, id?, className? })` — controlled stepper; `onValueChange` receives the clamped integer; `null`/`NaN` emissions from Base UI are swallowed (never reach the consumer). SettingsView (Task 5) mounts 9 of these.
+
+**Acceptance Criteria:**
+- Standard stepper layout: `[−]` button, value input, `[+]` button — flanking the value (user requirement: "similar to how applications usually design them")
+- Step 1 everywhere; clamped to `[min, max]`; buttons disabled at bounds (Base UI behavior)
+- Manual typing works; empty/invalid input reverts to last valid value on blur; `onValueChange` NEVER receives `null` or `NaN` (contract pinned by spy test — spec §8)
+- Input renders `type="text"` (Base UI behavior — NO spinbutton role; queries use `getByLabelText`)
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `increments and decrements by 1` — buttons step ±1, display updates
+- `disables buttons at bounds` — at `min` Decrease disabled; at `max` Increase disabled (fresh mount per bound — no stale-state rerender)
+- `accepts typed values and clamps on blur` — type `999` → blur → display `100`, consumer received 100
+- `normalizes invalid typed input to last valid value on blur` — clear → blur → display reverts; `onValueChange` spy NOT called with `null`/`NaN`
+- `steps with ArrowUp/ArrowDown` — keyboard stepping ±1
+- `null emissions never reach onValueChange` — spy contract pin (spec §8)
 
 - [ ] **Step 1: Fetch the authoritative API doc**
 
 Per AGENTS.md rules, fetch Context7 `/base-ui-components/react` (or open
 `https://base-ui.com/react/components/number-field.md`) and confirm: `Root` props
 (`value`, `onValueChange`, `min`, `max`, `step`, `snapOnStep`), and whether `onValueChange`
-can emit `null`. Adjust the guard in Step 3 if the signature differs from `(number|null) => void`.
+can emit `null`. Adjust the guard in Step 4 if the signature differs from `(number|null) => void`.
 
 - [ ] **Step 2: Write the failing tests**
 
-Create `src/components/NumberStepper.test.tsx`:
+Create `src/components/NumberStepper.test.tsx`. Query facts (verified against installed
+`@base-ui/react` v1.8): the input renders `type="text"` → role is **textbox**, so query by
+label (`getByLabelText`) — never `getByRole('spinbutton')`. `toHaveDisplayValue` works on
+text inputs.
 
 ```tsx
 import { describe, it, expect, vi } from 'vitest'
@@ -530,15 +717,9 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NumberStepper } from '@/components/NumberStepper'
 
-function Harness({
-  min,
-  max,
-  initial,
-}: {
-  min: number
-  max: number
-  initial: number
-}) {
+const LABEL = 'Images minimum quality'
+
+function Harness({ min, max, initial }: { min: number; max: number; initial: number }) {
   const [value, setValue] = useState(initial)
   return (
     <NumberStepper
@@ -546,59 +727,80 @@ function Harness({
       onValueChange={setValue}
       min={min}
       max={max}
-      ariaLabel="Images minimum quality"
+      ariaLabel={LABEL}
     />
   )
 }
+
+const input = () => screen.getByLabelText(LABEL)
+const increase = () => screen.getByRole('button', { name: `Increase ${LABEL}` })
+const decrease = () => screen.getByRole('button', { name: `Decrease ${LABEL}` })
 
 describe('NumberStepper', () => {
   it('increments and decrements by 1', async () => {
     const user = userEvent.setup()
     render(<Harness min={0} max={100} initial={30} />)
-    await user.click(screen.getByRole('button', { name: 'Increase Images minimum quality' }))
-    expect(screen.getByRole('spinbutton')).toHaveDisplayValue('31')
-    await user.click(screen.getByRole('button', { name: 'Decrease Images minimum quality' }))
-    expect(screen.getByRole('spinbutton')).toHaveDisplayValue('30')
+    await user.click(increase())
+    expect(input()).toHaveDisplayValue('31')
+    await user.click(decrease())
+    expect(input()).toHaveDisplayValue('30')
   })
 
   it('disables buttons at bounds', async () => {
-    const user = userEvent.setup()
-    const { rerender } = render(<Harness min={0} max={100} initial={0} />)
-    expect(screen.getByRole('button', { name: 'Decrease Images minimum quality' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Increase Images minimum quality' })).toBeEnabled()
-    rerender(<Harness min={0} max={100} initial={100} />)
-    await user.click(screen.getByRole('spinbutton'))
-    expect(screen.getByRole('button', { name: 'Increase Images minimum quality' })).toBeDisabled()
+    // Fresh mount per bound — a rerender with new initial would leave stale state.
+    const { unmount } = render(<Harness min={0} max={100} initial={0} />)
+    expect(decrease()).toBeDisabled()
+    expect(increase()).toBeEnabled()
+    unmount()
+    render(<Harness min={0} max={100} initial={100} />)
+    expect(increase()).toBeDisabled()
+    expect(decrease()).toBeEnabled()
   })
 
   it('accepts typed values and clamps on blur', async () => {
     const user = userEvent.setup()
     render(<Harness min={0} max={100} initial={30} />)
-    const input = screen.getByRole('spinbutton')
-    await user.clear(input)
-    await user.type(input, '999')
+    await user.clear(input())
+    await user.type(input(), '999')
     await user.tab()
-    expect(input).toHaveDisplayValue('100')
+    expect(input()).toHaveDisplayValue('100')
   })
 
   it('normalizes invalid typed input to last valid value on blur', async () => {
     const user = userEvent.setup()
     render(<Harness min={0} max={100} initial={30} />)
-    const input = screen.getByRole('spinbutton')
-    await user.clear(input)
+    await user.clear(input())
     await user.tab()
-    expect(input).toHaveDisplayValue('30')
+    expect(input()).toHaveDisplayValue('30')
   })
 
   it('steps with ArrowUp/ArrowDown', async () => {
     const user = userEvent.setup()
     render(<Harness min={0} max={100} initial={30} />)
-    const input = screen.getByRole('spinbutton')
-    await user.click(input)
+    await user.click(input())
     await user.keyboard('{ArrowUp}')
-    expect(input).toHaveDisplayValue('31')
+    expect(input()).toHaveDisplayValue('31')
     await user.keyboard('{ArrowDown}')
-    expect(input).toHaveDisplayValue('30')
+    expect(input()).toHaveDisplayValue('30')
+  })
+
+  it('null emissions never reach onValueChange', async () => {
+    const user = userEvent.setup()
+    const spy = vi.fn()
+    render(
+      <NumberStepper
+        value={30}
+        onValueChange={spy}
+        min={0}
+        max={100}
+        ariaLabel={LABEL}
+      />
+    )
+    await user.clear(input())
+    await user.tab()
+    const calls = spy.mock.calls.flat()
+    expect(calls.every((v) => typeof v === 'number' && Number.isFinite(v))).toBe(true)
+    expect(calls).not.toContain(null)
   })
 })
 ```
@@ -629,7 +831,7 @@ Create `src/components/NumberStepper.tsx`:
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { NumberField } from '@base-ui-components/react/number-field'
+import { NumberField } from '@base-ui/react/number-field'
 import { RiAddLine, RiSubtractLine } from '@remixicon/react'
 import { cn } from '@/lib/utils'
 
@@ -691,7 +893,7 @@ export function NumberStepper({
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `yarn test src/components/NumberStepper.test.tsx`
-Expected: PASS (all 5). If Base UI emits typing-restrictions (input blocks letters), the
+Expected: PASS (all 6). If Base UI emits typing-restrictions (input blocks letters), the
 "invalid typed input" test still passes via empty→blur normalization path.
 
 - [ ] **Step 6: Run gate + commit**
@@ -714,7 +916,22 @@ git commit -m "feat(ui): NumberStepper wrapping Base UI NumberField"
 
 **Interfaces:**
 - Consumes: `NumberStepper` (Task 4), `@/components/ui/{card,field,select}`, existing `useSettings`, `Badge`, `Separator`, `Accordion*`, `Button`.
-- Produces: unchanged draft/save behavior — `draft` state, `hasChanges`, `handleSave/handleCancel/handleReset/handleBrowse` stay byte-compatible; same `aria-label`s on every control.
+- Produces: unchanged draft/save behavior — `draft` state, `hasChanges`, `handleSave/handleCancel/handleReset/handleBrowse` stay byte-compatible; same `aria-label`s on every control. **Behavior decision pinned:** clearing a stepper input reverts to the last valid value on blur (spec §5 revert-on-blur) — it does NOT coerce to 0; Save stays disabled unless a real change is made.
+
+**Acceptance Criteria:**
+- All 9 numeric controls are `NumberStepper` (no native `type="number"` remains in the file)
+- Both selects (target unit, min resolution) are shadcn `Select` — no raw `<select>` remains
+- Settings rows composed as `FieldGroup`/`Field`/`FieldLabel`/`FieldDescription` inside three Cards (Output Folder, Category Targets, Quality Floors with Advanced accordion)
+- Save/Cancel footer stays pinned outside the scroll region (`shrink-0` sibling of the `overflow-y-auto` content div)
+- `hasChanges` semantics preserved: stepper controls emit integers, so JSON compare still works
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- Existing `SettingsView.test.tsx` scenarios (load, save, cancel, reset, browse, hasChanges) stay green after selector migration (concrete list in Step 2)
+- `settings footer is sibling of the scroll region (pinned, 4a)` — structural: footer `shrink-0` NOT inside the `overflow-y-auto` container
+- `renders three cards with card composition` — CardTitle/Description present for Output Folder, Category Targets, Quality Floors
+- Stepper interactions: `Increase/Decrease` buttons step ±1; typing works (via `getByLabelText`)
 
 - [ ] **Step 1: Rewrite SettingsView**
 
@@ -1022,11 +1239,55 @@ keep `<Accordion>`/`<AccordionItem value>` exactly as the existing file uses the
 
 - [ ] **Step 2: Update SettingsView tests**
 
-In `src/views/SettingsView.test.tsx`: number inputs are now `spinbutton` roles with
-`aria-label`s (unchanged labels); clicking `Increase …`/`Decrease …` buttons steps by 1;
-unit/resolution selects open a listbox (use `user.click(trigger)` then click option).
-Keep every existing scenario (load, save, cancel, reset, browse, hasChanges) — only
-control interaction selectors change.
+`src/views/SettingsView.test.tsx` selector migration — concrete, per analyzer findings.
+Base UI renders steppers as `type="text"` inputs and Selects as `role="combobox"` buttons,
+so:
+
+1. **Stepper value assertions** — every `toHaveValue(<number>)` on a numeric input
+   (lines ~65-68, 85-90, 148, 158, 174, 204, 215, 218) becomes
+   `toHaveDisplayValue('200')` (string form) — jest-dom only coerces numbers for
+   `type="number"` inputs.
+2. **Stepper queries** — `getByLabelText('Images target size')` etc. keep working
+   (aria-label preserved on the input); button steps use
+   `getByRole('button', { name: 'Increase Images target size' })`.
+3. **Select value assertions** — `toHaveValue('KB')` on the unit/resolution selects
+   (lines ~69-72, 216, 219) becomes asserting the trigger's visible text:
+   `expect(screen.getByLabelText('Images target unit')).toHaveTextContent('KB')`.
+4. **Select interaction** — `user.selectOptions(...)` THROWS on non-`<select>` elements
+   (lines ~124, 232): replace with `await user.click(trigger)` then
+   `await user.click(within(listbox).getByRole('option', { name: 'MB' }))` (Base UI
+   SelectContent portals, screen queries still find it).
+5. **Accordion trigger** — `user.click(screen.getByText(/Quality Floors/))`
+   (lines ~84, 225) breaks: that text moved to the non-interactive `CardTitle`; the
+   trigger label is now `Advanced`. Click `getByRole('button', { name: /advanced/i })`.
+6. **Empty-input semantics change** — the old "empty target input coerces to 0" test
+   (lines ~199-206) contradicts the pinned revert-on-blur behavior: `user.clear` +
+   blur now REVERTS to the previous value and Save stays disabled. Rewrite the test to
+   assert the new behavior: clear → blur → value unchanged → Save disabled.
+7. Keep every scenario name and the load/save/cancel/reset/browse flows otherwise intact.
+8. Add the two new structural tests:
+
+```tsx
+  it('settings footer is sibling of the scroll region (pinned, 4a)', () => {
+    render(<SettingsView />)
+    const footer = screen.getByRole('button', { name: 'Save Changes' }).closest(
+      '.shrink-0.border-t'
+    )
+    const scrollRegion = footer!.previousElementSibling!
+    expect(scrollRegion.className).toContain('overflow-y-auto')
+    expect(scrollRegion.contains(footer)).toBe(false)
+  })
+
+  it('renders three cards with card composition', () => {
+    render(<SettingsView />)
+    expect(document.querySelectorAll('[data-slot="card"]')).toHaveLength(3)
+    expect(screen.getByText('Output Folder')).toBeInTheDocument()
+    expect(screen.getByText('Category Targets')).toBeInTheDocument()
+    expect(screen.getByText('Quality Floors')).toBeInTheDocument()
+  })
+```
+
+(Use the real `data-slot="card"` value recorded in Task 1 Step 2.)
 
 - [ ] **Step 3: Run tests**
 
@@ -1052,8 +1313,22 @@ git commit -m "feat(ui): settings cards, field rows, NumberStepper and Select co
 - Modify: `src/views/CompressView.test.tsx`
 
 **Interfaces:**
-- Consumes: `useCompressionContext()` (Task 2), `DropZone` (Task 7 API unchanged), `FileList` (unchanged), `@/components/ui/{card,scroll-area,spinner}`, `Button`, `toast` no longer imported here.
+- Consumes: `useCompressionContext()` (Task 2), `DropZone` (Task 7 API unchanged), `FileList` (unchanged), `@/components/ui/{card,scroll-area,spinner,empty}`, `Button`, `toast` no longer imported here.
 - Produces: compress view layout other tasks/tests rely on — `data-testid="batch-summary"` preserved; DropZone mounted before file list; summary inside Card footer.
+
+**Acceptance Criteria:**
+- Layout per spec §2.5/§2.3: DropZone + error banner pinned (`shrink-0`); file list Card scrolls internally (`ScrollArea` + `flex-1 min-h-0`); summary/actions in `CardFooter` always visible
+- All 17 existing CompressView scenarios keep passing (only `renderView()` wrap + heading removal)
+- Spinner shows inside the Compress button while compressing
+- Empty state (no files) renders the `Empty` composition Card
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test`
+
+**Required Tests:**
+- 17 ported scenarios (unchanged assertions): summary counts, toasts, cancel visibility, banner — via `renderView()`
+- `summary footer sits outside the scroll container` — structural (summary + action buttons NOT inside the scroll region; DropZone NOT inside the list Card)
+- `compress button shows spinner while compressing` — busy state visible (spec §2.5)
+- `renders empty state when no files` — `Empty` composition visible
 
 - [ ] **Step 1: Rewrite CompressView**
 
@@ -1203,10 +1478,10 @@ In `src/views/CompressView.test.tsx` (already provider-wrapped since Task 2):
 - Update the click target used by `addFilesInView` — DropZone markup changes in Task 7;
   at THIS task keep the `getByRole('button', { name: /drop files/i })` selector working by
   keeping an accessible name on the DropZone root (Task 7 preserves `aria-label`).
-- All 18 existing scenarios keep their assertions (`batch-summary` testid, button names
-  `Compress`/`Cancel All`/`Clear List`, toasts). Remove the per-view heading assertion if
-  one exists (heading removed by Task 3 — the old "Compress Files" h1 is gone).
-- Add one structural test:
+- All 17 existing scenarios keep their assertions (`batch-summary` testid, button names
+  `Compress`/`Cancel All`/`Clear List`, toasts). No heading assertion exists today
+  (verified) — the "Compress Files" h1 removal needs no test edit.
+- Replace the old structural draft with these three tests:
 
 ```tsx
   it('summary footer sits outside the scroll container', async () => {
@@ -1219,9 +1494,27 @@ In `src/views/CompressView.test.tsx` (already provider-wrapped since Task 2):
     expect(card.contains(scrollArea)).toBe(true)
     expect(scrollArea.contains(summary)).toBe(false)
   })
+
+  it('drop zone is pinned outside the file-list card', async () => {
+    renderView()
+    await addFileInView()
+    const listCard = screen.getByTestId('batch-summary').closest('[data-slot="card"]')
+    const dropzone = screen.getByRole('button', { name: /drop files/i })
+    expect(listCard!.contains(dropzone)).toBe(false)
+  })
+
+  it('compress button shows spinner while compressing', async () => {
+    const user = userEvent.setup()
+    renderView()
+    await addFileInView()
+    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    const btn = screen.getByRole('button', { name: 'Compress' })
+    await screen.findByRole('button', { name: 'Cancel All' })
+    expect(btn.querySelector('[data-slot="spinner"], svg')).not.toBeNull()
+  })
 ```
 
-(If the installed `scroll-area.tsx` uses a different `data-slot`, match on the real one.)
+(Use the real `data-slot` names recorded in Task 1 Step 2 if they differ.)
 
 - [ ] **Step 3: Run tests**
 
@@ -1250,11 +1543,25 @@ git commit -m "feat(ui): compress view cards with pinned summary footer and scro
 - Consumes: `@/components/ui/{card,separator,button}`, `RiUploadCloud2Line` from `@remixicon/react`; existing webview drag-drop effect (kept verbatim from current `DropZone.tsx:34-73`).
 - Produces: same props `{ onBrowse, onDrop, className? }`; root keeps accessible name matching `/drop files/i` (CompressView tests depend on it) and the drag-state behavior.
 
+**Acceptance Criteria:**
+- Split panel per spec §2.6 sketch: left = cloud icon + "Drag and drop"; vertical Separator; right = "Or choose a file" + primary Browse button + supported-formats hint
+- Entire card is the drop target AND click-to-browse target; keyboard access preserved (`role="button"`, `tabIndex`, Enter/Space)
+- Browse opens EXACTLY once per interaction — mouse click on inner button, mouse click on card, and Enter on focused inner button all fire `onBrowse` once (no double-fire)
+- Drag states via semantic tokens only; `border-primary bg-primary/5` while dragging
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test`
+
+**Required Tests:**
+- All 8 existing DropZone scenarios stay green (enter/over/drop payloads, drag classes, empty drop, subscription failures)
+- `inner browse button fires onBrowse exactly once` — click `Browse your files` → `toHaveBeenCalledTimes(1)`
+- `card click outside the button fires onBrowse exactly once` — click card body → `toHaveBeenCalledTimes(1)`
+- `Enter on focused browse button fires onBrowse exactly once` — keyboard double-fire guard (button keydown must not bubble into card handler)
+
 - [ ] **Step 1: Rewrite DropZone**
 
 Keep the existing imports/hooks (`useState`, `useCallback`, `useEffect`, `useRef`,
 `getCurrentWebview` logic at `DropZone.tsx:34-73`, `handleKeyDown` at `:75-80`) and
-replace ONLY the returned JSX (`DropZone.tsx:82-104`) with:
+replace ONLY the returned JSX (`DropZone.tsx:82-105`) with:
 
 ```tsx
   return (
@@ -1286,6 +1593,7 @@ replace ONLY the returned JSX (`DropZone.tsx:82-104`) with:
               e.stopPropagation()
               onBrowse()
             }}
+            onKeyDown={(e) => e.stopPropagation()}
           >
             Browse your files
           </Button>
@@ -1298,16 +1606,45 @@ replace ONLY the returned JSX (`DropZone.tsx:82-104`) with:
   )
 ```
 
+The `onKeyDown={(e) => e.stopPropagation()}` on the inner Button is REQUIRED — without
+it, Enter/Space on the focused button bubbles to the card's `handleKeyDown` and fires
+browse twice.
+
 Imports to add: `Card`, `CardContent` from `@/components/ui/card`; `Separator` from
 `@/components/ui/separator`; `RiUploadCloud2Line` from `@remixicon/react`.
 
-- [ ] **Step 2: Update DropZone tests**
+- [ ] **Step 2: Add the double-fire tests**
 
-In `src/components/DropZone.test.tsx`: keep every drag-drop scenario (enter/over/drop
-payloads → `onDrop` called, drag classes toggled). Adjust markup assertions: browse is
-now an explicit `Browse your files` button that stops propagation (assert card click
-still opens browse; button click does NOT double-fire `onBrowse` — assert
-`onBrowse` called exactly once). Keyboard Enter/Space scenario unchanged.
+In `src/components/DropZone.test.tsx` — keep all 8 existing scenarios (markup
+assertions survive: card keeps `role="button"` + the same `aria-label`; dragging class
+`border-primary` kept), then add:
+
+```tsx
+  it('inner browse button fires onBrowse exactly once', async () => {
+    const user = userEvent.setup()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    await user.click(screen.getByRole('button', { name: 'Browse your files' }))
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+  })
+
+  it('card click outside the button fires onBrowse exactly once', async () => {
+    const user = userEvent.setup()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    await user.click(screen.getByText('Drag and drop'))
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+  })
+
+  it('Enter on focused browse button fires onBrowse exactly once', async () => {
+    const user = userEvent.setup()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    const btn = screen.getByRole('button', { name: 'Browse your files' })
+    btn.focus()
+    await user.keyboard('{Enter}')
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+  })
+```
+
+(match the file's existing handler-mock naming for `onBrowse`/`onDrop`.)
 
 - [ ] **Step 3: Run tests**
 
@@ -1335,6 +1672,19 @@ git commit -m "feat(ui): split-panel drop zone with browse button and format hin
 
 **Interfaces:**
 - Consumes: `@/components/ui/{card,empty}`.
+- Produces: History placeholder; final acceptance mapping below is the implementer's AC gate.
+
+**Acceptance Criteria:**
+- History renders one empty-state Card with `Empty` composition ("No history yet")
+- Every plan-level criterion maps to a NAMED passing test (table below) — no hand-waved ✅
+- Rust untouched: `cargo test` stays green (dedup contract still guarded by `test_add_files_deduplicates_exact_canonical`, `commands.rs:317`)
+- Full manual smoke performed (Step 4)
+- All Required Tests pass
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+
+**Required Tests:**
+- `renders history empty state` — 'No history yet' text + one Card (new, Step 1b)
+- Acceptance matrix below (every row = a named test that exists by Task 8)
 
 - [ ] **Step 1: Rewrite HistoryView**
 
@@ -1374,6 +1724,24 @@ export function HistoryView() {
 
 Executor adapts `Empty` subcomponent names to the installed `empty.tsx`.
 
+- [ ] **Step 1b: Add HistoryView test**
+
+Create `src/views/HistoryView.test.tsx`:
+
+```tsx
+import { describe, it, expect } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import { HistoryView } from '@/views/HistoryView'
+
+describe('HistoryView', () => {
+  it('renders history empty state', () => {
+    render(<HistoryView />)
+    expect(screen.getByText('No history yet')).toBeInTheDocument()
+    expect(document.querySelectorAll('[data-slot="card"]')).toHaveLength(1)
+  })
+})
+```
+
 - [ ] **Step 2: Run gate**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
@@ -1381,19 +1749,23 @@ Expected: all pass.
 
 - [ ] **Step 3: Acceptance check (all proven by named tests — no hand-waved ✅)**
 
-| Criterion (spec §) | Proving test |
+| Criterion (spec §) | Proving test (exact name, exists by this task) |
 |---|---|
-| State survives view switch (Bug 2a) | `shares list state across consumer remounts (view-switch survival)` |
-| Re-drop deduped, no empty visual (Bug 2b) | existing `test_add_files_deduplicates_exact_canonical` (Rust, stays green) + provider remount test row count = 1 |
-| Listeners once, StrictMode-safe | `registers IPC listeners exactly once under StrictMode` |
-| Events survive navigation (latent) | provider remount test: emit `file:complete` while consumer unmounted → remounted consumer shows updated status |
-| Stepper ±1, clamp, typing, keys | NumberStepper tests (5) |
-| Settings save/cancel/reset flows | existing `SettingsView.test.tsx` scenarios |
-| Footer pinned on Settings (4a) | Settings root keeps `shrink-0` footer + Task 3 containment test; manual smoke below |
-| Only table scrolls on Compress (4c) | `summary footer sits outside the scroll container` |
-| Drop zone split panel (4b) | DropZone tests + `addFilesInView` selector passing |
-| Breadcrumb functional | `breadcrumb reflects the active view and updates on navigation` |
-| Sidebar flush | Task 3 containment test + no `floating` class assertion (add in App test if needed) |
+| State survives view switch (Bug 2a) | `shares list state across consumer remounts (view-switch survival)` (CompressionProvider.test.tsx) |
+| Re-drop deduped, no empty visual (Bug 2b) | `re-drop of same path keeps one row and a new path appends` (CompressionProvider.test.tsx) + Rust `test_add_files_deduplicates_exact_canonical` stays green |
+| Listeners once, StrictMode-safe | `registers IPC listeners exactly once under StrictMode` (CompressionProvider.test.tsx) |
+| Events survive navigation (latent) | `events fired while consumer unmounted update the remounted consumer` (CompressionProvider.test.tsx) |
+| Context guard | `useCompressionContext throws outside provider` |
+| Stepper ±1, clamp, typing, keys, null-guard | 6 NumberStepper.test.tsx tests |
+| Settings save/cancel/reset flows | existing `SettingsView.test.tsx` scenarios (migrated per Task 5 Step 2) |
+| Footer pinned on Settings (4a) | `settings footer is sibling of the scroll region (pinned, 4a)` (SettingsView.test.tsx) |
+| Only table scrolls on Compress (4c) | `summary footer sits outside the scroll container` + `drop zone is pinned outside the file-list card` (CompressView.test.tsx) |
+| Compress busy state | `compress button shows spinner while compressing` |
+| Empty states | `renders empty state when no files` + `renders history empty state` |
+| Drop zone split panel + single-fire (4b) | 3 double-fire tests (DropZone.test.tsx) + all 8 existing scenarios |
+| Breadcrumb functional (all 3 views) | `breadcrumb reflects the active view and updates on navigation` (App.test.tsx) |
+| Sidebar flush | `sidebar is flush (no floating variant)` (App.test.tsx) |
+| Height containment (4a/4c root) | `content wrapper constrains view height (min-h-0 chain)` (App.test.tsx) |
 
 - [ ] **Step 4: Manual smoke (deferred items only)**
 
