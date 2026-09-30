@@ -66,7 +66,7 @@ pub(crate) fn clear_list_core(list: &mut Vec<FileEntry>) {
 
 const STORE_FILE: &str = "settings.json";
 
-pub fn load_settings(app: &tauri::AppHandle) -> crate::settings::Settings {
+pub fn load_settings<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> crate::settings::Settings {
     let value = match app.store(STORE_FILE) {
         Ok(store) => store.get("settings"),
         Err(e) => {
