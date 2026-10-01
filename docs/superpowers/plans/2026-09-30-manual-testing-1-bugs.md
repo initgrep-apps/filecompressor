@@ -2109,8 +2109,20 @@ Expected: all pass.
 | Drop zone split panel + single-fire (4b) | 6 added tests (DropZone.test.tsx: 14 total = 8 existing + 6) |
 | Breadcrumb functional (all 3 views, collapse-safe) | `breadcrumb reflects the active view and updates on navigation` + `breadcrumb stays correct while the sidebar is collapsed to icon` (App.test.tsx) |
 | Sidebar flush | `sidebar is flush (no floating variant)` (App.test.tsx) |
-| Height containment (4a/4c root) | `content wrapper constrains view height (min-h-0 chain)` (App.test.tsx) |
+| Height containment (4a/4c root) | `content wrapper constrains view height (min-h-0 chain)` + `shell wrapper caps the viewport height (4a/4c: page body cannot scroll)` (App.test.tsx) |
 | Per-view headings removed | `per-view headings are removed from the main region` (App.test.tsx) |
+
+> **Step 4 smoke finding (fixed in this task):** the Step 3 structural tests passed while the
+> real layout still scrolled the page body. At 900×500 with 40 files the document overflowed by
+> 2159px and the summary footer sat at y=2613 (off-screen); the Settings footer likewise scrolled
+> out. Root cause: `SidebarProvider`'s wrapper only carried `min-h-svh`, so it grew with content
+> and the inner `min-h-0` chain had no bounded height to bind to. Fix:
+> `SidebarProvider className="h-svh overflow-hidden"` in `App.tsx` plus the
+> `shell wrapper caps the viewport height` regression test (RED→GREEN). Verified live in a
+> Chromium 700×500/900×500/1200×800 window: body scroll 0px on all three views, Compress summary
+> pinned with the table scrolling internally, Settings footer pinned (sibling of the scroll
+> region), History empty-state card. Smoke screenshots: `smoke-compress-700x500.png`,
+> `smoke-settings-700x500.png`, `smoke-history-700x500.png` in the task worktree.
 
 - [ ] **Step 4: Manual smoke (deferred items only)**
 

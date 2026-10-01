@@ -76,7 +76,7 @@ function App() {
 
   return (
     <CompressionProvider>
-      <SidebarProvider>
+      <SidebarProvider className="h-svh overflow-hidden">
       <Sidebar collapsible="icon">
         <SidebarHeader>
           <SidebarMenu>
