@@ -17,9 +17,12 @@
 import { cn } from "cn"
 import { RiLoaderLine } from "@remixicon/react"
 
-function Spinner({ className, ...props }: Omit<React.ComponentProps<"svg">, "children">) {
+function Spinner({
+  className,
+  ...props
+}: Omit<React.ComponentProps<"svg">, "children" | "dangerouslySetInnerHTML">) {
   return (
-    <RiLoaderLine data-slot="spinner" aria-hidden="true" className={cn("size-4 animate-spin", className)} {...props} />
+    <RiLoaderLine data-slot="spinner" className={cn("size-4 animate-spin", className)} {...props} aria-hidden="true" />
   )
 }
 
