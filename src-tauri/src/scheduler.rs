@@ -16,6 +16,8 @@
 
 use std::collections::VecDeque;
 use std::future::Future;
+use std::pin::Pin;
+use std::task::Poll;
 
 pub struct LaneSpec<J> {
     pub key: String,
@@ -73,8 +75,17 @@ where
             if inflight.is_empty() {
                 break;
             }
-            let (_idx, weight, handle) = inflight.remove(0);
-            let output = handle.await.unwrap_or_else(|e| {
+            let (done, result) = std::future::poll_fn(|cx| {
+                for (i, (_, _, handle)) in inflight.iter_mut().enumerate() {
+                    if let Poll::Ready(result) = Pin::new(handle).poll(cx) {
+                        return Poll::Ready((i, result));
+                    }
+                }
+                Poll::Pending
+            })
+            .await;
+            let (_idx, weight, _) = inflight.remove(done);
+            let output = result.unwrap_or_else(|e| {
                 eprintln!("warn: lane job panicked, counting as 0: {e}");
                 0
             });
@@ -322,5 +333,44 @@ mod tests {
         }, |_| {}).await;
         assert_eq!(total, 4);
         assert_eq!(*probe.max_seen.lock().unwrap().get("video").unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn frees_slots_as_soon_as_jobs_finish() {
+        let probe = Probe::new();
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let lanes = make_lanes(&[
+            ("video", 2, vec!["v"]),
+            ("image", 1, vec!["i1", "i2"]),
+        ]);
+        let probe2 = probe.clone();
+        let order2 = order.clone();
+        run_weighted_lanes(lanes, 4, || false, move |j| {
+            let probe = probe2.clone();
+            let order = order2.clone();
+            let weight = weight_of_lane(&j);
+            let iterations: usize = if j.starts_with("video") { 50 } else { 1 };
+            async move {
+                let lane = j.split_once(':').unwrap().0;
+                probe.enter(lane, &j, weight);
+                order.lock().unwrap().push(j.clone());
+                for _ in 0..iterations {
+                    tokio::task::yield_now().await;
+                }
+                probe.exit(lane, weight);
+                order.lock().unwrap().push(format!("{j}:exit"));
+                u64::from(weight)
+            }
+        }, |_| {}).await;
+
+        let order = order.lock().unwrap().clone();
+        let i2_enter = order.iter().position(|e| e == "image:i2");
+        let v_exit = order.iter().position(|e| e == "video:v:exit");
+        assert!(i2_enter.is_some(), "i2 must dispatch, log: {order:?}");
+        assert!(v_exit.is_some(), "v must exit, log: {order:?}");
+        assert!(
+            i2_enter.unwrap() < v_exit.unwrap(),
+            "queued image must dispatch while the long video still runs, log: {order:?}"
+        );
     }
 }
