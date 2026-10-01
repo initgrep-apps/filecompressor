@@ -292,4 +292,57 @@ describe('CompressView', () => {
     emit('batch:error', { batchId: 'b1', errorMessage: 'Output folder not writable' })
     expect(toast.error).toHaveBeenCalledWith('Output folder not writable')
   })
+
+  it('summary footer sits outside the scroll container', async () => {
+    renderView()
+    await addFileInView()
+    const card = screen.getByTestId('batch-summary').closest('[data-slot="card"]')!
+    const scrollArea = card.querySelector('[data-slot="scroll-area"]')!
+    const summary = card.querySelector('[data-testid="batch-summary"]')!
+    expect(card.contains(scrollArea)).toBe(true)
+    expect(scrollArea.contains(summary)).toBe(false)
+  })
+
+  it('drop zone is pinned outside the file-list card', async () => {
+    renderView()
+    await addFileInView()
+    const listCard = screen.getByTestId('batch-summary').closest('[data-slot="card"]')
+    const dropzone = screen.getByRole('button', { name: /drop files/i })
+    expect(listCard!.contains(dropzone)).toBe(false)
+  })
+
+  it('renders empty state when no files', () => {
+    renderView()
+    const emptyCard = screen.getByText('No files yet').closest('[data-slot="card"]')
+    expect(emptyCard).not.toBeNull()
+  })
+
+  it('compress button shows spinner while compressing', async () => {
+    const user = userEvent.setup()
+    renderView()
+    await addFileInView()
+    const btn = screen.getByRole('button', { name: 'Compress' })
+    expect(btn.querySelector('[data-slot="spinner"]')).toBeNull()
+    await user.click(btn)
+    await screen.findByRole('button', { name: 'Cancel All' })
+    expect(btn.querySelector('[data-slot="spinner"]')).not.toBeNull()
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Cancel All' })).not.toBeInTheDocument()
+    )
+    expect(btn.querySelector('[data-slot="spinner"]')).toBeNull()
+  })
+
+  it('compress button exposes aria-busy while compressing', async () => {
+    const user = userEvent.setup()
+    renderView()
+    await addFileInView()
+    const btn = screen.getByRole('button', { name: 'Compress' })
+    expect(btn).toHaveAttribute('aria-busy', 'false')
+    await user.click(btn)
+    await screen.findByRole('button', { name: 'Cancel All' })
+    expect(btn).toHaveAttribute('aria-busy', 'true')
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
+    await waitFor(() => expect(btn).toHaveAttribute('aria-busy', 'false'))
+  })
 })
