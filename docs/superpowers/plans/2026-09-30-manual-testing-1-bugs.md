@@ -2011,7 +2011,7 @@ git commit -m "feat(ui): split-panel drop zone with browse button and format hin
 - `per-view headings are removed from the main region` — App-level h1 removal assertion appended in Step 1c
 - Acceptance matrix below (every row = a named test that exists by Task 8)
 
-- [ ] **Step 1: Rewrite HistoryView**
+- [x] **Step 1: Rewrite HistoryView**
 
 ```tsx
 import { Card, CardContent } from '@/components/ui/card'
@@ -2049,7 +2049,7 @@ export function HistoryView() {
 
 Executor adapts `Empty` subcomponent names to the installed `empty.tsx`.
 
-- [ ] **Step 1b: Add HistoryView test**
+- [x] **Step 1b: Add HistoryView test**
 
 Create `src/views/HistoryView.test.tsx` (GPL header block from `src/views/CompressView.tsx:1-15`, blank line after):
 
@@ -2067,7 +2067,7 @@ describe('HistoryView', () => {
 })
 ```
 
-- [ ] **Step 1c: Add App-level heading-removal test**
+- [x] **Step 1c: Add App-level heading-removal test**
 
 Both view rewrites (Tasks 5/6) are done by now. Append to `src/App.test.tsx`:
 
@@ -2090,12 +2090,12 @@ Both view rewrites (Tasks 5/6) are done by now. Append to `src/App.test.tsx`:
   })
 ```
 
-- [ ] **Step 2: Run gate**
+- [x] **Step 2: Run gate**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: all pass.
 
-- [ ] **Step 3: Acceptance check (all proven by named tests — no hand-waved ✅)**
+- [x] **Step 3: Acceptance check (all proven by named tests — no hand-waved ✅)**
 
 | Criterion (spec §) | Proving test (exact name, exists by this task) |
 |---|---|
@@ -2106,7 +2106,7 @@ Expected: all pass.
 | Context guard | `useCompressionContext throws outside provider` |
 | Provider toast callbacks | `provider fires batch toasts for complete and error batches` + `provider surfaces listener registration failure as batch error toast` (CompressionProvider.test.tsx) |
 | Stepper ±1, clamp, typing, keys, Enter/Space, null-guard | 7 NumberStepper.test.tsx tests |
-| Settings save/cancel/reset flows | existing `SettingsView.test.tsx` scenarios (migrated per Task 5 Step 2) |
+| Settings save/cancel/reset flows | `save calls saveSettings with current draft`, `cancel reverts draft to last saved settings`, `reset to defaults replaces draft and disables save` (SettingsView.test.tsx) |
 | Footer pinned on Settings (4a) | `settings footer is sibling of the scroll region (pinned, 4a)` (SettingsView.test.tsx) |
 | Only table scrolls on Compress (4c) | `summary footer sits outside the scroll container` + `drop zone is pinned outside the file-list card` (CompressView.test.tsx) |
 | Compress busy state | `compress button shows spinner while compressing` (no spinner → spinner → gone) + `compress button exposes aria-busy while compressing` |
@@ -2134,14 +2134,14 @@ Expected: all pass.
 > → unmount → `file:complete`/`batch:complete` → remount) also passed: row Done with sizes,
 > summary updated, busy state cleared.
 
-- [ ] **Step 4: Manual smoke (partial — see notes)**
+- [ ] **Step 4: Manual smoke** (partial — item 1 done via headless Chromium + mocked IPC; item 2 `yarn tauri dev` deferred, see evidence note below)
 
 1. DONE — headless Chromium over CDP with the Tauri IPC surface mocked (NOT `yarn tauri dev`; no GUI session in this environment). At 700×500: Settings footer visible without scrolling; Compress drop zone + footer pinned; only table scrolls.
 2. DEFERRED — `yarn tauri dev` (no GUI session in this environment): drop file → navigate to Settings mid-compression → return Compress → row present and status updated. The navigation-survival half was smoke-verified in Chromium with mocked IPC (see finding above); the real-Tauri run remains outstanding.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/views/HistoryView.tsx src/App.test.tsx docs/superpowers/plans/2026-09-30-manual-testing-1-acceptance-table.md 2>/dev/null || git add src/views/HistoryView.tsx src/App.test.tsx
+git add src/views/HistoryView.tsx src/views/HistoryView.test.tsx src/App.tsx src/App.test.tsx docs/superpowers/plans/2026-09-30-manual-testing-1-acceptance-table.md 2>/dev/null || git add src/views/HistoryView.tsx src/views/HistoryView.test.tsx src/App.tsx src/App.test.tsx
 git commit -m "feat(ui): history empty-state card; manual testing 1 acceptance check"
 ```
