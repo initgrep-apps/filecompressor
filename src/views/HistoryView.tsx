@@ -14,13 +14,34 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import { Card, CardContent } from '@/components/ui/card'
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
+import { RiHistoryLine } from '@remixicon/react'
+
 export function HistoryView() {
   return (
-    <div className="flex flex-1 flex-col gap-4 p-6">
-      <h1 className="text-base font-semibold">History</h1>
-      <p className="text-sm text-muted-foreground">
-        Coming soon. Compression history will appear here in a future update.
-      </p>
+    <div className="flex min-h-0 flex-1 flex-col p-6">
+      <Card className="flex flex-1 flex-col justify-center">
+        <CardContent>
+          <Empty className="border-0">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <RiHistoryLine />
+              </EmptyMedia>
+              <EmptyTitle>No history yet</EmptyTitle>
+              <EmptyDescription>
+                Compression history will appear here in a future update.
+              </EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </CardContent>
+      </Card>
     </div>
   )
 }
