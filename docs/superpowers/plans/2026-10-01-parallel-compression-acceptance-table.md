@@ -100,7 +100,7 @@ for the user. No hand-waved checks.
 |---|----------------------|--------------|
 | 1 | Performance Card renders between Category Targets and Quality Floors with 4-option Select, label `Simultaneous files` | `renders four cards with card composition` (SettingsView.test.tsx:279 — all four card titles incl. Performance) + `performance select renders four options` (SettingsView.test.tsx:326 — options exactly `Auto · 1 · 2 · 3` under `Simultaneous files`) |
 | 2 | Selecting updates draft; Save persists; hasChanges flips | `changing performance updates draft and enables save` (SettingsView.test.tsx:339) |
-| 3 | Existing settings tests stay green | Migrated SettingsView suite green in gate (19 pre-existing scenarios — 18 unchanged, 1 renamed) |
+| 3 | Existing settings tests stay green | Migrated SettingsView suite green in gate (19 pre-existing scenarios — 16 unchanged, 1 renamed `renders three→four cards`, 2 with assertion bodies updated for combobox count 4→5 in the new Performance Select) |
 | 4 | Required tests pass; gate clean | Full gate green |
 
 ## Test-name drift (spec §7 / plan → shipped)
