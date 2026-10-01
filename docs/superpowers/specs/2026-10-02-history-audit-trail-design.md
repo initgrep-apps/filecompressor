@@ -124,9 +124,11 @@ The full retained history is parsed, folded, filtered and summarized in Rust on 
 `get_history` call. The UI never filters a partial dataset — whatever is on disk is what
 search sees.
 
-- **Date preset** (`today` / `last7` / `last30` / `all`): session-level; applied to
-  `startedAt` against the local-day boundaries of the OS timezone (presets are day-based,
-  not rolling-24h).
+- **Date window**: the UI maps its preset (`today` / `last7` / `last30` / `all`) to a
+  `sinceMs` epoch-ms timestamp (local midnight, computed in the webview where the OS
+  timezone is known — Rust std cannot resolve local offsets without a new dependency).
+  Rust filters `startedAt >= sinceMs`; filtering still executes core-side. Presets are
+  day-based, not rolling-24h.
 - **Search text**: case-insensitive substring over file name, source path, output path,
   error text — *and* the session's `outputFolder`. A session-level hit (folder) keeps the
   whole session; a file-level hit keeps only matching files.
@@ -229,7 +231,7 @@ pub fn query_history(
 | `open_folder` | `path: String` | `()` — opens folder in OS file manager (`opener().open_path`); errors as `Err(String)` |
 
 - `get_history` is `async` (parses + filters off the main thread).
-- `HistoryFilters` mirrors UI state: `{ search?: string, statuses?: string[], categories?: string[], datePreset?: "today" \| "last7" \| "last30" \| "all", outputFolder?: string }` — all optional; absent = no constraint.
+- `HistoryFilters` mirrors UI state: `{ search?: string, statuses?: string[], categories?: string[], sinceMs?: number, outputFolder?: string }` — all optional; absent = no constraint. The UI's date preset is converted to `sinceMs` in the webview (§3.5).
 - Existing `reveal_in_folder` is reused for both source and output file reveal.
 
 ### 4.3 Settings addition
@@ -306,8 +308,10 @@ Every filter change is a query to `get_history` — search and filters always ru
   change resets to page 0.
 - **Status** + **Category**: toggle chip rows (multi-select, `aria-pressed`), wrapping on
   narrow width. Six status chips, five category chips.
-- **Date**: Select with presets `Today / Last 7 days / Last 30 days / All time`
-  (session `startedAt` within range, day-based in local time; default All time).
+- **Date**: Select with presets `Today / Last 7 days / Last 30 days / All time`.
+  The preset is converted to `sinceMs` (local midnight of the range start) by a pure
+  helper in `src/lib/historyFormat.ts`; Rust applies `startedAt >= sinceMs`. Default
+  All time.
 - **Output folder**: Select of `outputFolders` from the response (distinct folders in full
   history, so options survive other active filters).
 - **Response semantics**: sessions already carry only matching files when a file-level
@@ -382,11 +386,11 @@ older-than, injected `now`); trim rewrite atomicity (original intact on simulate
 clear; empty/missing file. Settings: default 90, clamp, partial-fill.
 
 `query_history` (pure): each filter individually; combined filters; search hits name /
-source path / output path / error / session output folder; date presets at day boundaries
-(injected `now`); pagination (page 0, middle, last partial page, page beyond end);
+source path / output path / error / session output folder; `sinceMs` boundary (inclusive);
+pagination (page 0, middle, last partial page, page beyond end clamped);
 `totalSessions` / `totalFiles` / `summary` / `outputFolders` correctness under combinations;
-matched-file reduction (`matchedFiles` = total when no file-level filter); folder-text hit
-keeps all files.
+matched-file reduction (`matchedFiles` = None when no file-level filter); folder-text hit
+keeps all files. Frontend: preset → `sinceMs` helper pinned at local-day boundaries.
 
 ### Rust integration (`queue.rs`, MockRuntime harness in existing style)
 
@@ -442,6 +446,7 @@ notice.
   in `HistoryStore` is the next step (no spec change needed).
 - **Clock changes** — timestamps monotonic enough for display/retention; retention uses
   wall-clock by design.
-- **Timezone/DST in date presets** — presets are day-based in local time (matches user
-  expectation of "Today"); boundary tests inject `now` to pin them.
+- **Timezone/DST in date presets** — `sinceMs` is computed webview-side, which knows the
+  OS timezone; boundary tests pin the helper (frontend) and the inclusive comparison
+  (Rust).
 - **Batch id reuse** — uuid v4, collision-free in practice.
