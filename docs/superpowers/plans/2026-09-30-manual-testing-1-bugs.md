@@ -28,6 +28,7 @@
 
 **Files:**
 - Create (via CLI): `src/components/ui/card.tsx`, `src/components/ui/field.tsx`, `src/components/ui/scroll-area.tsx`, `src/components/ui/select.tsx`, `src/components/ui/empty.tsx`, `src/components/ui/spinner.tsx`
+- Create (hand-written): `src/components/ui/spinner.test.tsx` (see Required Tests)
 
 **Interfaces:**
 - Consumes: existing `components.json` (`style: "base-rhea"`, `iconLibrary: "remixicon"`, no preset field).
@@ -36,10 +37,11 @@
 **Acceptance Criteria:**
 - 6 files exist under `src/components/ui/`; all import primitives from `@base-ui/react/*` (installed package name — NOT `@base-ui-components/react/*`) and icons from `@remixicon/react`
 - No `lucide-react` imports in any added file
+- `spinner.tsx` is hardened: decorative `aria-hidden="true"` applied after the props spread (cannot be clobbered) and its type omits `children` + `dangerouslySetInnerHTML`
 - Gate passes clean: `yarn build && yarn test`
 
 **Required Tests:**
-- Compile gate is the test for a mechanical CLI add — no named unit tests required; `yarn build` green proves imports resolve
+- `src/components/ui/spinner.test.tsx` (cross-task contract pin): spinner root carries `aria-hidden="true"` (even when a consumer passes `aria-hidden={false}`); a button rendering `Compress` + `<Spinner />` resolves as `getByRole('button', { name: 'Compress' })`; `queryByRole('status')` is null. Deviation from the original "no named unit tests required" stance: that stance covered the mechanical CLI add and the compile gate; this test pins the a11y contract the PR reviewers flagged so a future `shadcn add spinner` re-run cannot silently reintroduce name pollution.
 
 - [ ] **Step 1: Add components via CLI**
 
@@ -55,12 +57,23 @@ Expected: 6 files created under `src/components/ui/`, no errors.
 
 Per the shadcn skill workflow — check: no missing sub-components, imports resolve (`@/lib/utils` etc.), primitives imported from `@base-ui/react/*` (the installed package; `@base-ui-components/react/*` would fail to resolve), icons from `@remixicon/react`, no `lucide-react` leaks. Fix icon/primitive imports if any slipped through. Record the `data-slot` attribute names used by `card.tsx` and `scroll-area.tsx` (needed by Task 6's structural test).
 
-- [ ] **Step 3: Verify gate**
+- [ ] **Step 3: Harden spinner + add contract test**
+
+`src/components/ui/spinner.tsx`: type becomes
+`Omit<React.ComponentProps<"svg">, "children" | "dangerouslySetInnerHTML">`; the props
+spread moves BEFORE `aria-hidden="true"` so a consumer cannot clobber the decorative
+default at runtime, while `cn("size-4 animate-spin", className)` keeps the className
+merge (`<Spinner data-icon="inline-start" />` and `className` must still typecheck).
+
+Create `src/components/ui/spinner.test.tsx` (GPL header block from
+`src/views/CompressView.tsx:1-15`) with the four contract tests listed in Required Tests.
+
+- [ ] **Step 4: Verify gate**
 
 Run: `yarn build && yarn test`
 Expected: both pass; new files are unused so no behavior change.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add src/components/ui
@@ -1037,6 +1050,7 @@ git commit -m "feat(ui): NumberStepper wrapping Base UI NumberField"
 - `renders three cards with card composition` — CardTitle/Description present for Output Folder, Category Targets, Quality Floors
 - `stepper buttons step ±1 and mark the draft dirty` — click `Increase Images target size` → display 201 + Save enabled; typing covered by Task 4
 - `no native number inputs or select elements remain` — `container.querySelectorAll('input[type="number"], select')` is empty
+- `null onValueChange from a mismatched persisted value does not mutate the draft` — guard prevents null writes into the settings JSON (spec §5)
 
 - [ ] **Step 1: Rewrite SettingsView**
 
@@ -1157,7 +1171,7 @@ Keep `categories`, `updateTarget`, `updateFloor`, `handleBrowse`, `handleSave`,
                         />
                         <Select
                           value={target.unit}
-                          onValueChange={(v) => updateTarget(cat.key, 'unit', v)}
+                          onValueChange={(v) => { if (v !== null) updateTarget(cat.key, 'unit', v) }}
                         >
                           <SelectTrigger
                             aria-label={`${cat.label} target unit`}
@@ -1235,7 +1249,7 @@ Keep `categories`, `updateTarget`, `updateFloor`, `handleBrowse`, `handleSave`,
                       <FieldLabel className="text-sm">Videos minimum resolution</FieldLabel>
                       <Select
                         value={draft.qualityFloors.video.minResolution}
-                        onValueChange={(v) => updateFloor('video.minResolution', v)}
+                        onValueChange={(v) => { if (v !== null) updateFloor('video.minResolution', v) }}
                       >
                         <SelectTrigger
                           aria-label="Videos minimum resolution"
@@ -1386,7 +1400,7 @@ async function pickOption(user: ReturnType<typeof userEvent.setup>, triggerLabel
    `user.type(img, '5')` appends → `2005`; keep the append-style typing.
 8. Both new structural tests must await load (first paint is the "Loading settings…" branch):
    use the file's existing `loadView()` helper or `await screen.findByText('Output Folder')`.
-9. Add the four new tests (two structural + two control) :
+9. Add the five new tests (two structural + three control):
 
 ```tsx
   it('settings footer is sibling of the scroll region (pinned, 4a)', async () => {
@@ -1420,7 +1434,38 @@ async function pickOption(user: ReturnType<typeof userEvent.setup>, triggerLabel
     await screen.findByLabelText('Images target size')
     expect(container.querySelectorAll('input[type="number"], select')).toHaveLength(0)
   })
+
+  it('null onValueChange from a mismatched persisted value does not mutate the draft', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(
+      structuredClone({
+        ...baseSettings,
+        qualityFloors: {
+          ...baseSettings.qualityFloors,
+          video: { ...baseSettings.qualityFloors.video, minResolution: '1280x720' },
+        },
+      })
+    )
+    await loadView()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /advanced/i }))
+    const trigger = await screen.findByLabelText('Videos minimum resolution')
+    expect(trigger).toHaveTextContent('1280x720')
+    await user.click(trigger)
+    await screen.findByRole('option', { name: '480p' })
+    await user.keyboard('{Escape}')
+    expect(trigger).toHaveTextContent('1280x720')
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
+  })
 ```
+
+Verified against Base UI v1.8 in jsdom: with a mismatched controlled value the
+trigger renders the raw persisted value, and open + Escape emits no `onValueChange`
+(null is only emitted when the item registry changes while the popup is mounted —
+e.g. an option unmounts — which the static option list never does). This test
+therefore pins the observable contract: no crash, raw `'1280x720'` retained in the
+trigger, draft untouched so Save stays disabled. The `if (v !== null)` guard stays
+as defensive hardening so any future Base UI emission that does reach
+`onValueChange` can never write `null` into the settings JSON (spec §5).
 
 (Use the real `data-slot="card"` value recorded in Task 1 Step 2.)
 
@@ -1463,7 +1508,8 @@ git commit -m "feat(ui): settings cards, field rows, NumberStepper and Select co
 - 17 ported scenarios (unchanged assertions): summary counts, toasts, cancel visibility, banner — via `renderView()`
 - `summary footer sits outside the scroll container` — structural (summary + action buttons NOT inside the scroll region)
 - `drop zone is pinned outside the file-list card` — structural (DropZone NOT inside the list Card)
-- `compress button shows spinner while compressing` — busy state visible (spec §2.5)
+- `compress button shows spinner while compressing` — busy state visible (spec §2.5); asserts NO spinner before click, exact `[data-slot="spinner"]` marker while compressing, and spinner gone after `batch:complete`
+- `compress button exposes aria-busy while compressing` — busy state announced (spec §2.5)
 - `renders empty state when no files` — `Empty` composition visible (no files yet)
 
 - [ ] **Step 1: Rewrite CompressView**
@@ -1563,7 +1609,7 @@ export function CompressView() {
               {summaryText}
             </div>
             <div className="flex gap-2">
-              <Button size="sm" onClick={compressAll} disabled={!canCompress}>
+              <Button size="sm" onClick={compressAll} disabled={!canCompress} aria-busy={isCompressing}>
                 {isCompressing && <Spinner data-icon="inline-start" />}
                 Compress
               </Button>
@@ -1617,7 +1663,7 @@ In `src/views/CompressView.test.tsx` (already provider-wrapped since Task 2):
 - All 17 existing scenarios keep their assertions (`batch-summary` testid, button names
   `Compress`/`Cancel All`/`Clear List`, toasts). No heading assertion exists today
   (verified) — the "Compress Files" h1 removal needs no test edit.
-- Replace the old structural draft with these four tests:
+- Replace the old structural draft with these five tests:
 
 ```tsx
   it('summary footer sits outside the scroll container', async () => {
@@ -1648,10 +1694,29 @@ In `src/views/CompressView.test.tsx` (already provider-wrapped since Task 2):
     const user = userEvent.setup()
     renderView()
     await addFileInView()
-    await user.click(screen.getByRole('button', { name: 'Compress' }))
     const btn = screen.getByRole('button', { name: 'Compress' })
+    expect(btn.querySelector('[data-slot="spinner"]')).toBeNull()
+    await user.click(btn)
     await screen.findByRole('button', { name: 'Cancel All' })
-    expect(btn.querySelector('[data-slot="spinner"], svg')).not.toBeNull()
+    expect(btn.querySelector('[data-slot="spinner"]')).not.toBeNull()
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Cancel All' })).not.toBeInTheDocument()
+    )
+    expect(btn.querySelector('[data-slot="spinner"]')).toBeNull()
+  })
+
+  it('compress button exposes aria-busy while compressing', async () => {
+    const user = userEvent.setup()
+    renderView()
+    await addFileInView()
+    const btn = screen.getByRole('button', { name: 'Compress' })
+    expect(btn).toHaveAttribute('aria-busy', 'false')
+    await user.click(btn)
+    await screen.findByRole('button', { name: 'Cancel All' })
+    expect(btn).toHaveAttribute('aria-busy', 'true')
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
+    await waitFor(() => expect(btn).toHaveAttribute('aria-busy', 'false'))
   })
 ```
 
@@ -1944,7 +2009,7 @@ Expected: all pass.
 | Settings save/cancel/reset flows | existing `SettingsView.test.tsx` scenarios (migrated per Task 5 Step 2) |
 | Footer pinned on Settings (4a) | `settings footer is sibling of the scroll region (pinned, 4a)` (SettingsView.test.tsx) |
 | Only table scrolls on Compress (4c) | `summary footer sits outside the scroll container` + `drop zone is pinned outside the file-list card` (CompressView.test.tsx) |
-| Compress busy state | `compress button shows spinner while compressing` |
+| Compress busy state | `compress button shows spinner while compressing` (no spinner → spinner → gone) + `compress button exposes aria-busy while compressing` |
 | Empty states | `renders empty state when no files` + `renders history empty state` |
 | Drop zone split panel + single-fire (4b) | 4 double-fire tests (DropZone.test.tsx) + all 8 existing scenarios |
 | Breadcrumb functional (all 3 views, collapse-safe) | `breadcrumb reflects the active view and updates on navigation` + `breadcrumb stays correct while the sidebar is collapsed to icon` (App.test.tsx) |
