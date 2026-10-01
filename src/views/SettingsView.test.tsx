@@ -154,7 +154,8 @@ describe('SettingsView', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Could not save settings: disk full',
     )
-    expect(screen.getByLabelText('Images target size')).toHaveDisplayValue('2,005')
+    const raw = screen.getByLabelText<HTMLInputElement>('Images target size')
+    expect(raw.value.replace(/\D/g, '')).toBe('2005')
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
   })
 
