@@ -90,10 +90,10 @@ export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
       role="button"
       tabIndex={0}
       aria-label="Drop files to compress or click to browse"
-      className={`cursor-pointer transition-colors ${
+      className={`cursor-pointer border border-dashed transition-colors ${
         isDragging
           ? 'border-primary bg-primary/5'
-          : 'bg-muted/30 hover:bg-muted/50'
+          : 'border-input bg-muted/30 hover:bg-muted/50'
       } ${className ?? ''}`}
     >
       <CardContent className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 py-8">
@@ -112,7 +112,9 @@ export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
               e.stopPropagation()
               onBrowse()
             }}
-            onKeyDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+            }}
           >
             Browse your files
           </Button>

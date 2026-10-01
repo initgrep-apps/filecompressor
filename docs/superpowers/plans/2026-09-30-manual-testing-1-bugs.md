@@ -1780,10 +1780,13 @@ git commit -m "feat(ui): compress view cards with pinned summary footer and scro
 
 **Required Tests:**
 - All 8 existing DropZone scenarios stay green (enter/over/drop payloads, drag classes, empty drop, subscription failures)
+- `sets and clears isDragging visual state` — strengthened: while dragging the root className contains `border-dashed` AND `border-primary` AND `bg-primary/5`; after leave it contains `border-input` AND `bg-muted/30` and neither `border-primary` nor `bg-primary/5`
 - `inner browse button fires onBrowse exactly once` — click `Browse your files` → `toHaveBeenCalledTimes(1)`
-- `card click outside the button fires onBrowse exactly once` — click card body → `toHaveBeenCalledTimes(1)`
+- `card click outside the button fires onBrowse exactly once` — click the card via `screen.getByRole('button', { name: /drop files/i })` → `toHaveBeenCalledTimes(1)`
 - `Enter on focused browse button fires onBrowse exactly once` — keyboard double-fire guard (button keydown must not bubble into card handler)
 - `Space on focused browse button fires onBrowse exactly once` — same guard for the Space key path
+- `stops Enter/Space keydown on the inner browse button from reaching the card` — `fireEvent.keyDown(btn, { key: 'Enter' })` / `{ key: ' ' }` → `onBrowse` not called (fails if the guard is removed)
+- `ignores keys other than Enter/Space` — `fireEvent.keyDown` with `a`/`Tab` on card and `a` on button → `onBrowse` not called (pins the guard scope)
 
 - [ ] **Step 1: Rewrite DropZone**
 
@@ -1799,10 +1802,10 @@ replace ONLY the returned JSX (`DropZone.tsx:82-105`) with:
       role="button"
       tabIndex={0}
       aria-label="Drop files to compress or click to browse"
-      className={`cursor-pointer transition-colors ${
+      className={`cursor-pointer border border-dashed transition-colors ${
         isDragging
           ? 'border-primary bg-primary/5'
-          : 'bg-muted/30 hover:bg-muted/50'
+          : 'border-input bg-muted/30 hover:bg-muted/50'
       } ${className ?? ''}`}
     >
       <CardContent className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 py-8">
@@ -1821,7 +1824,9 @@ replace ONLY the returned JSX (`DropZone.tsx:82-105`) with:
               e.stopPropagation()
               onBrowse()
             }}
-            onKeyDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+            }}
           >
             Browse your files
           </Button>
@@ -1834,18 +1839,44 @@ replace ONLY the returned JSX (`DropZone.tsx:82-105`) with:
   )
 ```
 
-The `onKeyDown={(e) => e.stopPropagation()}` on the inner Button is REQUIRED — without
-it, Enter/Space on the focused button bubbles to the card's `handleKeyDown` and fires
-browse twice.
+The inner Button's keydown guard is REQUIRED, but must be scoped to the double-fire
+keys: without it, Enter/Space on the focused button bubbles to the card's
+`handleKeyDown` and fires browse twice. Scoping to `Enter`/` ` only (instead of
+`e.stopPropagation()` unconditionally) keeps every other key bubbling so global
+shortcuts such as sidebar `Cmd+B` still work while the button has focus.
 
 Imports to add: `Card`, `CardContent` from `@/components/ui/card`; `Separator` from
 `@/components/ui/separator`; `RiUploadCloud2Line` from `@remixicon/react`.
 
 - [ ] **Step 2: Add the double-fire tests**
 
-In `src/components/DropZone.test.tsx` — keep all 8 existing scenarios (markup
-assertions survive: card keeps `role="button"` + the same `aria-label`; dragging class
-`border-primary` kept), then add:
+In `src/components/DropZone.test.tsx` — keep all 8 existing scenarios, strengthening the
+drag-state and card-click ones (card keeps `role="button"` + the same `aria-label`; drag
+assertions pin `border-dashed`, `border-primary`, `bg-primary/5`; idle pins `border-input`
+and `bg-muted/30`) and clicking the card via `screen.getByRole('button', { name: /drop files/i })`.
+
+Strengthened drag-state test (replaces the old 2-assertion version):
+
+```tsx
+  it('sets and clears isDragging visual state', async () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    await waitFor(() => expect(handlers.length).toBeGreaterThan(0))
+    const zone = screen.getByRole('button', { name: /drop files/i })
+    emit({
+      payload: { type: 'enter', paths: ['/a.jpg'], position: { x: 0, y: 0 } },
+    })
+    expect(zone.className).toContain('border-dashed')
+    expect(zone.className).toContain('border-primary')
+    expect(zone.className).toContain('bg-primary/5')
+    emit({ payload: { type: 'leave' } })
+    expect(zone.className).toContain('border-input')
+    expect(zone.className).toContain('bg-muted/30')
+    expect(zone.className).not.toContain('border-primary')
+    expect(zone.className).not.toContain('bg-primary/5')
+  })
+```
+
+Then add:
 
 ```tsx
   it('inner browse button fires onBrowse exactly once', async () => {
@@ -1862,7 +1893,7 @@ assertions survive: card keeps `role="button"` + the same `aria-label`; dragging
     const onBrowse = vi.fn()
     const onDrop = vi.fn()
     render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
-    await user.click(screen.getByText('Drag and drop'))
+    await user.click(screen.getByRole('button', { name: /drop files/i }))
     expect(onBrowse).toHaveBeenCalledTimes(1)
   })
 
@@ -1887,7 +1918,32 @@ assertions survive: card keeps `role="button"` + the same `aria-label`; dragging
     await user.keyboard(' ')
     expect(onBrowse).toHaveBeenCalledTimes(1)
   })
+
+  it('stops Enter/Space keydown on the inner browse button from reaching the card', () => {
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    const btn = screen.getByRole('button', { name: 'Browse your files' })
+    fireEvent.keyDown(btn, { key: 'Enter' })
+    fireEvent.keyDown(btn, { key: ' ' })
+    expect(onBrowse).not.toHaveBeenCalled()
+  })
+
+  it('ignores keys other than Enter/Space', () => {
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    const card = screen.getByRole('button', { name: /drop files/i })
+    fireEvent.keyDown(card, { key: 'a' })
+    fireEvent.keyDown(card, { key: 'Tab' })
+    const btn = screen.getByRole('button', { name: 'Browse your files' })
+    fireEvent.keyDown(btn, { key: 'a' })
+    expect(onBrowse).not.toHaveBeenCalled()
+  })
 ```
+
+Import `fireEvent` from `@testing-library/react` (alongside `render`, `screen`,
+`waitFor`, `act`) for the two keydown tests.
 
 Declare the `onBrowse`/`onDrop` mocks inside each `it` exactly as above (the existing file
 declares its mocks per test — do not hoist them to module scope).
