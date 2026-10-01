@@ -1788,7 +1788,7 @@ git commit -m "feat(ui): compress view cards with pinned summary footer and scro
 - `stops Enter/Space keydown on the inner browse button from reaching the card` — wrapper-spy: render inside `<div onKeyDown={onKeyDown}>`, `fireEvent.keyDown(btn, { key: 'Enter' })` / `{ key: ' ' }` → ancestor spy not called and `onBrowse` not called (pins the guard: fails if it is removed)
 - `lets non-Enter/Space keys bubble past the inner browse button` — wrapper-spy: `a` and `Cmd+B` on the button reach the ancestor handler (exact 1 then 2 calls); `Enter`/` ` do not → pins the guard scope (fails if the guard becomes an unconditional `stopPropagation()`)
 
-- [ ] **Step 1: Rewrite DropZone**
+- [x] **Step 1: Rewrite DropZone**
 
 Keep the existing imports/hooks (`useState`, `useCallback`, `useEffect`, `useRef`,
 `getCurrentWebview` logic at `DropZone.tsx:34-73`, `handleKeyDown` at `:75-80`) and
@@ -1853,7 +1853,7 @@ work while the button has focus (verified in all three engines).
 Imports to add: `Card`, `CardContent` from `@/components/ui/card`; `Separator` from
 `@/components/ui/separator`; `RiUploadCloud2Line` from `@remixicon/react`.
 
-- [ ] **Step 2: Add the single-fire and guard tests**
+- [x] **Step 2: Add the single-fire and guard tests**
 
 In `src/components/DropZone.test.tsx` — keep all 8 existing scenarios, strengthening the
 drag-state and card-click ones (card keeps `role="button"` + the same `aria-label`; the root
@@ -1968,13 +1968,13 @@ Import `fireEvent` from `@testing-library/react` (alongside `render`, `screen`,
 Declare the `onBrowse`/`onDrop` mocks inside each `it` exactly as above (the existing file
 declares its mocks per test — do not hoist them to module scope).
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `yarn test src/components/DropZone.test.tsx src/views/CompressView.test.tsx`
 Expected: PASS (CompressView's drop-files selector still matches the card's
 `aria-label`).
 
-- [ ] **Step 4: Run gate + commit**
+- [x] **Step 4: Run gate + commit**
 
 Run: `yarn build && yarn test`
 Expected: pass.
