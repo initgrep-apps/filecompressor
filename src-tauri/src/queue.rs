@@ -34,6 +34,16 @@ fn poison_recover<T>(lock: LockResult<MutexGuard<'_, T>>) -> MutexGuard<'_, T> {
     })
 }
 
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(msg) = payload.downcast_ref::<&'static str>() {
+        format!("job panicked: {msg}")
+    } else if let Some(msg) = payload.downcast_ref::<String>() {
+        format!("job panicked: {msg}")
+    } else {
+        "job panicked".to_string()
+    }
+}
+
 /// HEIC/HEIF input → .jpg output and MOV input → .mp4 output (spec §3),
 /// case-insensitive. Resolving the real output extension here is what makes
 /// collision detection apply before any processor touches the filename.
@@ -256,7 +266,7 @@ impl<R: Runtime> QueueState<R> {
             lanes,
             max_concurrent,
             stop_flag,
-            move |(file_id, _entry)| {
+            move |file_id| {
                 let app = run_app.clone();
                 let batch_id = run_batch_id.clone();
                 let output_folder = run_folder.clone();
@@ -266,7 +276,7 @@ impl<R: Runtime> QueueState<R> {
                     Self::process_single_job(
                         app,
                         batch_id,
-                        file_id.clone(),
+                        file_id,
                         output_folder,
                         settings,
                         &reserved,
@@ -274,8 +284,8 @@ impl<R: Runtime> QueueState<R> {
                     .await
                 }
             },
-            move |(file_id, _entry)| {
-                emit_file_cancelled(&skip_app, file_id);
+            move |file_id| {
+                emit_file_cancelled(&skip_app, &file_id);
                 let mut list = poison_recover(skip_state.0.lock());
                 if let Some(e) = list.iter_mut().find(|e| &e.id == file_id) {
                     if e.status == FileStatus::Pending {
@@ -301,7 +311,6 @@ impl<R: Runtime> QueueState<R> {
         let state = app.state::<FileListState>();
         let mut total_saved: u64 = 0;
 
-        // Cancel-all stops the remaining queue
         if queue.batch_cancelled(&batch_id) {
             let mut list = poison_recover(state.0.lock());
             if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
@@ -399,16 +408,23 @@ impl<R: Runtime> QueueState<R> {
                     crate::output::resolve_output_path_reserved(&output_folder, &output_filename, reserved);
 
                 let run = match sidecar::resolve_all_sidecar_paths() {
-                    Ok(sidecar_paths) => processor.compress_to_target(
-                        std::path::Path::new(&entry.path),
-                        &output_path,
-                        entry.target_bytes,
-                        &settings.quality_floors,
-                        cancel_token,
-                        progress,
-                        &sidecar_paths,
-                        &temp_dir,
-                    ),
+                    Ok(sidecar_paths) => {
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            processor.compress_to_target(
+                                std::path::Path::new(&entry.path),
+                                &output_path,
+                                entry.target_bytes,
+                                &settings.quality_floors,
+                                cancel_token,
+                                progress,
+                                &sidecar_paths,
+                                &temp_dir,
+                            )
+                        }))
+                        .unwrap_or_else(|payload| {
+                            Err(CompressionError::Unknown(panic_payload_message(&payload)))
+                        })
+                    }
                     // resolve_all_sidecar_paths already carries the
                     // "Engine error: …" wording; Unknown only re-labels
                     // pre-formatted text. A portable test trigger is
@@ -516,25 +532,24 @@ fn lane_weight(category: &crate::models::Category) -> u32 {
 fn group_lanes(
     state: &tauri::State<'_, FileListState>,
     file_ids: &[String],
-) -> Vec<scheduler::LaneSpec<(String, FileEntry)>> {
+) -> Vec<scheduler::LaneSpec<String>> {
     let list = poison_recover(state.0.lock());
-    let mut lanes: Vec<scheduler::LaneSpec<(String, FileEntry)>> = Vec::new();
+    let mut lanes: Vec<scheduler::LaneSpec<String>> = Vec::new();
     for file_id in file_ids {
         let Some(entry) = list
             .iter()
             .find(|e| &e.id == file_id && e.status == FileStatus::Pending)
-            .cloned()
         else {
             continue;
         };
         let key = category_key(&entry.category).to_string();
         if let Some(lane) = lanes.iter_mut().find(|l| l.key == key) {
-            lane.jobs.push_back((file_id.clone(), entry));
+            lane.jobs.push_back(file_id.clone());
         } else {
             lanes.push(scheduler::LaneSpec {
                 key,
                 weight: lane_weight(&entry.category),
-                jobs: std::collections::VecDeque::from(vec![(file_id.clone(), entry)]),
+                jobs: std::collections::VecDeque::from(vec![file_id.clone()]),
             });
         }
     }
@@ -606,6 +621,17 @@ mod tests {
             decide_result_status(&result(false, "already-under-target")),
             FileStatus::BestEffort
         );
+    }
+
+    #[test]
+    fn panic_payload_message_downcasts_common_payloads() {
+        assert_eq!(panic_payload_message(&"boom"), "job panicked: boom");
+        assert_eq!(
+            panic_payload_message(&"boom".to_string()),
+            "job panicked: boom"
+        );
+        let payload: Box<dyn std::any::Any + Send> = Box::new(41u32);
+        assert_eq!(panic_payload_message(&payload), "job panicked");
     }
 
     #[test]
@@ -909,6 +935,32 @@ mod tests {
         app
     }
 
+    fn setup_app(
+        max_concurrent: &str,
+    ) -> (
+        tempfile::TempDir,
+        tauri::App<tauri::test::MockRuntime>,
+        std::path::PathBuf,
+    ) {
+        let root = tempfile::TempDir::new().unwrap();
+        let out = root.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let app = make_app(
+            root.path(),
+            serde_json::json!({
+                "outputFolder": out.to_str().unwrap(),
+                "performance": { "maxConcurrent": max_concurrent }
+            }),
+        );
+        (root, app, out)
+    }
+
+    static TEMP_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn temp_guard() -> std::sync::MutexGuard<'static, ()> {
+        TEMP_GUARD.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn add_entries(
         app: &tauri::App<tauri::test::MockRuntime>,
         specs: &[(&str, crate::models::Category, &str)],
@@ -960,15 +1012,8 @@ mod tests {
 
     #[tokio::test]
     async fn n1_matches_legacy_sequential_order() {
-        use tempfile::TempDir;
-
-        let root = TempDir::new().unwrap();
-        let out = root.path().join("out");
-        std::fs::create_dir_all(&out).unwrap();
-        let app = make_app(root.path(), serde_json::json!({
-            "outputFolder": out.to_str().unwrap(),
-            "performance": { "maxConcurrent": "1" }
-        }));
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("1");
         let ids = add_entries(&app, &[
             ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
             ("b.pdf", crate::models::Category::Pdf, "/tmp/b.pdf"),
@@ -991,15 +1036,8 @@ mod tests {
 
     #[tokio::test]
     async fn video_occupies_two_slots_image_waits_at_n2() {
-        use tempfile::TempDir;
-
-        let root = TempDir::new().unwrap();
-        let out = root.path().join("out");
-        std::fs::create_dir_all(&out).unwrap();
-        let app = make_app(root.path(), serde_json::json!({
-            "outputFolder": out.to_str().unwrap(),
-            "performance": { "maxConcurrent": "2" }
-        }));
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("2");
         let ids = add_entries(&app, &[
             ("v1.mp4", crate::models::Category::Video, "/tmp/v1.mp4"),
             ("v2.mp4", crate::models::Category::Video, "/tmp/v2.mp4"),
@@ -1019,15 +1057,8 @@ mod tests {
 
     #[tokio::test]
     async fn cancel_all_mid_batch_marks_pending_cancelled_across_lanes() {
-        use tempfile::TempDir;
-
-        let root = TempDir::new().unwrap();
-        let out = root.path().join("out");
-        std::fs::create_dir_all(&out).unwrap();
-        let app = make_app(root.path(), serde_json::json!({
-            "outputFolder": out.to_str().unwrap(),
-            "performance": { "maxConcurrent": "3" }
-        }));
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("3");
         let ids = add_entries(&app, &[
             ("i1.jpg", crate::models::Category::Image, "/tmp/i1.jpg"),
             ("i2.jpg", crate::models::Category::Image, "/tmp/i2.jpg"),
@@ -1039,20 +1070,104 @@ mod tests {
         let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
         QueueState::start_batch(queue.inner(), &app.handle(), "b3".into(), ids.clone());
 
+        let (topic, first) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(topic, "file:error");
+        let mut seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        seen.insert(
+            first["fileId"].as_str().unwrap().to_string(),
+            "file:error".to_string(),
+        );
+        queue.cancel_all();
+
+        wait_idle(&queue, "b3");
+        loop {
+            let (topic, payload) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            if topic == "batch:complete" {
+                break;
+            }
+            let id = payload["fileId"].as_str().unwrap().to_string();
+            assert!(
+                !seen.contains_key(&id),
+                "each id must be finalized exactly once, {id} repeated as {topic}"
+            );
+            seen.insert(id, topic);
+        }
+        let covered: std::collections::HashSet<String> = seen.keys().cloned().collect();
+        assert_eq!(
+            covered,
+            ids.iter().cloned().collect::<std::collections::HashSet<String>>(),
+            "file:error + file:cancelled must cover all 5 ids exactly once each, seen: {seen:?}"
+        );
+
+        let state = app.state::<FileListState>();
+        let list = state.0.lock().unwrap();
+        for entry in list.iter() {
+            match seen.get(&entry.id).map(|s| s.as_str()) {
+                Some("file:error") => assert_eq!(
+                    entry.status,
+                    crate::models::FileStatus::Failed,
+                    "row finalized with file:error must be Failed: {}",
+                    entry.name
+                ),
+                _ => assert_eq!(
+                    entry.status,
+                    crate::models::FileStatus::Cancelled,
+                    "row not seen in file:error must be Cancelled (not Failed/Pending): {} → {:?}",
+                    entry.name,
+                    entry.status
+                ),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn cancel_all_across_lanes_cleans_each_jobs_temp_and_frees_slots() {
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("3");
+        let ids = add_entries(&app, &[
+            ("i1.jpg", crate::models::Category::Image, "/tmp/i1.jpg"),
+            ("i2.jpg", crate::models::Category::Image, "/tmp/i2.jpg"),
+            ("p1.pdf", crate::models::Category::Pdf, "/tmp/p1.pdf"),
+            ("p2.pdf", crate::models::Category::Pdf, "/tmp/p2.pdf"),
+            ("v1.mp4", crate::models::Category::Video, "/tmp/v1.mp4"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "file:cancelled", "file:complete", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+
+        let app_temp = std::env::temp_dir().join("file-compressor");
+        let snapshot = |dir: &std::path::Path| -> std::collections::HashSet<String> {
+            std::fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .map(|e| e.file_name().to_string_lossy().to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let before = snapshot(&app_temp);
+
+        QueueState::start_batch(queue.inner(), &app.handle(), "b7".into(), ids.clone());
+
         let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
         assert_eq!(topic, "file:error");
         queue.cancel_all();
 
-        wait_idle(&queue, "b3");
-        let mut cancelled_seen = 0;
-        while let Ok((topic, payload)) = rx.recv_timeout(std::time::Duration::from_secs(5)) {
-            match topic.as_str() {
-                "file:cancelled" => cancelled_seen += 1,
-                "batch:complete" => break,
-                _ => {}
+        wait_idle(&queue, "b7");
+        loop {
+            let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            if topic == "batch:complete" {
+                break;
             }
         }
-        assert!(cancelled_seen >= 1, "remaining jobs must be marked Cancelled");
+
+        let after = snapshot(&app_temp);
+        let leftovers: Vec<&String> = after.difference(&before).collect();
+        assert!(
+            leftovers.is_empty(),
+            "cancelled batch must leave no orphan session temp dirs under {app_temp:?}: {leftovers:?}"
+        );
+
         let state = app.state::<FileListState>();
         let list = state.0.lock().unwrap();
         assert!(
@@ -1060,19 +1175,23 @@ mod tests {
             "no row may stay Pending after cancel-all, got: {:?}",
             list.iter().map(|e| (e.name.clone(), e.status.clone())).collect::<Vec<_>>()
         );
+        drop(list);
+
+        let second = add_entries(&app, &[("solo.jpg", crate::models::Category::Image, "/tmp/solo.jpg")]);
+        QueueState::start_batch(queue.inner(), &app.handle(), "b7-second".into(), second);
+        wait_idle(&queue, "b7-second");
+        loop {
+            let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            if topic == "batch:complete" {
+                break;
+            }
+        }
     }
 
     #[tokio::test]
     async fn single_failure_does_not_stop_lane_or_batch() {
-        use tempfile::TempDir;
-
-        let root = TempDir::new().unwrap();
-        let out = root.path().join("out");
-        std::fs::create_dir_all(&out).unwrap();
-        let app = make_app(root.path(), serde_json::json!({
-            "outputFolder": out.to_str().unwrap(),
-            "performance": { "maxConcurrent": "3" }
-        }));
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("3");
         let ids = add_entries(&app, &[
             ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
             ("b.pdf", crate::models::Category::Pdf, "/tmp/b.pdf"),
@@ -1093,15 +1212,8 @@ mod tests {
 
     #[tokio::test]
     async fn batch_complete_fires_once_after_all_lanes_drain() {
-        use tempfile::TempDir;
-
-        let root = TempDir::new().unwrap();
-        let out = root.path().join("out");
-        std::fs::create_dir_all(&out).unwrap();
-        let app = make_app(root.path(), serde_json::json!({
-            "outputFolder": out.to_str().unwrap(),
-            "performance": { "maxConcurrent": "3" }
-        }));
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("3");
         let ids = add_entries(&app, &[
             ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
             ("b.pdf", crate::models::Category::Pdf, "/tmp/b.pdf"),
@@ -1121,16 +1233,10 @@ mod tests {
 
     #[tokio::test]
     async fn parallel_same_name_outputs_get_suffixes_end_to_end() {
-        use tempfile::TempDir;
         use std::io::Write;
 
-        let root = TempDir::new().unwrap();
-        let out = root.path().join("out");
-        std::fs::create_dir_all(&out).unwrap();
-        let app = make_app(root.path(), serde_json::json!({
-            "outputFolder": out.to_str().unwrap(),
-            "performance": { "maxConcurrent": "2" }
-        }));
+        let _temp_guard = temp_guard();
+        let (root, app, _out) = setup_app("2");
 
         let mut docx_paths = Vec::new();
         for i in 0..2 {
@@ -1144,20 +1250,10 @@ mod tests {
             zip.finish().unwrap();
             docx_paths.push(path);
         }
-        let state = app.state::<FileListState>();
-        let mut list = state.0.lock().unwrap();
-        let ids: Vec<String> = docx_paths
-            .iter()
-            .map(|p| {
-                let mut entry = crate::models::FileEntry::new(p.to_str().unwrap(), 1 << 20);
-                entry.name = "report.docx".to_string();
-                entry.category = crate::models::Category::Document;
-                entry.status = crate::models::FileStatus::Pending;
-                list.push(entry.clone());
-                entry.id
-            })
-            .collect();
-        drop(list);
+        let ids = add_entries(&app, &[
+            ("report.docx", crate::models::Category::Document, docx_paths[0].to_str().unwrap()),
+            ("report.docx", crate::models::Category::Document, docx_paths[1].to_str().unwrap()),
+        ]);
 
         let rx = events_of(&app.handle(), &["file:complete", "file:error", "batch:complete"]);
         let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
