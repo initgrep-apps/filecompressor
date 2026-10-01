@@ -25,7 +25,11 @@ vi.mock('@tauri-apps/api/webview', () => ({
 }))
 
 import { CompressView } from '@/views/CompressView'
+import { CompressionProvider } from '@/providers/CompressionProvider'
 import { toast } from 'sonner'
+
+const renderView = (ui = <CompressView />) =>
+  render(<CompressionProvider>{ui}</CompressionProvider>)
 
 const emit = (event: string, payload: unknown) =>
   act(() => {
@@ -67,7 +71,7 @@ async function addFilesInView(entries: Array<Partial<FileEntry>>) {
 
 describe('CompressView', () => {
   it('does not render banner on initial render', () => {
-    render(<CompressView />)
+    renderView()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
@@ -75,7 +79,7 @@ describe('CompressView', () => {
     const user = userEvent.setup()
     vi.mocked(open).mockResolvedValueOnce('/t/x.jpg')
     vi.mocked(invoke).mockRejectedValueOnce(new Error('picker dead'))
-    render(<CompressView />)
+    renderView()
     await user.click(screen.getByRole('button', { name: /drop files/i }))
     await waitFor(() => {
       const banner = screen.getByRole('alert')
@@ -86,14 +90,14 @@ describe('CompressView', () => {
   })
 
   it('compress button disabled when no pending files', async () => {
-    render(<CompressView />)
+    renderView()
     await addFileInView({ status: 'done', compressedSize: 100, outputPath: '/o/a.jpg' })
     expect(screen.getByRole('button', { name: 'Compress' })).toBeDisabled()
   })
 
   it('compress button enabled with pending files and triggers compression', async () => {
     const user = userEvent.setup()
-    render(<CompressView />)
+    renderView()
     await addFileInView()
     const btn = screen.getByRole('button', { name: 'Compress' })
     expect(btn).toBeEnabled()
@@ -103,7 +107,7 @@ describe('CompressView', () => {
 
   it('cancel all button visible during compression only', async () => {
     const user = userEvent.setup()
-    render(<CompressView />)
+    renderView()
     expect(screen.queryByRole('button', { name: 'Cancel All' })).not.toBeInTheDocument()
     await addFileInView()
     await user.click(screen.getByRole('button', { name: 'Compress' }))
@@ -118,7 +122,7 @@ describe('CompressView', () => {
 
   it('compress button disabled while compressing', async () => {
     const user = userEvent.setup()
-    render(<CompressView />)
+    renderView()
     await addFileInView()
     await user.click(screen.getByRole('button', { name: 'Compress' }))
     await screen.findByRole('button', { name: 'Cancel All' })
@@ -127,7 +131,7 @@ describe('CompressView', () => {
 
   it('clear list disabled while compressing', async () => {
     const user = userEvent.setup()
-    render(<CompressView />)
+    renderView()
     await addFileInView()
     await user.click(screen.getByRole('button', { name: 'Compress' }))
     await screen.findByRole('button', { name: 'Cancel All' })
@@ -135,7 +139,7 @@ describe('CompressView', () => {
   })
 
   it('batch summary counts mixed statuses', async () => {
-    render(<CompressView />)
+    renderView()
     await addFilesInView([
       { name: 'd1.jpg', id: 'f1', status: 'done', compressedSize: 100, outputPath: '/o/d1.jpg' },
       { name: 'd2.jpg', id: 'f2', status: 'done', compressedSize: 100, outputPath: '/o/d2.jpg' },
@@ -151,7 +155,7 @@ describe('CompressView', () => {
   })
 
   it('failed files counted in summary', async () => {
-    render(<CompressView />)
+    renderView()
     await addFilesInView([
       { name: 'd1.jpg', id: 'f1', status: 'done', compressedSize: 100, outputPath: '/o/d1.jpg' },
       { name: 'x1.jpg', id: 'f2', status: 'failed', error: 'boom' },
@@ -160,7 +164,7 @@ describe('CompressView', () => {
   })
 
   it('cancelled files represented in summary', async () => {
-    render(<CompressView />)
+    renderView()
     await addFilesInView([
       { name: 'p1.jpg', id: 'f1', status: 'pending' },
       { name: 'x1.jpg', id: 'f2', status: 'cancelled' },
@@ -169,7 +173,7 @@ describe('CompressView', () => {
   })
 
   it('already under target counted as done in summary', async () => {
-    render(<CompressView />)
+    renderView()
     await addFilesInView([
       { name: 'a1.jpg', id: 'f1', status: 'already_under_target', compressedSize: 100, outputPath: '/o/a1.jpg' },
     ])
@@ -178,7 +182,7 @@ describe('CompressView', () => {
 
   it('summary updates live during compression', async () => {
     const user = userEvent.setup()
-    render(<CompressView />)
+    renderView()
     await addFileInView()
     const summary = () => screen.getByTestId('batch-summary').textContent
     expect(summary()).toBe('1 files · 1 pending')
@@ -199,7 +203,7 @@ describe('CompressView', () => {
 
   it('cancel all click invokes cancel_all', async () => {
     const user = userEvent.setup()
-    render(<CompressView />)
+    renderView()
     await addFileInView()
     vi.mocked(invoke).mockResolvedValue('b1')
     await user.click(screen.getByRole('button', { name: 'Compress' }))
@@ -210,7 +214,7 @@ describe('CompressView', () => {
 
   it('batch complete toast shows total saved bytes', async () => {
     const user = userEvent.setup()
-    render(<CompressView />)
+    renderView()
     await addFileInView({ originalSize: 1258291 })
     await user.click(screen.getByRole('button', { name: 'Compress' }))
     emit('file:complete', {
@@ -231,7 +235,7 @@ describe('CompressView', () => {
 
   it('error count toast shows count when errors accumulated', async () => {
     const user = userEvent.setup()
-    render(<CompressView />)
+    renderView()
     await addFilesInView([
       { name: 'x1.jpg', id: 'f1' },
       { name: 'x2.jpg', id: 'f2' },
@@ -255,7 +259,7 @@ describe('CompressView', () => {
 
   it('toast success says compressed N files with done count', async () => {
     const user = userEvent.setup()
-    render(<CompressView />)
+    renderView()
     await addFilesInView(
       Array.from({ length: 10 }, (_, i) => ({
         id: `f${i}`,
@@ -282,7 +286,7 @@ describe('CompressView', () => {
 
   it('batch error toast shows message', async () => {
     const user = userEvent.setup()
-    render(<CompressView />)
+    renderView()
     await addFileInView()
     await user.click(screen.getByRole('button', { name: 'Compress' }))
     emit('batch:error', { batchId: 'b1', errorMessage: 'Output folder not writable' })

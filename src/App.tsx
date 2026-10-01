@@ -40,6 +40,7 @@ import { CompressView } from "@/views/CompressView"
 import { HistoryView } from "@/views/HistoryView"
 import { SettingsView } from "@/views/SettingsView"
 import { Toaster } from "@/components/ui/sonner"
+import { CompressionProvider } from "@/providers/CompressionProvider"
 
 type ViewId = "compress" | "history" | "settings"
 
@@ -65,7 +66,8 @@ function App() {
   const [activeView, setActiveView] = useState<ViewId>("compress")
 
   return (
-    <SidebarProvider>
+    <CompressionProvider>
+      <SidebarProvider>
       <Sidebar collapsible="icon" variant="floating">
         <SidebarHeader>
           <SidebarMenu>
@@ -129,7 +131,8 @@ function App() {
         </div>
       </SidebarInset>
       <Toaster />
-    </SidebarProvider>
+      </SidebarProvider>
+    </CompressionProvider>
   )
 }
 
