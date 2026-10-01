@@ -1780,12 +1780,15 @@ git commit -m "feat(ui): compress view cards with pinned summary footer and scro
 
 **Required Tests:**
 - All 8 existing DropZone scenarios stay green (enter/over/drop payloads, drag classes, empty drop, subscription failures)
+- `sets and clears isDragging visual state` — strengthened: the root always carries the base `border-dashed` dashed affordance; while dragging the root className additionally contains `border-primary` AND `bg-primary/5`; after leave it contains `border-input` AND `bg-muted/30` and neither `border-primary` nor `bg-primary/5`
 - `inner browse button fires onBrowse exactly once` — click `Browse your files` → `toHaveBeenCalledTimes(1)`
-- `card click outside the button fires onBrowse exactly once` — click card body → `toHaveBeenCalledTimes(1)`
-- `Enter on focused browse button fires onBrowse exactly once` — keyboard double-fire guard (button keydown must not bubble into card handler)
-- `Space on focused browse button fires onBrowse exactly once` — same guard for the Space key path
+- `card click outside the button fires onBrowse exactly once` — click the non-button "Drag and drop" text (`screen.getByText('Drag and drop')`) → `toHaveBeenCalledTimes(1)` (distinct target from the inner-button test; the card's `onClick` fires via bubbling)
+- `Enter on focused browse button fires onBrowse exactly once` — end-to-end single fire on the button's activation path
+- `Space on focused browse button fires onBrowse exactly once` — same single-fire assertion for the Space key path
+- `stops Enter/Space keydown on the inner browse button from reaching the card` — wrapper-spy: render inside `<div onKeyDown={onKeyDown}>`, `fireEvent.keyDown(btn, { key: 'Enter' })` / `{ key: ' ' }` → ancestor spy not called and `onBrowse` not called (pins the guard: fails if it is removed)
+- `lets non-Enter/Space keys bubble past the inner browse button` — wrapper-spy: `a` and `Cmd+B` on the button reach the ancestor handler (exact 1 then 2 calls); `Enter`/` ` do not → pins the guard scope (fails if the guard becomes an unconditional `stopPropagation()`)
 
-- [ ] **Step 1: Rewrite DropZone**
+- [x] **Step 1: Rewrite DropZone**
 
 Keep the existing imports/hooks (`useState`, `useCallback`, `useEffect`, `useRef`,
 `getCurrentWebview` logic at `DropZone.tsx:34-73`, `handleKeyDown` at `:75-80`) and
@@ -1799,10 +1802,10 @@ replace ONLY the returned JSX (`DropZone.tsx:82-105`) with:
       role="button"
       tabIndex={0}
       aria-label="Drop files to compress or click to browse"
-      className={`cursor-pointer transition-colors ${
+      className={`cursor-pointer border border-dashed transition-colors ${
         isDragging
           ? 'border-primary bg-primary/5'
-          : 'bg-muted/30 hover:bg-muted/50'
+          : 'border-input bg-muted/30 hover:bg-muted/50'
       } ${className ?? ''}`}
     >
       <CardContent className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 py-8">
@@ -1821,7 +1824,9 @@ replace ONLY the returned JSX (`DropZone.tsx:82-105`) with:
               e.stopPropagation()
               onBrowse()
             }}
-            onKeyDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+            }}
           >
             Browse your files
           </Button>
@@ -1834,18 +1839,50 @@ replace ONLY the returned JSX (`DropZone.tsx:82-105`) with:
   )
 ```
 
-The `onKeyDown={(e) => e.stopPropagation()}` on the inner Button is REQUIRED — without
-it, Enter/Space on the focused button bubbles to the card's `handleKeyDown` and fires
-browse twice.
+The inner Button's keydown guard is REQUIRED, but must be scoped to the
+activation keys: without it, Enter/Space keydown on the button reaches the card's
+`handleKeyDown`, which fires `onBrowse` and calls `preventDefault()` — cancelling
+the button's own activation path (probe-verified in Chromium, Firefox and WebKit:
+browse fires exactly once either way, but via the card path; without the
+`preventDefault`-cancellation a keyup-activated Space click could double-fire).
+The guard also prevents key auto-repeat from firing `onBrowse` per repeated
+keydown. Scoping to `Enter`/` ` only (instead of `e.stopPropagation()` unconditionally)
+keeps every other key bubbling so global shortcuts such as sidebar `Cmd+B` still
+work while the button has focus (verified in all three engines).
 
 Imports to add: `Card`, `CardContent` from `@/components/ui/card`; `Separator` from
 `@/components/ui/separator`; `RiUploadCloud2Line` from `@remixicon/react`.
 
-- [ ] **Step 2: Add the double-fire tests**
+- [x] **Step 2: Add the single-fire and guard tests**
 
-In `src/components/DropZone.test.tsx` — keep all 8 existing scenarios (markup
-assertions survive: card keeps `role="button"` + the same `aria-label`; dragging class
-`border-primary` kept), then add:
+In `src/components/DropZone.test.tsx` — keep all 8 existing scenarios, strengthening the
+drag-state and card-click ones (card keeps `role="button"` + the same `aria-label`; the root
+always carries the base `border-dashed` dashed affordance; drag assertions add `border-primary`,
+`bg-primary/5`; idle pins `border-input` and `bg-muted/30`) and clicking the card's non-button
+"Drag and drop" area via `screen.getByText('Drag and drop')`.
+
+Strengthened drag-state test (replaces the old 2-assertion version):
+
+```tsx
+  it('sets and clears isDragging visual state', async () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    await waitFor(() => expect(handlers.length).toBeGreaterThan(0))
+    const zone = screen.getByRole('button', { name: /drop files/i })
+    emit({
+      payload: { type: 'enter', paths: ['/a.jpg'], position: { x: 0, y: 0 } },
+    })
+    expect(zone.className).toContain('border-dashed')
+    expect(zone.className).toContain('border-primary')
+    expect(zone.className).toContain('bg-primary/5')
+    emit({ payload: { type: 'leave' } })
+    expect(zone.className).toContain('border-input')
+    expect(zone.className).toContain('bg-muted/30')
+    expect(zone.className).not.toContain('border-primary')
+    expect(zone.className).not.toContain('bg-primary/5')
+  })
+```
+
+Then add:
 
 ```tsx
   it('inner browse button fires onBrowse exactly once', async () => {
@@ -1887,18 +1924,57 @@ assertions survive: card keeps `role="button"` + the same `aria-label`; dragging
     await user.keyboard(' ')
     expect(onBrowse).toHaveBeenCalledTimes(1)
   })
+
+  it('stops Enter/Space keydown on the inner browse button from reaching the card', () => {
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    const onKeyDown = vi.fn()
+    render(
+      <div onKeyDown={onKeyDown}>
+        <DropZone onBrowse={onBrowse} onDrop={onDrop} />
+      </div>
+    )
+    const btn = screen.getByRole('button', { name: 'Browse your files' })
+    fireEvent.keyDown(btn, { key: 'Enter' })
+    fireEvent.keyDown(btn, { key: ' ' })
+    expect(onKeyDown).not.toHaveBeenCalled()
+    expect(onBrowse).not.toHaveBeenCalled()
+  })
+
+  it('lets non-Enter/Space keys bubble past the inner browse button', () => {
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    const onKeyDown = vi.fn()
+    render(
+      <div onKeyDown={onKeyDown}>
+        <DropZone onBrowse={onBrowse} onDrop={onDrop} />
+      </div>
+    )
+    const btn = screen.getByRole('button', { name: 'Browse your files' })
+    fireEvent.keyDown(btn, { key: 'a' })
+    expect(onKeyDown).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(btn, { key: 'b', metaKey: true })
+    expect(onKeyDown).toHaveBeenCalledTimes(2)
+    fireEvent.keyDown(btn, { key: 'Enter' })
+    fireEvent.keyDown(btn, { key: ' ' })
+    expect(onKeyDown).toHaveBeenCalledTimes(2)
+    expect(onBrowse).not.toHaveBeenCalled()
+  })
 ```
+
+Import `fireEvent` from `@testing-library/react` (alongside `render`, `screen`,
+`waitFor`, `act`) for the two keydown tests.
 
 Declare the `onBrowse`/`onDrop` mocks inside each `it` exactly as above (the existing file
 declares its mocks per test — do not hoist them to module scope).
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `yarn test src/components/DropZone.test.tsx src/views/CompressView.test.tsx`
 Expected: PASS (CompressView's drop-files selector still matches the card's
 `aria-label`).
 
-- [ ] **Step 4: Run gate + commit**
+- [x] **Step 4: Run gate + commit**
 
 Run: `yarn build && yarn test`
 Expected: pass.
@@ -2030,7 +2106,7 @@ Expected: all pass.
 | Only table scrolls on Compress (4c) | `summary footer sits outside the scroll container` + `drop zone is pinned outside the file-list card` (CompressView.test.tsx) |
 | Compress busy state | `compress button shows spinner while compressing` (no spinner → spinner → gone) + `compress button exposes aria-busy while compressing` |
 | Empty states | `renders empty state when no files and clears it after adding files` + `renders history empty state` |
-| Drop zone split panel + single-fire (4b) | 4 double-fire tests (DropZone.test.tsx) + all 8 existing scenarios |
+| Drop zone split panel + single-fire (4b) | 6 added tests (DropZone.test.tsx: 14 total = 8 existing + 6) |
 | Breadcrumb functional (all 3 views, collapse-safe) | `breadcrumb reflects the active view and updates on navigation` + `breadcrumb stays correct while the sidebar is collapsed to icon` (App.test.tsx) |
 | Sidebar flush | `sidebar is flush (no floating variant)` (App.test.tsx) |
 | Height containment (4a/4c root) | `content wrapper constrains view height (min-h-0 chain)` (App.test.tsx) |

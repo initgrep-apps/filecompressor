@@ -16,6 +16,10 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { Card, CardContent } from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
+import { Button } from '@/components/ui/button'
+import { RiUploadCloud2Line } from '@remixicon/react'
 
 interface DropZoneProps {
   onBrowse: () => void
@@ -80,27 +84,45 @@ export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
   }, [onBrowse])
 
   return (
-    <div
+    <Card
       onClick={onBrowse}
       onKeyDown={handleKeyDown}
       role="button"
       tabIndex={0}
       aria-label="Drop files to compress or click to browse"
-      className={`border border-dashed rounded-lg py-7 px-4 text-center cursor-pointer transition-colors ${
+      className={`cursor-pointer border border-dashed transition-colors ${
         isDragging
           ? 'border-primary bg-primary/5'
           : 'border-input bg-muted/30 hover:bg-muted/50'
       } ${className ?? ''}`}
     >
-      <div className="inline-flex items-center justify-center w-10 h-10 rounded-lg border border-border bg-card mb-3">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-muted-foreground">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="17 8 12 3 7 8" />
-          <line x1="12" y1="3" x2="12" y2="15" />
-        </svg>
-      </div>
-      <p className="text-sm font-medium text-foreground mb-0.5">Drop files to compress</p>
-      <p className="text-xs text-muted-foreground">or <span className="text-primary underline">browse from your computer</span></p>
-    </div>
+      <CardContent className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 py-8">
+        <div className="flex flex-col items-center gap-2">
+          <div className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <RiUploadCloud2Line size={24} />
+          </div>
+          <p className="text-sm font-medium">Drag and drop</p>
+        </div>
+        <Separator orientation="vertical" className="h-20" />
+        <div className="flex flex-col items-center gap-2.5">
+          <p className="text-sm font-medium">Or choose a file</p>
+          <Button
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              onBrowse()
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+            }}
+          >
+            Browse your files
+          </Button>
+          <p className="text-xs text-muted-foreground">
+            Supported: JPEG, PNG, WebP, HEIC, MP4, MOV, PDF, DOCX, XLSX, PPTX
+          </p>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 
@@ -108,9 +108,14 @@ describe('DropZone', () => {
     emit({
       payload: { type: 'enter', paths: ['/a.jpg'], position: { x: 0, y: 0 } },
     })
+    expect(zone.className).toContain('border-dashed')
     expect(zone.className).toContain('border-primary')
+    expect(zone.className).toContain('bg-primary/5')
     emit({ payload: { type: 'leave' } })
+    expect(zone.className).toContain('border-input')
+    expect(zone.className).toContain('bg-muted/30')
     expect(zone.className).not.toContain('border-primary')
+    expect(zone.className).not.toContain('bg-primary/5')
   })
 
   it('click triggers browse', async () => {
@@ -131,5 +136,81 @@ describe('DropZone', () => {
     expect(onBrowse).toHaveBeenCalledTimes(1)
     await user.keyboard(' ')
     expect(onBrowse).toHaveBeenCalledTimes(2)
+  })
+
+  it('inner browse button fires onBrowse exactly once', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    await user.click(screen.getByRole('button', { name: 'Browse your files' }))
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+  })
+
+  it('card click outside the button fires onBrowse exactly once', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    await user.click(screen.getByText('Drag and drop'))
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+  })
+
+  it('Enter on focused browse button fires onBrowse exactly once', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    const btn = screen.getByRole('button', { name: 'Browse your files' })
+    btn.focus()
+    await user.keyboard('{Enter}')
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+  })
+
+  it('Space on focused browse button fires onBrowse exactly once', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    const btn = screen.getByRole('button', { name: 'Browse your files' })
+    btn.focus()
+    await user.keyboard(' ')
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops Enter/Space keydown on the inner browse button from reaching the card', () => {
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    const onKeyDown = vi.fn()
+    render(
+      <div onKeyDown={onKeyDown}>
+        <DropZone onBrowse={onBrowse} onDrop={onDrop} />
+      </div>
+    )
+    const btn = screen.getByRole('button', { name: 'Browse your files' })
+    fireEvent.keyDown(btn, { key: 'Enter' })
+    fireEvent.keyDown(btn, { key: ' ' })
+    expect(onKeyDown).not.toHaveBeenCalled()
+    expect(onBrowse).not.toHaveBeenCalled()
+  })
+
+  it('lets non-Enter/Space keys bubble past the inner browse button', () => {
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    const onKeyDown = vi.fn()
+    render(
+      <div onKeyDown={onKeyDown}>
+        <DropZone onBrowse={onBrowse} onDrop={onDrop} />
+      </div>
+    )
+    const btn = screen.getByRole('button', { name: 'Browse your files' })
+    fireEvent.keyDown(btn, { key: 'a' })
+    expect(onKeyDown).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(btn, { key: 'b', metaKey: true })
+    expect(onKeyDown).toHaveBeenCalledTimes(2)
+    fireEvent.keyDown(btn, { key: 'Enter' })
+    fireEvent.keyDown(btn, { key: ' ' })
+    expect(onKeyDown).toHaveBeenCalledTimes(2)
+    expect(onBrowse).not.toHaveBeenCalled()
   })
 })
