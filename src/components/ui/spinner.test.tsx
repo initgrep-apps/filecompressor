@@ -37,15 +37,63 @@ describe('Spinner', () => {
   })
 
   it('keeps aria-hidden when a consumer passes a conflicting value', () => {
-    const { container } = render(<Spinner aria-hidden={false} />)
+    const conflicting: Record<string, unknown> = { 'aria-hidden': false }
+    const { container } = render(<Spinner {...conflicting} />)
     expect(container.querySelector('[data-slot="spinner"]')).toHaveAttribute(
       'aria-hidden',
       'true'
     )
   })
 
-  it('exposes no status role', () => {
+  it('exposes no status role on the default render', () => {
     render(<Spinner />)
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByRole('status', { hidden: true })).toBeNull()
+  })
+
+  it('strips a spread-smuggled role', () => {
+    const smuggled: Record<string, unknown> = { role: 'status' }
+    const { container } = render(<Spinner {...smuggled} />)
+    const root = container.querySelector('[data-slot="spinner"]')
+    expect(root).not.toBeNull()
+    expect(root).not.toHaveAttribute('role')
+    expect(screen.queryByRole('status', { hidden: true })).toBeNull()
+  })
+
+  it('merges className and passes data-icon through', () => {
+    const { container } = render(
+      <Spinner className="custom-class" data-icon="inline-start" />
+    )
+    const root = container.querySelector('[data-slot="spinner"]')
+    expect(root).toHaveClass('animate-spin', 'custom-class')
+    expect(root).toHaveAttribute('data-icon', 'inline-start')
+  })
+
+  it('keeps its data-slot marker when a consumer passes data-slot', () => {
+    const { container } = render(<Spinner data-slot="not-spinner" />)
+    expect(container.querySelector('[data-slot="spinner"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="not-spinner"]')).toBeNull()
+  })
+
+  it('bans children, dangerouslySetInnerHTML, role and aria-hidden, and a wide SVGProps spread, at the type level', () => {
+    // @ts-expect-error children are rejected
+    const withChildren = <Spinner>child</Spinner>
+    // @ts-expect-error dangerouslySetInnerHTML is rejected
+    const withHtml = <Spinner dangerouslySetInnerHTML={{ __html: '<i />' }} />
+    // @ts-expect-error role is rejected
+    const withRole = <Spinner role="status" />
+    // @ts-expect-error aria-hidden is rejected
+    const withAriaHidden = <Spinner aria-hidden={false} />
+    const wide = {} as React.ComponentProps<'svg'>
+    // @ts-expect-error wide SVGProps spread is rejected
+    const withWide = <Spinner {...wide} />
+    const roleSpread = { role: 'status' as const, className: 'x' }
+    // @ts-expect-error role via typed spread is rejected
+    const withTypedRole = <Spinner {...roleSpread} />
+    expect(withChildren).toBeTruthy()
+    expect(withHtml).toBeTruthy()
+    expect(withRole).toBeTruthy()
+    expect(withAriaHidden).toBeTruthy()
+    expect(withWide).toBeTruthy()
+    expect(withTypedRole).toBeTruthy()
   })
 })
