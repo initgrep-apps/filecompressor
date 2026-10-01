@@ -14,35 +14,27 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useFileList } from '@/hooks/useFileList'
-import { useCompression } from '@/hooks/useCompression'
+import { useCompressionContext } from '@/providers/CompressionProvider'
 import { DropZone } from '@/components/DropZone'
-import { FileList, formatSize } from '@/components/FileList'
+import { FileList } from '@/components/FileList'
 import { Button } from '@/components/ui/button'
-import { toast } from 'sonner'
 import type { FileStatus } from '@/types'
 
-function formatSavedBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  return formatSize(bytes)
-}
-
 export function CompressView() {
-  const { files, error, addFiles, browseFiles, removeFile, clearList, setFiles } = useFileList()
   const {
+    files,
+    error,
+    addFiles,
+    browseFiles,
+    removeFile,
+    clearList,
     isCompressing,
     progressByFile,
     compressAll,
     cancelFile,
     cancelAll,
     revealInFolder,
-  } = useCompression(files, setFiles, {
-    onBatchComplete: (saved, count, errorCount) => {
-      toast.success(`Compressed ${count} files. Saved ${formatSavedBytes(saved)} total.`)
-      if (errorCount > 0) toast.error(`${errorCount} files could not reach target.`)
-    },
-    onBatchError: (message) => toast.error(message),
-  })
+  } = useCompressionContext()
 
   const hasFiles = files.length > 0
   const pendingCount = files.filter((f) => f.status === 'pending').length

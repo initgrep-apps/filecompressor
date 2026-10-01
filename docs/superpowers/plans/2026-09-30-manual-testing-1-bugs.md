@@ -113,7 +113,7 @@ git commit -m "feat(ui): add card, field, scroll-area, select, empty, spinner bl
 - `provider surfaces listener registration failure as batch error toast` — `listen` rejects once → `toast.error('Lost connection to compression worker')` (spec §8: port the hook-level guard to provider level)
 - `useCompressionContext throws outside provider` — cheap guard assertion
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/providers/CompressionProvider.test.tsx`:
 
@@ -360,12 +360,12 @@ describe('CompressionProvider', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `yarn test src/providers/CompressionProvider.test.tsx`
 Expected: FAIL — `Cannot find module '@/providers/CompressionProvider'`
 
-- [ ] **Step 3: Create the provider**
+- [x] **Step 3: Create the provider**
 
 Create `src/providers/CompressionProvider.tsx`:
 
@@ -454,7 +454,7 @@ export function useCompressionContext(): CompressionContextValue {
 }
 ```
 
-- [ ] **Step 4: Point CompressView at the context (temporary bridge)**
+- [x] **Step 4: Point CompressView at the context (temporary bridge)**
 
 In `src/views/CompressView.tsx`, replace the two hook imports (lines 17–18), the `formatSavedBytes` helper (lines 25–28), and the `useFileList()`/`useCompression(...)` call block (lines 31–45) with:
 
@@ -491,7 +491,7 @@ const renderView = (ui = <CompressView />) =>
 
 and replace each of the 17 bare `render(<CompressView />)` calls with `renderView()`.
 
-- [ ] **Step 5: Minimal App wiring (keep runtime working between commits)**
+- [x] **Step 5: Minimal App wiring (keep runtime working between commits)**
 
 In `src/App.tsx` — import and wrap only (breadcrumb/sidebar/containment stay in Task 3):
 
@@ -513,17 +513,17 @@ close with:
   )
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `yarn test src/providers src/views/CompressView.test.tsx src/hooks`
 Expected: ALL PASS (provider tests + ported CompressView tests + untouched hook tests).
 
-- [ ] **Step 7: Run gate**
+- [x] **Step 7: Run gate**
 
 Run: `yarn build && yarn test`
 Expected: pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/providers src/views/CompressView.tsx src/views/CompressView.test.tsx src/App.tsx
