@@ -43,7 +43,7 @@
 **Required Tests:**
 - `src/components/ui/spinner.test.tsx` (cross-task contract pin): spinner root carries `aria-hidden="true"` (even when a consumer passes a conflicting `aria-hidden` through a wide-typed spread); a button rendering `Compress` + `<Spinner />` resolves as `getByRole('button', { name: 'Compress' })`; `queryByRole('status', { hidden: true })` is null; `className` merges with `animate-spin` and `data-icon` passes through; the `data-slot="spinner"` marker is clobber-resistant; compile pins keep `children`/`dangerouslySetInnerHTML` banned. Deviation from the original "no named unit tests required" stance: that stance covered the mechanical CLI add and the compile gate; this test pins the a11y contract the PR reviewers flagged so a future `shadcn add spinner` re-run cannot silently reintroduce name pollution.
 
-- [ ] **Step 1: Add components via CLI**
+- [x] **Step 1: Add components via CLI**
 
 Run from repo root:
 
@@ -53,11 +53,11 @@ yarn dlx shadcn@latest add card field scroll-area select empty spinner
 
 Expected: 6 files created under `src/components/ui/`, no errors.
 
-- [ ] **Step 2: Read every added file and verify**
+- [x] **Step 2: Read every added file and verify**
 
 Per the shadcn skill workflow — check: no missing sub-components, imports resolve (`@/lib/utils` etc.), primitives imported from `@base-ui/react/*` (the installed package; `@base-ui-components/react/*` would fail to resolve), icons from `@remixicon/react`, no `lucide-react` leaks. Fix icon/primitive imports if any slipped through. Record the `data-slot` attribute names used by `card.tsx` and `scroll-area.tsx` (needed by Task 6's structural test).
 
-- [ ] **Step 3: Harden spinner + add contract test**
+- [x] **Step 3: Harden spinner + add contract test**
 
 `src/components/ui/spinner.tsx`: type becomes
 `Omit<React.ComponentProps<"svg">, "children" | "dangerouslySetInnerHTML" | "aria-hidden" | "role"> & { children?: never; dangerouslySetInnerHTML?: never }`;
@@ -73,12 +73,12 @@ name, no status role (`hidden: true` so the assertion is not vacuous), className
 `data-slot` clobber-resistance, and compile pins for the banned `children` /
 `dangerouslySetInnerHTML` props.
 
-- [ ] **Step 4: Verify gate**
+- [x] **Step 4: Verify gate**
 
 Run: `yarn build && yarn test`
 Expected: both pass; no production behavior change (the spinner hardening and its test only tighten the added block).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/ui
@@ -118,7 +118,7 @@ git commit -m "feat(ui): add card, field, scroll-area, select, empty, spinner bl
 - `provider surfaces listener registration failure as batch error toast` — `listen` rejects once → `toast.error('Lost connection to compression worker')` (spec §8: port the hook-level guard to provider level)
 - `useCompressionContext throws outside provider` — cheap guard assertion
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/providers/CompressionProvider.test.tsx`:
 
@@ -365,12 +365,12 @@ describe('CompressionProvider', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `yarn test src/providers/CompressionProvider.test.tsx`
 Expected: FAIL — `Cannot find module '@/providers/CompressionProvider'`
 
-- [ ] **Step 3: Create the provider**
+- [x] **Step 3: Create the provider**
 
 Create `src/providers/CompressionProvider.tsx`:
 
@@ -459,7 +459,7 @@ export function useCompressionContext(): CompressionContextValue {
 }
 ```
 
-- [ ] **Step 4: Point CompressView at the context (temporary bridge)**
+- [x] **Step 4: Point CompressView at the context (temporary bridge)**
 
 In `src/views/CompressView.tsx`, replace the two hook imports (lines 17–18), the `formatSavedBytes` helper (lines 25–28), and the `useFileList()`/`useCompression(...)` call block (lines 31–45) with:
 
@@ -496,7 +496,7 @@ const renderView = (ui = <CompressView />) =>
 
 and replace each of the 17 bare `render(<CompressView />)` calls with `renderView()`.
 
-- [ ] **Step 5: Minimal App wiring (keep runtime working between commits)**
+- [x] **Step 5: Minimal App wiring (keep runtime working between commits)**
 
 In `src/App.tsx` — import and wrap only (breadcrumb/sidebar/containment stay in Task 3):
 
@@ -518,17 +518,17 @@ close with:
   )
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `yarn test src/providers src/views/CompressView.test.tsx src/hooks`
 Expected: ALL PASS (provider tests + ported CompressView tests + untouched hook tests).
 
-- [ ] **Step 7: Run gate**
+- [x] **Step 7: Run gate**
 
 Run: `yarn build && yarn test`
 Expected: pass.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/providers src/views/CompressView.tsx src/views/CompressView.test.tsx src/App.tsx
@@ -562,7 +562,7 @@ git commit -m "fix(state): lift file list + compression state into app-level pro
 - `content wrapper constrains view height (min-h-0 chain)` — `data-testid="view-container"` classes contain `min-h-0` + `overflow-hidden`
 - `file list survives navigating to Settings and back (Bug 2a)` — real shell: add file → Settings → Compress → row still present (Step 1b)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/App.test.tsx`. Two jsdom pitfalls MUST be mocked before render:
 1. `window.matchMedia` — `SidebarProvider` → `useIsMobile()` calls it; jsdom lacks it.
@@ -650,7 +650,7 @@ Note: `getByRole('button', { name: 'Settings' })` is unique here because the Set
 view itself is not mounted at query time (conditional rendering); keep name-exact
 queries (no regex) to stay collision-safe.
 
-- [ ] **Step 1b: Add an App-level Bug 2a regression test**
+- [x] **Step 1b: Add an App-level Bug 2a regression test**
 
 The provider test simulates a remount; this proves the real shell keeps the provider above the view switch. Append to `src/App.test.tsx`:
 
@@ -681,12 +681,12 @@ The provider test simulates a remount; this proves the real shell keeps the prov
   })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `yarn test src/App.test.tsx`
 Expected: FAIL — no breadcrumb / no `data-testid="view-container"` / sidebar still floating.
 
-- [ ] **Step 3: Apply the shell changes**
+- [x] **Step 3: Apply the shell changes**
 
 The tree is already wrapped in `CompressionProvider` (Task 2) — leave that alone.
 
@@ -748,17 +748,17 @@ import { Separator } from '@/components/ui/separator'
         <div data-testid="view-container" className="flex min-h-0 flex-1 flex-col overflow-hidden">
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `yarn test src/App.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Run gate**
+- [x] **Step 5: Run gate**
 
 Run: `yarn build && yarn test`
 Expected: pass. (Existing view tests mock their own modules; shell change doesn't affect them.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/App.tsx src/App.test.tsx

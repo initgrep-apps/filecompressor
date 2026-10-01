@@ -1,0 +1,102 @@
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+}))
+vi.mock('@tauri-apps/api/webview', () => ({
+  getCurrentWebview: () => ({ onDragDropEvent: () => Promise.resolve(() => {}) }),
+}))
+vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+  Toaster: () => null,
+}))
+
+beforeAll(() => {
+  window.matchMedia = (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }) as MediaQueryList
+})
+
+import App from '@/App'
+
+const headerEl = () => document.querySelector('main')!.querySelector('header')!
+
+describe('App shell', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('breadcrumb reflects the active view and updates on navigation', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    expect(within(headerEl()).getByText('Optimizer')).toBeInTheDocument()
+    expect(within(headerEl()).getByText('Compress')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Settings' }))
+    expect(within(headerEl()).getByText('Settings')).toBeInTheDocument()
+    expect(within(headerEl()).queryByText('Compress')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'History' }))
+    expect(within(headerEl()).getByText('History')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    expect(within(headerEl()).getByText('Compress')).toBeInTheDocument()
+  })
+
+  it('sidebar is flush (no floating variant)', () => {
+    render(<App />)
+    const sidebar = document.querySelector('[data-slot="sidebar"]')
+    expect(sidebar).not.toBeNull()
+    expect(sidebar!.getAttribute('data-variant')).not.toBe('floating')
+  })
+
+  it('content wrapper constrains view height (min-h-0 chain)', () => {
+    render(<App />)
+    const wrapper = screen.getByTestId('view-container')
+    expect(wrapper.className).toContain('min-h-0')
+    expect(wrapper.className).toContain('overflow-hidden')
+  })
+
+  it('breadcrumb stays correct while the sidebar is collapsed to icon', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const trigger = document.querySelector(
+      'button[data-slot="sidebar-trigger"]'
+    ) as HTMLElement
+    await user.click(trigger)
+    expect(within(headerEl()).getByText('Compress')).toBeInTheDocument()
+  })
+
+  it('file list survives navigating to Settings and back (Bug 2a)', async () => {
+    const user = userEvent.setup()
+    vi.mocked(open).mockResolvedValueOnce('/t/a.jpg')
+    vi.mocked(invoke).mockResolvedValueOnce([
+      {
+        id: 'f1',
+        name: 'a.jpg',
+        path: '/t/a.jpg',
+        category: 'image',
+        targetBytes: 204800,
+        originalSize: 1024,
+        status: 'pending',
+        compressedSize: null,
+        outputPath: null,
+        error: null,
+      },
+    ])
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: /drop files/i }))
+    expect(await screen.findByText('a.jpg')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Settings' }))
+    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    expect(await screen.findByText('a.jpg')).toBeInTheDocument()
+  })
+})

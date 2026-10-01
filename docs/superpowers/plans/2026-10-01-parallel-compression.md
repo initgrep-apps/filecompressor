@@ -48,7 +48,7 @@
 - `resolve_max_concurrent_auto_clamps_cores` — injectable cores: (1→1, 2→1, 4→2, 8→4, 16→4, error→1) — function takes `cores: Option<u32>` override or splits into `resolve_from_cores(cores)` pure fn + thin caller
 - `resolve_max_concurrent_manual_verbatim` — `"1"→1`, `"2"→2`, `"3"→3`, `"5"→1` (invalid → 1), `""→1`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `src-tauri/src/settings.rs` test module add:
 
@@ -90,12 +90,12 @@ In `src-tauri/src/settings.rs` test module add:
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd src-tauri && cargo test settings`
 Expected: FAIL — `no field 'performance' on Settings` / no method `resolve_max_concurrent_from`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src-tauri/src/settings.rs`, add after `DocumentQualityFloor` (line ~85):
 
@@ -152,12 +152,12 @@ impl Settings {
 
 Executor: if the cores math reads awkward, make it exact — `let half = (cores.max(1) / 2).max(1); auto = half.clamp(1, 4)` — truth table above is canonical (3→1: floor(3/2)=1; 4→2; 8→4; 16→4).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd src-tauri && cargo test settings`
 Expected: PASS (new + all existing settings tests).
 
-- [ ] **Step 5: Run gate + commit**
+- [x] **Step 5: Run gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: pass.
@@ -193,7 +193,7 @@ git commit -m "feat(settings): performance.maxConcurrent with auto core-based re
 - `reserved_registry_disk_collision_still_suffixes` — on-disk `photo.jpg` + fresh registry → `photo-1.jpg` (fs check still applies)
 - existing 7 output.rs tests stay green untouched
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `src-tauri/src/output.rs` test module add:
 
@@ -230,12 +230,12 @@ In `src-tauri/src/output.rs` test module add:
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd src-tauri && cargo test reserved_registry`
 Expected: FAIL — `ReservedNames` not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src-tauri/src/output.rs`, add above `resolve_output_path`:
 
@@ -357,12 +357,12 @@ pub(crate) fn resolve_output_path(output_folder: &str, filename: &str) -> PathBu
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd src-tauri && cargo test output`
 Expected: PASS (3 new + existing 7).
 
-- [ ] **Step 5: Run gate + commit**
+- [x] **Step 5: Run gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: pass.
@@ -403,7 +403,7 @@ git commit -m "feat(output): reserved-name registry for parallel-safe collision 
 - `stop_hook_skips_remaining_and_sums_completed` — stop flips after first completion → remaining skipped via on_skipped, return == first job's output only
 - `drains_to_empty_and_returns_sum` — 4 jobs, N=2 → returns sum of all outputs, all lanes empty
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src-tauri/src/scheduler.rs` (tests first, at the bottom):
 
@@ -579,12 +579,12 @@ Executor notes on the test harness:
 - If `job_future`'s gate await makes tests hang, replace the gate with a fixed number of `yield_now().await` calls (deterministic interleave is what the probes measure; the gate exists only to hold jobs open across dispatch windows).
 - Adapt the closure plumbing (`gate2`/`probe2` clones) freely — the ASSERTIONS are canonical, not the harness shape.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd src-tauri && cargo test scheduler`
 Expected: FAIL — `run_weighted_lanes` not found.
 
-- [ ] **Step 3: Implement the core**
+- [x] **Step 3: Implement the core**
 
 ```rust
 // File Size Optimizer — offline batch file compression
@@ -678,12 +678,12 @@ where
 
 Also declare `mod scheduler;` in the crate root module list (wherever `mod queue;` lives — `src-tauri/src/lib.rs`).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd src-tauri && cargo test scheduler`
 Expected: PASS (all 6).
 
-- [ ] **Step 5: Run gate + commit**
+- [x] **Step 5: Run gate + commit**
 
 Run: `cd src-tauri && cargo test`
 Expected: pass.
@@ -724,7 +724,7 @@ git commit -m "feat(scheduler): generic weighted-lane dispatch core"
 - `parallel_same_name_outputs_get_suffixes_end_to_end` — two zero-media `report.docx` (different source dirs), N=2 → outputs `{report.docx, report-1.docx}` as a set, both rows complete
 - existing queue tests stay green (preflight, decide_result_status, output_file_name, empty-batch)
 
-- [ ] **Step 1: Extract `process_single_job`**
+- [x] **Step 1: Extract `process_single_job`**
 
 Move the per-file block (`queue.rs:210-390` — everything inside the `for file_id in file_ids` loop) into:
 
@@ -754,7 +754,7 @@ Move the per-file block (`queue.rs:210-390` — everything inside the `for file_
 
 Every `continue` in the moved body becomes `return total_saved;`. The Unsupported early-exit (`queue.rs:255-279`) returns 0. Cancelled-error and error arms return the saved accumulated so far (0).
 
-- [ ] **Step 2: Split `process_batch`**
+- [x] **Step 2: Split `process_batch`**
 
 `process_batch` keeps preflight (`queue.rs:196-206`) then:
 
@@ -894,7 +894,7 @@ Lane path body:
         Self::finish_batch(app, &batch_id, total_saved);
 ```
 
-- [ ] **Step 3: Write the integration tests**
+- [x] **Step 3: Write the integration tests**
 
 Harness = the existing MockRuntime pattern from `queue.rs:646-744` (mock_context with
 `app_directories_override` Root, store plugin, `manage(FileListState)`,
@@ -1192,12 +1192,12 @@ Executor notes:
 - If `zip::write::SimpleFileOptions` is named differently in the pinned zip version
   (Slice 7 Task 1 pinned the real one), match `document.rs`'s existing fixture code.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd src-tauri && cargo test`
 Expected: PASS (new 6 + all existing).
 
-- [ ] **Step 5: Run gate + commit**
+- [x] **Step 5: Run gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: pass.

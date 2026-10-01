@@ -86,6 +86,20 @@ impl DocumentQualityFloor {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Performance {
+    pub max_concurrent: String,
+}
+
+impl Default for Performance {
+    fn default() -> Self {
+        Performance {
+            max_concurrent: "auto".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct QualityFloors {
     #[serde(default = "ImageQualityFloor::spec_default")]
     pub image: ImageQualityFloor,
@@ -117,6 +131,8 @@ pub struct Settings {
     pub category_targets: std::collections::HashMap<String, CategoryTarget>,
     #[serde(default)]
     pub quality_floors: QualityFloors,
+    #[serde(default)]
+    pub performance: Performance,
 }
 
 fn default_category_targets() -> std::collections::HashMap<String, CategoryTarget> {
@@ -158,6 +174,7 @@ impl Default for Settings {
             output_folder: default_output_folder(),
             category_targets: default_category_targets(),
             quality_floors: QualityFloors::default(),
+            performance: Performance::default(),
         }
     }
 }
@@ -180,6 +197,31 @@ impl Settings {
                 target.size.saturating_mul(multiplier)
             }
             None => 0,
+        }
+    }
+
+    pub fn resolve_max_concurrent(&self) -> u32 {
+        let cores = match std::thread::available_parallelism() {
+            Ok(n) => n.get() as u32,
+            Err(e) => {
+                eprintln!("warn: available_parallelism() failed, assuming 1 core: {e}");
+                1
+            }
+        };
+        self.resolve_max_concurrent_from(cores)
+    }
+
+    pub fn resolve_max_concurrent_from(&self, cores: u32) -> u32 {
+        let auto = (cores.max(1) / 2).clamp(1, 4);
+        match self.performance.max_concurrent.as_str() {
+            "1" => 1,
+            "2" => 2,
+            "3" => 3,
+            "auto" => auto,
+            raw => {
+                eprintln!("warn: invalid performance.maxConcurrent {raw:?}, using 1");
+                1
+            }
         }
     }
 }
@@ -297,6 +339,62 @@ mod tests {
         assert_eq!(parsed.output_folder, "/tmp/out");
         assert_eq!(parsed.category_targets.get("image").unwrap().size, 200);
         assert_eq!(parsed.quality_floors.pdf.min_dpi, 72);
+    }
+
+    #[test]
+    fn performance_defaults_to_auto() {
+        let s = Settings::default();
+        assert_eq!(s.performance.max_concurrent, "auto");
+    }
+
+    #[test]
+    fn resolve_max_concurrent_auto_clamps_cores() {
+        let s = Settings::default();
+        assert_eq!(s.resolve_max_concurrent_from(1), 1);
+        assert_eq!(s.resolve_max_concurrent_from(2), 1);
+        assert_eq!(s.resolve_max_concurrent_from(3), 1);
+        assert_eq!(s.resolve_max_concurrent_from(4), 2);
+        assert_eq!(s.resolve_max_concurrent_from(8), 4);
+        assert_eq!(s.resolve_max_concurrent_from(16), 4);
+        assert_eq!(s.resolve_max_concurrent_from(0), 1);
+    }
+
+    #[test]
+    fn resolve_max_concurrent_manual_verbatim() {
+        let mut s = Settings::default();
+        for (raw, want) in [("1", 1), ("2", 2), ("3", 3), ("5", 1), ("", 1)] {
+            s.performance.max_concurrent = raw.to_string();
+            assert_eq!(s.resolve_max_concurrent_from(16), want, "raw={raw}");
+        }
+        for (raw, want) in [("1", 1), ("2", 2), ("3", 3)] {
+            s.performance.max_concurrent = raw.to_string();
+            assert_eq!(s.resolve_max_concurrent_from(1), want, "raw={raw}");
+        }
+    }
+
+    #[test]
+    fn performance_serde_roundtrip_camel_case() {
+        let value = serde_json::to_value(Settings::default()).unwrap();
+        let perf = value.get("performance").unwrap();
+        assert!(perf.get("maxConcurrent").is_some());
+        let roundtripped: Settings = serde_json::from_value(value).unwrap();
+        assert_eq!(Settings::default(), roundtripped);
+    }
+
+    #[test]
+    fn parse_settings_value_missing_performance_fills_default() {
+        let partial = serde_json::json!({ "outputFolder": "/tmp/out" });
+        let parsed = parse_settings_value(Some(partial));
+        assert_eq!(parsed.performance.max_concurrent, "auto");
+    }
+
+    #[test]
+    fn parse_settings_value_corrupt_performance_fills_default() {
+        let corrupt = serde_json::json!({
+            "outputFolder": "/x",
+            "performance": {}
+        });
+        assert_eq!(parse_settings_value(Some(corrupt)), Settings::default());
     }
 
     #[test]

@@ -36,10 +36,20 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb"
+import { Separator } from "@/components/ui/separator"
 import { CompressView } from "@/views/CompressView"
 import { HistoryView } from "@/views/HistoryView"
 import { SettingsView } from "@/views/SettingsView"
 import { Toaster } from "@/components/ui/sonner"
+import { CompressionProvider } from "@/providers/CompressionProvider"
 
 type ViewId = "compress" | "history" | "settings"
 
@@ -65,8 +75,9 @@ function App() {
   const [activeView, setActiveView] = useState<ViewId>("compress")
 
   return (
-    <SidebarProvider>
-      <Sidebar collapsible="icon" variant="floating">
+    <CompressionProvider>
+      <SidebarProvider>
+      <Sidebar collapsible="icon">
         <SidebarHeader>
           <SidebarMenu>
             <SidebarMenuItem>
@@ -119,17 +130,35 @@ function App() {
         <SidebarRail />
       </Sidebar>
       <SidebarInset>
-        <header className="flex h-12 items-center gap-2 border-b border-border px-4">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
           <SidebarTrigger />
+          <Separator
+            orientation="vertical"
+            className="mr-2 data-[orientation=vertical]:h-4"
+          />
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbLink href="#">Optimizer</BreadcrumbLink>
+              </BreadcrumbItem>
+              <BreadcrumbSeparator />
+              <BreadcrumbItem>
+                <BreadcrumbPage>
+                  {navItems.find((item) => item.id === activeView)?.label}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
         </header>
-        <div className="flex flex-1 flex-col">
+        <div data-testid="view-container" className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {activeView === "compress" && <CompressView />}
           {activeView === "history" && <HistoryView />}
           {activeView === "settings" && <SettingsView />}
         </div>
       </SidebarInset>
       <Toaster />
-    </SidebarProvider>
+      </SidebarProvider>
+    </CompressionProvider>
   )
 }
 
