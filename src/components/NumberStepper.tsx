@@ -22,7 +22,7 @@ interface NumberStepperProps {
   value: number
   onValueChange: (value: number) => void
   min: number
-  max: number
+  max?: number
   ariaLabel: string
   id?: string
   className?: string
@@ -47,12 +47,12 @@ export function NumberStepper({
       min={min}
       max={max}
       step={1}
-      className={cn('w-24', className)}
+      className={cn('w-32', className)}
     >
-      <NumberField.Group className="flex h-9 items-center rounded-md border border-input bg-background/50 shadow-xs outline-none transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
+      <NumberField.Group className="flex h-9 items-center overflow-hidden rounded-md border border-input bg-background/50 shadow-xs outline-none transition-[color,box-shadow] focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/50">
         <NumberField.Decrement
           aria-label={`Decrease ${ariaLabel}`}
-          className="flex size-9 shrink-0 items-center justify-center rounded-l-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+          className="flex h-full w-8 shrink-0 items-center justify-center rounded-l-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
         >
           <RiSubtractLine data-icon="inline-start" />
         </NumberField.Decrement>
@@ -63,7 +63,7 @@ export function NumberStepper({
         />
         <NumberField.Increment
           aria-label={`Increase ${ariaLabel}`}
-          className="flex size-9 shrink-0 items-center justify-center rounded-r-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+          className="flex h-full w-8 shrink-0 items-center justify-center rounded-r-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
         >
           <RiAddLine data-icon="inline-start" />
         </NumberField.Increment>

@@ -293,6 +293,18 @@ describe('SettingsView', () => {
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
   })
 
+  it('target size stepper has no upper cap (no 4096 ceiling)', async () => {
+    vi.mocked(invoke).mockResolvedValue(structuredClone({
+      ...baseSettings,
+      categoryTargets: { ...baseSettings.categoryTargets, image: { size: 4096, unit: 'KB' } },
+    }))
+    await loadView()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Increase Images target size' }))
+    expect(screen.getByLabelText('Images target size')).toHaveDisplayValue('4,097')
+    expect(screen.getByRole('button', { name: 'Increase Images target size' })).toBeEnabled()
+  })
+
   it('no native number inputs or select elements remain', async () => {
     const { container } = render(<SettingsView />)
     await screen.findByLabelText('Images target size')

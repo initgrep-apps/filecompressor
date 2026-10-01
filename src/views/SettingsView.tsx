@@ -208,9 +208,8 @@ export function SettingsView() {
                           value={target.size}
                           onValueChange={(n) => updateTarget(cat.key, 'size', n)}
                           min={0}
-                          max={4096}
                           ariaLabel={`${cat.label} target size`}
-                          className="w-20"
+                          className="w-32"
                         />
                         <Select
                           value={target.unit}
@@ -293,7 +292,7 @@ export function SettingsView() {
                           min={0}
                           max={100}
                           ariaLabel="Images minimum quality"
-                          className="w-20"
+                          className="w-32"
                         />
                         <span className="w-4 text-xs text-muted-foreground">%</span>
                       </div>
@@ -312,7 +311,7 @@ export function SettingsView() {
                         min={0}
                         max={51}
                         ariaLabel="Videos minimum CRF"
-                        className="w-20"
+                        className="w-32"
                       />
                     </div>
                     <FieldDescription>Higher CRF = lower quality floor.</FieldDescription>
@@ -351,7 +350,7 @@ export function SettingsView() {
                           min={0}
                           max={600}
                           ariaLabel="PDF minimum DPI"
-                          className="w-20"
+                          className="w-32"
                         />
                         <span className="w-6 text-xs text-muted-foreground">dpi</span>
                       </div>
@@ -370,7 +369,7 @@ export function SettingsView() {
                           min={0}
                           max={100}
                           ariaLabel="PDF minimum JPEG quality"
-                          className="w-20"
+                          className="w-32"
                         />
                         <span className="w-4 text-xs text-muted-foreground">%</span>
                       </div>
@@ -389,7 +388,7 @@ export function SettingsView() {
                           min={0}
                           max={100}
                           ariaLabel="Documents media quality"
-                          className="w-20"
+                          className="w-32"
                         />
                         <span className="w-4 text-xs text-muted-foreground">%</span>
                       </div>

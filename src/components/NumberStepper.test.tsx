@@ -6,7 +6,7 @@ import { NumberStepper } from '@/components/NumberStepper'
 
 const LABEL = 'Images minimum quality'
 
-function Harness({ min, max, initial }: { min: number; max: number; initial: number }) {
+function Harness({ min, max, initial }: { min: number; max?: number; initial: number }) {
   const [value, setValue] = useState(initial)
   return (
     <NumberStepper
@@ -110,5 +110,37 @@ describe('NumberStepper', () => {
     await user.keyboard('{Enter}')
     await user.keyboard(' ')
     expect(input()).toHaveDisplayValue('30')
+  })
+
+  it('reserves enough width for the value: buttons are w-8 and root is at least w-32', () => {
+    const { container } = render(<Harness min={0} max={4096} initial={4096} />)
+    const root = container.firstElementChild as HTMLElement
+    const group = container.querySelector('[role="group"]') as HTMLElement
+    const buttons = container.querySelectorAll('button')
+
+    expect(root.className).toContain('w-32')
+    expect(buttons).toHaveLength(2)
+    for (const button of buttons) {
+      expect(button.className).toContain('w-8')
+      expect(button.className).not.toContain('size-9')
+    }
+    expect(group.className).toContain('overflow-hidden')
+  })
+
+  it('increments without an upper bound when max is omitted', async () => {
+    const user = userEvent.setup()
+    render(<Harness min={0} initial={4096} />)
+    await user.click(increase())
+    expect(input()).toHaveDisplayValue('4,097')
+    expect(increase()).toBeEnabled()
+  })
+
+  it('does not clamp typed values above the old 4096 ceiling when uncapped', async () => {
+    const user = userEvent.setup()
+    render(<Harness min={0} initial={10} />)
+    await user.clear(input())
+    await user.type(input(), '99999')
+    await user.tab()
+    expect(input()).toHaveDisplayValue('99,999')
   })
 })
