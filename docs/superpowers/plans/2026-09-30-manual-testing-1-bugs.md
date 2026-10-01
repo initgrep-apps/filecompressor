@@ -1524,9 +1524,9 @@ git commit -m "feat(ui): settings cards, field rows, NumberStepper and Select co
 - `drop zone is pinned outside the file-list card` — structural (DropZone NOT inside the list Card)
 - `compress button shows spinner while compressing` — busy state visible (spec §4 — spinner, Compress button busy state); asserts NO spinner before click, exact `[data-slot="spinner"]` marker while compressing, and spinner gone after `batch:complete`
 - `compress button exposes aria-busy while compressing` — busy state announced (spec §4 — spinner, Compress button busy state; aria-busy is a plan-added a11y enhancement — spec §4 pins Button + Spinner + disabled only)
-- `renders empty state when no files` — `Empty` composition visible (no files yet)
+- `renders empty state when no files and clears it after adding files` — `Empty` composition visible without files, cleared after a file is added
 
-- [ ] **Step 1: Rewrite CompressView**
+- [x] **Step 1: Rewrite CompressView**
 
 Full replacement body (GPL header stays; keep `formatSavedBytes` removed in Task 2 —
 do not re-add it here):
@@ -1565,27 +1565,26 @@ export function CompressView() {
     browseFiles,
   } = useCompressionContext()
 
-  const pendingCount = files.filter((f) => f.status === 'pending').length
-  const doneCount = files.filter(
-    (f) => f.status === 'done' || f.status === 'already_under_target'
-  ).length
+  const statusCount = (status: FileStatus) => files.filter((f) => f.status === status).length
+  const pendingCount = statusCount('pending')
+  const doneCount = statusCount('done') + statusCount('already_under_target')
   const canCompress = pendingCount > 0 && !isCompressing
   const hasFiles = files.length > 0
 
-  const statusCount = (status: FileStatus) => files.filter((f) => f.status === status).length
+  const compressingCount = statusCount('compressing')
+  const bestEffortCount = statusCount('best_effort')
+  const unsupportedCount = statusCount('unsupported')
+  const failedCount = statusCount('failed')
+  const cancelledCount = statusCount('cancelled')
 
   const summarySegments: string[] = [`${files.length} files`]
   if (doneCount > 0) summarySegments.push(`${doneCount} done`)
-  if (statusCount('compressing') > 0)
-    summarySegments.push(`${statusCount('compressing')} compressing`)
+  if (compressingCount > 0) summarySegments.push(`${compressingCount} compressing`)
   if (pendingCount > 0) summarySegments.push(`${pendingCount} pending`)
-  if (statusCount('best_effort') > 0)
-    summarySegments.push(`${statusCount('best_effort')} warning`)
-  if (statusCount('unsupported') > 0)
-    summarySegments.push(`${statusCount('unsupported')} skipped`)
-  if (statusCount('failed') > 0) summarySegments.push(`${statusCount('failed')} failed`)
-  if (statusCount('cancelled') > 0)
-    summarySegments.push(`${statusCount('cancelled')} cancelled`)
+  if (bestEffortCount > 0) summarySegments.push(`${bestEffortCount} warning`)
+  if (unsupportedCount > 0) summarySegments.push(`${unsupportedCount} skipped`)
+  if (failedCount > 0) summarySegments.push(`${failedCount} failed`)
+  if (cancelledCount > 0) summarySegments.push(`${cancelledCount} cancelled`)
   const summaryText = summarySegments.join(' · ')
 
   return (
@@ -1668,7 +1667,7 @@ export function CompressView() {
 Executor checks the installed `spinner.tsx`/`scroll-area.tsx`/`empty.tsx` exports
 (Task 1 files) and adapts subcomponent names if the base-style exports differ.
 
-- [ ] **Step 2: Port the view tests**
+- [x] **Step 2: Port the view tests**
 
 In `src/views/CompressView.test.tsx` (already provider-wrapped since Task 2):
 - Update the click target used by `addFilesInView` — DropZone markup changes in Task 7;
@@ -1683,25 +1682,31 @@ In `src/views/CompressView.test.tsx` (already provider-wrapped since Task 2):
   it('summary footer sits outside the scroll container', async () => {
     renderView()
     await addFileInView()
-    const card = screen.getByTestId('batch-summary').closest('[data-slot="card"]')!
-    const scrollArea = card.querySelector('[data-slot="scroll-area"]')!
-    const summary = card.querySelector('[data-testid="batch-summary"]')!
-    expect(card.contains(scrollArea)).toBe(true)
-    expect(scrollArea.contains(summary)).toBe(false)
+    const card = screen.getByTestId('batch-summary').closest('[data-slot="card"]')
+    if (!card) throw new Error('batch summary not inside a card')
+    const scrollArea = card.querySelector('[data-slot="scroll-area"]')
+    if (!scrollArea) throw new Error('file-list card has no scroll area')
+
+    expect(scrollArea.contains(screen.getByRole('table'))).toBe(true)
+    expect(scrollArea.contains(screen.getByTestId('batch-summary'))).toBe(false)
+    expect(scrollArea.contains(screen.getByRole('button', { name: 'Compress' }))).toBe(false)
+    expect(scrollArea.contains(screen.getByRole('button', { name: 'Clear List' }))).toBe(false)
   })
 
   it('drop zone is pinned outside the file-list card', async () => {
     renderView()
     await addFileInView()
     const listCard = screen.getByTestId('batch-summary').closest('[data-slot="card"]')
+    if (!listCard) throw new Error('batch summary not inside a card')
     const dropzone = screen.getByRole('button', { name: /drop files/i })
-    expect(listCard!.contains(dropzone)).toBe(false)
+    expect(listCard.contains(dropzone)).toBe(false)
   })
 
-  it('renders empty state when no files', () => {
+  it('renders empty state when no files and clears it after adding files', async () => {
     renderView()
-    const emptyCard = screen.getByText('No files yet').closest('[data-slot="card"]')
-    expect(emptyCard).not.toBeNull()
+    expect(screen.getByText('No files yet').closest('[data-slot="empty"]')).not.toBeNull()
+    await addFileInView()
+    expect(screen.queryByText('No files yet')).not.toBeInTheDocument()
   })
 
   it('compress button shows spinner while compressing', async () => {
@@ -1734,16 +1739,16 @@ In `src/views/CompressView.test.tsx` (already provider-wrapped since Task 2):
   })
 ```
 
-(Use the real `data-slot` names recorded in Task 1 Step 2 if they differ. The
-`expect(...)!.` non-null form keeps strict `tsc` happy — `querySelector`/`closest`
-return `Element | null`.)
+(Use the real `data-slot` names recorded in Task 1 Step 2 if they differ. Explicit
+`if (!x) throw` guards give strict `tsc` narrowing with an actionable message —
+`querySelector`/`closest` return `Element | null`.)
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `yarn test src/views/CompressView.test.tsx src/components/FileList.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 4: Run gate + commit**
+- [x] **Step 4: Run gate + commit**
 
 Run: `yarn build && yarn test`
 Expected: pass.
@@ -2024,7 +2029,7 @@ Expected: all pass.
 | Footer pinned on Settings (4a) | `settings footer is sibling of the scroll region (pinned, 4a)` (SettingsView.test.tsx) |
 | Only table scrolls on Compress (4c) | `summary footer sits outside the scroll container` + `drop zone is pinned outside the file-list card` (CompressView.test.tsx) |
 | Compress busy state | `compress button shows spinner while compressing` (no spinner → spinner → gone) + `compress button exposes aria-busy while compressing` |
-| Empty states | `renders empty state when no files` + `renders history empty state` |
+| Empty states | `renders empty state when no files and clears it after adding files` + `renders history empty state` |
 | Drop zone split panel + single-fire (4b) | 4 double-fire tests (DropZone.test.tsx) + all 8 existing scenarios |
 | Breadcrumb functional (all 3 views, collapse-safe) | `breadcrumb reflects the active view and updates on navigation` + `breadcrumb stays correct while the sidebar is collapsed to icon` (App.test.tsx) |
 | Sidebar flush | `sidebar is flush (no floating variant)` (App.test.tsx) |
