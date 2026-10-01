@@ -26,6 +26,24 @@ describe('FileList', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
+  it('table header is sticky at the top of the scroll region', () => {
+    const { container } = render(<FileList files={[entry()]} onRemove={vi.fn()} />)
+    const scrollRegion = container.querySelector('[data-slot="file-list-scroll"]')
+    const tableContainer = container.querySelector('[data-slot="table-container"]')
+    const header = container.querySelector('[data-slot="table-header"]')
+    if (!scrollRegion || !tableContainer || !header) {
+      throw new Error('file list is missing its scroll region or table header')
+    }
+
+    expect(scrollRegion.className).toContain('overflow-y-auto')
+    expect(scrollRegion.className).toContain('[&>[data-slot=table-container]]:overflow-visible')
+    expect(scrollRegion.className).not.toContain('border')
+    expect(scrollRegion.className).not.toContain('rounded')
+    expect(header.className).toContain('sticky')
+    expect(header.className).toContain('top-0')
+    expect(scrollRegion.contains(header)).toBe(true)
+  })
+
   it('shows name, size, category badge, target, status', () => {
     render(
       <FileList

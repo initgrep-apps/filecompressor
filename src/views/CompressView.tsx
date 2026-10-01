@@ -20,7 +20,6 @@ import { FileList } from '@/components/FileList'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Card, CardContent, CardFooter } from '@/components/ui/card'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Empty,
   EmptyDescription,
@@ -84,19 +83,17 @@ export function CompressView() {
 
       {hasFiles ? (
         <Card className="flex min-h-0 flex-1 flex-col">
-          <CardContent className="min-h-0 flex-1 p-0">
-            <ScrollArea className="h-full">
-              <FileList
-                files={files}
-                onRemove={removeFile}
-                progress={progressByFile}
-                onReveal={revealInFolder}
-                onCancel={cancelFile}
-                removeDisabled={isCompressing}
-              />
-            </ScrollArea>
+          <CardContent className="min-h-0 flex-1">
+            <FileList
+              files={files}
+              onRemove={removeFile}
+              progress={progressByFile}
+              onReveal={revealInFolder}
+              onCancel={cancelFile}
+              removeDisabled={isCompressing}
+            />
           </CardContent>
-          <CardFooter className="justify-between gap-2 border-t px-4">
+          <CardFooter className="justify-between gap-2 border-t">
             <div
               data-testid="batch-summary"
               className="text-xs text-muted-foreground tabular-nums"

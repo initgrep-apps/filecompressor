@@ -107,9 +107,12 @@ export function FileList({ files, onRemove, progress, onReveal, onCancel, remove
   if (files.length === 0) return null
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden bg-background/50">
+    <div
+      data-slot="file-list-scroll"
+      className="h-full overflow-y-auto bg-card [&>[data-slot=table-container]]:overflow-visible"
+    >
       <Table>
-        <TableHeader>
+        <TableHeader className="sticky top-0 z-10 bg-card">
           <TableRow>
             <TableHead className="w-[40%]">File</TableHead>
             <TableHead>Category</TableHead>

@@ -298,13 +298,13 @@ describe('CompressView', () => {
     await addFileInView()
     const card = screen.getByTestId('batch-summary').closest('[data-slot="card"]')
     if (!card) throw new Error('batch summary not inside a card')
-    const scrollArea = card.querySelector('[data-slot="scroll-area"]')
-    if (!scrollArea) throw new Error('file-list card has no scroll area')
+    const scrollRegion = card.querySelector('[data-slot="file-list-scroll"]')
+    if (!scrollRegion) throw new Error('file-list card has no scroll region')
 
-    expect(scrollArea.contains(screen.getByRole('table'))).toBe(true)
-    expect(scrollArea.contains(screen.getByTestId('batch-summary'))).toBe(false)
-    expect(scrollArea.contains(screen.getByRole('button', { name: 'Compress' }))).toBe(false)
-    expect(scrollArea.contains(screen.getByRole('button', { name: 'Clear List' }))).toBe(false)
+    expect(scrollRegion.contains(screen.getByRole('table'))).toBe(true)
+    expect(scrollRegion.contains(screen.getByTestId('batch-summary'))).toBe(false)
+    expect(scrollRegion.contains(screen.getByRole('button', { name: 'Compress' }))).toBe(false)
+    expect(scrollRegion.contains(screen.getByRole('button', { name: 'Clear List' }))).toBe(false)
   })
 
   it('drop zone is pinned outside the file-list card', async () => {
@@ -314,6 +314,18 @@ describe('CompressView', () => {
     if (!listCard) throw new Error('batch summary not inside a card')
     const dropzone = screen.getByRole('button', { name: /drop files/i })
     expect(listCard.contains(dropzone)).toBe(false)
+  })
+
+  it('file-list panel is inset inside the card, not full-bleed', async () => {
+    renderView()
+    await addFileInView()
+    const card = screen.getByTestId('batch-summary').closest('[data-slot="card"]')
+    if (!card) throw new Error('batch summary not inside a card')
+    const content = card.querySelector('[data-slot="card-content"]')
+    if (!content) throw new Error('file-list card has no content wrapper')
+
+    expect(content.className).toContain('px-(--card-spacing)')
+    expect(content.className).not.toContain('p-0')
   })
 
   it('renders empty state when no files and clears it after adding files', async () => {
