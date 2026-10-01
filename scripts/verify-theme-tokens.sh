@@ -16,7 +16,7 @@ for tok in $tokens; do
   grep -q -- "--$tok:" "$CSS" || fail "missing --$tok"
 done
 
-grep -q -- "--radius: 0.45rem" "$CSS" || fail "missing --radius"
+grep -q -- "--radius: 0.35rem" "$CSS" || fail "missing --radius"
 
 grep -q -- "--primary: oklch(0.527 0.154 150.069)" "$CSS" || fail "light --primary wrong"
 grep -q -- "--primary: oklch(0.448 0.119 151.328)" "$CSS" || fail "dark --primary wrong"

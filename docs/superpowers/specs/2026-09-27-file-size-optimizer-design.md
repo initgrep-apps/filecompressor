@@ -120,7 +120,7 @@ Green primary palette. Key tokens:
 **Light mode:**
 - `--primary: oklch(0.527 0.154 150.069)` — green
 - `--background: oklch(1 0 0)` — white
-- `--radius: 0.45rem`
+- `--radius: 0.35rem`
 
 **Dark mode:**
 - `--primary: oklch(0.448 0.119 151.328)` — green
@@ -271,7 +271,7 @@ Settings is a **view inside the sidebar layout**, not a separate window.
 
 Desktop-tuned shadcn configuration:
 - Font: Inter
-- Border radius: 0.45rem
+- Border radius: 0.35rem
 - Tabular-nums for all size figures
 - Hover-reveal actions on table rows (reduce visual noise)
 - System preference for light/dark mode
