@@ -558,7 +558,7 @@ git commit -m "fix(state): lift file list + compression state into app-level pro
 **Acceptance Criteria:**
 - Sidebar flush: `[data-slot="sidebar"]` has no `floating` variant (`data-variant` absent or ≠ floating); `collapsible="icon"` retained
 - Breadcrumb functional: header shows `Optimizer` root + current view page label; updates on every sidebar navigation; correct for all three views (Compress/History/Settings)
-- Content wrapper height-constrains views (`min-h-0 overflow-hidden`) so view-internal scroll regions engage
+- Content wrapper height-constrains views (`min-h-0 overflow-hidden`) so view-internal scroll regions engage (Task 8 smoke found this chain only binds under the `SidebarProvider` `h-svh overflow-hidden` cap added in Task 8 — regression test `shell wrapper caps the viewport height (4a/4c: h-svh + overflow-hidden)`)
 - Per-view h1 headings ("Compress Files", "Settings") removed in Task 5/6 rewrites — asserted at App level in Task 8 (`per-view headings are removed from the main region`)
 - All Required Tests pass
 - Gate passes clean: `yarn build && yarn test`
@@ -1991,6 +1991,7 @@ git commit -m "feat(ui): split-panel drop zone with browse button and format hin
 **Files:**
 - Modify: `src/views/HistoryView.tsx`
 - Modify: `src/App.test.tsx` (Step 1c heading-removal test)
+- Create: `src/views/HistoryView.test.tsx` (Step 1b empty-state test)
 - Create: `docs/superpowers/plans/2026-09-30-manual-testing-1-acceptance-table.md` (only if any criterion can't be proven by a named test — otherwise the table in Task 8 Step 3 suffices)
 
 **Interfaces:**
@@ -2001,16 +2002,16 @@ git commit -m "feat(ui): split-panel drop zone with browse button and format hin
 - History renders one empty-state Card with `Empty` composition ("No history yet")
 - Every plan-level criterion maps to a NAMED passing test (table below) — no hand-waved ✅
 - Rust untouched: `cargo test` stays green (dedup contract still guarded by `test_add_files_deduplicates_exact_canonical`, `commands.rs:317`)
-- Full manual smoke performed (Step 4)
+- Manual smoke performed to the extent possible in this environment (Step 4): viewport checks + mid-compression navigation in headless Chromium over CDP (Tauri IPC mocked); `yarn tauri dev` run deferred (no GUI session)
 - All Required Tests pass
 - Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
 
 **Required Tests:**
-- `renders history empty state` — 'No history yet' text + one Card (new, Step 1b)
+- `renders history empty state` — 'No history yet' inside `[data-slot="empty"]` + one Card (container-scoped) (new, Step 1b)
 - `per-view headings are removed from the main region` — App-level h1 removal assertion appended in Step 1c
 - Acceptance matrix below (every row = a named test that exists by Task 8)
 
-- [ ] **Step 1: Rewrite HistoryView**
+- [x] **Step 1: Rewrite HistoryView**
 
 ```tsx
 import { Card, CardContent } from '@/components/ui/card'
@@ -2026,9 +2027,9 @@ import { RiHistoryLine } from '@remixicon/react'
 export function HistoryView() {
   return (
     <div className="flex min-h-0 flex-1 flex-col p-6">
-      <Card className="flex flex-1 flex-col justify-center">
-        <CardContent>
-          <Empty className="border-0">
+      <Card className="flex min-h-0 flex-1 flex-col">
+        <CardContent className="flex flex-1 flex-col items-center justify-center overflow-y-auto">
+          <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
                 <RiHistoryLine />
@@ -2048,9 +2049,9 @@ export function HistoryView() {
 
 Executor adapts `Empty` subcomponent names to the installed `empty.tsx`.
 
-- [ ] **Step 1b: Add HistoryView test**
+- [x] **Step 1b: Add HistoryView test**
 
-Create `src/views/HistoryView.test.tsx`:
+Create `src/views/HistoryView.test.tsx` (GPL header block from `src/views/CompressView.tsx:1-15`, blank line after):
 
 ```tsx
 import { describe, it, expect } from 'vitest'
@@ -2059,14 +2060,14 @@ import { HistoryView } from '@/views/HistoryView'
 
 describe('HistoryView', () => {
   it('renders history empty state', () => {
-    render(<HistoryView />)
-    expect(screen.getByText('No history yet')).toBeInTheDocument()
-    expect(document.querySelectorAll('[data-slot="card"]')).toHaveLength(1)
+    const { container } = render(<HistoryView />)
+    expect(screen.getByText('No history yet').closest('[data-slot="empty"]')).not.toBeNull()
+    expect(container.querySelectorAll('[data-slot="card"]')).toHaveLength(1)
   })
 })
 ```
 
-- [ ] **Step 1c: Add App-level heading-removal test**
+- [x] **Step 1c: Add App-level heading-removal test**
 
 Both view rewrites (Tasks 5/6) are done by now. Append to `src/App.test.tsx`:
 
@@ -2082,15 +2083,19 @@ Both view rewrites (Tasks 5/6) are done by now. Append to `src/App.test.tsx`:
     expect(
       within(main).queryByRole('heading', { name: 'Settings' })
     ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'History' }))
+    expect(
+      within(main).queryByRole('heading', { name: 'History' })
+    ).not.toBeInTheDocument()
   })
 ```
 
-- [ ] **Step 2: Run gate**
+- [x] **Step 2: Run gate**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: all pass.
 
-- [ ] **Step 3: Acceptance check (all proven by named tests — no hand-waved ✅)**
+- [x] **Step 3: Acceptance check (all proven by named tests — no hand-waved ✅)**
 
 | Criterion (spec §) | Proving test (exact name, exists by this task) |
 |---|---|
@@ -2101,25 +2106,42 @@ Expected: all pass.
 | Context guard | `useCompressionContext throws outside provider` |
 | Provider toast callbacks | `provider fires batch toasts for complete and error batches` + `provider surfaces listener registration failure as batch error toast` (CompressionProvider.test.tsx) |
 | Stepper ±1, clamp, typing, keys, Enter/Space, null-guard | 7 NumberStepper.test.tsx tests |
-| Settings save/cancel/reset flows | existing `SettingsView.test.tsx` scenarios (migrated per Task 5 Step 2) |
+| Settings save/cancel/reset flows | `save calls saveSettings with current draft`, `cancel reverts draft to last saved settings`, `reset to defaults replaces draft and disables save` (SettingsView.test.tsx) |
 | Footer pinned on Settings (4a) | `settings footer is sibling of the scroll region (pinned, 4a)` (SettingsView.test.tsx) |
 | Only table scrolls on Compress (4c) | `summary footer sits outside the scroll container` + `drop zone is pinned outside the file-list card` (CompressView.test.tsx) |
 | Compress busy state | `compress button shows spinner while compressing` (no spinner → spinner → gone) + `compress button exposes aria-busy while compressing` |
-| Empty states | `renders empty state when no files and clears it after adding files` + `renders history empty state` |
+| Empty states | `renders empty state when no files and clears it after adding files` + `renders history empty state` (pins `[data-slot="empty"]` composition, container-scoped card count) |
 | Drop zone split panel + single-fire (4b) | 6 added tests (DropZone.test.tsx: 14 total = 8 existing + 6) |
 | Breadcrumb functional (all 3 views, collapse-safe) | `breadcrumb reflects the active view and updates on navigation` + `breadcrumb stays correct while the sidebar is collapsed to icon` (App.test.tsx) |
 | Sidebar flush | `sidebar is flush (no floating variant)` (App.test.tsx) |
-| Height containment (4a/4c root) | `content wrapper constrains view height (min-h-0 chain)` (App.test.tsx) |
-| Per-view headings removed | `per-view headings are removed from the main region` (App.test.tsx) |
+| Height containment (4a/4c root) | `content wrapper constrains view height (min-h-0 chain)` + `shell wrapper caps the viewport height (4a/4c: h-svh + overflow-hidden)` (App.test.tsx) |
+| Per-view headings removed | `per-view headings are removed from the main region` (App.test.tsx) — proven for Compress + Settings + History |
 
-- [ ] **Step 4: Manual smoke (deferred items only)**
+> **Step 4 smoke finding (fixed in this task):** the Step 3 structural tests passed while the
+> real layout still scrolled the page body. At 900×500 with 40 files the document overflowed by
+> 2159px and the summary footer sat at y=2613 (off-screen); the Settings footer likewise scrolled
+> out. Root cause: `SidebarProvider`'s wrapper only carried `min-h-svh`, so it grew with content
+> and the inner `min-h-0` chain had no bounded height to bind to. Fix:
+> `SidebarProvider className="h-svh overflow-hidden"` in `App.tsx` plus the
+> `shell wrapper caps the viewport height (4a/4c: h-svh + overflow-hidden)` regression test
+> (RED→GREEN).
+>
+> **Runtime/method:** these checks were run in **headless Chromium over CDP with the Tauri IPC
+> surface mocked** — NOT `yarn tauri dev` (no GUI session available in this environment).
+> Verified at 700×500/900×500/1200×800: body scroll 0px on all three views, Compress summary
+> pinned with the table scrolling internally, Settings footer pinned (sibling of the scroll
+> region), History empty-state card. Mid-compression navigation smoke (40 files, `file:progress`
+> → unmount → `file:complete`/`batch:complete` → remount) also passed: row Done with sizes,
+> summary updated, busy state cleared.
 
-1. `yarn dev` in browser at 700×500 window: Settings footer visible without scrolling; Compress drop zone + footer pinned; only table scrolls.
-2. `yarn tauri dev`: drop file → navigate to Settings mid-compression → return Compress → row present and status updated.
+- [ ] **Step 4: Manual smoke** (partial — item 1 done via headless Chromium + mocked IPC; item 2 `yarn tauri dev` deferred, see evidence note below)
 
-- [ ] **Step 5: Commit**
+1. DONE — headless Chromium over CDP with the Tauri IPC surface mocked (NOT `yarn tauri dev`; no GUI session in this environment). At 700×500: Settings footer visible without scrolling; Compress drop zone + footer pinned; only table scrolls.
+2. DEFERRED — `yarn tauri dev` (no GUI session in this environment): drop file → navigate to Settings mid-compression → return Compress → row present and status updated. The navigation-survival half was smoke-verified in Chromium with mocked IPC (see finding above); the real-Tauri run remains outstanding.
+
+- [x] **Step 5: Commit**
 
 ```bash
-git add src/views/HistoryView.tsx src/App.test.tsx docs/superpowers/plans/2026-09-30-manual-testing-1-acceptance-table.md 2>/dev/null || git add src/views/HistoryView.tsx src/App.test.tsx
+git add src/views/HistoryView.tsx src/views/HistoryView.test.tsx src/App.tsx src/App.test.tsx docs/superpowers/plans/2026-09-30-manual-testing-1-acceptance-table.md 2>/dev/null || git add src/views/HistoryView.tsx src/views/HistoryView.test.tsx src/App.tsx src/App.test.tsx
 git commit -m "feat(ui): history empty-state card; manual testing 1 acceptance check"
 ```
