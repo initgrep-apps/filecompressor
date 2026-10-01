@@ -297,10 +297,8 @@ describe('CompressView', () => {
     renderView()
     await addFileInView()
     const card = screen.getByTestId('batch-summary').closest('[data-slot="card"]')
-    expect(card).not.toBeNull()
     if (!card) throw new Error('batch summary not inside a card')
     const scrollArea = card.querySelector('[data-slot="scroll-area"]')
-    expect(scrollArea).not.toBeNull()
     if (!scrollArea) throw new Error('file-list card has no scroll area')
 
     expect(scrollArea.contains(screen.getByRole('table'))).toBe(true)
@@ -313,13 +311,13 @@ describe('CompressView', () => {
     renderView()
     await addFileInView()
     const listCard = screen.getByTestId('batch-summary').closest('[data-slot="card"]')
+    if (!listCard) throw new Error('batch summary not inside a card')
     const dropzone = screen.getByRole('button', { name: /drop files/i })
-    expect(listCard!.contains(dropzone)).toBe(false)
+    expect(listCard.contains(dropzone)).toBe(false)
   })
 
-  it('renders empty state when no files', async () => {
+  it('renders empty state when no files and clears it after adding files', async () => {
     renderView()
-    expect(screen.getByText('No files yet')).toBeInTheDocument()
     expect(screen.getByText('No files yet').closest('[data-slot="empty"]')).not.toBeNull()
     await addFileInView()
     expect(screen.queryByText('No files yet')).not.toBeInTheDocument()

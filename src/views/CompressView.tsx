@@ -47,14 +47,12 @@ export function CompressView() {
     browseFiles,
   } = useCompressionContext()
 
-  const pendingCount = files.filter((f) => f.status === 'pending').length
-  const doneCount = files.filter(
-    (f) => f.status === 'done' || f.status === 'already_under_target'
-  ).length
+  const statusCount = (status: FileStatus) => files.filter((f) => f.status === status).length
+  const pendingCount = statusCount('pending')
+  const doneCount = statusCount('done') + statusCount('already_under_target')
   const canCompress = pendingCount > 0 && !isCompressing
   const hasFiles = files.length > 0
 
-  const statusCount = (status: FileStatus) => files.filter((f) => f.status === status).length
   const compressingCount = statusCount('compressing')
   const bestEffortCount = statusCount('best_effort')
   const unsupportedCount = statusCount('unsupported')
