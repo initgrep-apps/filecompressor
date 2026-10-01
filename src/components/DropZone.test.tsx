@@ -132,4 +132,44 @@ describe('DropZone', () => {
     await user.keyboard(' ')
     expect(onBrowse).toHaveBeenCalledTimes(2)
   })
+
+  it('inner browse button fires onBrowse exactly once', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    await user.click(screen.getByRole('button', { name: 'Browse your files' }))
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+  })
+
+  it('card click outside the button fires onBrowse exactly once', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    await user.click(screen.getByText('Drag and drop'))
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+  })
+
+  it('Enter on focused browse button fires onBrowse exactly once', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    const btn = screen.getByRole('button', { name: 'Browse your files' })
+    btn.focus()
+    await user.keyboard('{Enter}')
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+  })
+
+  it('Space on focused browse button fires onBrowse exactly once', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    const btn = screen.getByRole('button', { name: 'Browse your files' })
+    btn.focus()
+    await user.keyboard(' ')
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+  })
 })
