@@ -403,7 +403,7 @@ git commit -m "feat(output): reserved-name registry for parallel-safe collision 
 - `stop_hook_skips_remaining_and_sums_completed` — stop flips after first completion → remaining skipped via on_skipped, return == first job's output only
 - `drains_to_empty_and_returns_sum` — 4 jobs, N=2 → returns sum of all outputs, all lanes empty
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src-tauri/src/scheduler.rs` (tests first, at the bottom):
 
@@ -579,12 +579,12 @@ Executor notes on the test harness:
 - If `job_future`'s gate await makes tests hang, replace the gate with a fixed number of `yield_now().await` calls (deterministic interleave is what the probes measure; the gate exists only to hold jobs open across dispatch windows).
 - Adapt the closure plumbing (`gate2`/`probe2` clones) freely — the ASSERTIONS are canonical, not the harness shape.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd src-tauri && cargo test scheduler`
 Expected: FAIL — `run_weighted_lanes` not found.
 
-- [ ] **Step 3: Implement the core**
+- [x] **Step 3: Implement the core**
 
 ```rust
 // File Size Optimizer — offline batch file compression
@@ -678,12 +678,12 @@ where
 
 Also declare `mod scheduler;` in the crate root module list (wherever `mod queue;` lives — `src-tauri/src/lib.rs`).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd src-tauri && cargo test scheduler`
 Expected: PASS (all 6).
 
-- [ ] **Step 5: Run gate + commit**
+- [x] **Step 5: Run gate + commit**
 
 Run: `cd src-tauri && cargo test`
 Expected: pass.
