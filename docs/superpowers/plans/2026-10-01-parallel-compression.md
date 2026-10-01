@@ -724,7 +724,7 @@ git commit -m "feat(scheduler): generic weighted-lane dispatch core"
 - `parallel_same_name_outputs_get_suffixes_end_to_end` — two zero-media `report.docx` (different source dirs), N=2 → outputs `{report.docx, report-1.docx}` as a set, both rows complete
 - existing queue tests stay green (preflight, decide_result_status, output_file_name, empty-batch)
 
-- [ ] **Step 1: Extract `process_single_job`**
+- [x] **Step 1: Extract `process_single_job`**
 
 Move the per-file block (`queue.rs:210-390` — everything inside the `for file_id in file_ids` loop) into:
 
@@ -754,7 +754,7 @@ Move the per-file block (`queue.rs:210-390` — everything inside the `for file_
 
 Every `continue` in the moved body becomes `return total_saved;`. The Unsupported early-exit (`queue.rs:255-279`) returns 0. Cancelled-error and error arms return the saved accumulated so far (0).
 
-- [ ] **Step 2: Split `process_batch`**
+- [x] **Step 2: Split `process_batch`**
 
 `process_batch` keeps preflight (`queue.rs:196-206`) then:
 
@@ -894,7 +894,7 @@ Lane path body:
         Self::finish_batch(app, &batch_id, total_saved);
 ```
 
-- [ ] **Step 3: Write the integration tests**
+- [x] **Step 3: Write the integration tests**
 
 Harness = the existing MockRuntime pattern from `queue.rs:646-744` (mock_context with
 `app_directories_override` Root, store plugin, `manage(FileListState)`,
@@ -1192,12 +1192,12 @@ Executor notes:
 - If `zip::write::SimpleFileOptions` is named differently in the pinned zip version
   (Slice 7 Task 1 pinned the real one), match `document.rs`'s existing fixture code.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd src-tauri && cargo test`
 Expected: PASS (new 6 + all existing).
 
-- [ ] **Step 5: Run gate + commit**
+- [x] **Step 5: Run gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: pass.
