@@ -39,6 +39,7 @@ const mockSettings: Settings = {
     pdf: { minDpi: 100, minJpegQuality: 55 },
     document: { minMediaQuality: 50 },
   },
+  performance: { maxConcurrent: 'auto' },
 }
 
 beforeEach(() => vi.clearAllMocks())

@@ -51,8 +51,15 @@ export interface QualityFloors {
   document: { minMediaQuality: number }
 }
 
+export type MaxConcurrent = 'auto' | '1' | '2' | '3'
+
+export interface PerformanceSettings {
+  maxConcurrent: MaxConcurrent
+}
+
 export interface Settings {
   outputFolder: string
   categoryTargets: Record<string, CategoryTarget>
   qualityFloors: QualityFloors
+  performance: PerformanceSettings
 }

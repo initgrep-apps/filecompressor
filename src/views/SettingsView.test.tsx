@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -24,6 +24,7 @@ const baseSettings: Settings = {
     pdf: { minDpi: 72, minJpegQuality: 15 },
     document: { minMediaQuality: 40 },
   },
+  performance: { maxConcurrent: 'auto' },
 }
 
 const resetDefaults: Settings = {
@@ -70,7 +71,7 @@ describe('SettingsView', () => {
     expect(screen.getByText('MP4, MOV')).toBeInTheDocument()
     expect(screen.getByText('PDF documents')).toBeInTheDocument()
     expect(screen.getByText('DOCX, XLSX, PPTX')).toBeInTheDocument()
-    expect(screen.getAllByRole('combobox')).toHaveLength(4)
+    expect(screen.getAllByRole('combobox')).toHaveLength(5)
     expect(screen.getByLabelText('Images target size')).toHaveDisplayValue('200')
     expect(screen.getByLabelText('Videos target size')).toHaveDisplayValue('10')
     expect(screen.getByLabelText('PDF target size')).toHaveDisplayValue('2')
@@ -222,7 +223,7 @@ describe('SettingsView', () => {
       categoryTargets: { image: { size: 200, unit: 'KB' } },
     })
     await loadView()
-    expect(screen.getAllByRole('combobox')).toHaveLength(4)
+    expect(screen.getAllByRole('combobox')).toHaveLength(5)
     expect(screen.getByLabelText('Videos target size')).toHaveDisplayValue('0')
     expect(screen.getByLabelText('Videos target unit')).toHaveTextContent('KB')
     expect(screen.getByLabelText('PDF target size')).toHaveDisplayValue('0')
@@ -277,9 +278,10 @@ describe('SettingsView', () => {
 
   it('renders three cards with card composition', async () => {
     await loadView()
-    expect(document.querySelectorAll('[data-slot="card"]')).toHaveLength(3)
+    expect(document.querySelectorAll('[data-slot="card"]')).toHaveLength(4)
     expect(screen.getByText('Output Folder')).toBeInTheDocument()
     expect(screen.getByText('Category Targets')).toBeInTheDocument()
+    expect(screen.getByText('Performance')).toBeInTheDocument()
     expect(screen.getByText('Quality Floors')).toBeInTheDocument()
   })
 
@@ -319,5 +321,33 @@ describe('SettingsView', () => {
     await user.keyboard('{Escape}')
     expect(trigger).toHaveTextContent('1280x720')
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
+  })
+
+  it('performance select renders four options', async () => {
+    await loadView()
+    const user = userEvent.setup()
+    await user.click(screen.getByLabelText('Simultaneous files'))
+    const listbox = await screen.findByRole('listbox')
+    expect(within(listbox).getAllByRole('option').map((o) => o.textContent)).toEqual([
+      'Auto',
+      '1',
+      '2',
+      '3',
+    ])
+  })
+
+  it('changing performance updates draft and enables save', async () => {
+    await loadView()
+    const user = userEvent.setup()
+    await pickOption(user, 'Simultaneous files', '2')
+    const save = screen.getByRole('button', { name: 'Save Changes' })
+    expect(save).toBeEnabled()
+    await user.click(save)
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('save_settings', expect.anything())
+    })
+    const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === 'save_settings')
+    const saved = (call?.[1] as { settings: Settings }).settings
+    expect(saved.performance.maxConcurrent).toBe('2')
   })
 })
