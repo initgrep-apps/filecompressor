@@ -17,16 +17,30 @@
 import { useState, useEffect } from 'react'
 import { useSettings } from '@/hooks/useSettings'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
+import { NumberStepper } from '@/components/NumberStepper'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field'
 import {
   Accordion,
   AccordionItem,
   AccordionTrigger,
   AccordionContent,
 } from '@/components/ui/accordion'
-import type { Settings, CategoryTarget } from '@/types'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import type { Settings, CategoryTarget, MaxConcurrent, PerformanceSettings } from '@/types'
 
 const categories = [
   { key: 'image', label: 'Images', badge: 'Image', formats: 'JPEG, PNG, WebP, HEIC' },
@@ -85,6 +99,13 @@ export function SettingsView() {
     })
   }
 
+  const updatePerformance = (field: keyof PerformanceSettings, value: string) => {
+    setDraft((prev) => {
+      if (!prev) return prev
+      return { ...prev, performance: { ...prev.performance, [field]: value as MaxConcurrent } }
+    })
+  }
+
   const handleBrowse = async () => {
     const folder = await browseFolder()
     if (folder) {
@@ -115,9 +136,9 @@ export function SettingsView() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex-1 space-y-6 overflow-y-auto p-6">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
         <div className="flex items-center justify-between">
-          <h1 className="text-base font-semibold">Settings</h1>
+          <h2 className="text-sm font-medium text-muted-foreground">Preferences</h2>
           <button
             type="button"
             onClick={handleReset}
@@ -127,184 +148,258 @@ export function SettingsView() {
           </button>
         </div>
 
-        <div className="space-y-3">
-          <div>
-            <h2 className="text-sm font-medium">Output Folder</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Output Folder</CardTitle>
+            <CardDescription>
               Compressed files are saved here. Originals are never modified.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex h-9 flex-1 items-center gap-2 rounded-md border border-input bg-background/50 px-3 text-sm text-muted-foreground">
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="shrink-0"
-                aria-hidden="true"
-              >
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-              </svg>
-              <span className="truncate">{draft.outputFolder}</span>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-2">
+              <div className="flex h-9 flex-1 items-center gap-2 rounded-md border border-input bg-background/50 px-3 text-sm text-muted-foreground">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="shrink-0"
+                  aria-hidden="true"
+                >
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+                <span className="truncate">{draft.outputFolder}</span>
+              </div>
+              <Button variant="outline" size="sm" onClick={handleBrowse}>
+                Browse
+              </Button>
             </div>
-            <Button variant="outline" size="sm" onClick={handleBrowse}>
-              Browse
-            </Button>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
 
-        <Separator />
-
-        <div className="space-y-4">
-          <div>
-            <h2 className="text-sm font-medium">Category Targets</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Category Targets</CardTitle>
+            <CardDescription>
               Maximum file size per category. Applied to all files in that category.
-            </p>
-          </div>
-          {categories.map((cat) => {
-            const target = draft.categoryTargets[cat.key] ?? { size: 0, unit: 'KB' }
-            return (
-              <div key={cat.key} className="flex items-center justify-between py-1">
-                <div className="flex items-center gap-2.5">
-                  <Badge variant="secondary">{cat.badge}</Badge>
-                  <span className="text-sm">{cat.label}</span>
-                  <span className="text-xs text-muted-foreground">{cat.formats}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Input
-                    type="number"
-                    aria-label={`${cat.label} target size`}
-                    value={target.size}
-                    onChange={(e) => updateTarget(cat.key, 'size', parseInt(e.target.value) || 0)}
-                    className="w-16 rounded-md text-right tabular-nums"
-                  />
-                  <select
-                    aria-label={`${cat.label} target unit`}
-                    value={target.unit}
-                    onChange={(e) => updateTarget(cat.key, 'unit', e.target.value)}
-                    className="h-9 rounded-md border border-input bg-background/50 px-2 text-sm text-muted-foreground"
-                  >
-                    <option value="KB">KB</option>
-                    <option value="MB">MB</option>
-                  </select>
-                </div>
-              </div>
-            )
-          })}
-        </div>
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup>
+              {categories.map((cat) => {
+                const target = draft.categoryTargets[cat.key] ?? { size: 0, unit: 'KB' }
+                return (
+                  <Field key={cat.key}>
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5">
+                        <Badge variant="secondary">{cat.badge}</Badge>
+                        <FieldLabel htmlFor={`${cat.key}-size`} className="text-sm">
+                          {cat.label}
+                        </FieldLabel>
+                        <span className="text-xs text-muted-foreground">{cat.formats}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <NumberStepper
+                          id={`${cat.key}-size`}
+                          value={target.size}
+                          onValueChange={(n) => updateTarget(cat.key, 'size', n)}
+                          min={0}
+                          max={4096}
+                          ariaLabel={`${cat.label} target size`}
+                          className="w-20"
+                        />
+                        <Select
+                          value={target.unit}
+                          onValueChange={(v) => { if (v !== null) updateTarget(cat.key, 'unit', v) }}
+                        >
+                          <SelectTrigger
+                            aria-label={`${cat.label} target unit`}
+                            className="w-20"
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="KB">KB</SelectItem>
+                            <SelectItem value="MB">MB</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </Field>
+                )
+              })}
+            </FieldGroup>
+          </CardContent>
+        </Card>
 
-        <Separator />
-
-        <Accordion>
-          <AccordionItem value="quality-floors">
-            <AccordionTrigger className="text-sm font-medium">
-              Quality Floors <span className="ml-2 text-xs font-normal text-muted-foreground">advanced</span>
-            </AccordionTrigger>
-            <AccordionContent className="space-y-4 pt-2">
-              <p className="text-xs text-muted-foreground">
-                Engine stops compressing below these values and reports &quot;best effort&quot;.
-              </p>
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Images minimum quality</span>
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      type="number"
-                      min={0}
-                      max={100}
-                      aria-label="Images minimum quality"
-                      value={draft.qualityFloors.image.minQuality}
-                      onChange={(e) =>
-                        updateFloor('image.minQuality', parseInt(e.target.value) || 0)
-                      }
-                      className="w-16 rounded-md text-right tabular-nums"
-                    />
-                    <span className="w-4 text-xs text-muted-foreground">%</span>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Videos minimum CRF</span>
-                  <Input
-                    type="number"
-                    min={0}
-                    max={51}
-                    aria-label="Videos minimum CRF"
-                    value={draft.qualityFloors.video.minCrf}
-                    onChange={(e) => updateFloor('video.minCrf', parseInt(e.target.value) || 0)}
-                    className="w-16 rounded-md text-right tabular-nums"
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Videos minimum resolution</span>
-                  <select
-                    aria-label="Videos minimum resolution"
-                    value={draft.qualityFloors.video.minResolution}
-                    onChange={(e) => updateFloor('video.minResolution', e.target.value)}
-                    className="h-9 rounded-md border border-input bg-background/50 px-2.5 text-sm"
-                  >
-                    <option value="480p">480p</option>
-                    <option value="720p">720p</option>
-                    <option value="1080p">1080p</option>
-                  </select>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">PDF minimum DPI</span>
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      type="number"
-                      min={0}
-                      aria-label="PDF minimum DPI"
-                      value={draft.qualityFloors.pdf.minDpi}
-                      onChange={(e) => updateFloor('pdf.minDpi', parseInt(e.target.value) || 0)}
-                      className="w-16 rounded-md text-right tabular-nums"
-                    />
-                    <span className="w-6 text-xs text-muted-foreground">dpi</span>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">PDF minimum JPEG quality</span>
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      type="number"
-                      min={0}
-                      max={100}
-                      aria-label="PDF minimum JPEG quality"
-                      value={draft.qualityFloors.pdf.minJpegQuality}
-                      onChange={(e) =>
-                        updateFloor('pdf.minJpegQuality', parseInt(e.target.value) || 0)
-                      }
-                      className="w-16 rounded-md text-right tabular-nums"
-                    />
-                    <span className="w-4 text-xs text-muted-foreground">%</span>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Documents media quality</span>
-                  <div className="flex items-center gap-1.5">
-                    <Input
-                      type="number"
-                      min={0}
-                      max={100}
-                      aria-label="Documents media quality"
-                      value={draft.qualityFloors.document.minMediaQuality}
-                      onChange={(e) =>
-                        updateFloor('document.minMediaQuality', parseInt(e.target.value) || 0)
-                      }
-                      className="w-16 rounded-md text-right tabular-nums"
-                    />
-                    <span className="w-4 text-xs text-muted-foreground">%</span>
-                  </div>
-                </div>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Performance</CardTitle>
+            <CardDescription>
+              How many files compress at once. Auto adapts to your machine (CPU cores).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Field>
+              <div className="flex items-center justify-between gap-3">
+                <FieldLabel className="text-sm">Simultaneous files</FieldLabel>
+                <Select
+                  value={draft.performance.maxConcurrent}
+                  onValueChange={(v) => { if (v !== null) updatePerformance('maxConcurrent', v) }}
+                >
+                  <SelectTrigger aria-label="Simultaneous files" className="w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto</SelectItem>
+                    <SelectItem value="1">1</SelectItem>
+                    <SelectItem value="2">2</SelectItem>
+                    <SelectItem value="3">3</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
-            </AccordionContent>
-          </AccordionItem>
-        </Accordion>
+            </Field>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Quality Floors</CardTitle>
+            <CardDescription>
+              Engine stops compressing below these values and reports best effort.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Accordion>
+              <AccordionItem value="quality-floors">
+                <AccordionTrigger className="text-sm font-medium">
+                  Advanced
+                </AccordionTrigger>
+                <AccordionContent className="space-y-3 pt-2">
+                  <Field>
+                    <div className="flex items-center justify-between gap-3">
+                      <FieldLabel htmlFor="image-min-quality" className="text-sm">
+                        Images minimum quality
+                      </FieldLabel>
+                      <div className="flex items-center gap-1.5">
+                        <NumberStepper
+                          id="image-min-quality"
+                          value={draft.qualityFloors.image.minQuality}
+                          onValueChange={(n) => updateFloor('image.minQuality', n)}
+                          min={0}
+                          max={100}
+                          ariaLabel="Images minimum quality"
+                          className="w-20"
+                        />
+                        <span className="w-4 text-xs text-muted-foreground">%</span>
+                      </div>
+                    </div>
+                    <FieldDescription>Minimum JPEG/PNG quality percentage.</FieldDescription>
+                  </Field>
+                  <Field>
+                    <div className="flex items-center justify-between gap-3">
+                      <FieldLabel htmlFor="video-min-crf" className="text-sm">
+                        Videos minimum CRF
+                      </FieldLabel>
+                      <NumberStepper
+                        id="video-min-crf"
+                        value={draft.qualityFloors.video.minCrf}
+                        onValueChange={(n) => updateFloor('video.minCrf', n)}
+                        min={0}
+                        max={51}
+                        ariaLabel="Videos minimum CRF"
+                        className="w-20"
+                      />
+                    </div>
+                    <FieldDescription>Higher CRF = lower quality floor.</FieldDescription>
+                  </Field>
+                  <Field>
+                    <div className="flex items-center justify-between gap-3">
+                      <FieldLabel className="text-sm">Videos minimum resolution</FieldLabel>
+                      <Select
+                        value={draft.qualityFloors.video.minResolution}
+                        onValueChange={(v) => { if (v !== null) updateFloor('video.minResolution', v) }}
+                      >
+                        <SelectTrigger
+                          aria-label="Videos minimum resolution"
+                          className="w-24"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="480p">480p</SelectItem>
+                          <SelectItem value="720p">720p</SelectItem>
+                          <SelectItem value="1080p">1080p</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </Field>
+                  <Field>
+                    <div className="flex items-center justify-between gap-3">
+                      <FieldLabel htmlFor="pdf-min-dpi" className="text-sm">
+                        PDF minimum DPI
+                      </FieldLabel>
+                      <div className="flex items-center gap-1.5">
+                        <NumberStepper
+                          id="pdf-min-dpi"
+                          value={draft.qualityFloors.pdf.minDpi}
+                          onValueChange={(n) => updateFloor('pdf.minDpi', n)}
+                          min={0}
+                          max={600}
+                          ariaLabel="PDF minimum DPI"
+                          className="w-20"
+                        />
+                        <span className="w-6 text-xs text-muted-foreground">dpi</span>
+                      </div>
+                    </div>
+                  </Field>
+                  <Field>
+                    <div className="flex items-center justify-between gap-3">
+                      <FieldLabel htmlFor="pdf-min-jpeg-quality" className="text-sm">
+                        PDF minimum JPEG quality
+                      </FieldLabel>
+                      <div className="flex items-center gap-1.5">
+                        <NumberStepper
+                          id="pdf-min-jpeg-quality"
+                          value={draft.qualityFloors.pdf.minJpegQuality}
+                          onValueChange={(n) => updateFloor('pdf.minJpegQuality', n)}
+                          min={0}
+                          max={100}
+                          ariaLabel="PDF minimum JPEG quality"
+                          className="w-20"
+                        />
+                        <span className="w-4 text-xs text-muted-foreground">%</span>
+                      </div>
+                    </div>
+                  </Field>
+                  <Field>
+                    <div className="flex items-center justify-between gap-3">
+                      <FieldLabel htmlFor="document-min-media-quality" className="text-sm">
+                        Documents media quality
+                      </FieldLabel>
+                      <div className="flex items-center gap-1.5">
+                        <NumberStepper
+                          id="document-min-media-quality"
+                          value={draft.qualityFloors.document.minMediaQuality}
+                          onValueChange={(n) => updateFloor('document.minMediaQuality', n)}
+                          min={0}
+                          max={100}
+                          ariaLabel="Documents media quality"
+                          className="w-20"
+                        />
+                        <span className="w-4 text-xs text-muted-foreground">%</span>
+                      </div>
+                    </div>
+                  </Field>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          </CardContent>
+        </Card>
       </div>
 
       {error && (

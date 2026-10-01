@@ -1232,7 +1232,7 @@ git commit -m "feat(queue): weighted-lane parallel scheduler with N=1 legacy par
 - `changing performance updates draft and enables save` — pick "2" → Save enabled → click → invoke `save_settings` payload contains `performance.maxConcurrent === "2"`
 - existing SettingsView scenarios stay green
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `src/views/SettingsView.test.tsx` (follow the migrated Select interaction pattern from the manual-testing-1 plan — click trigger, click option in listbox):
 
@@ -1270,12 +1270,12 @@ Add to `src/views/SettingsView.test.tsx` (follow the migrated Select interaction
   })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `yarn test src/views/SettingsView.test.tsx`
 Expected: FAIL — no `Simultaneous files` control.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/types.ts` — extend the `Settings` interface:
 
@@ -1336,12 +1336,12 @@ and a Card between Category Targets and Quality Floors:
 
 `handleReset`/defaults flow through untouched (`Settings::default()` carries `"auto"`).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `yarn test src/views/SettingsView.test.tsx`
 Expected: PASS (new 2 + migrated existing).
 
-- [ ] **Step 5: Run gate + commit**
+- [x] **Step 5: Run gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: pass.
@@ -1372,7 +1372,7 @@ git commit -m "feat(ui): performance settings card with simultaneous-files selec
 **Required Tests:**
 - Acceptance table cites: 5 scheduler-core tests, 5 settings tests, 3 reserved-registry tests, 6 queue integration tests, 2 SettingsView tests — every AC row names a real test from Tasks 1-5
 
-- [ ] **Step 1: Update spec §7**
+- [x] **Step 1: Update spec §7**
 
 In `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md`, replace the Job Queue section's first bullet:
 
@@ -1392,12 +1392,12 @@ with:
   categories cost 1. A job's temp cleanup completes before its slots are released.
 ```
 
-- [ ] **Step 2: Run full gate**
+- [x] **Step 2: Run full gate**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: all pass.
 
-- [ ] **Step 3: Write the acceptance table**
+- [x] **Step 3: Write the acceptance table**
 
 Create `docs/superpowers/plans/2026-10-01-parallel-compression-acceptance-table.md` mapping each spec §2 decision + §3 invariant to its proving test (names from Tasks 1-5; structure follows `2026-09-27-slices-5-8-acceptance-table.md`).
 
@@ -1406,7 +1406,7 @@ Create `docs/superpowers/plans/2026-10-01-parallel-compression-acceptance-table.
 1. `yarn tauri dev`: add 10 mixed files (images + videos + pdf + docx) at default Auto → observe 2+ rows `compressing` simultaneously; summary counts shift live; `batch:complete` toast once.
 2. Cancel All mid-flight → remaining rows Cancelled, no temp leftovers (`ls $(getconf DARWIN_USER_TEMP_DIR)/file-compressor/` shows no orphan dirs), slots freed (next batch runs).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md docs/superpowers/plans/2026-10-01-parallel-compression-acceptance-table.md
