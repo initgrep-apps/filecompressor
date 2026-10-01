@@ -37,7 +37,7 @@
 **Acceptance Criteria:**
 - 6 files exist under `src/components/ui/`; files that use primitives import them from `@base-ui/react/*` (installed package name — NOT `@base-ui-components/react/*`); files that use icons import from `@remixicon/react`
 - No `lucide-react` imports in any added file
-- `spinner.tsx` is hardened: type omits `children`, `dangerouslySetInnerHTML`, `aria-hidden` and `role`; the banned keys are re-declared as optional never-props under their exact names (`children?: never; dangerouslySetInnerHTML?: never; "aria-hidden"?: never; role?: never`), including the quoted `"aria-hidden"` — this is what makes direct JSX usage AND typed spreads like `React.ComponentProps<"svg">` compile-rejected. `Record<string, unknown>` spreads bypass TS entirely (index-signature relaxation), so post-spread runtime backstops neutralize clobbering of only `role` / `aria-hidden` / `data-slot`; `children` and `dangerouslySetInnerHTML` smuggled through a `Record` spread are NOT stripped (children forwarded per the icon's `createElement` precedence; `dangerouslySetInnerHTML` collides loudly with the icon's built-in `<path>` child). The props spread precedes forced `role={undefined}`, `data-slot="spinner"` and `aria-hidden="true"` (cannot be clobbered)
+- `spinner.tsx` is hardened: type omits `children`, `dangerouslySetInnerHTML`, `aria-hidden` and `role`; the banned keys are re-declared as optional never-props under their exact names (`children?: never; dangerouslySetInnerHTML?: never; "aria-hidden"?: never; role?: never`), including the quoted `"aria-hidden"` — this is what makes direct JSX usage AND typed spreads like `React.ComponentProps<"svg">` compile-rejected. `Record<string, unknown>` spreads bypass TS entirely (index-signature relaxation), so post-spread runtime backstops neutralize clobbering of only `role` / `aria-hidden` / `data-slot`; `children` and `dangerouslySetInnerHTML` smuggled through a `Record` spread are NOT stripped (children silently overridden by the icon's built-in `<path>` child, which wins as `createElement` trailing children; `dangerouslySetInnerHTML` collides loudly with that same built-in `<path>` child). The props spread precedes forced `role={undefined}`, `data-slot="spinner"` and `aria-hidden="true"` (cannot be clobbered)
 - Gate passes clean: `yarn build && yarn test`
 
 **Required Tests:**
@@ -66,8 +66,9 @@ this compile-enforces the banned props for direct usage and typed spreads (per t
 BEFORE forced `role={undefined}`, `data-slot="spinner"` and `aria-hidden="true"` — later keys
 win and React strips undefined props, neutralizing runtime clobbering of `role`, `aria-hidden`
 and `data-slot` only. `children` and `dangerouslySetInnerHTML` smuggled through a
-`Record<string, unknown>` spread are NOT stripped: `children` is forwarded per the icon's
-`createElement` precedence, and `dangerouslySetInnerHTML` collides loudly with the icon's
+`Record<string, unknown>` spread are NOT stripped: `children` is silently overridden by the
+icon's built-in `<path>` child (the icon passes it as `createElement` trailing children, which
+wins over `config.children`), and `dangerouslySetInnerHTML` collides loudly with that same
 built-in `<path>` child.
 `cn("size-4 animate-spin", className)` keeps the className
 merge (`<Spinner data-icon="inline-start" />` and `className` must still typecheck).
