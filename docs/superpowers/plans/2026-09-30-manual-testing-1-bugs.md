@@ -1052,7 +1052,7 @@ git commit -m "feat(ui): NumberStepper wrapping Base UI NumberField"
 - `no native number inputs or select elements remain` — `container.querySelectorAll('input[type="number"], select')` is empty
 - `null onValueChange from a mismatched persisted value does not mutate the draft` — guard prevents null writes into the settings JSON (spec §5)
 
-- [ ] **Step 1: Rewrite SettingsView**
+- [x] **Step 1: Rewrite SettingsView**
 
 Full replacement body (imports then component — GPL header stays at top of file):
 
@@ -1355,7 +1355,7 @@ prop names if the base-style exports differ (e.g. `SelectTrigger` render prop). 
 `Accordion` composition above matches the current installed `accordion.tsx` usage —
 keep `<Accordion>`/`<AccordionItem value>` exactly as the existing file uses them.
 
-- [ ] **Step 2: Update SettingsView tests**
+- [x] **Step 2: Update SettingsView tests**
 
 `src/views/SettingsView.test.tsx` selector migration — concrete, per analyzer findings.
 Base UI renders steppers as `type="text"` inputs and Selects as `role="combobox"` buttons,
@@ -1469,12 +1469,12 @@ as defensive hardening so any future Base UI emission that does reach
 
 (Use the real `data-slot="card"` value recorded in Task 1 Step 2.)
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `yarn test src/views/SettingsView.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 4: Run gate + commit**
+- [x] **Step 4: Run gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: pass.
