@@ -36,6 +36,15 @@ const loadView = async () => {
   await screen.findByLabelText('Images target size')
 }
 
+async function pickOption(
+  user: ReturnType<typeof userEvent.setup>,
+  triggerLabel: string,
+  option: string,
+) {
+  await user.click(screen.getByLabelText(triggerLabel))
+  await user.click(await screen.findByRole('option', { name: option }))
+}
+
 beforeEach(() => {
   vi.mocked(invoke).mockReset()
   vi.mocked(open).mockReset()
@@ -62,14 +71,14 @@ describe('SettingsView', () => {
     expect(screen.getByText('PDF documents')).toBeInTheDocument()
     expect(screen.getByText('DOCX, XLSX, PPTX')).toBeInTheDocument()
     expect(screen.getAllByRole('combobox')).toHaveLength(4)
-    expect(screen.getByLabelText('Images target size')).toHaveValue(200)
-    expect(screen.getByLabelText('Videos target size')).toHaveValue(10)
-    expect(screen.getByLabelText('PDF target size')).toHaveValue(2)
-    expect(screen.getByLabelText('Documents target size')).toHaveValue(1)
-    expect(screen.getByLabelText('Images target unit')).toHaveValue('KB')
-    expect(screen.getByLabelText('Videos target unit')).toHaveValue('MB')
-    expect(screen.getByLabelText('PDF target unit')).toHaveValue('MB')
-    expect(screen.getByLabelText('Documents target unit')).toHaveValue('MB')
+    expect(screen.getByLabelText('Images target size')).toHaveDisplayValue('200')
+    expect(screen.getByLabelText('Videos target size')).toHaveDisplayValue('10')
+    expect(screen.getByLabelText('PDF target size')).toHaveDisplayValue('2')
+    expect(screen.getByLabelText('Documents target size')).toHaveDisplayValue('1')
+    expect(screen.getByLabelText('Images target unit')).toHaveTextContent('KB')
+    expect(screen.getByLabelText('Videos target unit')).toHaveTextContent('MB')
+    expect(screen.getByLabelText('PDF target unit')).toHaveTextContent('MB')
+    expect(screen.getByLabelText('Documents target unit')).toHaveTextContent('MB')
   })
 
   it('quality floors collapsed by default', async () => {
@@ -81,13 +90,13 @@ describe('SettingsView', () => {
     expect(screen.queryByLabelText('PDF minimum DPI')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('PDF minimum JPEG quality')).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Documents media quality')).not.toBeInTheDocument()
-    await userEvent.setup().click(screen.getByText(/Quality Floors/))
-    expect(await screen.findByLabelText('Images minimum quality')).toHaveValue(30)
-    expect(screen.getByLabelText('Videos minimum CRF')).toHaveValue(28)
-    expect(screen.getByLabelText('Videos minimum resolution')).toHaveValue('480p')
-    expect(screen.getByLabelText('PDF minimum DPI')).toHaveValue(72)
-    expect(screen.getByLabelText('PDF minimum JPEG quality')).toHaveValue(15)
-    expect(screen.getByLabelText('Documents media quality')).toHaveValue(40)
+    await userEvent.setup().click(screen.getByRole('button', { name: /advanced/i }))
+    expect(await screen.findByLabelText('Images minimum quality')).toHaveDisplayValue('30')
+    expect(screen.getByLabelText('Videos minimum CRF')).toHaveDisplayValue('28')
+    expect(screen.getByLabelText('Videos minimum resolution')).toHaveTextContent('480p')
+    expect(screen.getByLabelText('PDF minimum DPI')).toHaveDisplayValue('72')
+    expect(screen.getByLabelText('PDF minimum JPEG quality')).toHaveDisplayValue('15')
+    expect(screen.getByLabelText('Documents media quality')).toHaveDisplayValue('40')
   })
 
   it('disables Save and Cancel until draft differs', async () => {
@@ -121,7 +130,7 @@ describe('SettingsView', () => {
   it('changing unit updates save payload', async () => {
     await loadView()
     const user = userEvent.setup()
-    await user.selectOptions(screen.getByLabelText('Images target unit'), 'MB')
+    await pickOption(user, 'Images target unit', 'MB')
     await user.type(screen.getByLabelText('Images target size'), '5')
     await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() => {
@@ -145,7 +154,7 @@ describe('SettingsView', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Could not save settings: disk full',
     )
-    expect(screen.getByLabelText('Images target size')).toHaveValue(2005)
+    expect(screen.getByLabelText('Images target size')).toHaveDisplayValue('2,005')
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
   })
 
@@ -155,7 +164,7 @@ describe('SettingsView', () => {
     const img = screen.getByLabelText('Images target size')
     await user.type(img, '5')
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
-    expect(img).toHaveValue(200)
+    expect(img).toHaveDisplayValue('200')
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
   })
@@ -171,7 +180,7 @@ describe('SettingsView', () => {
     await user.type(screen.getByLabelText('Images target size'), '5')
     await user.click(screen.getByText('Reset to defaults'))
     expect(await screen.findByText('/defaults/Compressed')).toBeInTheDocument()
-    expect(screen.getByLabelText('Images target size')).toHaveValue(200)
+    expect(screen.getByLabelText('Images target size')).toHaveDisplayValue('200')
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
     expect(vi.mocked(invoke)).toHaveBeenCalledWith('reset_settings')
   })
@@ -196,13 +205,14 @@ describe('SettingsView', () => {
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
   })
 
-  it('empty target input coerces to 0', async () => {
+  it('empty target input reverts to last valid value on blur and keeps Save disabled', async () => {
     await loadView()
     const user = userEvent.setup()
     const img = screen.getByLabelText('Images target size')
     await user.clear(img)
-    await waitFor(() => expect(img).toHaveValue(0))
-    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
+    await user.tab()
+    expect(img).toHaveDisplayValue('200')
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
   })
 
   it('renders default KB target row for missing category key', async () => {
@@ -212,24 +222,24 @@ describe('SettingsView', () => {
     })
     await loadView()
     expect(screen.getAllByRole('combobox')).toHaveLength(4)
-    expect(screen.getByLabelText('Videos target size')).toHaveValue(0)
-    expect(screen.getByLabelText('Videos target unit')).toHaveValue('KB')
-    expect(screen.getByLabelText('PDF target size')).toHaveValue(0)
-    expect(screen.getByLabelText('Documents target size')).toHaveValue(0)
-    expect(screen.getByLabelText('Documents target unit')).toHaveValue('KB')
+    expect(screen.getByLabelText('Videos target size')).toHaveDisplayValue('0')
+    expect(screen.getByLabelText('Videos target unit')).toHaveTextContent('KB')
+    expect(screen.getByLabelText('PDF target size')).toHaveDisplayValue('0')
+    expect(screen.getByLabelText('Documents target size')).toHaveDisplayValue('0')
+    expect(screen.getByLabelText('Documents target unit')).toHaveTextContent('KB')
   })
 
   it('updates nested quality floors', async () => {
     await loadView()
     const user = userEvent.setup()
-    await user.click(screen.getByText(/Quality Floors/))
+    await user.click(screen.getByRole('button', { name: /advanced/i }))
     const minQuality = await screen.findByLabelText('Images minimum quality')
     await user.clear(minQuality)
     await user.type(minQuality, '45')
     const minCrf = screen.getByLabelText('Videos minimum CRF')
     await user.clear(minCrf)
     await user.type(minCrf, '35')
-    await user.selectOptions(screen.getByLabelText('Videos minimum resolution'), '720p')
+    await pickOption(user, 'Videos minimum resolution', '720p')
     const minDpi = screen.getByLabelText('PDF minimum DPI')
     await user.clear(minDpi)
     await user.type(minDpi, '96')
@@ -252,5 +262,61 @@ describe('SettingsView', () => {
       document: { minMediaQuality: 50 },
     })
     expect(saved.outputFolder).toBe('/Users/test/Documents/Compressed')
+  })
+
+  it('settings footer is sibling of the scroll region (pinned, 4a)', async () => {
+    await loadView()
+    const footer = screen.getByRole('button', { name: 'Save Changes' }).closest(
+      '.shrink-0.border-t',
+    )
+    const scrollRegion = footer!.previousElementSibling!
+    expect(scrollRegion.className).toContain('overflow-y-auto')
+    expect(scrollRegion.contains(footer)).toBe(false)
+  })
+
+  it('renders three cards with card composition', async () => {
+    await loadView()
+    expect(document.querySelectorAll('[data-slot="card"]')).toHaveLength(3)
+    expect(screen.getByText('Output Folder')).toBeInTheDocument()
+    expect(screen.getByText('Category Targets')).toBeInTheDocument()
+    expect(screen.getByText('Quality Floors')).toBeInTheDocument()
+  })
+
+  it('stepper buttons step ±1 and mark the draft dirty', async () => {
+    await loadView()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Increase Images target size' }))
+    expect(screen.getByLabelText('Images target size')).toHaveDisplayValue('201')
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
+  })
+
+  it('no native number inputs or select elements remain', async () => {
+    const { container } = render(<SettingsView />)
+    await screen.findByLabelText('Images target size')
+    expect(
+      container.querySelectorAll('input[type="number"]:not([aria-hidden="true"]), select'),
+    ).toHaveLength(0)
+  })
+
+  it('null onValueChange from a mismatched persisted value does not mutate the draft', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(
+      structuredClone({
+        ...baseSettings,
+        qualityFloors: {
+          ...baseSettings.qualityFloors,
+          video: { ...baseSettings.qualityFloors.video, minResolution: '1280x720' },
+        },
+      })
+    )
+    await loadView()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /advanced/i }))
+    const trigger = await screen.findByLabelText('Videos minimum resolution')
+    expect(trigger).toHaveTextContent('1280x720')
+    await user.click(trigger)
+    await screen.findByRole('option', { name: '480p' })
+    await user.keyboard('{Escape}')
+    expect(trigger).toHaveTextContent('1280x720')
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
   })
 })
