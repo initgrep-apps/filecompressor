@@ -37,7 +37,8 @@ describe('Spinner', () => {
   })
 
   it('keeps aria-hidden when a consumer passes a conflicting value', () => {
-    const { container } = render(<Spinner aria-hidden={false} />)
+    const conflicting: Record<string, unknown> = { 'aria-hidden': false }
+    const { container } = render(<Spinner {...conflicting} />)
     expect(container.querySelector('[data-slot="spinner"]')).toHaveAttribute(
       'aria-hidden',
       'true'
@@ -46,6 +47,30 @@ describe('Spinner', () => {
 
   it('exposes no status role', () => {
     render(<Spinner />)
-    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByRole('status', { hidden: true })).toBeNull()
+  })
+
+  it('merges className and passes data-icon through', () => {
+    const { container } = render(
+      <Spinner className="custom-class" data-icon="inline-start" />
+    )
+    const root = container.querySelector('[data-slot="spinner"]')
+    expect(root).toHaveClass('animate-spin', 'custom-class')
+    expect(root).toHaveAttribute('data-icon', 'inline-start')
+  })
+
+  it('keeps its data-slot marker when a consumer passes data-slot', () => {
+    const { container } = render(<Spinner data-slot="not-spinner" />)
+    expect(container.querySelector('[data-slot="spinner"]')).not.toBeNull()
+    expect(container.querySelector('[data-slot="not-spinner"]')).toBeNull()
+  })
+
+  it('bans children and dangerouslySetInnerHTML at the type level', () => {
+    // @ts-expect-error children are rejected
+    const withChildren = <Spinner>child</Spinner>
+    // @ts-expect-error dangerouslySetInnerHTML is rejected
+    const withHtml = <Spinner dangerouslySetInnerHTML={{ __html: '<i />' }} />
+    expect(withChildren).toBeTruthy()
+    expect(withHtml).toBeTruthy()
   })
 })
