@@ -65,7 +65,7 @@ describe('App shell', () => {
     expect(wrapper.className).toContain('overflow-hidden')
   })
 
-  it('shell wrapper caps the viewport height (4a/4c: page body cannot scroll)', () => {
+  it('shell wrapper caps the viewport height (4a/4c: h-svh + overflow-hidden)', () => {
     render(<App />)
     const wrapper = document.querySelector('[data-slot="sidebar-wrapper"]')
     expect(wrapper).not.toBeNull()
@@ -118,6 +118,10 @@ describe('App shell', () => {
     await user.click(screen.getByRole('button', { name: 'Settings' }))
     expect(
       within(main).queryByRole('heading', { name: 'Settings' })
+    ).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'History' }))
+    expect(
+      within(main).queryByRole('heading', { name: 'History' })
     ).not.toBeInTheDocument()
   })
 })

@@ -27,9 +27,9 @@ import { RiHistoryLine } from '@remixicon/react'
 export function HistoryView() {
   return (
     <div className="flex min-h-0 flex-1 flex-col p-6">
-      <Card className="flex flex-1 flex-col justify-center">
-        <CardContent>
-          <Empty className="border-0">
+      <Card className="flex min-h-0 flex-1 flex-col">
+        <CardContent className="flex flex-1 flex-col items-center justify-center overflow-y-auto">
+          <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
                 <RiHistoryLine />
