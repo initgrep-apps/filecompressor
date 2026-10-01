@@ -1372,7 +1372,7 @@ git commit -m "feat(ui): performance settings card with simultaneous-files selec
 **Required Tests:**
 - Acceptance table cites: 5 scheduler-core tests, 5 settings tests, 3 reserved-registry tests, 6 queue integration tests, 2 SettingsView tests — every AC row names a real test from Tasks 1-5
 
-- [ ] **Step 1: Update spec §7**
+- [x] **Step 1: Update spec §7**
 
 In `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md`, replace the Job Queue section's first bullet:
 
@@ -1392,12 +1392,12 @@ with:
   categories cost 1. A job's temp cleanup completes before its slots are released.
 ```
 
-- [ ] **Step 2: Run full gate**
+- [x] **Step 2: Run full gate**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: all pass.
 
-- [ ] **Step 3: Write the acceptance table**
+- [x] **Step 3: Write the acceptance table**
 
 Create `docs/superpowers/plans/2026-10-01-parallel-compression-acceptance-table.md` mapping each spec §2 decision + §3 invariant to its proving test (names from Tasks 1-5; structure follows `2026-09-27-slices-5-8-acceptance-table.md`).
 
@@ -1406,7 +1406,7 @@ Create `docs/superpowers/plans/2026-10-01-parallel-compression-acceptance-table.
 1. `yarn tauri dev`: add 10 mixed files (images + videos + pdf + docx) at default Auto → observe 2+ rows `compressing` simultaneously; summary counts shift live; `batch:complete` toast once.
 2. Cancel All mid-flight → remaining rows Cancelled, no temp leftovers (`ls $(getconf DARWIN_USER_TEMP_DIR)/file-compressor/` shows no orphan dirs), slots freed (next batch runs).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md docs/superpowers/plans/2026-10-01-parallel-compression-acceptance-table.md
