@@ -45,8 +45,17 @@ describe('Spinner', () => {
     )
   })
 
-  it('exposes no status role', () => {
+  it('exposes no status role on the default render', () => {
     render(<Spinner />)
+    expect(screen.queryByRole('status', { hidden: true })).toBeNull()
+  })
+
+  it('strips a spread-smuggled role', () => {
+    const smuggled: Record<string, unknown> = { role: 'status' }
+    const { container } = render(<Spinner {...smuggled} />)
+    const root = container.querySelector('[data-slot="spinner"]')
+    expect(root).not.toBeNull()
+    expect(root).not.toHaveAttribute('role')
     expect(screen.queryByRole('status', { hidden: true })).toBeNull()
   })
 
@@ -65,12 +74,22 @@ describe('Spinner', () => {
     expect(container.querySelector('[data-slot="not-spinner"]')).toBeNull()
   })
 
-  it('bans children and dangerouslySetInnerHTML at the type level', () => {
+  it('bans children, dangerouslySetInnerHTML, role and aria-hidden at the type level', () => {
     // @ts-expect-error children are rejected
     const withChildren = <Spinner>child</Spinner>
     // @ts-expect-error dangerouslySetInnerHTML is rejected
     const withHtml = <Spinner dangerouslySetInnerHTML={{ __html: '<i />' }} />
+    // @ts-expect-error role is rejected
+    const withRole = <Spinner role="status" />
+    // @ts-expect-error aria-hidden is rejected
+    const withAriaHidden = <Spinner aria-hidden={false} />
+    const wide = {} as React.ComponentProps<'svg'>
+    // @ts-expect-error wide SVGProps spread is rejected
+    const withWide = <Spinner {...wide} />
     expect(withChildren).toBeTruthy()
     expect(withHtml).toBeTruthy()
+    expect(withRole).toBeTruthy()
+    expect(withAriaHidden).toBeTruthy()
+    expect(withWide).toBeTruthy()
   })
 })

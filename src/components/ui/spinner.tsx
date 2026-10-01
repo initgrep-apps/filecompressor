@@ -23,6 +23,8 @@ type SpinnerProps = Omit<
 > & {
   children?: never
   dangerouslySetInnerHTML?: never
+  "aria-hidden"?: never
+  role?: never
 }
 
 function Spinner({ className, ...props }: SpinnerProps) {
@@ -30,6 +32,7 @@ function Spinner({ className, ...props }: SpinnerProps) {
     <RiLoaderLine
       className={cn("size-4 animate-spin", className)}
       {...props}
+      role={undefined}
       data-slot="spinner"
       aria-hidden="true"
     />

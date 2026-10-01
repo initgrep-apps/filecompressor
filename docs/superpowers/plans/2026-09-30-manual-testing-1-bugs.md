@@ -20,7 +20,7 @@
 - Styling: semantic tokens only (`bg-muted/30`, `border-input`, `text-muted-foreground`) — never raw colors; `gap-*` not `space-y-*`; `size-*` for equal w/h; `cn()` for conditional classes; icons in buttons use `data-icon`, no manual sizing classes.
 - Existing tests must keep passing unless this plan explicitly rewrites them.
 - Gate runs `tsc` over `src/` including `*.test.tsx` (`noUnusedLocals`, `noUnusedParameters`, strict) — unused imports or locals in step snippets fail `yarn build`; keep snippets lint-clean.
-- shadcn CLI resolves style/base automatically from `components.json` — never hand-edit added `src/components/ui/*` files, except the reviewer-approved Task 1 Step 3 `spinner.tsx` a11y hardening (keeps the added file honest without drifting from the registry).
+- shadcn CLI resolves style/base automatically from `components.json` — never hand-edit added `src/components/ui/*` files beyond the mandated GPL header; one reviewer-approved exception: the Task 1 Step 3 `spinner.tsx` a11y hardening (a documented deviation from the raw CLI output).
 
 ---
 
@@ -35,13 +35,13 @@
 - Produces: `@/components/ui/{card,field,scroll-area,select,empty,spinner}` — later tasks import from these exact aliases.
 
 **Acceptance Criteria:**
-- 6 files exist under `src/components/ui/`; all import primitives from `@base-ui/react/*` (installed package name — NOT `@base-ui-components/react/*`) and icons from `@remixicon/react`
+- 6 files exist under `src/components/ui/`; files that use primitives import them from `@base-ui/react/*` (installed package name — NOT `@base-ui-components/react/*`); files that use icons import from `@remixicon/react`
 - No `lucide-react` imports in any added file
-- `spinner.tsx` is hardened: type omits `children`, `dangerouslySetInnerHTML`, `aria-hidden` and `role` (with never-typed `children`/`dangerouslySetInnerHTML` so a wide-typed SVGProps spread cannot smuggle them); `data-slot="spinner"` and `aria-hidden="true"` are applied after the props spread (cannot be clobbered)
+- `spinner.tsx` is hardened: type omits `children`, `dangerouslySetInnerHTML`, `aria-hidden` and `role` (with never-typed `children`/`dangerouslySetInnerHTML`/`aria-hidden`/`role` — explicitly declared hyphenated props ARE type-checked, so direct and typed-spread usage is compile-enforced; `Record<string, unknown>` spreads are inherently unchecked by TS and are neutralized at runtime); the props spread precedes forced `role={undefined}`, `data-slot="spinner"` and `aria-hidden="true"` (cannot be clobbered)
 - Gate passes clean: `yarn build && yarn test`
 
 **Required Tests:**
-- `src/components/ui/spinner.test.tsx` (cross-task contract pin): spinner root carries `aria-hidden="true"` (even when a consumer passes a conflicting `aria-hidden` through a wide-typed spread); a button rendering `Compress` + `<Spinner />` resolves as `getByRole('button', { name: 'Compress' })`; `queryByRole('status', { hidden: true })` is null; `className` merges with `animate-spin` and `data-icon` passes through; the `data-slot="spinner"` marker is clobber-resistant; compile pins keep `children`/`dangerouslySetInnerHTML` banned. Deviation from the original "no named unit tests required" stance: that stance covered the mechanical CLI add and the compile gate; this test pins the a11y contract the PR reviewers flagged so a future `shadcn add spinner` re-run cannot silently reintroduce name pollution.
+- `src/components/ui/spinner.test.tsx` (cross-task contract pin): spinner root carries `aria-hidden="true"` (even when a consumer passes a conflicting `aria-hidden` through an index-signature `Record<string, unknown>` spread); default render has no status role and `queryByRole('status', { hidden: true })` is null; a spread-smuggled `role` is stripped at runtime (post-spread `role={undefined}` backstop); a button rendering `Compress` + `<Spinner />` resolves as `getByRole('button', { name: 'Compress' })`; `className` merges with `animate-spin` and `data-icon` passes through; the `data-slot="spinner"` marker is clobber-resistant; compile pins reject `children`, `dangerouslySetInnerHTML`, `role`, `aria-hidden` and wide SVGProps spreads. Deviation from the original "no named unit tests required" stance: that stance covered the mechanical CLI add and the compile gate; this test pins the a11y contract the PR reviewers flagged so a future `shadcn add spinner` re-run cannot silently reintroduce name pollution.
 
 - [x] **Step 1: Add components via CLI**
 
@@ -60,18 +60,21 @@ Per the shadcn skill workflow — check: no missing sub-components, imports reso
 - [x] **Step 3: Harden spinner + add contract test**
 
 `src/components/ui/spinner.tsx`: type becomes
-`Omit<React.ComponentProps<"svg">, "children" | "dangerouslySetInnerHTML" | "aria-hidden" | "role"> & { children?: never; dangerouslySetInnerHTML?: never }`;
-the props spread moves BEFORE `data-slot="spinner"` and `aria-hidden="true"` so a
-consumer cannot clobber the decorative default or the contract marker at runtime,
-while `cn("size-4 animate-spin", className)` keeps the className
+`Omit<React.ComponentProps<"svg">, "children" | "dangerouslySetInnerHTML" | "aria-hidden" | "role"> & { children?: never; dangerouslySetInnerHTML?: never; "aria-hidden"?: never; role?: never }`;
+this compile-enforces the banned props for direct usage and typed spreads (per tsc probes);
+`Record<string, unknown>` spreads are inherently unchecked by TS, so the props spread moves
+BEFORE forced `role={undefined}`, `data-slot="spinner"` and `aria-hidden="true"` — later keys
+win and React strips undefined props, neutralizing runtime clobbering.
+`cn("size-4 animate-spin", className)` keeps the className
 merge (`<Spinner data-icon="inline-start" />` and `className` must still typecheck).
 
 Create `src/components/ui/spinner.test.tsx` (GPL header block from
 `src/views/CompressView.tsx:1-15`) with the contract tests listed in Required Tests:
-forced `aria-hidden` (incl. clobber-resistance via a wide-typed spread), exact button
-name, no status role (`hidden: true` so the assertion is not vacuous), className merge,
+forced `aria-hidden` (incl. index-signature `Record<string, unknown>` spread clobber-resistance), default render with no
+status role (`hidden: true` so the assertion is not vacuous), spread-smuggled `role`
+stripped by the runtime backstop, exact button name, className/`data-icon` merge,
 `data-slot` clobber-resistance, and compile pins for the banned `children` /
-`dangerouslySetInnerHTML` props.
+`dangerouslySetInnerHTML` / `role` / `aria-hidden` props plus a wide SVGProps spread.
 
 - [x] **Step 4: Verify gate**
 
@@ -1055,7 +1058,7 @@ git commit -m "feat(ui): NumberStepper wrapping Base UI NumberField"
 - `renders three cards with card composition` — CardTitle/Description present for Output Folder, Category Targets, Quality Floors
 - `stepper buttons step ±1 and mark the draft dirty` — click `Increase Images target size` → display 201 + Save enabled; typing covered by Task 4
 - `no native number inputs or select elements remain` — `container.querySelectorAll('input[type="number"], select')` is empty
-- `null onValueChange from a mismatched persisted value does not mutate the draft` — raw persisted value retained in the trigger, Save stays disabled; the `if (v !== null)` guard is retained as defense in depth so no invalid state can reach the draft (this flow emits no `onValueChange`)
+- `mismatched persisted select value stays raw and does not dirty the draft` — raw persisted value retained in the trigger, Save stays disabled; the `if (v !== null)` guard is retained as defense in depth so no invalid state can reach the draft (this flow emits no `onValueChange`)
 
 - [ ] **Step 1: Rewrite SettingsView**
 
@@ -1440,7 +1443,7 @@ async function pickOption(user: ReturnType<typeof userEvent.setup>, triggerLabel
     expect(container.querySelectorAll('input[type="number"], select')).toHaveLength(0)
   })
 
-  it('null onValueChange from a mismatched persisted value does not mutate the draft', async () => {
+  it('mismatched persisted select value stays raw and does not dirty the draft', async () => {
     vi.mocked(invoke).mockResolvedValueOnce(
       structuredClone({
         ...baseSettings,
@@ -1514,8 +1517,8 @@ git commit -m "feat(ui): settings cards, field rows, NumberStepper and Select co
 - 17 ported scenarios (unchanged assertions): summary counts, toasts, cancel visibility, banner — via `renderView()`
 - `summary footer sits outside the scroll container` — structural (summary + action buttons NOT inside the scroll region)
 - `drop zone is pinned outside the file-list card` — structural (DropZone NOT inside the list Card)
-- `compress button shows spinner while compressing` — busy state visible (spec §4); asserts NO spinner before click, exact `[data-slot="spinner"]` marker while compressing, and spinner gone after `batch:complete`
-- `compress button exposes aria-busy while compressing` — busy state announced (spec §4)
+- `compress button shows spinner while compressing` — busy state visible (spec §4 — spinner, Compress button busy state); asserts NO spinner before click, exact `[data-slot="spinner"]` marker while compressing, and spinner gone after `batch:complete`
+- `compress button exposes aria-busy while compressing` — busy state announced (spec §4 — spinner, Compress button busy state)
 - `renders empty state when no files` — `Empty` composition visible (no files yet)
 
 - [ ] **Step 1: Rewrite CompressView**
