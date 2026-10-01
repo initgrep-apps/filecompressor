@@ -1783,10 +1783,10 @@ git commit -m "feat(ui): compress view cards with pinned summary footer and scro
 - `sets and clears isDragging visual state` — strengthened: the root always carries the base `border-dashed` dashed affordance; while dragging the root className additionally contains `border-primary` AND `bg-primary/5`; after leave it contains `border-input` AND `bg-muted/30` and neither `border-primary` nor `bg-primary/5`
 - `inner browse button fires onBrowse exactly once` — click `Browse your files` → `toHaveBeenCalledTimes(1)`
 - `card click outside the button fires onBrowse exactly once` — click the non-button "Drag and drop" text (`screen.getByText('Drag and drop')`) → `toHaveBeenCalledTimes(1)` (distinct target from the inner-button test; the card's `onClick` fires via bubbling)
-- `Enter on focused browse button fires onBrowse exactly once` — keyboard double-fire guard (button keydown must not bubble into card handler)
-- `Space on focused browse button fires onBrowse exactly once` — same guard for the Space key path
-- `stops Enter/Space keydown on the inner browse button from reaching the card` — wrapper-spy: render inside `<div onKeyDown={onKeyDown}>`, `fireEvent.keyDown(btn, { key: 'Enter' })` / `{ key: ' ' }` → ancestor spy not called and `onBrowse` not called (fails if the guard is removed)
-- `lets non-Enter/Space keys bubble past the inner browse button` — wrapper-spy: `a` and `Cmd/Ctrl+B` on the button reach the ancestor handler (~1 call each); `Enter`/` ` do not → pins the guard scope (fails if the guard becomes an unconditional `stopPropagation()`)
+- `Enter on focused browse button fires onBrowse exactly once` — end-to-end single fire on the button's activation path
+- `Space on focused browse button fires onBrowse exactly once` — same single-fire assertion for the Space key path
+- `stops Enter/Space keydown on the inner browse button from reaching the card` — wrapper-spy: render inside `<div onKeyDown={onKeyDown}>`, `fireEvent.keyDown(btn, { key: 'Enter' })` / `{ key: ' ' }` → ancestor spy not called and `onBrowse` not called (pins the guard: fails if it is removed)
+- `lets non-Enter/Space keys bubble past the inner browse button` — wrapper-spy: `a` and `Cmd+B` on the button reach the ancestor handler (exact 1 then 2 calls); `Enter`/` ` do not → pins the guard scope (fails if the guard becomes an unconditional `stopPropagation()`)
 
 - [ ] **Step 1: Rewrite DropZone**
 
@@ -1840,17 +1840,20 @@ replace ONLY the returned JSX (`DropZone.tsx:82-105`) with:
 ```
 
 The inner Button's keydown guard is REQUIRED, but must be scoped to the
-double-browse keys: without it, Enter/Space keydown on the button propagates to
-the card's `handleKeyDown` (probe-verified), which would fire `onBrowse` and — in
-real browser engines where Space activates on keyup — can produce a double-fire.
-Scoping to `Enter`/` ` only (instead of `e.stopPropagation()` unconditionally)
+activation keys: without it, Enter/Space keydown on the button reaches the card's
+`handleKeyDown`, which fires `onBrowse` and calls `preventDefault()` — cancelling
+the button's own activation path (probe-verified in Chromium, Firefox and WebKit:
+browse fires exactly once either way, but via the card path; without the
+`preventDefault`-cancellation a keyup-activated Space click could double-fire).
+The guard also prevents key auto-repeat from firing `onBrowse` per repeated
+keydown. Scoping to `Enter`/` ` only (instead of `e.stopPropagation()` unconditionally)
 keeps every other key bubbling so global shortcuts such as sidebar `Cmd+B` still
-work while the button has focus.
+work while the button has focus (verified in all three engines).
 
 Imports to add: `Card`, `CardContent` from `@/components/ui/card`; `Separator` from
 `@/components/ui/separator`; `RiUploadCloud2Line` from `@remixicon/react`.
 
-- [ ] **Step 2: Add the double-fire tests**
+- [ ] **Step 2: Add the single-fire and guard tests**
 
 In `src/components/DropZone.test.tsx` — keep all 8 existing scenarios, strengthening the
 drag-state and card-click ones (card keeps `role="button"` + the same `aria-label`; the root
@@ -2103,7 +2106,7 @@ Expected: all pass.
 | Only table scrolls on Compress (4c) | `summary footer sits outside the scroll container` + `drop zone is pinned outside the file-list card` (CompressView.test.tsx) |
 | Compress busy state | `compress button shows spinner while compressing` (no spinner → spinner → gone) + `compress button exposes aria-busy while compressing` |
 | Empty states | `renders empty state when no files and clears it after adding files` + `renders history empty state` |
-| Drop zone split panel + single-fire (4b) | 4 double-fire tests (DropZone.test.tsx) + all 8 existing scenarios |
+| Drop zone split panel + single-fire (4b) | 6 added tests (DropZone.test.tsx: 14 total = 8 existing + 6) |
 | Breadcrumb functional (all 3 views, collapse-safe) | `breadcrumb reflects the active view and updates on navigation` + `breadcrumb stays correct while the sidebar is collapsed to icon` (App.test.tsx) |
 | Sidebar flush | `sidebar is flush (no floating variant)` (App.test.tsx) |
 | Height containment (4a/4c root) | `content wrapper constrains view height (min-h-0 chain)` (App.test.tsx) |
