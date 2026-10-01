@@ -253,7 +253,7 @@ mod tests {
         )
         .await;
         assert_eq!(total, 1);
-        assert_eq!(skipped.lock().unwrap().len(), 2);
+        assert_eq!(*skipped.lock().unwrap(), vec!["image:b", "image:c"]);
     }
 
     #[tokio::test]
@@ -264,5 +264,63 @@ mod tests {
             if j.ends_with('a') || j.ends_with('p') { 3 } else { 4 }
         }, |_| {}).await;
         assert_eq!(total, 14);
+    }
+
+    #[tokio::test]
+    async fn never_exceeds_slot_budget() {
+        let probe = Probe::new();
+        let lanes = make_lanes(&[
+            ("image", 1, vec!["a"]),
+            ("pdf", 1, vec!["p"]),
+            ("doc", 1, vec!["d"]),
+            ("video", 1, vec!["v"]),
+        ]);
+        let probe2 = probe.clone();
+        let total = run_weighted_lanes(lanes, 2, || false, move |j| {
+            job_future(&probe2, j, 1)
+        }, |_| {}).await;
+        assert_eq!(total, 4);
+        assert_eq!(probe.max_weight(), 2);
+    }
+
+    #[tokio::test]
+    async fn panicking_job_does_not_kill_batch_or_sum() {
+        let lanes = make_lanes(&[("image", 1, vec!["a"]), ("pdf", 1, vec!["p"])]);
+        let total = run_weighted_lanes(lanes, 2, || false, |j| async move {
+            tokio::task::yield_now().await;
+            if j.starts_with("image") {
+                panic!("boom");
+            }
+            7
+        }, |_| {}).await;
+        assert_eq!(total, 7);
+    }
+
+    #[tokio::test]
+    async fn stop_before_start_skips_everything() {
+        let skipped = Arc::new(Mutex::new(Vec::new()));
+        let skipped2 = skipped.clone();
+        let lanes = make_lanes(&[("image", 1, vec!["a", "b"]), ("pdf", 1, vec!["p", "q"])]);
+        let total = run_weighted_lanes(lanes, 2, || true, |_j| async { 0u64 }, move |j| {
+            skipped2.lock().unwrap().push(j.clone())
+        })
+        .await;
+        assert_eq!(total, 0);
+        assert_eq!(
+            *skipped.lock().unwrap(),
+            vec!["image:a", "image:b", "pdf:p", "pdf:q"]
+        );
+    }
+
+    #[tokio::test]
+    async fn two_videos_do_not_overlap_even_at_n4() {
+        let probe = Probe::new();
+        let lanes = make_lanes(&[("video", 2, vec!["v1", "v2"])]);
+        let probe2 = probe.clone();
+        let total = run_weighted_lanes(lanes, 4, || false, move |j| {
+            job_future(&probe2, j, 2)
+        }, |_| {}).await;
+        assert_eq!(total, 4);
+        assert_eq!(*probe.max_seen.lock().unwrap().get("video").unwrap(), 1);
     }
 }
