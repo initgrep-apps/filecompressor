@@ -789,14 +789,14 @@ git commit -m "feat(ui): flush sidebar, functional breadcrumb header, view heigh
 - `Enter and Space in the input do not change the value` — Base UI treats whitespace-only as non-parseable; no step (spec §6)
 - `null emissions never reach onValueChange` — stateful harness: clear → blur → spy never called with `null`/`NaN` and last emitted value stays finite (spec §8)
 
-- [ ] **Step 1: Fetch the authoritative API doc**
+- [x] **Step 1: Fetch the authoritative API doc**
 
 Per AGENTS.md rules, fetch Context7 `/base-ui-components/react` (or open
 `https://base-ui.com/react/components/number-field.md`) and confirm: `Root` props
 (`value`, `onValueChange`, `min`, `max`, `step`, `snapOnStep`), and whether `onValueChange`
 can emit `null`. Adjust the guard in Step 4 if the signature differs from `(number|null) => void`.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Create `src/components/NumberStepper.test.tsx`. Query facts (verified against installed
 `@base-ui/react` v1.8): the input renders `type="text"` → role is **textbox**, so query by
@@ -922,12 +922,12 @@ describe('NumberStepper', () => {
 })
 ```
 
-- [ ] **Step 3: Run tests to verify they fail**
+- [x] **Step 3: Run tests to verify they fail**
 
 Run: `yarn test src/components/NumberStepper.test.tsx`
 Expected: FAIL — `Cannot find module '@/components/NumberStepper'`
 
-- [ ] **Step 4: Implement NumberStepper**
+- [x] **Step 4: Implement NumberStepper**
 
 Create `src/components/NumberStepper.tsx`:
 
@@ -1007,13 +1007,13 @@ export function NumberStepper({
 }
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `yarn test src/components/NumberStepper.test.tsx`
 Expected: PASS (all 7). If Base UI emits typing-restrictions (input blocks letters), the
 "invalid typed input" test still passes via empty→blur normalization path.
 
-- [ ] **Step 6: Run gate + commit**
+- [x] **Step 6: Run gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: pass.
