@@ -152,7 +152,7 @@ describe('DropZone', () => {
     const onBrowse = vi.fn()
     const onDrop = vi.fn()
     render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
-    await user.click(screen.getByRole('button', { name: /drop files/i }))
+    await user.click(screen.getByText('Drag and drop'))
     expect(onBrowse).toHaveBeenCalledTimes(1)
   })
 
@@ -181,22 +181,36 @@ describe('DropZone', () => {
   it('stops Enter/Space keydown on the inner browse button from reaching the card', () => {
     const onBrowse = vi.fn()
     const onDrop = vi.fn()
-    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    const onKeyDown = vi.fn()
+    render(
+      <div onKeyDown={onKeyDown}>
+        <DropZone onBrowse={onBrowse} onDrop={onDrop} />
+      </div>
+    )
     const btn = screen.getByRole('button', { name: 'Browse your files' })
     fireEvent.keyDown(btn, { key: 'Enter' })
     fireEvent.keyDown(btn, { key: ' ' })
+    expect(onKeyDown).not.toHaveBeenCalled()
     expect(onBrowse).not.toHaveBeenCalled()
   })
 
-  it('ignores keys other than Enter/Space', () => {
+  it('lets non-Enter/Space keys bubble past the inner browse button', () => {
     const onBrowse = vi.fn()
     const onDrop = vi.fn()
-    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
-    const card = screen.getByRole('button', { name: /drop files/i })
-    fireEvent.keyDown(card, { key: 'a' })
-    fireEvent.keyDown(card, { key: 'Tab' })
+    const onKeyDown = vi.fn()
+    render(
+      <div onKeyDown={onKeyDown}>
+        <DropZone onBrowse={onBrowse} onDrop={onDrop} />
+      </div>
+    )
     const btn = screen.getByRole('button', { name: 'Browse your files' })
     fireEvent.keyDown(btn, { key: 'a' })
+    expect(onKeyDown).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(btn, { key: 'b', metaKey: true })
+    expect(onKeyDown).toHaveBeenCalledTimes(2)
+    fireEvent.keyDown(btn, { key: 'Enter' })
+    fireEvent.keyDown(btn, { key: ' ' })
+    expect(onKeyDown).toHaveBeenCalledTimes(2)
     expect(onBrowse).not.toHaveBeenCalled()
   })
 })

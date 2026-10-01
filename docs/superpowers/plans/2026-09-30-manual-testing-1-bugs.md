@@ -1780,13 +1780,13 @@ git commit -m "feat(ui): compress view cards with pinned summary footer and scro
 
 **Required Tests:**
 - All 8 existing DropZone scenarios stay green (enter/over/drop payloads, drag classes, empty drop, subscription failures)
-- `sets and clears isDragging visual state` — strengthened: while dragging the root className contains `border-dashed` AND `border-primary` AND `bg-primary/5`; after leave it contains `border-input` AND `bg-muted/30` and neither `border-primary` nor `bg-primary/5`
+- `sets and clears isDragging visual state` — strengthened: the root always carries the base `border-dashed` dashed affordance; while dragging the root className additionally contains `border-primary` AND `bg-primary/5`; after leave it contains `border-input` AND `bg-muted/30` and neither `border-primary` nor `bg-primary/5`
 - `inner browse button fires onBrowse exactly once` — click `Browse your files` → `toHaveBeenCalledTimes(1)`
-- `card click outside the button fires onBrowse exactly once` — click the card via `screen.getByRole('button', { name: /drop files/i })` → `toHaveBeenCalledTimes(1)`
+- `card click outside the button fires onBrowse exactly once` — click the non-button "Drag and drop" text (`screen.getByText('Drag and drop')`) → `toHaveBeenCalledTimes(1)` (distinct target from the inner-button test; the card's `onClick` fires via bubbling)
 - `Enter on focused browse button fires onBrowse exactly once` — keyboard double-fire guard (button keydown must not bubble into card handler)
 - `Space on focused browse button fires onBrowse exactly once` — same guard for the Space key path
-- `stops Enter/Space keydown on the inner browse button from reaching the card` — `fireEvent.keyDown(btn, { key: 'Enter' })` / `{ key: ' ' }` → `onBrowse` not called (fails if the guard is removed)
-- `ignores keys other than Enter/Space` — `fireEvent.keyDown` with `a`/`Tab` on card and `a` on button → `onBrowse` not called (pins the guard scope)
+- `stops Enter/Space keydown on the inner browse button from reaching the card` — wrapper-spy: render inside `<div onKeyDown={onKeyDown}>`, `fireEvent.keyDown(btn, { key: 'Enter' })` / `{ key: ' ' }` → ancestor spy not called and `onBrowse` not called (fails if the guard is removed)
+- `lets non-Enter/Space keys bubble past the inner browse button` — wrapper-spy: `a` and `Cmd/Ctrl+B` on the button reach the ancestor handler (~1 call each); `Enter`/` ` do not → pins the guard scope (fails if the guard becomes an unconditional `stopPropagation()`)
 
 - [ ] **Step 1: Rewrite DropZone**
 
@@ -1839,11 +1839,13 @@ replace ONLY the returned JSX (`DropZone.tsx:82-105`) with:
   )
 ```
 
-The inner Button's keydown guard is REQUIRED, but must be scoped to the double-fire
-keys: without it, Enter/Space on the focused button bubbles to the card's
-`handleKeyDown` and fires browse twice. Scoping to `Enter`/` ` only (instead of
-`e.stopPropagation()` unconditionally) keeps every other key bubbling so global
-shortcuts such as sidebar `Cmd+B` still work while the button has focus.
+The inner Button's keydown guard is REQUIRED, but must be scoped to the
+double-browse keys: without it, Enter/Space keydown on the button propagates to
+the card's `handleKeyDown` (probe-verified), which would fire `onBrowse` and — in
+real browser engines where Space activates on keyup — can produce a double-fire.
+Scoping to `Enter`/` ` only (instead of `e.stopPropagation()` unconditionally)
+keeps every other key bubbling so global shortcuts such as sidebar `Cmd+B` still
+work while the button has focus.
 
 Imports to add: `Card`, `CardContent` from `@/components/ui/card`; `Separator` from
 `@/components/ui/separator`; `RiUploadCloud2Line` from `@remixicon/react`.
@@ -1851,9 +1853,10 @@ Imports to add: `Card`, `CardContent` from `@/components/ui/card`; `Separator` f
 - [ ] **Step 2: Add the double-fire tests**
 
 In `src/components/DropZone.test.tsx` — keep all 8 existing scenarios, strengthening the
-drag-state and card-click ones (card keeps `role="button"` + the same `aria-label`; drag
-assertions pin `border-dashed`, `border-primary`, `bg-primary/5`; idle pins `border-input`
-and `bg-muted/30`) and clicking the card via `screen.getByRole('button', { name: /drop files/i })`.
+drag-state and card-click ones (card keeps `role="button"` + the same `aria-label`; the root
+always carries the base `border-dashed` dashed affordance; drag assertions add `border-primary`,
+`bg-primary/5`; idle pins `border-input` and `bg-muted/30`) and clicking the card's non-button
+"Drag and drop" area via `screen.getByText('Drag and drop')`.
 
 Strengthened drag-state test (replaces the old 2-assertion version):
 
@@ -1893,7 +1896,7 @@ Then add:
     const onBrowse = vi.fn()
     const onDrop = vi.fn()
     render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
-    await user.click(screen.getByRole('button', { name: /drop files/i }))
+    await user.click(screen.getByText('Drag and drop'))
     expect(onBrowse).toHaveBeenCalledTimes(1)
   })
 
@@ -1922,22 +1925,36 @@ Then add:
   it('stops Enter/Space keydown on the inner browse button from reaching the card', () => {
     const onBrowse = vi.fn()
     const onDrop = vi.fn()
-    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
+    const onKeyDown = vi.fn()
+    render(
+      <div onKeyDown={onKeyDown}>
+        <DropZone onBrowse={onBrowse} onDrop={onDrop} />
+      </div>
+    )
     const btn = screen.getByRole('button', { name: 'Browse your files' })
     fireEvent.keyDown(btn, { key: 'Enter' })
     fireEvent.keyDown(btn, { key: ' ' })
+    expect(onKeyDown).not.toHaveBeenCalled()
     expect(onBrowse).not.toHaveBeenCalled()
   })
 
-  it('ignores keys other than Enter/Space', () => {
+  it('lets non-Enter/Space keys bubble past the inner browse button', () => {
     const onBrowse = vi.fn()
     const onDrop = vi.fn()
-    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
-    const card = screen.getByRole('button', { name: /drop files/i })
-    fireEvent.keyDown(card, { key: 'a' })
-    fireEvent.keyDown(card, { key: 'Tab' })
+    const onKeyDown = vi.fn()
+    render(
+      <div onKeyDown={onKeyDown}>
+        <DropZone onBrowse={onBrowse} onDrop={onDrop} />
+      </div>
+    )
     const btn = screen.getByRole('button', { name: 'Browse your files' })
     fireEvent.keyDown(btn, { key: 'a' })
+    expect(onKeyDown).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(btn, { key: 'b', metaKey: true })
+    expect(onKeyDown).toHaveBeenCalledTimes(2)
+    fireEvent.keyDown(btn, { key: 'Enter' })
+    fireEvent.keyDown(btn, { key: ' ' })
+    expect(onKeyDown).toHaveBeenCalledTimes(2)
     expect(onBrowse).not.toHaveBeenCalled()
   })
 ```
