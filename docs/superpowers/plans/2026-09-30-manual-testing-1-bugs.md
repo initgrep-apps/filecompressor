@@ -2121,8 +2121,9 @@ Expected: all pass.
 > `shell wrapper caps the viewport height` regression test (RED→GREEN). Verified live in a
 > Chromium 700×500/900×500/1200×800 window: body scroll 0px on all three views, Compress summary
 > pinned with the table scrolling internally, Settings footer pinned (sibling of the scroll
-> region), History empty-state card. Smoke screenshots: `smoke-compress-700x500.png`,
-> `smoke-settings-700x500.png`, `smoke-history-700x500.png` in the task worktree.
+> region), History empty-state card. Mid-compression navigation smoke (40 files, `file:progress`
+> → unmount → `file:complete`/`batch:complete` → remount) also passed: row Done with sizes,
+> summary updated, busy state cleared.
 
 - [ ] **Step 4: Manual smoke (deferred items only)**
 
