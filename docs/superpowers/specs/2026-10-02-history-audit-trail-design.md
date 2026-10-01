@@ -20,7 +20,8 @@ in a filterable, searchable History view with links to the actual source and out
    output locations, timings, errors.
 2. Group records by **session** (= existing `batch_id` from `compress_all`), with a flat
    file table available inline per session.
-3. Search (name / path / error) and filter (status, category, date preset, output folder).
+3. Search (name / path / error) and filter (status, category, date preset, output folder) —
+   **always over the full retained history**, not just loaded rows.
 4. Act on results: reveal source/output files, copy paths, open a session's output folder.
 5. Honest audit semantics: interrupted runs are visible as **Interrupted**, not hidden.
 
@@ -28,9 +29,12 @@ in a filterable, searchable History view with links to the actual source and out
 
 - CSV/JSON export (deferred slice; model supports it).
 - Per-session delete (retention + clear-all cover hygiene).
-- Charts/trend dashboards, column sorting, server-side pagination.
+- Charts/trend dashboards, column sorting.
 - Live per-file streaming into History (refresh on mount / batch completion / manual).
 - Recording files that were never part of a batch (added then cleared without compressing).
+
+Terminology: the app is offline — "core-side" (Rust backend) is what earlier drafts called
+"server-side". There is no remote server.
 
 ---
 
@@ -45,8 +49,10 @@ in a filterable, searchable History view with links to the actual source and out
 | Record cadence | Append as-you-go: `session_start` → one record per file outcome → `session_end` |
 | Interrupted runs | Missing `session_end` ⇒ **Interrupted** badge; recorded files still shown |
 | Retention | **Configurable in Settings**, default **90 days**; auto-trim on startup + after each batch |
-| Search scope | Name, source path, output path, **and error text** (one box) |
-| Filters | Status (multi), Category (multi), Date presets (single), Output folder (single) |
+| Search scope | Name, source path, output path, **and error text** (one box), executed core-side over full retained history |
+| Filters | Status (multi), Category (multi), Date presets (single), Output folder (single) — executed core-side |
+| Query model | `get_history` takes filters + pagination; returns one page of sessions + **total counts + summary for the entire filtered set** |
+| Pagination | Core-side, page size 50 sessions, numbered footer (Prev/Next + `Page X of Y`) |
 | Overview | Filtered summary bar (sessions · files · saved · failed) |
 | Row actions | Reveal source, copy source path, reveal output, copy output path, open session output folder |
 | Refresh | On view mount, on `batch:complete`, manual refresh button |
@@ -110,10 +116,51 @@ Field notes:
 - `session_end` present ⇒ `endedAt`, exact `counts`, `cancelled` flag.
 - `session_end` absent ⇒ `interrupted: true`; `endedAt = null`; counts and
   `totalSavedBytes` computed from the recorded files.
-- Sessions returned **newest first** (by `startedAt`). Reads and writes share a mutex, so a
-  read never observes a partially written line.
+- Reads and writes share a mutex, so a read never observes a partially written line.
 
-### 3.5 Retention (90-day default, configurable)
+### 3.5 Query execution (filters + pagination, core-side)
+
+The full retained history is parsed, folded, filtered and summarized in Rust on every
+`get_history` call. The UI never filters a partial dataset — whatever is on disk is what
+search sees.
+
+- **Date preset** (`today` / `last7` / `last30` / `all`): session-level; applied to
+  `startedAt` against the local-day boundaries of the OS timezone (presets are day-based,
+  not rolling-24h).
+- **Search text**: case-insensitive substring over file name, source path, output path,
+  error text — *and* the session's `outputFolder`. A session-level hit (folder) keeps the
+  whole session; a file-level hit keeps only matching files.
+- **Status / Category**: file-level; a session is visible when ≥1 file matches, and only
+  matching files are returned (`matchedFiles`).
+- Sessions are ordered newest-first by `startedAt`, then paginated: `page` (0-based),
+  `pageSize = 50`.
+
+`get_history` response (camelCase):
+
+```json
+{
+  "sessions": [ { "…HistorySession": "with files[] already reduced to matches + matchedFiles" } ],
+  "page": 0,
+  "pageSize": 50,
+  "totalSessions": 120,
+  "totalFiles": 3400,
+  "summary": { "sessions": 120, "files": 3400, "savedBytes": 0, "failedFiles": 9 },
+  "outputFolders": ["/Users/x/Documents/Compressed", "…"],
+  "skippedLines": 0
+}
+```
+
+- `summary` always describes the **entire filtered set**, independent of the current page:
+  `files` / `savedBytes` count all files of visible sessions, or — when a file-level filter
+  is active — only those matching files (the same set §5.4 displays).
+- `outputFolders` = distinct folders in the full retained history (unfiltered), so the
+  folder dropdown never loses options because of another active filter.
+- `totalSessions` / `totalFiles` drive the pager and "N sessions" count; `summary.sessions`
+  equals `totalSessions`.
+- Pagination granularity is **sessions**, never files — a session row is never split
+  across pages.
+
+### 3.6 Retention (90-day default, configurable)
 
 - Trim runs on **app startup** and **after each batch** (`finish_batch`).
 - A whole session is dropped when its **newest** record (`max(startedAt, all completedAt,
@@ -123,7 +170,7 @@ Field notes:
 - Trim failure is non-fatal: warn to stderr, retry next startup/batch.
 - Manual **Clear history** removes the file entirely (after confirm).
 
-### 3.6 Module design — `src-tauri/src/history.rs`
+### 3.7 Module design — `src-tauri/src/history.rs`
 
 Pure functions over `&Path` + thin Tauri wrappers, same style as `output.rs` / `temp.rs`:
 
@@ -136,14 +183,24 @@ impl HistoryStore {
     pub fn append_session_start(&self, rec: &SessionStartRecord) -> Result<(), String>;
     pub fn append_file(&self, rec: &FileResultRecord) -> Result<(), String>;
     pub fn append_session_end(&self, rec: &SessionEndRecord) -> Result<(), String>;
-    pub fn load(&self) -> Result<HistoryResponse, String>;   // fold + skippedLines
+    pub fn load(&self) -> Result<LoadedHistory, String>;     // records + skippedLines
     pub fn trim(&self, retention_days: u32, now_ms: i64) -> Result<u32, String>; // dropped
     pub fn clear(&self) -> Result<(), String>;
 }
+
+pub fn fold_sessions(records: &[Record]) -> Vec<HistorySession>;   // pure
+pub fn query_history(
+    sessions: Vec<HistorySession>,
+    filters: &HistoryFilters,
+    page: u32,
+    page_size: u32,
+    now_ms: i64,
+) -> HistoryResponse;                                              // pure, unit-tested
 ```
 
-`now_ms` is injectable for retention boundary tests. All file access serialized by the
-mutex. Registered in `lib.rs` setup; `queue.rs` reaches it via `app.state::<HistoryStore>()`.
+`now_ms` is injectable for retention and date-preset boundary tests (`today` / `last7` /
+`last30` resolved against it). All file access serialized by the mutex. Registered in
+`lib.rs` setup; `queue.rs` reaches it via `app.state::<HistoryStore>()`.
 
 ---
 
@@ -167,11 +224,12 @@ mutex. Registered in `lib.rs` setup; `queue.rs` reaches it via `app.state::<Hist
 
 | Command | Payload | Returns |
 |---|---|---|
-| `get_history` | — | `{ sessions: HistorySession[], skippedLines: number }`, newest first |
+| `get_history` | `{ filters: HistoryFilters, page: number, pageSize: number }` | `HistoryResponse` (§3.5) — full filtered set summarized, one page of sessions |
 | `clear_history` | — | `()` — `Err(String)` on failure |
 | `open_folder` | `path: String` | `()` — opens folder in OS file manager (`opener().open_path`); errors as `Err(String)` |
 
-- `get_history` is `async` (parses off the main thread).
+- `get_history` is `async` (parses + filters off the main thread).
+- `HistoryFilters` mirrors UI state: `{ search?: string, statuses?: string[], categories?: string[], datePreset?: "today" \| "last7" \| "last30" \| "all", outputFolder?: string }` — all optional; absent = no constraint.
 - Existing `reveal_in_folder` is reused for both source and output file reveal.
 
 ### 4.3 Settings addition
@@ -213,6 +271,7 @@ deleted." Reset-to-defaults restores 90.
 │ ┌──────────────────────────────────────────────────────────────────┐ │
 │ │ 11:03 AM · 4 files · [Interrupted] 3.1 MB → 900 KB · partial  ⌄  │ │
 │ └──────────────────────────────────────────────────────────────────┘ │
+│                                        Page 1 of 3   [‹ Prev] [Next ›]│  ← pagination footer
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -237,31 +296,37 @@ deleted." Reset-to-defaults restores 90.
 - Actions (icon buttons with `aria-label`s): reveal output (`📂`, disabled when no output
   path), copy output path (`⧉`), reveal source, copy source path. Copy confirms via toast.
 
-### 5.4 Search & filters
+### 5.4 Search & filters (core-side query)
+
+Every filter change is a query to `get_history` — search and filters always run over the
+**full retained history in Rust**, never over just the loaded page.
 
 - **Search**: one input, case-insensitive substring over file name, source path, output
-  path, and error text. ~200 ms debounce; Esc clears.
+  path, error text, and the session's output folder. ~300 ms debounce; Esc clears. Each
+  change resets to page 0.
 - **Status** + **Category**: toggle chip rows (multi-select, `aria-pressed`), wrapping on
   narrow width. Six status chips, five category chips.
 - **Date**: Select with presets `Today / Last 7 days / Last 30 days / All time`
-  (session `startedAt` within range; default All time).
-- **Output folder**: Select of distinct `outputFolder` values present in history.
-- A session is visible if it passes session-level criteria (date, folder, text match, or
-  any file match). When a file-level filter is active (search, status, category), matching
-  sessions **auto-expand showing only matching files**; the session row's file-count slot
-  reads `N matches` instead of the total. Sessions that match only at session level (date,
-  folder) stay collapsed and show all files when opened.
+  (session `startedAt` within range, day-based in local time; default All time).
+- **Output folder**: Select of `outputFolders` from the response (distinct folders in full
+  history, so options survive other active filters).
+- **Response semantics**: sessions already carry only matching files when a file-level
+  filter is active; the UI **auto-expands** those sessions and shows `N matches` in the
+  row's file-count slot. Sessions matching only at session level (date, folder, folder-text
+  hit) stay collapsed and show all files when opened.
 - Active-filter count + **Clear filters** appears when anything is active.
+- While a refetch is in flight the previous page stays visible with a subtle busy state —
+  no layout jump, no flash of empty state.
 - Filters are view-local state (reset when leaving the view — acceptable for v1).
 
-### 5.5 Summary bar
+### 5.5 Summary bar & pagination footer
 
-Client-side from the filtered set: `N sessions · N files · X saved · N failed`.
-"Filtered set" means: all files of visible sessions when no file-level filter is active;
-when one is active, only the matching files (same set the auto-expanded session shows).
-Saved = Σ `originalSize − compressedSize`; failed = failed count. Updates live with filters. **Clear history** sits on the right with a
-shadcn AlertDialog confirm: "Permanently deletes all compression history. Files on disk
-are not affected." (also mentions retention).
+- Summary bar renders `response.summary`: `N sessions · N files · X saved · N failed` for
+  the entire filtered set (core-computed, independent of the current page). **Clear
+  history** sits on the right with a shadcn AlertDialog confirm: "Permanently deletes all
+  compression history. Files on disk are not affected." (also mentions retention).
+- Below the session list: `Page X of Y` with Prev/Next buttons, driven by
+  `page` / `totalSessions` / `pageSize` (50). Changing any filter resets to page 0.
 
 ### 5.6 States
 
@@ -279,12 +344,13 @@ are not affected." (also mentions retention).
 
 | File | Purpose |
 |---|---|
-| `src/views/HistoryView.tsx` (rewrite) | composition, states, refresh wiring |
-| `src/hooks/useHistory.ts` | fetch/clear/refresh, `history:error` toast listener |
-| `src/lib/historyFilters.ts` | pure: filter sessions (incl. folder/date/text), summary, day grouping — unit-testable |
+| `src/views/HistoryView.tsx` (rewrite) | composition, states, query wiring, pagination |
+| `src/hooks/useHistory.ts` | query/clear/refresh with filters + page, `history:error` toast listener |
 | `src/components/HistoryFilterBar.tsx` | search input + chip rows + selects + clear |
 | `src/components/HistorySessionRow.tsx` | session summary row + inline file table |
-| `src/types.ts` | `HistorySession`, `HistoryFile`, `HistoryCounts`, `HistoryFilters`, `HistorySummary` |
+| `src/components/HistoryPagination.tsx` | `Page X of Y` + Prev/Next |
+| `src/lib/historyFormat.ts` | pure presentation helpers: day grouping, durations, percent — unit-testable |
+| `src/types.ts` | `HistorySession`, `HistoryFile`, `HistoryFilters`, `HistoryResponse`, `HistorySummary` |
 
 - New shadcn components via CLI: `alert-dialog` (confirm). Toggle chips reuse existing
   `Badge`/`Button` patterns; no other new primitives needed.
@@ -315,6 +381,13 @@ detection; cancelled flag; duplicate fileId last-wins; retention boundary (exact
 older-than, injected `now`); trim rewrite atomicity (original intact on simulated failure);
 clear; empty/missing file. Settings: default 90, clamp, partial-fill.
 
+`query_history` (pure): each filter individually; combined filters; search hits name /
+source path / output path / error / session output folder; date presets at day boundaries
+(injected `now`); pagination (page 0, middle, last partial page, page beyond end);
+`totalSessions` / `totalFiles` / `summary` / `outputFolders` correctness under combinations;
+matched-file reduction (`matchedFiles` = total when no file-level filter); folder-text hit
+keeps all files.
+
 ### Rust integration (`queue.rs`, MockRuntime harness in existing style)
 
 Batch writes `session_start` + one record per terminal outcome + `session_end` with exact
@@ -324,15 +397,18 @@ write failure does not fail the batch.
 
 ### Commands
 
-`get_history` newest-first + `skippedLines`; `clear_history`; `open_folder` error path.
+`get_history` filters + pagination end-to-end + `skippedLines`; `clear_history`;
+`open_folder` error path.
 
 ### Frontend (vitest + Testing Library, existing patterns)
 
 Empty state; skeleton; error + retry; day grouping; disclosure keyboard behavior
 (`aria-expanded`, Enter/Space); Interrupted/Cancelled chips; failed-row inline error;
-each filter + combination incl. auto-expand-with-only-matches and `N matches`; summary bar
-reflects filters; clear-history confirm flow; copy/reveal invokes; refetch on
-`batch:complete`; `history:error` toast; skipped-lines notice.
+filter bar produces correct `get_history` payloads (debounce, chips, presets, folder);
+auto-expand-with-only-matches + `N matches`; summary bar and pagination render from
+response; pager Prev/Next + filter change resets to page 0; clear-history confirm flow;
+copy/reveal invokes; refetch on `batch:complete`; `history:error` toast; skipped-lines
+notice.
 
 ### Gate
 
@@ -346,13 +422,14 @@ reflects filters; clear-history confirm flow; copy/reveal invokes; refetch on
    and per-file rows match what happened.
 2. Force-kill mid-batch → reopen → session shows **Interrupted** with the files that
    finished; preflight failures create no session.
-3. Every filter and combination narrows correctly; summary bar reflects the filtered set;
+3. Every filter and combination narrows correctly **over the full retained history**;
+   summary bar reflects the entire filtered set regardless of page; pager navigates;
    one click clears filters.
 4. Reveal/copy work for source and output; missing outputs disable gracefully.
 5. Retention setting (default 90) removes old sessions on the next trim; Clear history
    wipes after confirm.
 6. Corrupt/old history files load without crashing; unknown records ignored.
-7. Keyboard-only users can filter, expand, and action; labels announced.
+7. Keyboard-only users can filter, expand, paginate, and action; labels announced.
 8. Zero behavior change to the compression pipeline: gate command green.
 
 ---
@@ -360,8 +437,11 @@ reflects filters; clear-history confirm flow; copy/reveal invokes; refetch on
 ## 8. Risks
 
 - **File size growth** — bounded by retention (90-day default) + clear; worst case a few MB.
-- **Read latency at large counts** — capped set + async parse; in-memory filtering is fine
-  at this scale (deferred: server-side pagination if 10k+ sessions ever materialize).
+- **Read latency at large counts** — full parse + filter runs core-side on every query;
+  fine well into the thousands of sessions. If it ever measures slow, page-level caching
+  in `HistoryStore` is the next step (no spec change needed).
 - **Clock changes** — timestamps monotonic enough for display/retention; retention uses
   wall-clock by design.
+- **Timezone/DST in date presets** — presets are day-based in local time (matches user
+  expectation of "Today"); boundary tests inject `now` to pin them.
 - **Batch id reuse** — uuid v4, collision-free in practice.
