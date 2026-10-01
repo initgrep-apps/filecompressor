@@ -43,7 +43,7 @@
 **Required Tests:**
 - `src/components/ui/spinner.test.tsx` (cross-task contract pin): spinner root carries `aria-hidden="true"` (even when a consumer passes `aria-hidden={false}`); a button rendering `Compress` + `<Spinner />` resolves as `getByRole('button', { name: 'Compress' })`; `queryByRole('status')` is null. Deviation from the original "no named unit tests required" stance: that stance covered the mechanical CLI add and the compile gate; this test pins the a11y contract the PR reviewers flagged so a future `shadcn add spinner` re-run cannot silently reintroduce name pollution.
 
-- [ ] **Step 1: Add components via CLI**
+- [x] **Step 1: Add components via CLI**
 
 Run from repo root:
 
@@ -53,11 +53,11 @@ yarn dlx shadcn@latest add card field scroll-area select empty spinner
 
 Expected: 6 files created under `src/components/ui/`, no errors.
 
-- [ ] **Step 2: Read every added file and verify**
+- [x] **Step 2: Read every added file and verify**
 
 Per the shadcn skill workflow — check: no missing sub-components, imports resolve (`@/lib/utils` etc.), primitives imported from `@base-ui/react/*` (the installed package; `@base-ui-components/react/*` would fail to resolve), icons from `@remixicon/react`, no `lucide-react` leaks. Fix icon/primitive imports if any slipped through. Record the `data-slot` attribute names used by `card.tsx` and `scroll-area.tsx` (needed by Task 6's structural test).
 
-- [ ] **Step 3: Harden spinner + add contract test**
+- [x] **Step 3: Harden spinner + add contract test**
 
 `src/components/ui/spinner.tsx`: type becomes
 `Omit<React.ComponentProps<"svg">, "children" | "dangerouslySetInnerHTML">`; the props
@@ -68,12 +68,12 @@ merge (`<Spinner data-icon="inline-start" />` and `className` must still typeche
 Create `src/components/ui/spinner.test.tsx` (GPL header block from
 `src/views/CompressView.tsx:1-15`) with the four contract tests listed in Required Tests.
 
-- [ ] **Step 4: Verify gate**
+- [x] **Step 4: Verify gate**
 
 Run: `yarn build && yarn test`
 Expected: both pass; new files are unused so no behavior change.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/ui
