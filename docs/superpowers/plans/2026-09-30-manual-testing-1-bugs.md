@@ -1524,7 +1524,7 @@ git commit -m "feat(ui): settings cards, field rows, NumberStepper and Select co
 - `drop zone is pinned outside the file-list card` — structural (DropZone NOT inside the list Card)
 - `compress button shows spinner while compressing` — busy state visible (spec §4 — spinner, Compress button busy state); asserts NO spinner before click, exact `[data-slot="spinner"]` marker while compressing, and spinner gone after `batch:complete`
 - `compress button exposes aria-busy while compressing` — busy state announced (spec §4 — spinner, Compress button busy state; aria-busy is a plan-added a11y enhancement — spec §4 pins Button + Spinner + disabled only)
-- `renders empty state when no files and clears it after adding files` — `Empty` composition visible (no files yet)
+- `renders empty state when no files and clears it after adding files` — `Empty` composition visible without files, cleared after a file is added
 
 - [ ] **Step 1: Rewrite CompressView**
 
@@ -1565,14 +1565,12 @@ export function CompressView() {
     browseFiles,
   } = useCompressionContext()
 
-  const pendingCount = files.filter((f) => f.status === 'pending').length
-  const doneCount = files.filter(
-    (f) => f.status === 'done' || f.status === 'already_under_target'
-  ).length
+  const statusCount = (status: FileStatus) => files.filter((f) => f.status === status).length
+  const pendingCount = statusCount('pending')
+  const doneCount = statusCount('done') + statusCount('already_under_target')
   const canCompress = pendingCount > 0 && !isCompressing
   const hasFiles = files.length > 0
 
-  const statusCount = (status: FileStatus) => files.filter((f) => f.status === status).length
   const compressingCount = statusCount('compressing')
   const bestEffortCount = statusCount('best_effort')
   const unsupportedCount = statusCount('unsupported')
