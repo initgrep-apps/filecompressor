@@ -74,7 +74,7 @@ describe('Spinner', () => {
     expect(container.querySelector('[data-slot="not-spinner"]')).toBeNull()
   })
 
-  it('bans children, dangerouslySetInnerHTML, role and aria-hidden at the type level', () => {
+  it('bans children, dangerouslySetInnerHTML, role and aria-hidden, and a wide SVGProps spread, at the type level', () => {
     // @ts-expect-error children are rejected
     const withChildren = <Spinner>child</Spinner>
     // @ts-expect-error dangerouslySetInnerHTML is rejected
@@ -86,10 +86,14 @@ describe('Spinner', () => {
     const wide = {} as React.ComponentProps<'svg'>
     // @ts-expect-error wide SVGProps spread is rejected
     const withWide = <Spinner {...wide} />
+    const roleSpread = { role: 'status' as const, className: 'x' }
+    // @ts-expect-error role via typed spread is rejected
+    const withTypedRole = <Spinner {...roleSpread} />
     expect(withChildren).toBeTruthy()
     expect(withHtml).toBeTruthy()
     expect(withRole).toBeTruthy()
     expect(withAriaHidden).toBeTruthy()
     expect(withWide).toBeTruthy()
+    expect(withTypedRole).toBeTruthy()
   })
 })

@@ -301,7 +301,7 @@ describe('SettingsView', () => {
     ).toHaveLength(0)
   })
 
-  it('null onValueChange from a mismatched persisted value does not mutate the draft', async () => {
+  it('mismatched persisted select value stays raw and does not dirty the draft', async () => {
     vi.mocked(invoke).mockResolvedValueOnce(
       structuredClone({
         ...baseSettings,

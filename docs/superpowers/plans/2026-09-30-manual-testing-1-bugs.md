@@ -37,7 +37,7 @@
 **Acceptance Criteria:**
 - 6 files exist under `src/components/ui/`; files that use primitives import them from `@base-ui/react/*` (installed package name — NOT `@base-ui-components/react/*`); files that use icons import from `@remixicon/react`
 - No `lucide-react` imports in any added file
-- `spinner.tsx` is hardened: type omits `children`, `dangerouslySetInnerHTML`, `aria-hidden` and `role` (with never-typed `children`/`dangerouslySetInnerHTML`/`aria-hidden`/`role` — explicitly declared hyphenated props ARE type-checked, so direct and typed-spread usage is compile-enforced; `Record<string, unknown>` spreads are inherently unchecked by TS and are neutralized at runtime); the props spread precedes forced `role={undefined}`, `data-slot="spinner"` and `aria-hidden="true"` (cannot be clobbered)
+- `spinner.tsx` is hardened: type omits `children`, `dangerouslySetInnerHTML`, `aria-hidden` and `role`; the banned keys are re-declared as optional never-props under their exact names (`children?: never; dangerouslySetInnerHTML?: never; "aria-hidden"?: never; role?: never`), including the quoted `"aria-hidden"` — this is what makes direct JSX usage AND typed spreads like `React.ComponentProps<"svg">` compile-rejected. `Record<string, unknown>` spreads bypass TS entirely (index-signature relaxation), so post-spread runtime backstops neutralize clobbering of only `role` / `aria-hidden` / `data-slot`; `children` and `dangerouslySetInnerHTML` smuggled through a `Record` spread are NOT stripped (children forwarded per the icon's `createElement` precedence; `dangerouslySetInnerHTML` collides loudly with the icon's built-in `<path>` child). The props spread precedes forced `role={undefined}`, `data-slot="spinner"` and `aria-hidden="true"` (cannot be clobbered)
 - Gate passes clean: `yarn build && yarn test`
 
 **Required Tests:**
@@ -64,7 +64,11 @@ Per the shadcn skill workflow — check: no missing sub-components, imports reso
 this compile-enforces the banned props for direct usage and typed spreads (per tsc probes);
 `Record<string, unknown>` spreads are inherently unchecked by TS, so the props spread moves
 BEFORE forced `role={undefined}`, `data-slot="spinner"` and `aria-hidden="true"` — later keys
-win and React strips undefined props, neutralizing runtime clobbering.
+win and React strips undefined props, neutralizing runtime clobbering of `role`, `aria-hidden`
+and `data-slot` only. `children` and `dangerouslySetInnerHTML` smuggled through a
+`Record<string, unknown>` spread are NOT stripped: `children` is forwarded per the icon's
+`createElement` precedence, and `dangerouslySetInnerHTML` collides loudly with the icon's
+built-in `<path>` child.
 `cn("size-4 animate-spin", className)` keeps the className
 merge (`<Spinner data-icon="inline-start" />` and `className` must still typecheck).
 
@@ -1518,7 +1522,7 @@ git commit -m "feat(ui): settings cards, field rows, NumberStepper and Select co
 - `summary footer sits outside the scroll container` — structural (summary + action buttons NOT inside the scroll region)
 - `drop zone is pinned outside the file-list card` — structural (DropZone NOT inside the list Card)
 - `compress button shows spinner while compressing` — busy state visible (spec §4 — spinner, Compress button busy state); asserts NO spinner before click, exact `[data-slot="spinner"]` marker while compressing, and spinner gone after `batch:complete`
-- `compress button exposes aria-busy while compressing` — busy state announced (spec §4 — spinner, Compress button busy state)
+- `compress button exposes aria-busy while compressing` — busy state announced (spec §4 — spinner, Compress button busy state; aria-busy is a plan-added a11y enhancement — spec §4 pins Button + Spinner + disabled only)
 - `renders empty state when no files` — `Empty` composition visible (no files yet)
 
 - [ ] **Step 1: Rewrite CompressView**
