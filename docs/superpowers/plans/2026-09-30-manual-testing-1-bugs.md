@@ -1526,7 +1526,7 @@ git commit -m "feat(ui): settings cards, field rows, NumberStepper and Select co
 - `compress button exposes aria-busy while compressing` — busy state announced (spec §4 — spinner, Compress button busy state; aria-busy is a plan-added a11y enhancement — spec §4 pins Button + Spinner + disabled only)
 - `renders empty state when no files and clears it after adding files` — `Empty` composition visible without files, cleared after a file is added
 
-- [ ] **Step 1: Rewrite CompressView**
+- [x] **Step 1: Rewrite CompressView**
 
 Full replacement body (GPL header stays; keep `formatSavedBytes` removed in Task 2 —
 do not re-add it here):
@@ -1667,7 +1667,7 @@ export function CompressView() {
 Executor checks the installed `spinner.tsx`/`scroll-area.tsx`/`empty.tsx` exports
 (Task 1 files) and adapts subcomponent names if the base-style exports differ.
 
-- [ ] **Step 2: Port the view tests**
+- [x] **Step 2: Port the view tests**
 
 In `src/views/CompressView.test.tsx` (already provider-wrapped since Task 2):
 - Update the click target used by `addFilesInView` — DropZone markup changes in Task 7;
@@ -1743,12 +1743,12 @@ In `src/views/CompressView.test.tsx` (already provider-wrapped since Task 2):
 `if (!x) throw` guards give strict `tsc` narrowing with an actionable message —
 `querySelector`/`closest` return `Element | null`.)
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 Run: `yarn test src/views/CompressView.test.tsx src/components/FileList.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 4: Run gate + commit**
+- [x] **Step 4: Run gate + commit**
 
 Run: `yarn build && yarn test`
 Expected: pass.
