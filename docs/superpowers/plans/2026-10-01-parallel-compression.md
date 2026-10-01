@@ -1232,7 +1232,7 @@ git commit -m "feat(queue): weighted-lane parallel scheduler with N=1 legacy par
 - `changing performance updates draft and enables save` — pick "2" → Save enabled → click → invoke `save_settings` payload contains `performance.maxConcurrent === "2"`
 - existing SettingsView scenarios stay green
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `src/views/SettingsView.test.tsx` (follow the migrated Select interaction pattern from the manual-testing-1 plan — click trigger, click option in listbox):
 
@@ -1270,12 +1270,12 @@ Add to `src/views/SettingsView.test.tsx` (follow the migrated Select interaction
   })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `yarn test src/views/SettingsView.test.tsx`
 Expected: FAIL — no `Simultaneous files` control.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/types.ts` — extend the `Settings` interface:
 
@@ -1336,12 +1336,12 @@ and a Card between Category Targets and Quality Floors:
 
 `handleReset`/defaults flow through untouched (`Settings::default()` carries `"auto"`).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `yarn test src/views/SettingsView.test.tsx`
 Expected: PASS (new 2 + migrated existing).
 
-- [ ] **Step 5: Run gate + commit**
+- [x] **Step 5: Run gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: pass.

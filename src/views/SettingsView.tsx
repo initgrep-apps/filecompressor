@@ -40,7 +40,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import type { Settings, CategoryTarget } from '@/types'
+import type { Settings, CategoryTarget, MaxConcurrent, PerformanceSettings } from '@/types'
 
 const categories = [
   { key: 'image', label: 'Images', badge: 'Image', formats: 'JPEG, PNG, WebP, HEIC' },
@@ -96,6 +96,13 @@ export function SettingsView() {
         }
       }
       return { ...prev, qualityFloors: floors }
+    })
+  }
+
+  const updatePerformance = (field: keyof PerformanceSettings, value: string) => {
+    setDraft((prev) => {
+      if (!prev) return prev
+      return { ...prev, performance: { ...prev.performance, [field]: value as MaxConcurrent } }
     })
   }
 
@@ -226,6 +233,36 @@ export function SettingsView() {
                 )
               })}
             </FieldGroup>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">Performance</CardTitle>
+            <CardDescription>
+              How many files compress at once. Auto adapts to your machine (CPU cores).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Field>
+              <div className="flex items-center justify-between gap-3">
+                <FieldLabel className="text-sm">Simultaneous files</FieldLabel>
+                <Select
+                  value={draft.performance.maxConcurrent}
+                  onValueChange={(v) => { if (v !== null) updatePerformance('maxConcurrent', v) }}
+                >
+                  <SelectTrigger aria-label="Simultaneous files" className="w-24">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto</SelectItem>
+                    <SelectItem value="1">1</SelectItem>
+                    <SelectItem value="2">2</SelectItem>
+                    <SelectItem value="3">3</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </Field>
           </CardContent>
         </Card>
 
