@@ -506,8 +506,12 @@ struct CompressionResult {
 
 ### Job Queue (Rust side)
 
-- `tokio::sync::mpsc` channel — frontend sends jobs, a worker task processes sequentially.
-- One file at a time (simpler, avoids sidecar resource contention, predictable progress).
+- `tokio::sync::mpsc` channel — frontend sends jobs, a lane scheduler processes them.
+- Weighted-lane concurrency: same-category files run sequentially (one FIFO lane per
+  category); different categories run in parallel, bounded by a slot budget
+  (Settings `performance.maxConcurrent`: Auto = clamp(logical cores / 2, 1, 4), or
+  manual 1/2/3). Video jobs cost 2 slots (CPU-heavy two-pass encode); all other
+  categories cost 1. A job's temp cleanup completes before its slots are released.
 - Each job has its own `CancellationToken` stored in a `HashMap<file_id, CancellationToken>`.
 - Cancel All iterates the map and triggers all tokens.
 
