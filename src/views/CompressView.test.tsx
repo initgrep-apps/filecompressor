@@ -296,11 +296,17 @@ describe('CompressView', () => {
   it('summary footer sits outside the scroll container', async () => {
     renderView()
     await addFileInView()
-    const card = screen.getByTestId('batch-summary').closest('[data-slot="card"]')!
-    const scrollArea = card.querySelector('[data-slot="scroll-area"]')!
-    const summary = card.querySelector('[data-testid="batch-summary"]')!
-    expect(card.contains(scrollArea)).toBe(true)
-    expect(scrollArea.contains(summary)).toBe(false)
+    const card = screen.getByTestId('batch-summary').closest('[data-slot="card"]')
+    expect(card).not.toBeNull()
+    if (!card) throw new Error('batch summary not inside a card')
+    const scrollArea = card.querySelector('[data-slot="scroll-area"]')
+    expect(scrollArea).not.toBeNull()
+    if (!scrollArea) throw new Error('file-list card has no scroll area')
+
+    expect(scrollArea.contains(screen.getByRole('table'))).toBe(true)
+    expect(scrollArea.contains(screen.getByTestId('batch-summary'))).toBe(false)
+    expect(scrollArea.contains(screen.getByRole('button', { name: 'Compress' }))).toBe(false)
+    expect(scrollArea.contains(screen.getByRole('button', { name: 'Clear List' }))).toBe(false)
   })
 
   it('drop zone is pinned outside the file-list card', async () => {
@@ -311,10 +317,12 @@ describe('CompressView', () => {
     expect(listCard!.contains(dropzone)).toBe(false)
   })
 
-  it('renders empty state when no files', () => {
+  it('renders empty state when no files', async () => {
     renderView()
-    const emptyCard = screen.getByText('No files yet').closest('[data-slot="card"]')
-    expect(emptyCard).not.toBeNull()
+    expect(screen.getByText('No files yet')).toBeInTheDocument()
+    expect(screen.getByText('No files yet').closest('[data-slot="empty"]')).not.toBeNull()
+    await addFileInView()
+    expect(screen.queryByText('No files yet')).not.toBeInTheDocument()
   })
 
   it('compress button shows spinner while compressing', async () => {

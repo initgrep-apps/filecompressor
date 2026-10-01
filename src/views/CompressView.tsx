@@ -55,19 +55,20 @@ export function CompressView() {
   const hasFiles = files.length > 0
 
   const statusCount = (status: FileStatus) => files.filter((f) => f.status === status).length
+  const compressingCount = statusCount('compressing')
+  const bestEffortCount = statusCount('best_effort')
+  const unsupportedCount = statusCount('unsupported')
+  const failedCount = statusCount('failed')
+  const cancelledCount = statusCount('cancelled')
 
   const summarySegments: string[] = [`${files.length} files`]
   if (doneCount > 0) summarySegments.push(`${doneCount} done`)
-  if (statusCount('compressing') > 0)
-    summarySegments.push(`${statusCount('compressing')} compressing`)
+  if (compressingCount > 0) summarySegments.push(`${compressingCount} compressing`)
   if (pendingCount > 0) summarySegments.push(`${pendingCount} pending`)
-  if (statusCount('best_effort') > 0)
-    summarySegments.push(`${statusCount('best_effort')} warning`)
-  if (statusCount('unsupported') > 0)
-    summarySegments.push(`${statusCount('unsupported')} skipped`)
-  if (statusCount('failed') > 0) summarySegments.push(`${statusCount('failed')} failed`)
-  if (statusCount('cancelled') > 0)
-    summarySegments.push(`${statusCount('cancelled')} cancelled`)
+  if (bestEffortCount > 0) summarySegments.push(`${bestEffortCount} warning`)
+  if (unsupportedCount > 0) summarySegments.push(`${unsupportedCount} skipped`)
+  if (failedCount > 0) summarySegments.push(`${failedCount} failed`)
+  if (cancelledCount > 0) summarySegments.push(`${cancelledCount} cancelled`)
   const summaryText = summarySegments.join(' · ')
 
   return (

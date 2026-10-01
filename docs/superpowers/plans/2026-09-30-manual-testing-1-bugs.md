@@ -1573,19 +1573,20 @@ export function CompressView() {
   const hasFiles = files.length > 0
 
   const statusCount = (status: FileStatus) => files.filter((f) => f.status === status).length
+  const compressingCount = statusCount('compressing')
+  const bestEffortCount = statusCount('best_effort')
+  const unsupportedCount = statusCount('unsupported')
+  const failedCount = statusCount('failed')
+  const cancelledCount = statusCount('cancelled')
 
   const summarySegments: string[] = [`${files.length} files`]
   if (doneCount > 0) summarySegments.push(`${doneCount} done`)
-  if (statusCount('compressing') > 0)
-    summarySegments.push(`${statusCount('compressing')} compressing`)
+  if (compressingCount > 0) summarySegments.push(`${compressingCount} compressing`)
   if (pendingCount > 0) summarySegments.push(`${pendingCount} pending`)
-  if (statusCount('best_effort') > 0)
-    summarySegments.push(`${statusCount('best_effort')} warning`)
-  if (statusCount('unsupported') > 0)
-    summarySegments.push(`${statusCount('unsupported')} skipped`)
-  if (statusCount('failed') > 0) summarySegments.push(`${statusCount('failed')} failed`)
-  if (statusCount('cancelled') > 0)
-    summarySegments.push(`${statusCount('cancelled')} cancelled`)
+  if (bestEffortCount > 0) summarySegments.push(`${bestEffortCount} warning`)
+  if (unsupportedCount > 0) summarySegments.push(`${unsupportedCount} skipped`)
+  if (failedCount > 0) summarySegments.push(`${failedCount} failed`)
+  if (cancelledCount > 0) summarySegments.push(`${cancelledCount} cancelled`)
   const summaryText = summarySegments.join(' · ')
 
   return (
@@ -1683,11 +1684,17 @@ In `src/views/CompressView.test.tsx` (already provider-wrapped since Task 2):
   it('summary footer sits outside the scroll container', async () => {
     renderView()
     await addFileInView()
-    const card = screen.getByTestId('batch-summary').closest('[data-slot="card"]')!
-    const scrollArea = card.querySelector('[data-slot="scroll-area"]')!
-    const summary = card.querySelector('[data-testid="batch-summary"]')!
-    expect(card.contains(scrollArea)).toBe(true)
-    expect(scrollArea.contains(summary)).toBe(false)
+    const card = screen.getByTestId('batch-summary').closest('[data-slot="card"]')
+    expect(card).not.toBeNull()
+    if (!card) throw new Error('batch summary not inside a card')
+    const scrollArea = card.querySelector('[data-slot="scroll-area"]')
+    expect(scrollArea).not.toBeNull()
+    if (!scrollArea) throw new Error('file-list card has no scroll area')
+
+    expect(scrollArea.contains(screen.getByRole('table'))).toBe(true)
+    expect(scrollArea.contains(screen.getByTestId('batch-summary'))).toBe(false)
+    expect(scrollArea.contains(screen.getByRole('button', { name: 'Compress' }))).toBe(false)
+    expect(scrollArea.contains(screen.getByRole('button', { name: 'Clear List' }))).toBe(false)
   })
 
   it('drop zone is pinned outside the file-list card', async () => {
@@ -1698,10 +1705,12 @@ In `src/views/CompressView.test.tsx` (already provider-wrapped since Task 2):
     expect(listCard!.contains(dropzone)).toBe(false)
   })
 
-  it('renders empty state when no files', () => {
+  it('renders empty state when no files', async () => {
     renderView()
-    const emptyCard = screen.getByText('No files yet').closest('[data-slot="card"]')
-    expect(emptyCard).not.toBeNull()
+    expect(screen.getByText('No files yet')).toBeInTheDocument()
+    expect(screen.getByText('No files yet').closest('[data-slot="empty"]')).not.toBeNull()
+    await addFileInView()
+    expect(screen.queryByText('No files yet')).not.toBeInTheDocument()
   })
 
   it('compress button shows spinner while compressing', async () => {
