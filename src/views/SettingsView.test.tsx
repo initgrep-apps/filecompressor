@@ -276,7 +276,7 @@ describe('SettingsView', () => {
     expect(scrollRegion.contains(footer)).toBe(false)
   })
 
-  it('renders three cards with card composition', async () => {
+  it('renders four cards with card composition', async () => {
     await loadView()
     expect(document.querySelectorAll('[data-slot="card"]')).toHaveLength(4)
     expect(screen.getByText('Output Folder')).toBeInTheDocument()
