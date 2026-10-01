@@ -557,7 +557,7 @@ git commit -m "fix(state): lift file list + compression state into app-level pro
 - `content wrapper constrains view height (min-h-0 chain)` — `data-testid="view-container"` classes contain `min-h-0` + `overflow-hidden`
 - `file list survives navigating to Settings and back (Bug 2a)` — real shell: add file → Settings → Compress → row still present (Step 1b)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `src/App.test.tsx`. Two jsdom pitfalls MUST be mocked before render:
 1. `window.matchMedia` — `SidebarProvider` → `useIsMobile()` calls it; jsdom lacks it.
@@ -645,7 +645,7 @@ Note: `getByRole('button', { name: 'Settings' })` is unique here because the Set
 view itself is not mounted at query time (conditional rendering); keep name-exact
 queries (no regex) to stay collision-safe.
 
-- [ ] **Step 1b: Add an App-level Bug 2a regression test**
+- [x] **Step 1b: Add an App-level Bug 2a regression test**
 
 The provider test simulates a remount; this proves the real shell keeps the provider above the view switch. Append to `src/App.test.tsx`:
 
@@ -676,12 +676,12 @@ The provider test simulates a remount; this proves the real shell keeps the prov
   })
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `yarn test src/App.test.tsx`
 Expected: FAIL — no breadcrumb / no `data-testid="view-container"` / sidebar still floating.
 
-- [ ] **Step 3: Apply the shell changes**
+- [x] **Step 3: Apply the shell changes**
 
 The tree is already wrapped in `CompressionProvider` (Task 2) — leave that alone.
 
@@ -743,17 +743,17 @@ import { Separator } from '@/components/ui/separator'
         <div data-testid="view-container" className="flex min-h-0 flex-1 flex-col overflow-hidden">
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `yarn test src/App.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Run gate**
+- [x] **Step 5: Run gate**
 
 Run: `yarn build && yarn test`
 Expected: pass. (Existing view tests mock their own modules; shell change doesn't affect them.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/App.tsx src/App.test.tsx
