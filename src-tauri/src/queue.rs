@@ -280,6 +280,27 @@ impl<R: Runtime> QueueState<R> {
         let _ = append_history(app, HistoryRecordRef::File(&record));
     }
 
+    fn record_cancelled(
+        &self,
+        app: &AppHandle<R>,
+        batch_id: &str,
+        entry: &FileEntry,
+        duration_ms: u64,
+    ) {
+        self.record_file(
+            app,
+            batch_id,
+            entry,
+            FileStatus::Cancelled,
+            None,
+            None,
+            None,
+            None,
+            None,
+            duration_ms,
+        );
+    }
+
     async fn process_batch(app: &AppHandle<R>, batch_id: String, file_ids: Vec<String>) {
         let queue = app.state::<QueueState<R>>();
         let state = app.state::<FileListState>();
@@ -319,18 +340,7 @@ impl<R: Runtime> QueueState<R> {
                         cancel_skip_entry(&mut list, &file_id)
                     };
                     if let Some(entry) = entry {
-                        queue.record_file(
-                            app,
-                            &batch_id,
-                            &entry,
-                            FileStatus::Cancelled,
-                            None,
-                            None,
-                            None,
-                            None,
-                            None,
-                            0,
-                        );
+                        queue.record_cancelled(app, &batch_id, &entry, 0);
                     }
                     emit_file_cancelled(app, &file_id);
                     continue;
@@ -365,18 +375,7 @@ impl<R: Runtime> QueueState<R> {
                 .collect()
         };
         for entry in unplaced_cancelled {
-            queue.record_file(
-                app,
-                &batch_id,
-                &entry,
-                FileStatus::Cancelled,
-                None,
-                None,
-                None,
-                None,
-                None,
-                0,
-            );
+            queue.record_cancelled(app, &batch_id, &entry, 0);
         }
 
         let batch_app = app.clone();
@@ -424,18 +423,7 @@ impl<R: Runtime> QueueState<R> {
                 };
                 if let Some(entry) = entry {
                     let queue = skip_app.state::<QueueState<R>>();
-                    queue.record_file(
-                        &skip_app,
-                        &skip_batch_id,
-                        &entry,
-                        FileStatus::Cancelled,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        0,
-                    );
+                    queue.record_cancelled(&skip_app, &skip_batch_id, &entry, 0);
                 }
             },
         )
@@ -464,18 +452,7 @@ impl<R: Runtime> QueueState<R> {
                 cancel_skip_entry(&mut list, &file_id)
             };
             if let Some(entry) = entry {
-                queue.record_file(
-                    &app,
-                    &batch_id,
-                    &entry,
-                    FileStatus::Cancelled,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    0,
-                );
+                queue.record_cancelled(&app, &batch_id, &entry, 0);
             }
             emit_file_cancelled(&app, &file_id);
             return total_saved;
@@ -488,18 +465,7 @@ impl<R: Runtime> QueueState<R> {
         let Some(entry) = entry else { return total_saved };
         if entry.status != FileStatus::Pending {
             if entry.status == FileStatus::Cancelled {
-                queue.record_file(
-                    &app,
-                    &batch_id,
-                    &entry,
-                    FileStatus::Cancelled,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    0,
-                );
+                queue.record_cancelled(&app, &batch_id, &entry, 0);
             }
             return total_saved; // cancelled/removed/done — skip
         }
@@ -522,25 +488,12 @@ impl<R: Runtime> QueueState<R> {
         };
         if !flipped {
             queue.remove_token(&file_id);
-            let cancelled: Option<FileEntry> = {
-                let list = poison_recover(state.0.lock());
-                list.iter()
-                    .find(|e| e.id == file_id && e.status == FileStatus::Cancelled)
-                    .cloned()
+            let cancelled = {
+                let mut list = poison_recover(state.0.lock());
+                cancel_skip_entry(&mut list, &file_id)
             };
             if let Some(cancelled) = cancelled {
-                queue.record_file(
-                    &app,
-                    &batch_id,
-                    &cancelled,
-                    FileStatus::Cancelled,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    0,
-                );
+                queue.record_cancelled(&app, &batch_id, &cancelled, 0);
             }
             return total_saved;
         }
@@ -715,18 +668,7 @@ impl<R: Runtime> QueueState<R> {
                         e.status = FileStatus::Cancelled;
                     }
                 }
-                queue.record_file(
-                    &app,
-                    &batch_id,
-                    &entry,
-                    FileStatus::Cancelled,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    elapsed_ms(),
-                );
+                queue.record_cancelled(&app, &batch_id, &entry, elapsed_ms());
                 emit_file_cancelled(&app, &file_id);
             }
             Err(e) => {
@@ -1667,12 +1609,6 @@ mod tests {
         }
     }
 
-    fn wall_now_ms() -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-    }
-
     fn raw_file_records(
         store: &crate::history::HistoryStore,
     ) -> Vec<crate::history::FileResultRecord> {
@@ -1695,13 +1631,7 @@ mod tests {
         file_id: &str,
         status: crate::models::FileStatus,
     ) {
-        let state = app.state::<FileListState>();
-        let mut list = state.0.lock().unwrap();
-        let entry = list
-            .iter_mut()
-            .find(|e| e.id == file_id)
-            .expect("entry must exist");
-        entry.status = status;
+        update_entry(app, file_id, |e| e.status = status);
     }
 
     fn update_entry(
@@ -1736,7 +1666,6 @@ mod tests {
 
     #[test]
     fn history_counts_map_all_statuses() {
-        use crate::history::FileResultRecord;
         let rec = |status: &str| FileResultRecord {
             session_id: "s".into(),
             file_id: uuid::Uuid::new_v4().to_string(),
@@ -2017,7 +1946,6 @@ mod tests {
 
     #[test]
     fn cancel_skip_entry_ignores_non_pending() {
-        use crate::models::FileStatus;
         let entry = |id: &str, status: FileStatus| {
             let mut e = FileEntry::new(&format!("/tmp/{id}"), 1024);
             e.id = id.to_string();
@@ -2459,7 +2387,7 @@ mod tests {
             }),
         );
         let store = app.state::<crate::history::HistoryStore>();
-        seed_session_start(&store, "trim-old", wall_now_ms() - 30 * 86_400_000, "/old");
+        seed_session_start(&store, "trim-old", now_ms() - 30 * 86_400_000, "/old");
         std::fs::create_dir_all(root.path().join("history.jsonl.tmp")).unwrap();
 
         let ids = add_entries(&app, &[
@@ -2541,7 +2469,7 @@ mod tests {
             }),
         );
         let store = app.state::<crate::history::HistoryStore>();
-        let now = wall_now_ms();
+        let now = now_ms();
         seed_session_start(&store, "old-11", now - 11 * 86_400_000, "/old");
         seed_session_start(&store, "old-30", now - 30 * 86_400_000, "/old");
 
