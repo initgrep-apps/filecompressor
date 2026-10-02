@@ -119,11 +119,16 @@ impl Default for HistorySettings {
 
 impl HistorySettings {
     pub fn effective_retention_days(&self) -> u32 {
-        if self.retention_days == 0 {
-            90
+        let raw = self.retention_days;
+        let effective = if raw == 0 {
+            default_retention_days()
         } else {
-            self.retention_days.clamp(1, 3650)
+            raw.clamp(1, 3650)
+        };
+        if raw != effective {
+            eprintln!("warn: invalid history.retentionDays {raw}, using {effective}");
         }
+        effective
     }
 }
 
@@ -260,7 +265,10 @@ impl Settings {
 
 pub fn parse_settings_value(value: Option<serde_json::Value>) -> Settings {
     match value {
-        Some(v) => serde_json::from_value(v).unwrap_or_else(|_| Settings::default()),
+        Some(v) => serde_json::from_value(v).unwrap_or_else(|e| {
+            eprintln!("warn: settings parse failed, using defaults: {e}");
+            Settings::default()
+        }),
         None => Settings::default(),
     }
 }
@@ -475,6 +483,22 @@ mod tests {
             "history": { "retentionDays": "lots" }
         });
         assert_eq!(parse_settings_value(Some(corrupt)), Settings::default());
+    }
+
+    #[test]
+    fn parse_settings_value_in_range_history_value_parses() {
+        let parsed =
+            parse_settings_value(Some(serde_json::json!({"history": {"retentionDays": 30}})));
+        assert_eq!(parsed.history.retention_days, 30);
+    }
+
+    #[test]
+    fn parse_settings_value_null_history_falls_back_to_defaults() {
+        let with_null = serde_json::json!({
+            "outputFolder": "/tmp/out",
+            "history": null
+        });
+        assert_eq!(parse_settings_value(Some(with_null)), Settings::default());
     }
 
     #[test]
