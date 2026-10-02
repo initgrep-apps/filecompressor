@@ -243,7 +243,8 @@ serialized by the mutex. Registered in
 ```
 
 Rust: `history: HistorySettings` with `#[serde(default)]`; `HistorySettings { retention_days: u32 }`
-defaulting to 90; clamp at use site (`1..=3650`). Settings UI: new **History** card after
+defaulting to 90; clamp at use site (`1..=3650`). Missing/empty `history` keeps other settings;
+corrupt `history` follows the existing whole-Settings fallback convention. Settings UI: new **History** card after
 Quality Floors — `NumberStepper` (min 1, max 3650, labelled "History retention (days)") +
 description "Sessions older than this are removed automatically. Files on disk are never
 deleted." Reset-to-defaults restores 90.

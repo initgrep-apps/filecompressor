@@ -40,8 +40,8 @@
 - Test: existing `src-tauri/src/settings.rs` test module
 
 **Interfaces:**
-- Consumes: existing `Settings` struct + `parse_settings_value` fallback pattern (`settings.rs:229-234`).
-- Produces: `Settings.history: HistorySettings` with `retention_days: u32`, serde-defaulted to 90 on missing/corrupt; `HistorySettings::effective_retention_days(&self) -> u32` clamping to `1..=3650` with 90 fallback for 0. Tasks 5, 8, 10 consume both.
+- Consumes: existing `Settings` struct + `parse_settings_value` fallback pattern (`settings.rs:266-273`).
+- Produces: `Settings.history: HistorySettings` with `retention_days: u32`, defaulted to 90 on missing/empty; corrupt values fall back to whole-Settings defaults (existing convention); `HistorySettings::effective_retention_days(&self) -> u32` clamping to `1..=3650` with 90 fallback for 0. Tasks 5, 8, 10 consume both.
 
 **Acceptance Criteria:**
 - `history.retentionDays` roundtrips camelCase; max value 3650 roundtrips (spec §4.3).
@@ -58,7 +58,10 @@
 - `parse_settings_value_missing_history_fills_default` — `{ "outputFolder": "/tmp/out" }` → 90
 - `parse_settings_value_empty_history_fills_default` — `{ "history": {} }` → 90 with `outputFolder` preserved (spec "old settings keep loading")
 - `parse_settings_value_corrupt_history_fills_default` — `{ "history": { "retentionDays": "lots" } }` → whole Settings falls back to defaults (existing corrupt-value convention)
+- `parse_settings_value_in_range_history_value_parses` — `{ "history": { "retentionDays": 30 } }` → 30
+- `parse_settings_value_null_history_whole_settings_defaults` — `{ "history": null }` → whole Settings defaults
 - `effective_retention_days_clamps` — 0→90, 1→1, 90→90, 3649→3649, 3650→3650, 3651→3650, 5000→3650
+- `parse_history_effective_retention_integration_pins` — parse `{ "history": { "retentionDays": 5000 } }` → raw 5000 / effective 3650; parse `0` → effective 90
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -162,16 +165,24 @@ impl Default for HistorySettings {
 
 impl HistorySettings {
     pub fn effective_retention_days(&self) -> u32 {
-        if self.retention_days == 0 {
-            90
+        let raw = self.retention_days;
+        let effective = if raw == 0 {
+            default_retention_days()
         } else {
-            self.retention_days.clamp(1, 3650)
+            raw.clamp(1, 3650)
+        };
+        if raw != effective {
+            eprintln!("warn: invalid history.retentionDays {raw}, using {effective}");
         }
+        effective
     }
 }
 ```
 
 Extend `Settings` with `#[serde(default)] pub history: HistorySettings,` (after `performance`), extend `Settings::default()` with `history: HistorySettings::default(),`.
+
+Also update `parse_settings_value` so the serde error is logged (it currently discards it):
+`eprintln!("warn: settings parse failed, using defaults: {e}");` inside the `unwrap_or_else` closure, then fall back to `Settings::default()`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -803,7 +814,7 @@ git commit -m "feat(history): core-side query with filters, summary and paginati
 **Interfaces:**
 - Consumes: Task 3 `FoldResult`; Task 2 record structs; `read_lines`; `Settings.history.effective_retention_days()` (Task 1).
 - Produces:
-  - `pub fn split_by_retention(lines: Vec<String>, retention_days: u32, now_ms: i64) -> (Vec<String>, usize)` — pure; `(kept_lines, dropped_sessions)`; a whole session's lines move together; lines of unknown `type` are kept verbatim; orphan/malformed lines are kept (never dropped by retention).
+  - `pub fn split_by_retention(lines: Vec<String>, retention_days: u32, now_ms: i64) -> (Vec<String>, usize)` — pure; `(kept_lines, dropped_sessions)`; a whole session's lines move together; lines of unknown `type` are kept verbatim; orphan/malformed lines are kept (never dropped by retention). Cutoff math must widen before multiplying: `i64::from(retention_days) * 86_400_000`.
   - `HistoryStore::trim(&self, retention_days: u32, now_ms: i64) -> Result<u32, String>` — rewrite only when `dropped > 0`; atomic via `history.jsonl.tmp` + `fs::rename`; returns dropped session count.
   - `HistoryStore::clear(&self) -> Result<(), String>` — remove file if present; also remove a stray `.tmp`.
 
