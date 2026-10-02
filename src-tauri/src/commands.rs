@@ -240,21 +240,28 @@ fn clamp_page_size(n: u32) -> u32 {
     if n == 0 {
         crate::history::DEFAULT_PAGE_SIZE
     } else {
-        n.min(200)
+        n.min(crate::history::MAX_PAGE_SIZE)
     }
 }
 
 fn empty_history_response(requested_size: u32) -> crate::history::HistoryResponse {
-    crate::history::HistoryResponse {
-        sessions: Vec::new(),
-        page: 0,
-        page_size: clamp_page_size(requested_size),
-        total_sessions: 0,
-        total_files: 0,
-        summary: crate::history::HistorySummary::default(),
-        output_folders: Vec::new(),
-        skipped_lines: 0,
-    }
+    crate::history::HistoryResponse::empty(clamp_page_size(requested_size))
+}
+
+fn warn_missing_store_get_history() {
+    use std::sync::OnceLock;
+    static WARNED: OnceLock<()> = OnceLock::new();
+    WARNED.get_or_init(|| {
+        eprintln!("warn: get_history: HistoryStore state missing, returning empty history");
+    });
+}
+
+fn warn_missing_store_clear_history() {
+    use std::sync::OnceLock;
+    static WARNED: OnceLock<()> = OnceLock::new();
+    WARNED.get_or_init(|| {
+        eprintln!("warn: clear_history: HistoryStore state missing, nothing to clear");
+    });
 }
 
 #[tauri::command]
@@ -265,6 +272,7 @@ pub async fn get_history<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<crate::history::HistoryResponse, String> {
     let Some(store) = app.try_state::<crate::history::HistoryStore>() else {
+        warn_missing_store_get_history();
         return Ok(empty_history_response(page_size));
     };
     let fold = store.load()?;
@@ -279,6 +287,7 @@ pub async fn get_history<R: tauri::Runtime>(
 #[tauri::command]
 pub fn clear_history<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     let Some(store) = app.try_state::<crate::history::HistoryStore>() else {
+        warn_missing_store_clear_history();
         return Ok(());
     };
     store.clear()
@@ -291,7 +300,7 @@ pub fn open_folder<R: tauri::Runtime>(
 ) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     app.opener()
-        .open_path(path.clone(), None::<&str>)
+        .open_path(&path, None::<&str>)
         .map_err(|e| format!("Could not open folder {}: {}", path, e))
 }
 
