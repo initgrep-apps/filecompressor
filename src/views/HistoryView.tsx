@@ -405,12 +405,12 @@ export function HistoryView() {
     setExpandState({})
   }, [response])
 
-  const setSearchFilter = useRef<(partial: Partial<HistoryFilters>) => void>(() => {})
-  setSearchFilter.current = setFilters
+  const setFiltersRef = useRef<(partial: Partial<HistoryFilters>) => void>(() => {})
+  setFiltersRef.current = setFilters
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setSearchFilter.current({ search: searchText.trim() || undefined })
+      setFiltersRef.current({ search: searchText.trim() || undefined })
     }, 300)
     return () => window.clearTimeout(timer)
   }, [searchText])
@@ -436,7 +436,7 @@ export function HistoryView() {
 
   const applySearch = (text: string) => {
     setSearchText(text)
-    setSearchFilter.current({ search: text.trim() || undefined })
+    setFiltersRef.current({ search: text.trim() || undefined })
   }
 
   const applyDatePreset = (preset: DatePreset) => {
@@ -537,13 +537,13 @@ export function HistoryView() {
                 key={status}
                 active={filters.statuses?.includes(status) === true}
                 dotColor={STATUS_DOT_COLORS[status]}
-                onClick={() =>
-                  setFilters({
-                    statuses: filters.statuses?.includes(status)
-                      ? undefined
-                      : [...(filters.statuses ?? []), status],
-                  })
-                }
+                onClick={() => {
+                  const active = filters.statuses?.includes(status) === true
+                  const next = active
+                    ? filters.statuses!.filter((s) => s !== status)
+                    : [...(filters.statuses ?? []), status]
+                  setFilters({ statuses: next.length > 0 ? next : undefined })
+                }}
               >
                 {STATUS_LABELS[status]}
               </Chip>
@@ -553,13 +553,13 @@ export function HistoryView() {
                 key={category}
                 active={filters.categories?.includes(category) === true}
                 dotColor="bg-transparent"
-                onClick={() =>
-                  setFilters({
-                    categories: filters.categories?.includes(category)
-                      ? undefined
-                      : [...(filters.categories ?? []), category],
-                  })
-                }
+                onClick={() => {
+                  const active = filters.categories?.includes(category) === true
+                  const next = active
+                    ? filters.categories!.filter((c) => c !== category)
+                    : [...(filters.categories ?? []), category]
+                  setFilters({ categories: next.length > 0 ? next : undefined })
+                }}
               >
                 {CATEGORY_LABELS[category]}
               </Chip>
