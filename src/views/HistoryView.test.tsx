@@ -145,6 +145,16 @@ function responseWith(
 
 const renderView = () => render(<HistoryView />)
 
+function pagedResponse(sessions: HistorySession[], totalSessions: number) {
+  invokeMock.mockImplementation((_cmd: unknown, args: unknown) =>
+    Promise.resolve({
+      ...responseWith(sessions),
+      totalSessions,
+      page: (args as { page: number }).page,
+    })
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   registry.clear()
@@ -459,10 +469,7 @@ describe('HistoryView', () => {
 
   it('filter change resets page from pagination', async () => {
     const user = userEvent.setup()
-    invokeMock.mockResolvedValue({
-      ...responseWith([session({ sessionId: 's1' })]),
-      totalSessions: 120,
-    })
+    pagedResponse([session({ sessionId: 's1' })], 120)
     renderView()
     await screen.findByText(/files? ·/)
     await user.click(screen.getByRole('button', { name: /next/i }))
@@ -488,10 +495,7 @@ describe('HistoryView', () => {
 
   it('renders pagination and requests next page', async () => {
     const user = userEvent.setup()
-    invokeMock.mockResolvedValue({
-      ...responseWith([session({ sessionId: 's1' })]),
-      totalSessions: 120,
-    })
+    pagedResponse([session({ sessionId: 's1' })], 120)
     renderView()
     expect(await screen.findByText('Page 1 of 3')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /next/i }))
@@ -503,10 +507,7 @@ describe('HistoryView', () => {
 
   it('pagination prev next bounds', async () => {
     const user = userEvent.setup()
-    invokeMock.mockResolvedValue({
-      ...responseWith([session({ sessionId: 's1' })]),
-      totalSessions: 120,
-    })
+    pagedResponse([session({ sessionId: 's1' })], 120)
     renderView()
     await screen.findByText(/files? ·/)
     expect(screen.getByRole('button', { name: /prev/i })).toBeDisabled()
@@ -537,6 +538,15 @@ describe('HistoryView', () => {
     expect(screen.getByText('40 files')).toBeInTheDocument()
     expect(screen.getByText('1.00 GB saved')).toBeInTheDocument()
     expect(screen.getByText('9 failed')).toBeInTheDocument()
+  })
+
+  it('summary shows 0 B when no bytes saved', async () => {
+    invokeMock.mockResolvedValue({
+      ...emptyResponse,
+      summary: { sessions: 1, files: 1, savedBytes: 0, failedFiles: 1 },
+    })
+    renderView()
+    expect(await screen.findByText('0 B saved')).toBeInTheDocument()
   })
 
   it('auto-expands filtered sessions with match count', async () => {
@@ -756,6 +766,8 @@ describe('HistoryView', () => {
   it('shows a notice when lines were skipped', async () => {
     invokeMock.mockResolvedValue({ ...emptyResponse, skippedLines: 3 })
     renderView()
-    expect(await screen.findByText(/could not be read/i)).toBeInTheDocument()
+    expect(
+      await screen.findByText('Some history entries could not be read.')
+    ).toBeInTheDocument()
   })
 })

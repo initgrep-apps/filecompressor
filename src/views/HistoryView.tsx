@@ -157,8 +157,21 @@ async function openSessionFolder(path: string) {
 }
 
 function parentDir(path: string): string {
-  const idx = path.lastIndexOf('/')
-  return idx > 0 ? path.slice(0, idx) : path
+  const parts = path.split(/[\\/]/)
+  const dir = parts.slice(0, -1).join('/')
+  return dir.length > 0 ? dir : path
+}
+
+function savedLabel(bytes: number): string {
+  return bytes === 0 ? '0 B' : formatSize(bytes)
+}
+
+function fileCountLabel(count: number): string {
+  return count === 1 ? '1 file' : `${count} files`
+}
+
+function matchLabel(count: number): string {
+  return count === 1 ? '1 match' : `${count} matches`
 }
 
 function fileResult(file: HistoryFile): string {
@@ -171,10 +184,6 @@ function fileResult(file: HistoryFile): string {
         )
       : 0
   return `${formatSize(file.originalSize)} → ${formatSize(file.compressedSize)} · ${pct}%`
-}
-
-function matchLabel(count: number): string {
-  return count === 1 ? '1 match' : `${count} matches`
 }
 
 function StatusMarker({ status }: { status: FileStatus }) {
@@ -243,7 +252,9 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
     : session.outcome
   const hasOutput = files.some((f) => f.outputPath !== null)
   const countLabel =
-    session.matchedFiles !== null ? matchLabel(session.matchedFiles) : `${session.fileCount} files`
+    session.matchedFiles !== null
+      ? matchLabel(session.matchedFiles)
+      : fileCountLabel(session.fileCount)
 
   return (
     <div className="rounded-2xl border bg-card">
@@ -319,7 +330,7 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
             </TableHeader>
             <TableBody>
               {files.map((file) => (
-                <TableRow key={file.path} className="group align-top">
+                <TableRow key={`${file.path}:${file.completedAt}`} className="group align-top">
                   <TableCell>
                     <div className="max-w-[220px] truncate text-sm font-medium" title={file.path}>
                       {file.name}
@@ -588,7 +599,7 @@ export function HistoryView() {
                   <span aria-hidden>·</span>
                   <span>{response.summary.files} files</span>
                   <span aria-hidden>·</span>
-                  <span>{formatSize(response.summary.savedBytes)} saved</span>
+                  <span>{savedLabel(response.summary.savedBytes)} saved</span>
                   <span aria-hidden>·</span>
                   <span>{response.summary.failedFiles} failed</span>
                 </>
@@ -621,10 +632,10 @@ export function HistoryView() {
         </CardHeader>
         {response !== null && response.skippedLines > 0 && (
           <p className="px-(--card-spacing) text-xs text-muted-foreground">
-            {response.skippedLines} history lines could not be read.
+            Some history entries could not be read.
           </p>
         )}
-        <CardContent className="min-h-0 flex-1 overflow-y-auto" aria-busy={busy} data-busy={busy || undefined}>
+        <CardContent className="min-h-0 flex-1 overflow-y-auto" aria-busy={busy}>
           {error !== null ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
               <p className="text-sm text-destructive">{error}</p>

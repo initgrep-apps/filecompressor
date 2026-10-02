@@ -47,6 +47,7 @@ export function useHistory() {
         if (cancelled) return
         setResponse(res)
         setError(null)
+        if (res.page !== page) setPage(res.page)
       } catch (err) {
         if (cancelled) return
         setError(`Could not load history: ${toMessage(err)}`)

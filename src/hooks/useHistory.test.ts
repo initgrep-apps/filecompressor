@@ -127,6 +127,7 @@ describe('useHistory', () => {
     await waitFor(() => expect(vi.mocked(invoke).mock.calls.length).toBe(calls + 1))
     expect(result.current.filters).toEqual({ search: 'abc' })
     const callsBeforePage = vi.mocked(invoke).mock.calls.length
+    vi.mocked(invoke).mockResolvedValueOnce({ ...emptyResponse, page: 2 })
     act(() => result.current.setPage(2))
     await waitFor(() => expect(invoke).toHaveBeenLastCalledWith('get_history', expect.objectContaining({ page: 2 })))
     expect(vi.mocked(invoke).mock.calls.length).toBe(callsBeforePage + 1)
@@ -270,6 +271,28 @@ describe('useHistory', () => {
     expect(result.current.response?.page).toBe(2)
     expect(result.current.error).toBeNull()
     expect(result.current.loading).toBe(false)
+  })
+
+  it('page syncs when backend clamps response', async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(emptyResponse)
+      .mockResolvedValue({ ...emptyResponse, page: 0, totalSessions: 40 })
+    const { result } = renderHook(() => useHistory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    act(() => result.current.setPage(2))
+    await waitFor(() =>
+      expect(invoke).toHaveBeenLastCalledWith(
+        'get_history',
+        expect.objectContaining({ page: 2 })
+      )
+    )
+    await waitFor(() =>
+      expect(invoke).toHaveBeenLastCalledWith(
+        'get_history',
+        expect.objectContaining({ page: 0 })
+      )
+    )
+    expect(result.current.page).toBe(0)
   })
 
   it('setFilters merge accumulation', async () => {
