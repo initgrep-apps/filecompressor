@@ -75,3 +75,23 @@ Second refine pass (post-`51b644a`): drift found between plan step snippets and 
 8. Task 7: onKeyDown `stopPropagation` guards Enter but not Space (browser fires a Space click on buttons after keyup) → added the Space single-fire test.
 9. Docs-only: Task 1 Step 2 `data-slot` "recorded names" note; Task 2 Step 4 line range 17–45 also swallowed still-needed imports — narrowed to 17–18/25–28/31–45; heading-removal test moved from Task 3 to Task 8 Step 1c (headings only disappear after Tasks 5/6).
 10. Task 8 acceptance table updated to map every row to an existing named test (added App-level Bug 2a + heading-removal + provider toast rows).
+
+---
+
+## Refinement Drift — 2026-10-02-history-audit-trail
+**Date:** 2026-10-02 | **Plan:** `docs/superpowers/plans/2026-10-02-history-audit-trail.md`
+
+Refine pass (pre-implementation). Drift found by code-explorer against repo facts; all items fixed in-plan (implementation not started), none require code change.
+
+1. Task 2/6: record-serializer name mismatch — plan defined private `RecordRef<'a>` (`history.rs`) but Task 6's queue helper referenced `HistoryRecordRef<'_>`; a private enum is also unnameable from `queue.rs`. Fixed: type renamed `HistoryRecordRef`, visibility `pub(crate)` in both tasks.
+2. Task 6: `process_batch` N≤1 path consumes `file_ids` by value (`queue.rs:222`), so `file_ids.len()` for `session_start` must be captured before the loop — plan did not note the ordering constraint. Fixed in Write points.
+3. Task 6: `finish_batch` removes the batch token at `queue.rs:505` before emitting `batch:complete`; the `cancelled` flag must be read before/independent of removal. Fixed in Write points.
+4. Task 6: status strings risk — `FileResultRecord.status` must be the serde snake_case `FileStatus` string (`already_under_target`), not `format!("{:?}")` (`AlreadyUnderTarget`). Fixed: planned `status_key` exhaustive helper + `status_key_snake_case` required test.
+5. Task 7: `commands.rs` imports only `tauri::State`; `app.try_state::<HistoryStore>()` needs `use tauri::Manager;`. Fixed in interfaces + Step 3.
+6. Task 7: `opener().open_path` signature is `open_path(path, with: Option<impl Into<String>>)`; call must pass `None::<&str>`. Fixed in interfaces.
+7. Task 7: missing-store response `page` field inconsistency (interfaces said requested page, step hardcoded 0). Fixed: `empty_history_response` echoes clamped `page_size`, `page: 0`, with a test pinning `pageSize` clamp echo.
+8. Task 9: `App.test.tsx`'s `invoke` mock resolves `undefined` while the new HistoryView calls `get_history` on mount (breadcrumb test clicks History at `:48`, heading-absence at `:122-125`) — skeleton-flake risk. Fixed: Task 9 Step 1 now configures an empty `HistoryResponse` mock; line range corrected to 122-125.
+9. Task 10: fixture ripple was understated — `src/hooks/useSettings.test.ts:27` fixture is typed `Settings` (mandatory update); `SettingsView.test.tsx:281` asserts exactly 4 cards (now fails → update to 5); `baseSettings`/`resetDefaults` typed fixtures need `history`. Fixed: Task 10 Files + Required Tests list the mandatory edits.
+10. Task 9: "N matches" singular/plural — test expected literal `1 match` while spec says `N matches`; plan now specifies singular/plural and the auto-expand test asserts `1 match`.
+11. Spec drift (fixed): spec §3.7 still sketched `fold_sessions` / `LoadedHistory` / `query_history(..., now_ms)` while §3.5 resolves presets to `sinceMs` webview-side. Synced the spec to the plan (`fold_records` / `FoldResult` / no `now_ms`) and updated §5.7's file table to the implemented structure (`HistoryView.tsx` includes the filter bar + session row; `HistoryPagination.tsx` added).
+12. Coverage gaps closed by this refine: write-failure/once-per-batch `history:error` tests, command-level `get_history`/`clear_history`/`open_folder` tests, missing-store empty response, unsupported-outcome record, sequential cancel-all path, stale-response race, DST midnight boundaries, page_size 0 safety, empty/whitespace search and empty-vec filter semantics, session-not-split-across-pages, actions/disabled-state UI tests, summary-bar page-independence UI test, automated AC proxies in Task 11.
