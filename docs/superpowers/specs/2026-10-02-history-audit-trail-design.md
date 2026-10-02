@@ -149,6 +149,11 @@ search sees.
   whole session; a file-level hit keeps only matching files.
 - **Status / Category**: file-level; a session is visible when ≥1 file matches, and only
   matching files are returned (`matchedFiles`).
+- **Normalization**: all filter strings are trimmed; search/outputFolder blank or
+  whitespace-only count as absent (inactive); `statuses`/`categories` entries are trimmed
+  and empties dropped, and an empty resulting list counts as absent. Unknown filter keys
+  are rejected at deserialization (`deny_unknown_fields`) so a typo'd key fails loudly
+  instead of silently defaulting.
 - Sessions are ordered newest-first by `startedAt`, then paginated: `page` (0-based),
   `pageSize = 50`.
 
