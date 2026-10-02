@@ -236,14 +236,14 @@ git commit -m "feat(settings): add history.retentionDays with clamp"
 - Test: `src-tauri/src/history.rs` test module
 
 **Interfaces:**
-- Consumes: GPL header pattern; `uuid` crate (existing).
+- Consumes: GPL header pattern; no new deps.
 - Produces (all `pub` unless noted):
   - `SessionStartRecord { session_id: String, started_at: i64, file_count: usize, output_folder: String }` — camelCase serde
   - `FileResultRecord { session_id: String, file_id: String, completed_at: i64, name: String, path: String, output_path: Option<String>, category: String, target_bytes: u64, original_size: u64, compressed_size: Option<u64>, status: String, quality_used: Option<u32>, strategy_used: Option<String>, error: Option<String>, duration_ms: u64 }`
   - `SessionEndRecord { session_id: String, ended_at: i64, total_saved_bytes: u64, counts: Counts, cancelled: bool }`
   - `Counts { done: u32, best_effort: u32, failed: u32, cancelled: u32, unsupported: u32, already_under_target: u32 }` — camelCase
   - `HistoryStore::new_in(dir: &Path) -> HistoryStore` — path is `dir/history.jsonl`
-  - `HistoryStore::file_path(&self) -> &Path` (test accessor)
+  - `HistoryStore::file_path(&self) -> &Path` — `pub(crate)` (test accessor)
   - `HistoryStore::append_session_start / append_file / append_session_end -> Result<(), String>`
   - `HistoryStore::read_lines(&self) -> Result<Vec<String>, String>` (pub(crate); `Ok(vec![])` when the file does not exist)
   - `pub(crate) enum HistoryRecordRef<'a>::{SessionStart(&SessionStartRecord), File(&FileResultRecord), SessionEnd(&SessionEndRecord)}` — the single "type"-tagged serializer used by all three append methods (Task 6's helper takes `&HistoryRecordRef<'_>`; it must be `pub(crate)`, not private, because `queue.rs` is another module)
@@ -333,6 +333,9 @@ Create `src-tauri/src/history.rs` with the GPL header (`queue.rs:1-15` verbatim)
         assert_eq!(v["type"], "file");
         assert!(v["outputPath"].is_null());
         assert!(v["compressedSize"].is_null());
+        assert!(v["qualityUsed"].is_null());
+        assert!(v["strategyUsed"].is_null());
+        assert!(v["error"].is_null());
         assert_eq!(v["status"], "cancelled");
     }
 
@@ -380,8 +383,10 @@ Create `src-tauri/src/history.rs` with the GPL header (`queue.rs:1-15` verbatim)
         store.append_session_end(&small_end("s2")).unwrap();
         let lines = store.read_lines().unwrap();
         assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains("\"s1\""));
-        assert!(lines[1].contains("\"s2\""));
+        let first: SessionEndRecord = serde_json::from_str(&lines[0]).unwrap();
+        let second: SessionEndRecord = serde_json::from_str(&lines[1]).unwrap();
+        assert_eq!(first.session_id, "s1");
+        assert_eq!(second.session_id, "s2");
     }
 ```
 
@@ -393,14 +398,7 @@ Plus a test-module helper:
             session_id: session_id.into(),
             ended_at: 0,
             total_saved_bytes: 0,
-            counts: Counts {
-                done: 0,
-                best_effort: 0,
-                failed: 0,
-                cancelled: 0,
-                unsupported: 0,
-                already_under_target: 0,
-            },
+            counts: Counts::default(),
             cancelled: false,
         }
     }
@@ -415,8 +413,8 @@ Expected: FAIL — `HistoryStore` not defined.
 
 In `src-tauri/src/history.rs` (above the test module), implement:
 
-- The five structs with `#[serde(rename_all = "camelCase")]` + `Serialize, Deserialize, Debug, Clone`. `Counts` derives `Default`; `SessionStartRecord`/`SessionEndRecord`/`FileResultRecord`/`Counts` derive `PartialEq` for test equality.
-- `HistoryStore { path: PathBuf, lock: Mutex<()> }` with `new_in(dir)` = `dir.join("history.jsonl")`, `pub(crate)` `file_path()` accessor.
+- The four record structs (`SessionStartRecord`, `FileResultRecord`, `SessionEndRecord`, `Counts`) with `#[serde(rename_all = "camelCase")]` + `Serialize, Deserialize, Debug, Clone`. `Counts` derives `Default`; `SessionStartRecord`/`SessionEndRecord`/`FileResultRecord`/`Counts` derive `PartialEq` for test equality.
+- `HistoryStore { path: PathBuf, lock: Mutex<()> }` with `new_in(dir)` = `dir.join("history.jsonl")`, `pub(crate)` `file_path()` accessor. Lock acquisition goes through the private `poison_recover` helper, which logs `warn: history mutex was poisoned, recovering: {e}` to stderr and recovers the guard via `into_inner()` instead of panicking; every `lock()` call site (append/read/trim/clear) uses it.
 - Record-level serialization discriminator: a `pub(crate)` `#[derive(Serialize)] #[serde(tag = "type", rename_all = "snake_case")] enum HistoryRecordRef<'a> { SessionStart(&'a SessionStartRecord), File(&'a FileResultRecord), SessionEnd(&'a SessionEndRecord) }` so the `"type"` tag lives in exactly one place and `queue.rs` (Task 6) can name the type. `append()` serializes `HistoryRecordRef` to a compact line, creates parent dirs (`create_dir_all`) if missing, opens with `OpenOptions::new().create(true).append(true).read(true)`, then:
   - gets the current length via `seek(SeekFrom::End(0))` (error → `history write failed: seek {path}: {e}`);
   - if length > 0, probes the last byte (`seek(SeekFrom::End(-1))` + `read_exact`); probe errors log `warn: history append newline probe {path} failed, inserting separator: {e}` and are treated as "not a newline" (safe direction). When the tail is not `\n`, a separator `\n` is inserted before the new line — repairing torn/partial tails (spec §3.4).
@@ -456,7 +454,7 @@ git commit -m "feat(history): add JSONL records and append store"
 - Grouping by `sessionId`; files sorted by `completedAt`; sessions sorted newest-first by `startedAt` (spec §3.4).
 - Missing `session_end` ⇒ `interrupted: true`, `ended_at: null`, outcome + `total_saved_bytes` computed from recorded files with saturating subtraction (spec §3.4).
 - Present `session_end` ⇒ `ended_at`, `total_saved_bytes`, `cancelled`, and counts taken verbatim from the end record (spec §3.4).
-- Malformed JSON lines skipped + counted; unknown record `type`s ignored silently; orphan file/end lines (unknown session) skipped + counted (plan Task 3 implementation note; spec §3.3).
+- Malformed JSON lines skipped + counted; unknown record `type`s ignored silently; orphan file/end lines (unknown session) skipped + counted (plan Task 3 implementation note; spec §3.3). Lines with invalid UTF-8 are consumed lossy (stderr-warned by `read_lines`) and are not counted in `skippedLines` — only JSON-malformed lines are (spec §3.3).
 - Duplicate `fileId` within a session: last record wins (spec §3.4).
 - All Required Tests pass.
 - Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
@@ -1015,7 +1013,9 @@ git commit -m "feat(history): add 90-day retention trim and clear"
 
 **Write points:** `process_batch` after preflight passes → `append_session_start` (folder = settings `output_folder`, `file_count = file_ids.len()` — **capture `file_ids.len()` before the N≤1 loop, which consumes the vec by value at `queue.rs:222`**). Every terminal outcome in `process_single_job` (done / best-effort / already-under-target, failed, cancelled, unsupported) → `append_file`. Cancel-all skipped files (both the sequential loop and the lane `on_skipped` closure) and the "cancelled while pending" skip paths → `append_file` with `status: "cancelled"`, `output_path: None`, `compressed_size: None`, `duration_ms: 0`. `finish_batch` → `append_session_end` (counts over all recorded file records, `cancelled` = batch was cancelled — **read the cancellation state before `finish_batch` removes the batch token at `queue.rs:505`**) then `trim(effective_retention_days, now_ms)` (trim failure is logged, never propagated).
 
-**Status string format (must not drift):** `FileResultRecord.status` is the snake_case `FileStatus` string exactly as serialized by serde (`"done"`, `"best_effort"`, `"already_under_target"`, `"failed"`, `"cancelled"`, `"unsupported"`) — never `format!("{:?}")` (which would emit `"AlreadyUnderTarget"` and silently break Task 4 filters). Add a helper `fn status_key(status: &FileStatus) -> &'static str` with an exhaustive match.
+**Status string format (must not drift):** `FileResultRecord.status` is the snake_case `FileStatus` string exactly as serialized by serde (`"done"`, `"best_effort"`, `"already_under_target"`, `"failed"`, `"cancelled"`, `"unsupported"`) — never `format!("{:?}")` (which would emit `"AlreadyUnderTarget"` and silently break Task 4 filters). Add a helper `fn status_key(status: &FileStatus) -> &'static str` with an exhaustive match that is **total and safe for every `FileStatus` variant** (including `Pending` / `Compressing`) — map each variant to its snake_case serde string; no `unreachable!()`, no panic.
+
+**Category string:** `FileResultRecord.category` for file records is always `category_key(&entry.category)` — reuse the existing `category_key` helper at `queue.rs:517` (do not add a second mapping).
 
 **Acceptance Criteria:**
 - Preflight failure writes nothing (no phantom session); successful preflight writes `session_start` with the settings folder and the batch's file count (spec §4.1).
@@ -1045,7 +1045,8 @@ git commit -m "feat(history): add 90-day retention trim and clear"
 - `finish_batch_trims_old_history` — seeded 11-day-old session + retention 10 → gone after batch
 - `session_start_output_folder_matches_settings` — folder equals settings value
 - `duration_ms_positive_for_processed_outcome` — processed file record has duration_ms > 0 (sidecar-less failure path still measures)
-- `status_key_snake_case` — `status_key` returns `"already_under_target"` etc. (exhaustive match pinned)
+- `status_key_snake_case` — `status_key` returns `"already_under_target"` etc. for all variants including `pending` / `compressing` (exhaustive, total match pinned; no panic paths)
+- `category_key_snake_case` — `category_key` returns lowercase strings (`"image"` / `"video"` / `"pdf"` / `"document"` / `"other"`), so file records never carry `format!("{:?}")`-style casing
 
 - [ ] **Step 1: Write the failing tests**
 
