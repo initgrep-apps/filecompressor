@@ -87,7 +87,10 @@ export function useHistory() {
       toast.error(HISTORY_ERROR_TOAST)
     })
       .then(done)
-      .catch(reportListenFailure('history:error'))
+      .catch((err) => {
+        console.error('event listener registration failed: history:error', err)
+        toast.error('History error notifications are unavailable.')
+      })
 
     return () => {
       disposed = true
@@ -95,14 +98,15 @@ export function useHistory() {
     }
   }, [])
 
-  const setFilters = useCallback((partial: Partial<HistoryFilters>) => {
-    setFiltersState((prev) => {
-      const next = { ...prev, ...partial }
-      if (JSON.stringify(prev) === JSON.stringify(next)) return prev
-      return next
-    })
-    setPageState(0)
-  }, [])
+  const setFilters = useCallback(
+    (partial: Partial<HistoryFilters>) => {
+      const next = { ...filters, ...partial }
+      if (JSON.stringify(filters) === JSON.stringify(next)) return
+      setFiltersState(next)
+      setPageState(0)
+    },
+    [filters]
+  )
 
   const setPage = useCallback((next: number) => {
     setPageState(next)
@@ -116,7 +120,8 @@ export function useHistory() {
     try {
       await invoke('clear_history')
       refresh()
-    } catch {
+    } catch (err) {
+      console.error('clear_history failed:', err)
       toast.error('Could not clear history')
     }
   }, [refresh])
