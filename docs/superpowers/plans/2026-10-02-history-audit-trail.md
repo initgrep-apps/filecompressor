@@ -1064,10 +1064,11 @@ git commit -m "feat(history): add 90-day retention trim and clear"
 - Consumes: `HistoryStore` (Tasks 2–5); existing `process_batch` / `process_single_job` / `finish_batch`; `CompressionResult`.
 - Produces:
   - `FileCompletePayload` gains `quality_used: Option<u32>` and `strategy_used: Option<String>` (camelCase `qualityUsed` / `strategyUsed`) — additive for the frontend.
-  - Private `FileRecordFields` accumulator + `struct HistoryCounts { done, best_effort, failed, cancelled, unsupported, already_under_target: u32 }` in `queue.rs` for `session_end`.
-  - `fn history_counts_of(files: &[crate::history::FileResultRecord]) -> crate::history::Counts` — pure, maps the six statuses (unknown statuses are not counted).
+  - Per-batch accumulator `history_records: Mutex<HashMap<String, Vec<crate::history::FileResultRecord>>>` on `QueueState` (keyed by batch id) feeding `session_end` counts via the shared `crate::history::Counts` struct — no private counts type.
+  - `fn history_counts_of(files: &[crate::history::FileResultRecord]) -> crate::history::Counts` — pure, maps the six statuses; unknown statuses are not counted but warn to stderr.
   - `history:error` event: `{ "message": String }`, emitted **once per batch** on the first write failure.
-  - Private helper `fn append_history<R: tauri::Runtime>(app: &AppHandle<R>, record: HistoryRecordRef<'_>) -> Result<(), String>` — resolves `app.try_state::<HistoryStore>()`, missing store → `Ok(())` (tests that don't manage history still pass), write error → first-failure `history:error` emit (per-batch flag in `QueueState`), returns the error.
+  - Private helper `fn append_history<R: tauri::Runtime>(app: &AppHandle<R>, record: HistoryRecordRef<'_>) -> Result<(), String>` — resolves `app.try_state::<HistoryStore>()`, missing store → warn to stderr + `Ok(())` (tests that don't manage history still pass), write error → first-failure `history:error` emit (per-batch flag in `QueueState`), returns the error.
+  - Method `fn record_file(&self, app, batch_id, entry, status, output_path, compressed_size, quality_used, strategy_used, error, duration_ms)` — builds the record with `status_key` / `category_key`, pushes to the accumulator, appends via the `HistoryRecordRef::File` variant; `fn record_cancelled(&self, app, batch_id, entry, duration_ms)` wraps the six cancelled/skip call sites plus the mid-flight cancel path.
 
 **Write points:** `process_batch` after preflight passes → `append_session_start` (folder = settings `output_folder`, `file_count = file_ids.len()` — **capture `file_ids.len()` before the N≤1 loop, which consumes the vec by value at `queue.rs:314`**). Every terminal outcome in `process_single_job` (done / best-effort / already-under-target, failed, cancelled, unsupported) → `append_file`. Cancel-all skipped files (both the sequential loop and the lane `on_skipped` closure), the "cancelled while pending" skip paths, and entries individually cancelled while Pending (never placed into a lane) → `append_file` with `status: "cancelled"`, `output_path: None`, `compressed_size: None`, `duration_ms: 0`. `finish_batch` → `append_session_end` (counts over all recorded file records, `cancelled` = batch was cancelled — **read the cancellation state before `finish_batch` removes the batch token at `queue.rs:773`**) then `trim(effective_retention_days, now_ms)` (trim failure is logged, never propagated).
 
@@ -1090,14 +1091,14 @@ git commit -m "feat(history): add 90-day retention trim and clear"
 **Required Tests:**
 - `history_counts_map_all_statuses` — six counted, `"pending"` excluded
 - `file_complete_payload_carries_strategy_fields` — camelCase additive keys
-- `failed_batch_writes_session_records` — start + 2 files + end, not interrupted, counts exact
-- `session_end_totals_match_accumulated_records` — totalSavedBytes + all six counts exactness
+- `failed_batch_writes_session_records` — start + 2 files + end, not interrupted, `cancelled` false, counts exact, timestamps ordered: started_at > 0, ended_at >= started_at, each file completed_at within [started_at, ended_at]
+- `session_end_totals_match_accumulated_records` — totalSavedBytes + all six counts exactness; batch:complete payload total equals the recorded total; processed record pins exact output path, category `"document"`, quality 100 and the already-under-target strategy string
 - `preflight_failure_writes_nothing` — sessions empty
-- `cancel_all_records_cancelled_files` — every id once; failed + cancelled == 3
-- `sequential_cancel_all_records_cancelled` — max_concurrent "1" path records cancelled skips
-- `cancel_skipped_records_have_zero_duration_and_no_output` — duration 0, output null, sizes from entry
-- `unsupported_outcome_recorded` — Category::Other → status `unsupported`, nulls for output/quality/strategy
-- `history_write_failure_does_not_fail_batch` — history path unwritable → batch:complete still fires, file outcomes unchanged
+- `cancel_all_records_cancelled_files` — 6 ids, recorded fileId set equals the batch ids exactly (no duplicates, no gaps); failed + cancelled count cover all 6; every cancelled record carries `duration_ms` 0
+- `sequential_cancel_all_records_cancelled` — max_concurrent "1" path records cancelled skips; cancelled records carry `duration_ms` 0
+- `cancel_skipped_records_have_zero_duration_and_no_output` — real 1KB file pre-cancelled: original_size == 1024, duration 0, null output/compressed; all cancelled records keep entry sizes (mid-flight duration is measured per spec §3.2 and not asserted here — not deterministically simulatable without sidecars)
+- `unsupported_outcome_recorded` — Category::Other → status `unsupported`, category `"other"`, nulls for output/quality/strategy, duration_ms > 0
+- `history_write_failure_does_not_fail_batch` — history path unwritable → batch:complete still fires, file outcomes unchanged, exactly 1 `history:error` event
 - `history_error_emitted_once_per_batch` — persistent failure across 2 files → exactly 1 `history:error` `{ message }`
 - `missing_store_still_completes_batch` — no HistoryStore managed → batch completes normally
 - `finish_batch_trims_old_history` — seeded 11-day-old session + retention 10 → gone after batch
@@ -1109,10 +1110,7 @@ git commit -m "feat(history): add 90-day retention trim and clear"
 - `trim_failure_does_not_fail_batch` — rewrite temp path occupied by a directory with a seeded old session: batch completes, original history intact, outcomes unchanged
 - `history_error_flag_cleared_between_batches` — two sequential failing batches in one app emit 2 `history:error` events and clear both flag entries
 - `history_records_accumulator_cleared_after_batch` — accumulator drained after batch; second batch session counts unaffected
-- `cancel_skipped_records_have_zero_duration_and_no_output` — real 1KB file pre-cancelled: original_size == 1024, duration 0, null output/compressed; all cancelled records keep entry sizes (mid-flight duration is measured per spec §3.2 and not asserted here — not deterministically simulatable without sidecars)
-- `unsupported_outcome_recorded` — also asserts duration_ms > 0
-- `cancel_all_records_cancelled_files` / `sequential_cancel_all_records_cancelled` — recorded fileId set equals batch ids exactly (no duplicates, no gaps)
-- `history_write_failure_does_not_fail_batch` — also asserts exactly 1 `history:error` event
+- `queued_entry_individually_cancelled_records_on_dispatch` — maxConcurrent "3", one entry marked Cancelled via `set_status` then `process_single_job` called directly: saved 0, exactly one file record with status `cancelled`, duration 0, null output/compressed/quality/strategy
 - `status_key_snake_case` — `status_key` returns `"already_under_target"` etc. for all variants including `pending` / `compressing` (exhaustive, total match pinned; no panic paths)
 - `category_key_snake_case` — `category_key` returns lowercase strings (`"image"` / `"video"` / `"pdf"` / `"document"` / `"other"`), so file records never carry `format!("{:?}")`-style casing
 
@@ -1228,6 +1226,9 @@ Add to the `queue.rs` test module (existing harness: `make_app`, `setup_app`, `a
             ("i1.jpg", crate::models::Category::Image, "/tmp/i1.jpg"),
             ("i2.jpg", crate::models::Category::Image, "/tmp/i2.jpg"),
             ("p1.pdf", crate::models::Category::Pdf, "/tmp/p1.pdf"),
+            ("p2.pdf", crate::models::Category::Pdf, "/tmp/p2.pdf"),
+            ("v1.mp4", crate::models::Category::Video, "/tmp/v1.mp4"),
+            ("v2.mp4", crate::models::Category::Video, "/tmp/v2.mp4"),
         ]);
         let rx = events_of(&app.handle(), &["file:error", "file:cancelled", "batch:complete"]);
         let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
@@ -1242,12 +1243,28 @@ Add to the `queue.rs` test module (existing harness: `make_app`, `setup_app`, `a
         }
 
         let store = app.state::<crate::history::HistoryStore>();
+        let recorded: Vec<String> = raw_file_records(&store).iter().map(|r| r.file_id.clone()).collect();
+        assert_eq!(
+            recorded.iter().cloned().collect::<std::collections::HashSet<_>>(),
+            ids.iter().cloned().collect::<std::collections::HashSet<_>>(),
+            "recorded file ids must equal the batch ids exactly, got {recorded:?}"
+        );
+        assert_eq!(recorded.len(), ids.len(), "no duplicate file records");
+
         let fold = store.load().unwrap();
         let s = &fold.sessions[0];
-        assert_eq!(s.files.len(), 3, "every file terminal outcome recorded once");
+        assert_eq!(s.files.len(), ids.len(), "every file terminal outcome recorded once");
         assert!(s.files.iter().any(|f| f.status == "failed"));
         assert!(s.files.iter().any(|f| f.status == "cancelled"));
-        assert_eq!(s.outcome.failed + s.outcome.cancelled, 3);
+        assert_eq!(
+            s.outcome.failed + s.outcome.cancelled,
+            u32::try_from(ids.len()).unwrap(),
+            "counts must cover every recorded file"
+        );
+        for f in s.files.iter().filter(|f| f.status == "cancelled") {
+            assert_eq!(f.duration_ms, 0, "cancelled-before-slot records carry zero duration: {f:?}");
+        }
+        assert!(s.cancelled, "batch ended via cancel-all");
     }
 ```
 
@@ -1262,13 +1279,13 @@ In `queue.rs`:
 - Import `crate::history::{...}`; add `use tauri::Manager;` for `try_state` (already imported).
 - Add `quality_used: Option<u32>, strategy_used: Option<String>` to `FileCompletePayload`; fill from `compression_result.quality_used` / `.strategy_used` for successful jobs; `None` everywhere else.
 - `fn status_key(status: &FileStatus) -> &'static str` — exhaustive match to the serde snake_case strings; all history `status` values come from this helper.
-- Accumulator: thread-safe per batch — add to `QueueState`: `history_records: Mutex<HashMap<String, Vec<crate::history::FileResultRecord>>>` keyed by batch id; worker pushes each recorded file record there; `finish_batch` drains the vector, computes `history_counts_of`, writes `session_end`, calls `trim` with `crate::settings::Settings` loaded from `load_settings(app)` (call `load_settings` in `finish_batch`; it is already pub). `trim` errors are logged via `eprintln!`, never propagated.
+- Accumulator: thread-safe per batch — add to `QueueState`: `history_records: Mutex<HashMap<String, Vec<crate::history::FileResultRecord>>>` keyed by batch id; worker pushes each recorded file record there; `finish_batch` drains the vector, computes `history_counts_of`, writes `session_end`, calls `trim` with `crate::settings::Settings` loaded from `load_settings(app)` (call `load_settings` in `finish_batch`; it is already pub). `trim` errors are logged via `eprintln!`, never propagated. A missing `HistoryStore` state warns to stderr on the append/trim skip paths.
 - `history:error` once-per-batch: add `history_error_sent: Mutex<HashSet<String>>` keyed by batch id; helper checks+inserts before emitting; `finish_batch` removes the batch's entry.
 - Write-failure test technique: point the store at a path whose parent is a regular file (e.g. `HistoryStore::new_in(&blocker.join("child"))`) or put a directory at `history.jsonl` — `append` must return Err; the batch must still complete.
 - `duration_ms`: measure `std::time::Instant::now()` at job start, `elapsed().as_millis() as u64` at each terminal outcome.
 - Unsupported branch currently returns before the generic match — record there too (`status "unsupported"`, no sizes/output, duration measured).
-- Cancel-skip paths: sequential loop cancel-all branch, lane `on_skipped`, and the "cancelled while pending" guards in `process_single_job` → record `cancelled` with original sizes from the entry.
-- Wrap helper: `fn record_file<R: Runtime>(app, batch_id, entry, status, output_path, compressed_size, quality_used, strategy_used, error, duration_ms)` builds the record with `status_key`, pushes to the accumulator, appends via the `HistoryRecordRef::File` variant.
+- Cancel-skip paths: sequential loop cancel-all branch, lane `on_skipped`, the "cancelled while pending" guards in `process_single_job`, and the `!flipped` race branch (reuse `cancel_skip_entry` for the lookup) → `record_cancelled` with original sizes from the entry.
+- Methods on `QueueState`: `fn record_file(&self, app, batch_id, entry, status, output_path, compressed_size, quality_used, strategy_used, error, duration_ms)` builds the record with `status_key` / `category_key`, pushes to the accumulator, appends via the `HistoryRecordRef::File` variant; `fn record_cancelled(&self, app, batch_id, entry, duration_ms)` wraps the cancelled/skip call sites.
 
 - [ ] **Step 4: Run test to verify it passes**
 

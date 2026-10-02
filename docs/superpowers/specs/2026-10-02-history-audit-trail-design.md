@@ -90,9 +90,9 @@ Field notes:
   `unsupported`, `already_under_target`).
 - `outputPath`, `compressedSize`, `qualityUsed`, `strategyUsed`, `error` are optional
   (absent/`null` for outcomes that don't have them).
-- `qualityUsed` / `strategyUsed` are captured from `CompressionResult` — currently computed
-  by the engine and dropped before the `file:complete` event. Per-file "what the engine
-  actually did" detail for the audit tooltip.
+- `qualityUsed` / `strategyUsed` are captured from `CompressionResult` — surfaced on the
+  `file:complete` event and in the file records. Per-file "what the engine actually did"
+  detail for the audit tooltip.
 - `durationMs` measured in the worker per file (start → terminal outcome; 0 for files
   cancelled before their worker slot).
 - `counts` in `session_end` is accumulated in the worker (not derived from UI state).
@@ -243,7 +243,9 @@ serialized by the mutex. Registered in
   (`durationMs` 0); a job cancelled after taking a worker slot carries its measured
   duration.
 - Unsupported outcomes (registry lookup finds no processor) are recorded with status
-  `unsupported` — null output/compressed/quality/strategy, measured duration.
+  `unsupported` — null output/compressed/quality/strategy, measured duration. This is a
+  defensive/test-only path: `Category::Other` files never enter production batches, but when
+  such a job does reach the worker the outcome is recorded rather than dropped.
 
 ### 4.2 Commands (`commands.rs` + `lib.rs` registration)
 
