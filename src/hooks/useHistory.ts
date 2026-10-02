@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { toast } from 'sonner'
@@ -34,6 +34,7 @@ export function useHistory() {
   const [filters, setFiltersState] = useState<HistoryFilters>({})
   const [page, setPage] = useState(0)
   const [nonce, setNonce] = useState(0)
+  const lastSyncedPage = useRef<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -47,13 +48,19 @@ export function useHistory() {
         if (cancelled) return
         setResponse(res)
         setError(null)
-        if (
+        const validPage =
           typeof res.page === 'number' &&
           Number.isInteger(res.page) &&
-          res.page >= 0 &&
-          res.page !== page
-        ) {
-          setPage(res.page)
+          res.page >= 0
+        if (validPage && res.page !== page) {
+          if (lastSyncedPage.current !== res.page) {
+            lastSyncedPage.current = res.page
+            setPage(res.page)
+          } else {
+            console.warn('page-sync correction did not converge:', res.page)
+          }
+        } else if (validPage && lastSyncedPage.current !== null) {
+          lastSyncedPage.current = null
         }
       } catch (err) {
         if (cancelled) return

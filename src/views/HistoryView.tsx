@@ -256,10 +256,13 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
   const sumCompressed = files.reduce((acc, f) => acc + (f.compressedSize ?? 0), 0)
   const pct = savedPercent(sumOriginal, sumCompressed)
   const duration = session.endedAt !== null ? formatDuration(session.endedAt - session.startedAt) : '—'
-  const timeLabel = new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(new Date(session.startedAt))
+  const startedAtDate = new Date(session.startedAt)
+  const startedAtLabel = Number.isFinite(startedAtDate.getTime())
+    ? new Intl.DateTimeFormat(undefined, {
+        hour: 'numeric',
+        minute: '2-digit',
+      }).format(startedAtDate)
+    : '—'
   const matchedFiles = session.matchedFiles
   const matched = matchedFiles !== null
   const outcome = matched ? countOutcome(files) : session.outcome
@@ -278,7 +281,7 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
           onClick={onToggle}
         >
           <div className="flex flex-wrap items-center gap-x-0.5 text-sm tabular-nums">
-            <span className="text-muted-foreground">{timeLabel}</span>
+            <span className="text-muted-foreground">{startedAtLabel}</span>
             {matched && (
               <>
                 {' · '}
