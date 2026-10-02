@@ -275,6 +275,9 @@ git commit -m "feat(settings): add history.retentionDays with clamp"
 - `read_during_write_never_sees_torn_line` — reader loop during concurrent large appends → every returned line parses as JSON
 - `record_schema_keys_are_pinned` — golden sorted key lists for session_start/file/session_end + Counts
 - `append_and_read_roundtrip_unicode_paths` — café/漢字/😀 in names, paths and errors roundtrip
+- `append_blocks_until_lock_released` — holding `store.lock` blocks a spawned append until release (direct mutual-exclusion check)
+- `read_lines_blocks_until_lock_released` — holding `store.lock` blocks a spawned `read_lines` until release
+- `write_failure_surfaces_write_stage_error` — read-only handle → `write_terminated` → `Err` starting `history write failed: write `
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -412,10 +415,13 @@ Expected: FAIL — `HistoryStore` not defined.
 
 In `src-tauri/src/history.rs` (above the test module), implement:
 
-- The five structs with `#[serde(rename_all = "camelCase")]` + `Serialize, Deserialize, Debug, Clone`. `Counts` derives the same; `SessionStartRecord`/`SessionEndRecord`/`Counts` derive `PartialEq` for test equality.
-- `HistoryStore { path: PathBuf, lock: Mutex<()> }` with `new_in(dir)` = `dir.join("history.jsonl")`, `file_path()` accessor.
-- Record-level serialization discriminator: a `pub(crate)` `#[derive(Serialize)] #[serde(tag = "type", rename_all = "snake_case")] enum HistoryRecordRef<'a> { SessionStart(&'a SessionStartRecord), File(&'a FileResultRecord), SessionEnd(&'a SessionEndRecord) }` so the `"type"` tag lives in exactly one place and `queue.rs` (Task 6) can name the type. `append()` serializes `HistoryRecordRef` to a compact line, creates parent dirs (`create_dir_all`) if missing, opens with `OpenOptions::new().create(true).append(true)`, writes `line + "\n"` inside `self.lock`. Errors → `Err(format!("history write failed: {e}"))`.
-- `read_lines`: `NotFound` → `Ok(vec![])`; other errors → `Err(String)`; reads whole file inside the lock, returns non-empty, trimmed lines (blank lines filtered).
+- The five structs with `#[serde(rename_all = "camelCase")]` + `Serialize, Deserialize, Debug, Clone`. `Counts` derives `Default`; `SessionStartRecord`/`SessionEndRecord`/`FileResultRecord`/`Counts` derive `PartialEq` for test equality.
+- `HistoryStore { path: PathBuf, lock: Mutex<()> }` with `new_in(dir)` = `dir.join("history.jsonl")`, `pub(crate)` `file_path()` accessor.
+- Record-level serialization discriminator: a `pub(crate)` `#[derive(Serialize)] #[serde(tag = "type", rename_all = "snake_case")] enum HistoryRecordRef<'a> { SessionStart(&'a SessionStartRecord), File(&'a FileResultRecord), SessionEnd(&'a SessionEndRecord) }` so the `"type"` tag lives in exactly one place and `queue.rs` (Task 6) can name the type. `append()` serializes `HistoryRecordRef` to a compact line, creates parent dirs (`create_dir_all`) if missing, opens with `OpenOptions::new().create(true).append(true).read(true)`, then:
+  - gets the current length via `seek(SeekFrom::End(0))` (error → `history write failed: seek {path}: {e}`);
+  - if length > 0, probes the last byte (`seek(SeekFrom::End(-1))` + `read_exact`); probe errors log `warn: history append newline probe {path} failed, inserting separator: {e}` and are treated as "not a newline" (safe direction). When the tail is not `\n`, a separator `\n` is inserted before the new line — repairing torn/partial tails (spec §3.4).
+  - builds one buffer (`separator? + line + "\n"`) and writes it via the private `write_terminated(file, buf, path)` helper in a single `write_all` inside `self.lock`. Write errors → `Err(format!("history write failed: write {path}: {e}"))`; all other append stages carry `path` + stage in their messages (serialize / create parent dir / open / seek / write).
+- `read_lines`: `NotFound` → `Ok(vec![])`; other errors → `Err(format!("history read failed: read {path}: {e}"))`; reads the whole file inside the lock, then per line warns `warn: history line had invalid UTF-8, lossy-decoded ({path}): {e}` when `std::str::from_utf8` fails, lossy-decodes, trims, and filters blank lines.
 
 - [ ] **Step 4: Run test to verify it passes**
 
