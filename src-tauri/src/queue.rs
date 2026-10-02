@@ -16,12 +16,15 @@
 
 use crate::commands::FileListState;
 use crate::engine::{CompressionError, CompressionResult, ProgressSender};
+use crate::history::{
+    Counts, FileResultRecord, HistoryRecordRef, HistoryStore, SessionEndRecord, SessionStartRecord,
+};
 use crate::models::{FileEntry, FileStatus};
 use crate::processors::ProcessorRegistry;
 use crate::scheduler;
 use crate::sidecar;
 use crate::temp;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{LockResult, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::mpsc;
@@ -99,6 +102,8 @@ struct FileCompletePayload<'a> {
     compressed_size: u64,
     status: FileStatus,
     met_target: bool,
+    quality_used: Option<u32>,
+    strategy_used: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -121,6 +126,8 @@ struct BatchCompletePayload<'a> {
 pub struct QueueState<R: Runtime = tauri::Wry> {
     token_map: Mutex<HashMap<String, CancellationToken>>,
     batch_tokens: Mutex<HashMap<String, CancellationToken>>,
+    history_records: Mutex<HashMap<String, Vec<FileResultRecord>>>,
+    history_error_sent: Mutex<HashSet<String>>,
     sender: mpsc::UnboundedSender<BatchMessage>,
     _runtime: std::marker::PhantomData<fn() -> R>,
 }
@@ -137,6 +144,8 @@ impl<R: Runtime> QueueState<R> {
         QueueState {
             token_map: Mutex::new(HashMap::new()),
             batch_tokens: Mutex::new(HashMap::new()),
+            history_records: Mutex::new(HashMap::new()),
+            history_error_sent: Mutex::new(HashSet::new()),
             sender,
             _runtime: std::marker::PhantomData,
         }
@@ -198,6 +207,43 @@ impl<R: Runtime> QueueState<R> {
         poison_recover(self.batch_tokens.lock()).contains_key(batch_id)
     }
 
+    fn record_file(
+        &self,
+        app: &AppHandle<R>,
+        batch_id: &str,
+        entry: &FileEntry,
+        status: FileStatus,
+        output_path: Option<String>,
+        compressed_size: Option<u64>,
+        quality_used: Option<u32>,
+        strategy_used: Option<String>,
+        error: Option<String>,
+        duration_ms: u64,
+    ) {
+        let record = FileResultRecord {
+            session_id: batch_id.to_string(),
+            file_id: entry.id.clone(),
+            completed_at: now_ms(),
+            name: entry.name.clone(),
+            path: entry.path.clone(),
+            output_path,
+            category: category_key(&entry.category).to_string(),
+            target_bytes: entry.target_bytes,
+            original_size: entry.original_size,
+            compressed_size,
+            status: status_key(&status).to_string(),
+            quality_used,
+            strategy_used,
+            error,
+            duration_ms,
+        };
+        poison_recover(self.history_records.lock())
+            .entry(batch_id.to_string())
+            .or_default()
+            .push(record.clone());
+        let _ = append_history(app, HistoryRecordRef::File(&record));
+    }
+
     async fn process_batch(app: &AppHandle<R>, batch_id: String, file_ids: Vec<String>) {
         let queue = app.state::<QueueState<R>>();
         let state = app.state::<FileListState>();
@@ -216,17 +262,37 @@ impl<R: Runtime> QueueState<R> {
 
         let max_concurrent = settings.resolve_max_concurrent();
 
+        let started = SessionStartRecord {
+            session_id: batch_id.clone(),
+            started_at: now_ms(),
+            file_count: file_ids.len(),
+            output_folder: output_folder.clone(),
+        };
+        let _ = append_history(app, HistoryRecordRef::SessionStart(&started));
+
         if max_concurrent <= 1 {
             let mut total_saved: u64 = 0;
             let reserved = crate::output::ReservedNames::new();
             for file_id in file_ids {
                 // Cancel-all stops the remaining queue
                 if queue.batch_cancelled(&batch_id) {
-                    let mut list = poison_recover(state.0.lock());
-                    if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
-                        if e.status == FileStatus::Pending {
-                            e.status = FileStatus::Cancelled;
-                        }
+                    let entry = {
+                        let mut list = poison_recover(state.0.lock());
+                        cancel_skip_entry(&mut list, &file_id)
+                    };
+                    if let Some(entry) = entry {
+                        queue.record_file(
+                            app,
+                            &batch_id,
+                            &entry,
+                            FileStatus::Cancelled,
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
+                            0,
+                        );
                     }
                     emit_file_cancelled(app, &file_id);
                     continue;
@@ -261,6 +327,7 @@ impl<R: Runtime> QueueState<R> {
         let run_settings = settings.clone();
         let run_reserved = reserved.clone();
         let skip_app = app.clone();
+        let skip_batch_id = batch_id.clone();
         let skip_state = app.state::<FileListState>();
         let total_saved = scheduler::run_weighted_lanes(
             lanes,
@@ -286,11 +353,24 @@ impl<R: Runtime> QueueState<R> {
             },
             move |file_id| {
                 emit_file_cancelled(&skip_app, &file_id);
-                let mut list = poison_recover(skip_state.0.lock());
-                if let Some(e) = list.iter_mut().find(|e| &e.id == file_id) {
-                    if e.status == FileStatus::Pending {
-                        e.status = FileStatus::Cancelled;
-                    }
+                let entry = {
+                    let mut list = poison_recover(skip_state.0.lock());
+                    cancel_skip_entry(&mut list, file_id)
+                };
+                if let Some(entry) = entry {
+                    let queue = skip_app.state::<QueueState<R>>();
+                    queue.record_file(
+                        &skip_app,
+                        &skip_batch_id,
+                        &entry,
+                        FileStatus::Cancelled,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        0,
+                    );
                 }
             },
         )
@@ -310,13 +390,27 @@ impl<R: Runtime> QueueState<R> {
         let registry = ProcessorRegistry::new();
         let state = app.state::<FileListState>();
         let mut total_saved: u64 = 0;
+        let started = std::time::Instant::now();
+        let elapsed_ms = || (started.elapsed().as_millis() as u64).max(1);
 
         if queue.batch_cancelled(&batch_id) {
-            let mut list = poison_recover(state.0.lock());
-            if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
-                if e.status == FileStatus::Pending {
-                    e.status = FileStatus::Cancelled;
-                }
+            let entry = {
+                let mut list = poison_recover(state.0.lock());
+                cancel_skip_entry(&mut list, &file_id)
+            };
+            if let Some(entry) = entry {
+                queue.record_file(
+                    &app,
+                    &batch_id,
+                    &entry,
+                    FileStatus::Cancelled,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                );
             }
             emit_file_cancelled(&app, &file_id);
             return total_saved;
@@ -328,6 +422,20 @@ impl<R: Runtime> QueueState<R> {
         };
         let Some(entry) = entry else { return total_saved };
         if entry.status != FileStatus::Pending {
+            if entry.status == FileStatus::Cancelled {
+                queue.record_file(
+                    &app,
+                    &batch_id,
+                    &entry,
+                    FileStatus::Cancelled,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                );
+            }
             return total_saved; // cancelled/removed/done — skip
         }
 
@@ -349,6 +457,26 @@ impl<R: Runtime> QueueState<R> {
         };
         if !flipped {
             queue.remove_token(&file_id);
+            let cancelled: Option<FileEntry> = {
+                let list = poison_recover(state.0.lock());
+                list.iter()
+                    .find(|e| e.id == file_id && e.status == FileStatus::Cancelled)
+                    .cloned()
+            };
+            if let Some(cancelled) = cancelled {
+                queue.record_file(
+                    &app,
+                    &batch_id,
+                    &cancelled,
+                    FileStatus::Cancelled,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                );
+            }
             return total_saved;
         }
 
@@ -365,6 +493,18 @@ impl<R: Runtime> QueueState<R> {
                         e.status = FileStatus::Unsupported;
                     }
                 }
+                queue.record_file(
+                    &app,
+                    &batch_id,
+                    &entry,
+                    FileStatus::Unsupported,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    elapsed_ms(),
+                );
                 let _ = app.emit(
                     "file:complete",
                     FileCompletePayload {
@@ -374,6 +514,8 @@ impl<R: Runtime> QueueState<R> {
                         compressed_size: 0,
                         status: FileStatus::Unsupported,
                         met_target: false,
+                        quality_used: None,
+                        strategy_used: None,
                     },
                 );
                 queue.remove_token(&file_id);
@@ -391,6 +533,18 @@ impl<R: Runtime> QueueState<R> {
                                 e2.error = Some(error_msg.clone());
                             }
                         }
+                        queue.record_file(
+                            &app,
+                            &batch_id,
+                            &entry,
+                            FileStatus::Failed,
+                            None,
+                            None,
+                            None,
+                            None,
+                            Some(error_msg.clone()),
+                            elapsed_ms(),
+                        );
                         let _ = app.emit(
                             "file:error",
                             FileErrorPayload {
@@ -450,6 +604,8 @@ impl<R: Runtime> QueueState<R> {
                 total_saved += saved;
                 let status = decide_result_status(&compression_result);
                 let out_path = compression_result.output_path.to_string_lossy().to_string();
+                let quality_used = Some(compression_result.quality_used);
+                let strategy_used = Some(compression_result.strategy_used.clone());
 
                 {
                     let mut list = poison_recover(state.0.lock());
@@ -460,6 +616,19 @@ impl<R: Runtime> QueueState<R> {
                     }
                 }
 
+                queue.record_file(
+                    &app,
+                    &batch_id,
+                    &entry,
+                    status,
+                    Some(out_path.clone()),
+                    Some(compression_result.compressed_size),
+                    quality_used,
+                    strategy_used.clone(),
+                    None,
+                    elapsed_ms(),
+                );
+
                 let _ = app.emit(
                     "file:complete",
                     FileCompletePayload {
@@ -469,23 +638,53 @@ impl<R: Runtime> QueueState<R> {
                         compressed_size: compression_result.compressed_size,
                         status,
                         met_target: compression_result.met_target,
+                        quality_used,
+                        strategy_used,
                     },
                 );
             }
             Err(CompressionError::Cancelled) => {
-                let mut list = poison_recover(state.0.lock());
-                if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
-                    e.status = FileStatus::Cancelled;
+                {
+                    let mut list = poison_recover(state.0.lock());
+                    if let Some(e) = list.iter_mut().find(|e| e.id == file_id) {
+                        e.status = FileStatus::Cancelled;
+                    }
                 }
+                queue.record_file(
+                    &app,
+                    &batch_id,
+                    &entry,
+                    FileStatus::Cancelled,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    0,
+                );
                 emit_file_cancelled(&app, &file_id);
             }
             Err(e) => {
                 let error_msg = e.to_string();
-                let mut list = poison_recover(state.0.lock());
-                if let Some(e2) = list.iter_mut().find(|e2| e2.id == file_id) {
-                    e2.status = FileStatus::Failed;
-                    e2.error = Some(error_msg.clone());
+                {
+                    let mut list = poison_recover(state.0.lock());
+                    if let Some(e2) = list.iter_mut().find(|e2| e2.id == file_id) {
+                        e2.status = FileStatus::Failed;
+                        e2.error = Some(error_msg.clone());
+                    }
                 }
+                queue.record_file(
+                    &app,
+                    &batch_id,
+                    &entry,
+                    FileStatus::Failed,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(error_msg.clone()),
+                    elapsed_ms(),
+                );
                 let _ = app.emit(
                     "file:error",
                     FileErrorPayload {
@@ -502,7 +701,31 @@ impl<R: Runtime> QueueState<R> {
 
     fn finish_batch(app: &AppHandle<R>, batch_id: &str, total_saved: u64) {
         let queue = app.state::<QueueState<R>>();
+        let cancelled = queue.batch_cancelled(batch_id);
         poison_recover(queue.batch_tokens.lock()).remove(batch_id);
+
+        let records = poison_recover(queue.history_records.lock()).remove(batch_id);
+        let records = records.unwrap_or_default();
+        let counts = history_counts_of(&records);
+        let end = SessionEndRecord {
+            session_id: batch_id.to_string(),
+            ended_at: now_ms(),
+            total_saved_bytes: total_saved,
+            counts,
+            cancelled,
+        };
+        let _ = append_history(app, HistoryRecordRef::SessionEnd(&end));
+
+        let settings = crate::commands::load_settings(app);
+        if let Some(store) = app.try_state::<HistoryStore>() {
+            if let Err(e) =
+                store.trim(settings.history.effective_retention_days(), now_ms())
+            {
+                eprintln!("warn: history trim after batch {batch_id} failed: {e}");
+            }
+        }
+
+        poison_recover(queue.history_error_sent.lock()).remove(batch_id);
 
         let _ = app.emit(
             "batch:complete",
@@ -512,6 +735,82 @@ impl<R: Runtime> QueueState<R> {
             },
         );
     }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+fn status_key(status: &FileStatus) -> &'static str {
+    match status {
+        FileStatus::Pending => "pending",
+        FileStatus::Compressing => "compressing",
+        FileStatus::Done => "done",
+        FileStatus::BestEffort => "best_effort",
+        FileStatus::Failed => "failed",
+        FileStatus::Cancelled => "cancelled",
+        FileStatus::Unsupported => "unsupported",
+        FileStatus::AlreadyUnderTarget => "already_under_target",
+    }
+}
+
+fn history_counts_of(files: &[FileResultRecord]) -> Counts {
+    let mut counts = Counts::default();
+    for file in files {
+        match file.status.as_str() {
+            "done" => counts.done += 1,
+            "best_effort" => counts.best_effort += 1,
+            "failed" => counts.failed += 1,
+            "cancelled" => counts.cancelled += 1,
+            "unsupported" => counts.unsupported += 1,
+            "already_under_target" => counts.already_under_target += 1,
+            _ => {}
+        }
+    }
+    counts
+}
+
+fn append_history<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    record: HistoryRecordRef<'_>,
+) -> Result<(), String> {
+    let Some(store) = app.try_state::<HistoryStore>() else {
+        return Ok(());
+    };
+    let result = match record {
+        HistoryRecordRef::SessionStart(rec) => store.append_session_start(rec),
+        HistoryRecordRef::File(rec) => store.append_file(rec),
+        HistoryRecordRef::SessionEnd(rec) => store.append_session_end(rec),
+    };
+    if let Err(e) = &result {
+        eprintln!("warn: history write failed: {e}");
+        let queue = app.state::<QueueState<R>>();
+        let first = poison_recover(queue.history_error_sent.lock()).insert(batch_id_of(&record).to_string());
+        if first {
+            let _ = app.emit("history:error", serde_json::json!({ "message": e }));
+        }
+    }
+    result
+}
+
+fn batch_id_of<'a>(record: &'a HistoryRecordRef<'_>) -> &'a str {
+    match record {
+        HistoryRecordRef::SessionStart(rec) => &rec.session_id,
+        HistoryRecordRef::File(rec) => &rec.session_id,
+        HistoryRecordRef::SessionEnd(rec) => &rec.session_id,
+    }
+}
+
+fn cancel_skip_entry(list: &mut Vec<FileEntry>, file_id: &str) -> Option<FileEntry> {
+    let entry = list.iter_mut().find(|e| e.id == file_id)?;
+    match entry.status {
+        FileStatus::Pending => entry.status = FileStatus::Cancelled,
+        FileStatus::Cancelled => {}
+        _ => return None,
+    }
+    Some(entry.clone())
 }
 
 fn category_key(category: &crate::models::Category) -> &'static str {
@@ -913,6 +1212,14 @@ mod tests {
         root: &std::path::Path,
         settings_json: serde_json::Value,
     ) -> tauri::App<tauri::test::MockRuntime> {
+        make_app_inner(root, settings_json, true)
+    }
+
+    fn make_app_inner(
+        root: &std::path::Path,
+        settings_json: serde_json::Value,
+        manage_history: bool,
+    ) -> tauri::App<tauri::test::MockRuntime> {
         let settings_store = root.join("settings.json");
         std::fs::write(
             &settings_store,
@@ -932,6 +1239,9 @@ mod tests {
             .build(ctx)
             .unwrap();
         app.manage(QueueState::new(app.handle().clone()));
+        if manage_history {
+            app.manage(crate::history::HistoryStore::new_in(root));
+        }
         app
     }
 
@@ -1269,5 +1579,570 @@ mod tests {
         let name = |s: &str| std::path::Path::new(s).file_name().unwrap().to_str().unwrap().to_string();
         let names: Vec<String> = output_names.iter().map(|s| name(s)).collect();
         assert_eq!(names, vec!["report-1.docx", "report.docx"], "parallel same-name claims must suffix");
+    }
+
+    fn drain_until_complete(rx: &std::sync::mpsc::Receiver<(String, serde_json::Value)>) {
+        loop {
+            let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            if topic == "batch:complete" {
+                break;
+            }
+        }
+    }
+
+    fn wall_now_ms() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+    }
+
+    fn seed_session_start(
+        store: &crate::history::HistoryStore,
+        session_id: &str,
+        started_at: i64,
+        output_folder: &str,
+    ) {
+        store
+            .append_session_start(&crate::history::SessionStartRecord {
+                session_id: session_id.into(),
+                started_at,
+                file_count: 1,
+                output_folder: output_folder.into(),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn history_counts_map_all_statuses() {
+        use crate::history::FileResultRecord;
+        let rec = |status: &str| FileResultRecord {
+            session_id: "s".into(),
+            file_id: uuid::Uuid::new_v4().to_string(),
+            completed_at: 0,
+            name: "a".into(),
+            path: "/a".into(),
+            output_path: None,
+            category: "image".into(),
+            target_bytes: 1,
+            original_size: 1,
+            compressed_size: None,
+            status: status.into(),
+            quality_used: None,
+            strategy_used: None,
+            error: None,
+            duration_ms: 0,
+        };
+        let files = vec![
+            rec("done"),
+            rec("best_effort"),
+            rec("failed"),
+            rec("cancelled"),
+            rec("unsupported"),
+            rec("already_under_target"),
+            rec("pending"),
+            rec("compressing"),
+            rec("mystery"),
+        ];
+        let counts = history_counts_of(&files);
+        assert_eq!(counts.done, 1);
+        assert_eq!(counts.best_effort, 1);
+        assert_eq!(counts.failed, 1);
+        assert_eq!(counts.cancelled, 1);
+        assert_eq!(counts.unsupported, 1);
+        assert_eq!(counts.already_under_target, 1);
+    }
+
+    #[test]
+    fn status_key_snake_case() {
+        let all = [
+            FileStatus::Pending,
+            FileStatus::Compressing,
+            FileStatus::Done,
+            FileStatus::BestEffort,
+            FileStatus::Failed,
+            FileStatus::Cancelled,
+            FileStatus::Unsupported,
+            FileStatus::AlreadyUnderTarget,
+        ];
+        assert_eq!(all.len(), 8, "status_key must cover every FileStatus variant");
+        for status in all {
+            let expected = serde_json::to_value(status).unwrap();
+            assert_eq!(
+                serde_json::to_value(status_key(&status)).unwrap(),
+                expected,
+                "history status strings must match serde snake_case for {status:?}"
+            );
+        }
+        assert_eq!(status_key(&FileStatus::AlreadyUnderTarget), "already_under_target");
+        assert_eq!(status_key(&FileStatus::Pending), "pending");
+        assert_eq!(status_key(&FileStatus::Compressing), "compressing");
+    }
+
+    #[test]
+    fn category_key_snake_case() {
+        use crate::models::Category;
+        let all = [
+            Category::Image,
+            Category::Video,
+            Category::Pdf,
+            Category::Document,
+            Category::Other,
+        ];
+        assert_eq!(all.len(), 5, "category_key must cover every Category variant");
+        for category in all {
+            let expected = serde_json::to_value(category).unwrap();
+            assert_eq!(
+                serde_json::to_value(category_key(&category)).unwrap(),
+                expected,
+                "history category strings must match serde lowercase for {category:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn file_complete_payload_carries_strategy_fields() {
+        let payload = FileCompletePayload {
+            file_id: "f1",
+            output_path: "out".into(),
+            original_size: 2,
+            compressed_size: 1,
+            status: FileStatus::Done,
+            met_target: true,
+            quality_used: Some(70),
+            strategy_used: Some("quality=70".into()),
+        };
+        let v = serde_json::to_value(&payload).unwrap();
+        assert_eq!(v["qualityUsed"], 70);
+        assert_eq!(v["strategyUsed"], "quality=70");
+    }
+
+    #[tokio::test]
+    async fn failed_batch_writes_session_records() {
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("1");
+        let ids = add_entries(&app, &[
+            ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
+            ("b.jpg", crate::models::Category::Image, "/tmp/b.jpg"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-1".into(), ids.clone());
+        wait_idle(&queue, "hist-1");
+        drain_until_complete(&rx);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let fold = store.load().unwrap();
+        assert_eq!(fold.sessions.len(), 1);
+        let s = &fold.sessions[0];
+        assert_eq!(s.session_id, "hist-1");
+        assert_eq!(s.file_count, 2);
+        assert!(!s.interrupted, "session_end must be written by finish_batch");
+        assert_eq!(s.outcome.failed, 2, "sidecar-less jobs fail");
+        assert_eq!(s.files.len(), 2);
+        assert_eq!(
+            s.files.iter().map(|f| f.name.as_str()).collect::<std::collections::HashSet<_>>(),
+            std::collections::HashSet::from(["a.jpg", "b.jpg"])
+        );
+    }
+
+    #[tokio::test]
+    async fn session_end_totals_match_accumulated_records() {
+        use std::io::Write;
+
+        let _temp_guard = temp_guard();
+        let (root, app, _out) = setup_app("1");
+
+        let src = root.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        let docx = src.join("report.docx");
+        let file = std::fs::File::create(&docx).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        zip.start_file("[Content_Types].xml", zip::write::SimpleFileOptions::default()).unwrap();
+        zip.write_all(b"<?xml version=\"1.0\"?><Types/>").unwrap();
+        zip.finish().unwrap();
+
+        let ids = add_entries(&app, &[
+            ("report.docx", crate::models::Category::Document, docx.to_str().unwrap()),
+            ("b.jpg", crate::models::Category::Image, "/tmp/b.jpg"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:complete", "file:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-totals".into(), ids);
+        wait_idle(&queue, "hist-totals");
+        drain_until_complete(&rx);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let fold = store.load().unwrap();
+        let s = &fold.sessions[0];
+        assert_eq!(s.files.len(), 2);
+        assert_eq!(s.outcome.already_under_target, 1, "tiny docx is already under target");
+        assert_eq!(s.outcome.failed, 1);
+        assert_eq!(s.outcome.done, 0);
+        assert_eq!(s.outcome.best_effort, 0);
+        assert_eq!(s.outcome.cancelled, 0);
+        assert_eq!(s.outcome.unsupported, 0);
+        let derived: u64 = s
+            .files
+            .iter()
+            .map(|f| f.compressed_size.map_or(0, |c| f.original_size.saturating_sub(c)))
+            .sum();
+        assert_eq!(s.total_saved_bytes, derived, "session_end total must match recorded file lines");
+        let processed = s.files.iter().find(|f| f.status == "already_under_target").unwrap();
+        assert!(processed.output_path.is_some());
+        assert!(processed.quality_used.is_some());
+        assert!(processed.strategy_used.is_some());
+        assert!(!s.interrupted);
+    }
+
+    #[tokio::test]
+    async fn preflight_failure_writes_nothing() {
+        let _temp_guard = temp_guard();
+        let root = tempfile::TempDir::new().unwrap();
+        let blocker = root.path().join("blocker.txt");
+        std::fs::write(&blocker, b"x").unwrap();
+        let output_folder = blocker.join("child");
+        let app = make_app(
+            root.path(),
+            serde_json::json!({ "outputFolder": output_folder.to_str().unwrap() }),
+        );
+
+        let entry = crate::models::FileEntry::new("x.jpg", 1024);
+        app.state::<FileListState>().0.lock().unwrap().push(entry.clone());
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "preflight".into(), vec![entry.id.clone()]);
+        wait_idle(&queue, "preflight");
+
+        let store = app.state::<crate::history::HistoryStore>();
+        assert!(store.load().unwrap().sessions.is_empty(), "no phantom session");
+    }
+
+    #[tokio::test]
+    async fn cancel_all_records_cancelled_files() {
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("3");
+        let ids = add_entries(&app, &[
+            ("i1.jpg", crate::models::Category::Image, "/tmp/i1.jpg"),
+            ("i2.jpg", crate::models::Category::Image, "/tmp/i2.jpg"),
+            ("p1.pdf", crate::models::Category::Pdf, "/tmp/p1.pdf"),
+            ("p2.pdf", crate::models::Category::Pdf, "/tmp/p2.pdf"),
+            ("v1.mp4", crate::models::Category::Video, "/tmp/v1.mp4"),
+            ("v2.mp4", crate::models::Category::Video, "/tmp/v2.mp4"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "file:cancelled", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-cancel".into(), ids.clone());
+        let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(topic, "file:error");
+        queue.cancel_all();
+        wait_idle(&queue, "hist-cancel");
+        drain_until_complete(&rx);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let fold = store.load().unwrap();
+        let s = &fold.sessions[0];
+        assert_eq!(s.session_id, "hist-cancel");
+        assert_eq!(s.files.len(), ids.len(), "every file terminal outcome recorded once");
+        assert!(s.files.iter().any(|f| f.status == "failed"));
+        assert!(s.files.iter().any(|f| f.status == "cancelled"));
+        assert_eq!(
+            s.outcome.failed + s.outcome.cancelled,
+            u32::try_from(ids.len()).unwrap()
+        );
+        assert!(s.cancelled, "batch ended via cancel-all");
+    }
+
+    #[tokio::test]
+    async fn sequential_cancel_all_records_cancelled() {
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("1");
+        let ids = add_entries(&app, &[
+            ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
+            ("b.jpg", crate::models::Category::Image, "/tmp/b.jpg"),
+            ("c.jpg", crate::models::Category::Image, "/tmp/c.jpg"),
+            ("d.jpg", crate::models::Category::Image, "/tmp/d.jpg"),
+            ("e.jpg", crate::models::Category::Image, "/tmp/e.jpg"),
+            ("f.jpg", crate::models::Category::Image, "/tmp/f.jpg"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "file:cancelled", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-seq".into(), ids.clone());
+        let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(topic, "file:error");
+        queue.cancel_all();
+        wait_idle(&queue, "hist-seq");
+        drain_until_complete(&rx);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let fold = store.load().unwrap();
+        let s = &fold.sessions[0];
+        assert_eq!(s.files.len(), ids.len(), "every file terminal outcome recorded once");
+        let failed = s.files.iter().filter(|f| f.status == "failed").count();
+        let cancelled = s.files.iter().filter(|f| f.status == "cancelled").count();
+        assert!(cancelled >= 1, "remaining queue must be recorded cancelled: {failed} failed / {cancelled} cancelled");
+        assert_eq!(failed + cancelled, ids.len());
+        assert_eq!(s.outcome.failed + s.outcome.cancelled, ids.len() as u32);
+        assert!(s.cancelled);
+    }
+
+    #[tokio::test]
+    async fn cancel_skipped_records_have_zero_duration_and_no_output() {
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("3");
+        let ids = add_entries(&app, &[
+            ("i1.jpg", crate::models::Category::Image, "/tmp/missing-i1.jpg"),
+            ("i2.jpg", crate::models::Category::Image, "/tmp/missing-i2.jpg"),
+            ("p1.pdf", crate::models::Category::Pdf, "/tmp/missing-p1.pdf"),
+            ("p2.pdf", crate::models::Category::Pdf, "/tmp/missing-p2.pdf"),
+            ("v1.mp4", crate::models::Category::Video, "/tmp/missing-v1.mp4"),
+            ("v2.mp4", crate::models::Category::Video, "/tmp/missing-v2.mp4"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "file:cancelled", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-skip".into(), ids.clone());
+        let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(topic, "file:error");
+        queue.cancel_all();
+        wait_idle(&queue, "hist-skip");
+        drain_until_complete(&rx);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let fold = store.load().unwrap();
+        let s = &fold.sessions[0];
+        assert_eq!(s.files.len(), ids.len(), "terminal outcome per file");
+        let skipped: Vec<_> = s.files.iter().filter(|f| f.status == "cancelled").collect();
+        assert!(!skipped.is_empty(), "cancel-all must record at least one skipped file");
+        for f in skipped {
+            assert_eq!(f.duration_ms, 0);
+            assert!(f.output_path.is_none());
+            assert!(f.compressed_size.is_none());
+            assert_eq!(f.original_size, 0, "sizes come from the entry");
+            assert_eq!(f.target_bytes, 1 << 20);
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_outcome_recorded() {
+        let _temp_guard = temp_guard();
+        let (root, app, _out) = setup_app("1");
+        let path = root.path().join("weird.xyz");
+        std::fs::write(&path, vec![1u8; 512]).unwrap();
+        let ids = add_entries(&app, &[
+            ("weird.xyz", crate::models::Category::Other, path.to_str().unwrap()),
+        ]);
+        let rx = events_of(&app.handle(), &["file:complete", "file:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-unsupported".into(), ids);
+        wait_idle(&queue, "hist-unsupported");
+        drain_until_complete(&rx);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let fold = store.load().unwrap();
+        let s = &fold.sessions[0];
+        assert_eq!(s.files.len(), 1);
+        let f = &s.files[0];
+        assert_eq!(f.status, "unsupported");
+        assert!(f.output_path.is_none());
+        assert!(f.compressed_size.is_none());
+        assert!(f.quality_used.is_none());
+        assert!(f.strategy_used.is_none());
+        assert!(f.error.is_none());
+        assert_eq!(s.outcome.unsupported, 1);
+        assert_eq!(f.original_size, 512);
+    }
+
+    #[tokio::test]
+    async fn history_write_failure_does_not_fail_batch() {
+        let _temp_guard = temp_guard();
+        let root = tempfile::TempDir::new().unwrap();
+        let out = root.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::create_dir_all(root.path().join("history.jsonl")).unwrap();
+        let app = make_app(
+            root.path(),
+            serde_json::json!({
+                "outputFolder": out.to_str().unwrap(),
+                "performance": { "maxConcurrent": "1" }
+            }),
+        );
+        let ids = add_entries(&app, &[
+            ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
+            ("b.jpg", crate::models::Category::Image, "/tmp/b.jpg"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "history:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-fail".into(), ids.clone());
+        wait_idle(&queue, "hist-fail");
+
+        let mut file_errors = 0usize;
+        loop {
+            let (topic, payload) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            match topic.as_str() {
+                "file:error" => file_errors += 1,
+                "history:error" => assert!(payload["message"].is_string()),
+                "batch:complete" => break,
+                other => panic!("unexpected event: {other}"),
+            }
+        }
+        assert_eq!(file_errors, 2, "compression outcomes unchanged by history failure");
+
+        let state = app.state::<FileListState>();
+        let list = state.0.lock().unwrap();
+        assert!(
+            list.iter().all(|e| e.status == crate::models::FileStatus::Failed),
+            "file outcomes unchanged: {:?}",
+            list.iter().map(|e| (e.name.clone(), e.status)).collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn history_error_emitted_once_per_batch() {
+        let _temp_guard = temp_guard();
+        let root = tempfile::TempDir::new().unwrap();
+        let out = root.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::create_dir_all(root.path().join("history.jsonl")).unwrap();
+        let app = make_app(
+            root.path(),
+            serde_json::json!({
+                "outputFolder": out.to_str().unwrap(),
+                "performance": { "maxConcurrent": "3" }
+            }),
+        );
+        let ids = add_entries(&app, &[
+            ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
+            ("b.pdf", crate::models::Category::Pdf, "/tmp/b.pdf"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "history:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-once".into(), ids);
+        wait_idle(&queue, "hist-once");
+
+        let mut history_errors = 0usize;
+        loop {
+            let (topic, payload) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            if topic == "history:error" {
+                history_errors += 1;
+                assert!(payload["message"].is_string());
+            }
+            if topic == "batch:complete" {
+                break;
+            }
+        }
+        assert_eq!(history_errors, 1, "at most one history:error per batch");
+    }
+
+    #[tokio::test]
+    async fn missing_store_still_completes_batch() {
+        let _temp_guard = temp_guard();
+        let root = tempfile::TempDir::new().unwrap();
+        let out = root.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let app = make_app_inner(
+            root.path(),
+            serde_json::json!({
+                "outputFolder": out.to_str().unwrap(),
+                "performance": { "maxConcurrent": "3" }
+            }),
+            false,
+        );
+        assert!(app.try_state::<crate::history::HistoryStore>().is_none());
+
+        let ids = add_entries(&app, &[
+            ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
+            ("b.jpg", crate::models::Category::Image, "/tmp/b.jpg"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "history:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-missing".into(), ids);
+        wait_idle(&queue, "hist-missing");
+
+        let mut file_errors = 0usize;
+        loop {
+            let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            match topic.as_str() {
+                "file:error" => file_errors += 1,
+                "history:error" => panic!("missing store must silently no-op"),
+                "batch:complete" => break,
+                other => panic!("unexpected event: {other}"),
+            }
+        }
+        assert_eq!(file_errors, 2);
+    }
+
+    #[tokio::test]
+    async fn finish_batch_trims_old_history() {
+        let _temp_guard = temp_guard();
+        let root = tempfile::TempDir::new().unwrap();
+        let out = root.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let app = make_app(
+            root.path(),
+            serde_json::json!({
+                "outputFolder": out.to_str().unwrap(),
+                "performance": { "maxConcurrent": "1" },
+                "history": { "retentionDays": 10 }
+            }),
+        );
+        let store = app.state::<crate::history::HistoryStore>();
+        let now = wall_now_ms();
+        seed_session_start(&store, "old-11", now - 11 * 86_400_000, "/old");
+        seed_session_start(&store, "old-30", now - 30 * 86_400_000, "/old");
+
+        let ids = add_entries(&app, &[
+            ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-trim".into(), ids);
+        wait_idle(&queue, "hist-trim");
+        drain_until_complete(&rx);
+
+        let fold = store.load().unwrap();
+        let session_ids: Vec<&str> = fold.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(session_ids, vec!["hist-trim"], "old sessions trimmed, fresh session kept");
+    }
+
+    #[tokio::test]
+    async fn session_start_output_folder_matches_settings() {
+        let _temp_guard = temp_guard();
+        let (_root, app, out) = setup_app("1");
+        let ids = add_entries(&app, &[
+            ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-folder".into(), ids.clone());
+        wait_idle(&queue, "hist-folder");
+        drain_until_complete(&rx);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let fold = store.load().unwrap();
+        let s = &fold.sessions[0];
+        assert_eq!(s.output_folder, out.to_str().unwrap());
+        assert_eq!(s.file_count, ids.len());
+    }
+
+    #[tokio::test]
+    async fn duration_ms_positive_for_processed_outcome() {
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("1");
+        let ids = add_entries(&app, &[
+            ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-duration".into(), ids);
+        wait_idle(&queue, "hist-duration");
+        drain_until_complete(&rx);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let fold = store.load().unwrap();
+        let s = &fold.sessions[0];
+        assert_eq!(s.files.len(), 1);
+        assert!(
+            s.files[0].duration_ms > 0,
+            "attempted job must carry a measured duration, got {}",
+            s.files[0].duration_ms
+        );
     }
 }
