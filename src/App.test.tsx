@@ -34,8 +34,24 @@ import App from '@/App'
 
 const headerEl = () => document.querySelector('main')!.querySelector('header')!
 
+const emptyHistory = {
+  sessions: [],
+  page: 0,
+  pageSize: 50,
+  totalSessions: 0,
+  totalFiles: 0,
+  summary: { sessions: 0, files: 0, savedBytes: 0, failedFiles: 0 },
+  outputFolders: [],
+  skippedLines: 0,
+}
+
 describe('App shell', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(invoke).mockImplementation((cmd: unknown) =>
+      cmd === 'get_history' ? Promise.resolve(emptyHistory) : Promise.resolve(undefined)
+    )
+  })
 
   it('breadcrumb reflects the active view and updates on navigation', async () => {
     const user = userEvent.setup()

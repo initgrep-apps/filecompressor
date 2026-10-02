@@ -30,10 +30,9 @@ export function formatDuration(ms: number): string {
   return `${hours}h ${String(minutes).padStart(2, '0')}m`
 }
 
-export function presetSinceMs(
-  preset: 'today' | 'last7' | 'last30' | 'all',
-  now: Date
-): number | undefined {
+export type DatePreset = 'today' | 'last7' | 'last30' | 'all'
+
+export function presetSinceMs(preset: DatePreset, now: Date): number | undefined {
   if (preset === 'all') return undefined
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   if (preset === 'today') return start.getTime()
