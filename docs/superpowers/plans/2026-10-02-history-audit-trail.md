@@ -490,7 +490,7 @@ git commit -m "feat(history): add JSONL records and append store"
 - `load_counts_lossy_non_json_line_as_skipped` — invalid-UTF-8 line lossy-decoded, not valid JSON → counted
 - `load_surfaces_read_error` — history.jsonl as a directory → `Err`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the `history.rs` test module:
 
@@ -643,12 +643,12 @@ Add to the `history.rs` test module:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd src-tauri && cargo test history`
 Expected: FAIL — `fold_records` not defined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src-tauri/src/history.rs`:
 
@@ -662,12 +662,12 @@ In `src-tauri/src/history.rs`:
 - `HistoryStore::load` = `read_lines()` → `fold_records`; `read_lines` failure → `Err`.
 - `#[serde(rename_all = "camelCase")]` on `HistoryFile` / `HistorySession` (`outcome` uses the `Counts` struct from Task 2); `matched_files` serializes as `null` until Task 4 sets it.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd src-tauri && cargo test history`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/history.rs
