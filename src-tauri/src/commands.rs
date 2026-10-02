@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-use crate::history::clamp_page_size;
+use crate::history::{clamp_page_size, HistoryFilters, HistoryResponse, HistoryStore};
 use crate::models::{Category, FileEntry, FileStatus};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use tauri::{Manager, State};
 use tauri_plugin_store::StoreExt;
 
@@ -245,12 +245,7 @@ pub fn reveal_in_folder<R: tauri::Runtime>(
         .map_err(|e| format!("Could not reveal file {}: {}", file_path, e))
 }
 
-fn empty_history_response(requested_size: u32) -> crate::history::HistoryResponse {
-    crate::history::HistoryResponse::empty(requested_size)
-}
-
 fn warn_missing_store_get_history() {
-    use std::sync::OnceLock;
     static WARNED: OnceLock<()> = OnceLock::new();
     WARNED.get_or_init(|| {
         eprintln!("warn: get_history: HistoryStore state missing, returning empty history");
@@ -258,7 +253,6 @@ fn warn_missing_store_get_history() {
 }
 
 fn warn_missing_store_clear_history() {
-    use std::sync::OnceLock;
     static WARNED: OnceLock<()> = OnceLock::new();
     WARNED.get_or_init(|| {
         eprintln!("warn: clear_history: HistoryStore state missing, nothing to clear");
@@ -267,14 +261,14 @@ fn warn_missing_store_clear_history() {
 
 #[tauri::command]
 pub async fn get_history<R: tauri::Runtime>(
-    filters: crate::history::HistoryFilters,
+    filters: HistoryFilters,
     page: u32,
     page_size: u32,
     app: tauri::AppHandle<R>,
-) -> Result<crate::history::HistoryResponse, String> {
-    let Some(store) = app.try_state::<crate::history::HistoryStore>() else {
+) -> Result<HistoryResponse, String> {
+    let Some(store) = app.try_state::<HistoryStore>() else {
         warn_missing_store_get_history();
-        return Ok(empty_history_response(page_size));
+        return Ok(HistoryResponse::empty(page_size));
     };
     let fold = store.load()?;
     Ok(crate::history::query_history(
@@ -287,7 +281,7 @@ pub async fn get_history<R: tauri::Runtime>(
 
 #[tauri::command]
 pub fn clear_history<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    let Some(store) = app.try_state::<crate::history::HistoryStore>() else {
+    let Some(store) = app.try_state::<HistoryStore>() else {
         warn_missing_store_clear_history();
         return Ok(());
     };
@@ -303,6 +297,16 @@ pub fn open_folder<R: tauri::Runtime>(
     app.opener()
         .open_path(&path, None::<&str>)
         .map_err(|e| format!("Could not open folder {}: {}", path, e))
+}
+
+#[cfg(test)]
+pub(crate) fn mock_test_context(
+    dirs_override: tauri::utils::config::AppDirectoriesOverride,
+) -> tauri::Context<tauri::test::MockRuntime> {
+    let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
+    ctx.config_mut().app.app_directories_override = Some(dirs_override);
+    ctx.config_mut().identifier = "com.app.test".into();
+    ctx
 }
 
 #[cfg(test)]
@@ -522,15 +526,12 @@ mod tests {
         root: &std::path::Path,
         store: Option<crate::history::HistoryStore>,
     ) -> tauri::App<tauri::test::MockRuntime> {
-        let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
-        ctx.config_mut().app.app_directories_override = Some(
-            tauri::utils::config::AppDirectoriesOverride::Root(root.to_path_buf()),
-        );
-        ctx.config_mut().identifier = "com.app.test".into();
         let app = tauri::test::mock_builder()
-            .plugin(tauri_plugin_opener::Builder::default().build())
+            .plugin(tauri_plugin_opener::init())
             .plugin(tauri_plugin_store::Builder::default().build())
-            .build(ctx)
+            .build(mock_test_context(
+                tauri::utils::config::AppDirectoriesOverride::Root(root.to_path_buf()),
+            ))
             .unwrap();
         if let Some(store) = store {
             app.manage(store);
@@ -559,13 +560,13 @@ mod tests {
 
     #[test]
     fn get_history_empty_response_when_store_missing() {
-        let resp = empty_history_response(0);
+        let resp = HistoryResponse::empty(0);
         assert_eq!(resp.page, 0);
         assert_eq!(resp.page_size, 50);
         assert_eq!(resp.total_sessions, 0);
         assert_eq!(resp.sessions.len(), 0);
         assert_eq!(resp.summary.files, 0);
-        assert_eq!(empty_history_response(500).page_size, 200);
+        assert_eq!(HistoryResponse::empty(500).page_size, 200);
         assert_eq!(
             crate::history::HistoryResponse::default().page_size,
             50,
@@ -805,16 +806,16 @@ mod tests {
         let blocker = root.path().join("blocker.txt");
         fs::write(&blocker, b"x").unwrap();
 
-        let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
-        ctx.config_mut().app.app_directories_override =
-            Some(tauri::utils::config::AppDirectoriesOverride::Directories(
-                tauri::utils::config::AppDirectoryOverrides {
-                    data: Some(blocker.join("child")),
-                    ..Default::default()
-                },
-            ));
-        ctx.config_mut().identifier = "com.app.test".into();
-        let app = tauri::test::mock_builder().build(ctx).unwrap();
+        let app = tauri::test::mock_builder()
+            .build(mock_test_context(
+                tauri::utils::config::AppDirectoriesOverride::Directories(
+                    tauri::utils::config::AppDirectoryOverrides {
+                        data: Some(blocker.join("child")),
+                        ..Default::default()
+                    },
+                ),
+            ))
+            .unwrap();
 
         crate::setup_history(app.handle());
         assert!(app.try_state::<HistoryStore>().is_none());

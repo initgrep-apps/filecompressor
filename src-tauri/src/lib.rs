@@ -104,18 +104,15 @@ mod wiring_tests {
     use super::*;
 
     fn wiring_app(root: &std::path::Path) -> tauri::App<tauri::test::MockRuntime> {
-        let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
-        ctx.config_mut().app.app_directories_override = Some(
-            tauri::utils::config::AppDirectoriesOverride::Root(root.to_path_buf()),
-        );
-        ctx.config_mut().identifier = "com.app.test".into();
         tauri::test::mock_builder()
             .plugin(tauri_plugin_opener::init())
             .plugin(tauri_plugin_dialog::init())
             .plugin(tauri_plugin_store::Builder::default().build())
             .setup(setup_hook)
             .invoke_handler(invoke_handlers!())
-            .build(ctx)
+            .build(crate::commands::mock_test_context(
+                tauri::utils::config::AppDirectoriesOverride::Root(root.to_path_buf()),
+            ))
             .unwrap()
     }
 
