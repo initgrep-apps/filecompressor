@@ -454,7 +454,8 @@ git commit -m "feat(history): add JSONL records and append store"
 - Grouping by `sessionId`; files sorted by `completedAt`; sessions sorted newest-first by `startedAt` (spec §3.4).
 - Missing `session_end` ⇒ `interrupted: true`, `ended_at: null`, outcome + `total_saved_bytes` computed from recorded files with saturating subtraction (spec §3.4).
 - Present `session_end` ⇒ `ended_at`, `total_saved_bytes`, `cancelled`, and counts taken verbatim from the end record (spec §3.4).
-- Malformed JSON lines skipped + counted; unknown record `type`s ignored silently; orphan file/end lines (unknown session) skipped + counted (plan Task 3 implementation note; spec §3.3). Lines with invalid UTF-8 are consumed lossy (stderr-warned by `read_lines`) and are not counted in `skippedLines` — only JSON-malformed lines are (spec §3.3).
+- Malformed JSON lines skipped + counted; unknown record `type`s ignored silently; orphan file/end lines (unknown session) skipped + counted (plan Task 3 implementation note; spec §3.3). Lines with invalid UTF-8 are consumed lossy (stderr-warned by `read_lines`); if the lossy line still fails JSON parsing it is counted as malformed like any other bad line (spec §3.3).
+- Anomaly semantics: lines that parse as JSON but have no string `type` (`[]`, `123`, `"str"`, `null`, `{}`, `{"type":123}`) are counted as malformed; a typed record (`session_start`/`file`/`session_end`) whose struct parse fails is counted as malformed; a `file` record arriving after its session's `session_end` is skipped + counted (end-derived outcome/totals stay frozen).
 - Duplicate `fileId` within a session: last record wins (spec §3.4).
 - All Required Tests pass.
 - Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
@@ -472,6 +473,11 @@ git commit -m "feat(history): add JSONL records and append store"
 - `fold_orphan_session_end_is_skipped` — end for unknown session → skipped + counted
 - `fold_duplicate_file_id_last_wins` — replace semantics
 - `fold_saturates_when_compressed_exceeds_original` — original 5, compressed 10 → saved 0, no panic
+- `fold_interrupted_saturates_total_saved` — large saved deltas saturate to u64::MAX without panic
+- `fold_interrupted_flag_matches_ended_at_biconditional` — `interrupted == ended_at.is_none()` on complete + interrupted fixtures
+- `fold_counts_non_object_and_non_string_type_lines` — `[]`/`123`/`"str"`/`null`/`{}`/`{"type":123}`/`{"type":null}` counted as malformed; `future_record` silent
+- `fold_file_after_session_end_is_skipped_and_counted` — post-end file skipped; end-derived outcome/totals frozen
+- `fold_output_serde_keys_are_pinned` — camelCase golden keys for `HistorySession` + `files[0]` (PathBuf outputPath wire format)
 - `fold_tolerates_absent_optional_keys` — keys entirely absent (not just null) parse
 - `fold_zero_file_interrupted_session_still_appears` — start-only session → session with empty files, Interrupted
 - `load_roundtrips_through_file` — start + file appended → load
