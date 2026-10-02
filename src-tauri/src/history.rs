@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -518,6 +518,103 @@ pub fn query_history(
     }
 }
 
+enum LineRef {
+    Unbound,
+    Start { session_id: String, at: i64 },
+    FileRecord { session_id: String, at: i64 },
+    End { session_id: String, at: i64 },
+}
+
+fn parse_line_ref(line: &str) -> LineRef {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return LineRef::Unbound;
+    };
+    let Some(kind) = value.get("type").and_then(|kind| kind.as_str()) else {
+        return LineRef::Unbound;
+    };
+    match kind {
+        "session_start" => match serde_json::from_str::<SessionStartRecord>(line) {
+            Ok(record) => LineRef::Start {
+                session_id: record.session_id,
+                at: record.started_at,
+            },
+            Err(_) => LineRef::Unbound,
+        },
+        "file" => match serde_json::from_str::<FileResultRecord>(line) {
+            Ok(record) => LineRef::FileRecord {
+                session_id: record.session_id,
+                at: record.completed_at,
+            },
+            Err(_) => LineRef::Unbound,
+        },
+        "session_end" => match serde_json::from_str::<SessionEndRecord>(line) {
+            Ok(record) => LineRef::End {
+                session_id: record.session_id,
+                at: record.ended_at,
+            },
+            Err(_) => LineRef::Unbound,
+        },
+        _ => LineRef::Unbound,
+    }
+}
+
+pub fn split_by_retention(
+    lines: Vec<String>,
+    retention_days: u32,
+    now_ms: i64,
+) -> (Vec<String>, usize) {
+    let retention_days = if retention_days == 0 {
+        90
+    } else {
+        retention_days
+    };
+    let cutoff = now_ms - i64::from(retention_days) * 86_400_000;
+    let mut started: HashSet<String> = HashSet::new();
+    let mut newest_by_session: HashMap<String, i64> = HashMap::new();
+    let mut bound: Vec<Option<String>> = Vec::with_capacity(lines.len());
+
+    for line in &lines {
+        let (session_id, at, is_start) = match parse_line_ref(line) {
+            LineRef::Start { session_id, at } => (session_id, at, true),
+            LineRef::FileRecord { session_id, at } => (session_id, at, false),
+            LineRef::End { session_id, at } => (session_id, at, false),
+            LineRef::Unbound => {
+                bound.push(None);
+                continue;
+            }
+        };
+        if is_start {
+            started.insert(session_id.clone());
+        } else if !started.contains(&session_id) {
+            bound.push(None);
+            continue;
+        }
+        let newest = newest_by_session.entry(session_id.clone()).or_insert(at);
+        if at > *newest {
+            *newest = at;
+        }
+        bound.push(Some(session_id));
+    }
+
+    let drop: HashSet<String> = newest_by_session
+        .into_iter()
+        .filter(|(_, newest)| *newest < cutoff)
+        .map(|(session_id, _)| session_id)
+        .collect();
+
+    let mut kept = Vec::with_capacity(lines.len());
+    for (index, line) in lines.into_iter().enumerate() {
+        let dropped = bound[index]
+            .as_ref()
+            .is_some_and(|session_id| drop.contains(session_id));
+        if !dropped {
+            kept.push(line);
+        }
+    }
+
+    (kept, drop.len())
+}
+
 pub struct HistoryStore {
     path: PathBuf,
     lock: Mutex<()>,
@@ -549,6 +646,10 @@ impl HistoryStore {
 
     pub(crate) fn read_lines(&self) -> Result<Vec<String>, String> {
         let _guard = poison_recover(self.lock.lock());
+        self.decode_lines()
+    }
+
+    fn decode_lines(&self) -> Result<Vec<String>, String> {
         let bytes = match std::fs::read(&self.path) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -573,6 +674,77 @@ impl HistoryStore {
             })
             .filter(|line| !line.is_empty())
             .collect())
+    }
+
+    fn tmp_path(&self) -> PathBuf {
+        let mut name = self
+            .path
+            .file_name()
+            .map(|name| name.to_os_string())
+            .unwrap_or_default();
+        name.push(".tmp");
+        self.path.with_file_name(name)
+    }
+
+    pub fn trim(&self, retention_days: u32, now_ms: i64) -> Result<u32, String> {
+        let _guard = poison_recover(self.lock.lock());
+        let lines = self.decode_lines()?;
+        let (kept, dropped) = split_by_retention(lines, retention_days, now_ms);
+        if dropped == 0 {
+            return Ok(0);
+        }
+        let tmp = self.tmp_path();
+        match std::fs::remove_file(&tmp) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(format!(
+                    "history write failed: remove stale temp {}: {e}",
+                    tmp.display()
+                ))
+            }
+        }
+        let mut contents = String::new();
+        for line in &kept {
+            contents.push_str(line);
+            contents.push('\n');
+        }
+        std::fs::write(&tmp, contents)
+            .map_err(|e| format!("history write failed: write {}: {e}", tmp.display()))?;
+        std::fs::rename(&tmp, &self.path).map_err(|e| {
+            format!(
+                "history write failed: rename {} to {}: {e}",
+                tmp.display(),
+                self.path.display()
+            )
+        })?;
+        Ok(dropped as u32)
+    }
+
+    pub fn clear(&self) -> Result<(), String> {
+        let _guard = poison_recover(self.lock.lock());
+        match std::fs::remove_file(&self.path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(format!(
+                    "history clear failed: remove {}: {e}",
+                    self.path.display()
+                ))
+            }
+        }
+        let tmp = self.tmp_path();
+        match std::fs::remove_file(&tmp) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(format!(
+                    "history clear failed: remove {}: {e}",
+                    tmp.display()
+                ))
+            }
+        }
+        Ok(())
     }
 
     pub fn load(&self) -> Result<FoldResult, String> {
@@ -2625,5 +2797,186 @@ mod tests {
             result.is_err(),
             "typo'd filter key must fail deserialization instead of silently defaulting"
         );
+    }
+
+    const DAY_MS: i64 = 86_400_000;
+
+    #[test]
+    fn trim_keeps_session_exactly_at_boundary() {
+        let now = 10 * DAY_MS;
+        let lines = vec![
+            line(start("old", now - 11 * DAY_MS)),
+            line(file("old", "f", now - 11 * DAY_MS + 1, "done", (1, Some(1)))),
+            line(start("edge", now - 10 * DAY_MS)),
+            line(file("edge", "f", now - 10 * DAY_MS + 1, "done", (1, Some(1)))),
+            line(start("fresh", now - 1)),
+        ];
+        let (kept, dropped) = split_by_retention(lines, 10, now);
+        assert_eq!(dropped, 1);
+        let out = fold_records(&kept);
+        let ids: Vec<&str> = out.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["fresh", "edge"]);
+    }
+
+    #[test]
+    fn trim_newest_exactly_at_cutoff_kept() {
+        let now = 10 * DAY_MS;
+        let cutoff = now - 10 * DAY_MS;
+        let exact = line(start("exact", cutoff));
+        let older = line(start("older", cutoff - 1));
+        let (kept, dropped) = split_by_retention(vec![exact.clone(), older], 10, now);
+        assert_eq!(dropped, 1);
+        assert_eq!(kept, vec![exact], "newest == cutoff is kept (strict <)");
+    }
+
+    #[test]
+    fn trim_ended_at_counts_as_newest_record() {
+        let now = 10 * DAY_MS;
+        let lines = vec![
+            line(start("stale-end", now - 30 * DAY_MS)),
+            line(end("stale-end", now - DAY_MS)),
+            line(start("fresh-start", now - DAY_MS)),
+            line(end("fresh-start", now - 30 * DAY_MS)),
+            line(start("stale", now - 30 * DAY_MS)),
+            line(end("stale", now - 29 * DAY_MS)),
+        ];
+        let (kept, dropped) = split_by_retention(lines, 10, now);
+        assert_eq!(dropped, 1);
+        let out = fold_records(&kept);
+        let ids: Vec<&str> = out.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["fresh-start", "stale-end"],
+            "newest is max(started_at, completed_at, ended_at)"
+        );
+    }
+
+    #[test]
+    fn trim_counts_files_after_start_for_interrupted_sessions() {
+        let now = 10 * DAY_MS;
+        let lines = vec![
+            line(start("interrupted-old", now - 20 * DAY_MS)),
+            line(file("interrupted-old", "f", now - 2 * DAY_MS, "done", (1, Some(1)))),
+        ];
+        let (_, dropped) = split_by_retention(lines, 10, now);
+        assert_eq!(dropped, 0, "newest record (file) is inside the window");
+    }
+
+    #[test]
+    fn trim_keeps_malformed_and_orphan_lines() {
+        let now = 10 * DAY_MS;
+        let lines = vec![
+            "not json".to_string(),
+            line(file("orphan", "f", now - 99 * DAY_MS, "done", (1, Some(1)))),
+        ];
+        let (kept, dropped) = split_by_retention(lines, 10, now);
+        assert_eq!(dropped, 0);
+        assert_eq!(kept.len(), 2);
+    }
+
+    #[test]
+    fn trim_keeps_unknown_type_lines_verbatim() {
+        let now = 10 * DAY_MS;
+        let future = "{\"type\":\"future_record\",\"sessionId\":\"s1\",\"at\":1}".to_string();
+        let old_start = line(start("s1", now - 30 * DAY_MS));
+        let (kept, dropped) = split_by_retention(vec![future.clone(), old_start], 10, now);
+        assert_eq!(dropped, 1);
+        assert_eq!(kept, vec![future], "future record kinds survive verbatim");
+    }
+
+    #[test]
+    fn trim_wide_retention_does_not_overflow() {
+        let now = 10 * DAY_MS;
+        let lines = vec![line(start("s1", now))];
+        let (kept, dropped) = split_by_retention(lines, u32::MAX, now);
+        assert_eq!(dropped, 0);
+        assert_eq!(kept.len(), 1, "cutoff math widens before multiplying");
+    }
+
+    #[test]
+    fn trim_zero_retention_days_behaves_like_ninety() {
+        let now = 100 * DAY_MS;
+        let fresh = line(start("fresh", now - 89 * DAY_MS));
+        let old = line(start("old", now - 91 * DAY_MS));
+        let (kept, dropped) = split_by_retention(vec![fresh.clone(), old], 0, now);
+        assert_eq!(dropped, 1);
+        assert_eq!(kept, vec![fresh]);
+    }
+
+    #[test]
+    fn trim_rewrites_only_when_something_drops_and_is_atomic() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store.append_session_start(&SessionStartRecord {
+            session_id: "old".into(), started_at: 0, file_count: 1, output_folder: "/o".into(),
+        }).unwrap();
+        let dropped = store.trim(1, 100 * DAY_MS).unwrap();
+        assert_eq!(dropped, 1);
+        assert!(store.load().unwrap().sessions.is_empty());
+        assert!(!dir.path().join("history.jsonl.tmp").exists());
+
+        let dropped_again = store.trim(1, 100 * DAY_MS).unwrap();
+        assert_eq!(dropped_again, 0);
+    }
+
+    #[test]
+    fn trim_failure_leaves_original_intact() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("history.jsonl.tmp")).unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store.append_session_start(&SessionStartRecord {
+            session_id: "old".into(), started_at: 0, file_count: 1, output_folder: "/o".into(),
+        }).unwrap();
+        let before = store.read_lines().unwrap();
+        let err = store.trim(1, 100 * DAY_MS);
+        assert!(err.is_err(), "tmp path occupied by a directory ⇒ rewrite fails");
+        assert_eq!(store.read_lines().unwrap(), before);
+    }
+
+    #[test]
+    fn trim_missing_file_is_noop() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        assert_eq!(store.trim(1, 100 * DAY_MS).unwrap(), 0);
+        assert!(!store.file_path().exists());
+        assert!(!dir.path().join("history.jsonl.tmp").exists());
+    }
+
+    #[test]
+    fn trim_stale_tmp_regular_file_is_replaced() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store.append_session_start(&SessionStartRecord {
+            session_id: "old".into(), started_at: 0, file_count: 1, output_folder: "/o".into(),
+        }).unwrap();
+        std::fs::write(dir.path().join("history.jsonl.tmp"), "stale").unwrap();
+        let dropped = store.trim(1, 100 * DAY_MS).unwrap();
+        assert_eq!(dropped, 1);
+        assert!(!dir.path().join("history.jsonl.tmp").exists());
+        assert!(store.load().unwrap().sessions.is_empty());
+    }
+
+    #[test]
+    fn clear_removes_file_and_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store.append_session_end(&small_end("s1")).unwrap();
+        let stray = dir.path().join("history.jsonl.tmp");
+        std::fs::write(&stray, "stale").unwrap();
+        store.clear().unwrap();
+        assert!(!store.file_path().exists());
+        assert!(!stray.exists());
+        store.clear().unwrap();
+    }
+
+    #[test]
+    fn clear_failure_returns_err() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        std::fs::create_dir_all(store.file_path().join("inner")).unwrap();
+        std::fs::write(store.file_path().join("inner").join("data.txt"), "x").unwrap();
+        let err = store.clear().unwrap_err();
+        assert!(err.starts_with("history clear failed: remove "), "{err}");
+        assert!(store.file_path().join("inner").join("data.txt").exists());
     }
 }
