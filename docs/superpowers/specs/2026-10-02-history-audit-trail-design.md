@@ -239,8 +239,11 @@ serialized by the mutex. Registered in
 - Write failures: warn to stderr; at most **one `history:error` event per batch**
   (`{ "message": string }`) → UI toast "History could not be saved — compression was not
   affected." **Compression never depends on history I/O succeeding.**
-- Files cancelled before their worker slot: recorded with sizes and no output path.
-- Unsupported files never enter batches (`compress_all` filters Pending only) ⇒ no records.
+- Files cancelled before their worker slot: recorded with sizes and no output path
+  (`durationMs` 0); a job cancelled after taking a worker slot carries its measured
+  duration.
+- Unsupported outcomes (registry lookup finds no processor) are recorded with status
+  `unsupported` — null output/compressed/quality/strategy, measured duration.
 
 ### 4.2 Commands (`commands.rs` + `lib.rs` registration)
 

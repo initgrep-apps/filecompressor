@@ -1069,11 +1069,11 @@ git commit -m "feat(history): add 90-day retention trim and clear"
   - `history:error` event: `{ "message": String }`, emitted **once per batch** on the first write failure.
   - Private helper `fn append_history<R: tauri::Runtime>(app: &AppHandle<R>, record: HistoryRecordRef<'_>) -> Result<(), String>` — resolves `app.try_state::<HistoryStore>()`, missing store → `Ok(())` (tests that don't manage history still pass), write error → first-failure `history:error` emit (per-batch flag in `QueueState`), returns the error.
 
-**Write points:** `process_batch` after preflight passes → `append_session_start` (folder = settings `output_folder`, `file_count = file_ids.len()` — **capture `file_ids.len()` before the N≤1 loop, which consumes the vec by value at `queue.rs:222`**). Every terminal outcome in `process_single_job` (done / best-effort / already-under-target, failed, cancelled, unsupported) → `append_file`. Cancel-all skipped files (both the sequential loop and the lane `on_skipped` closure) and the "cancelled while pending" skip paths → `append_file` with `status: "cancelled"`, `output_path: None`, `compressed_size: None`, `duration_ms: 0`. `finish_batch` → `append_session_end` (counts over all recorded file records, `cancelled` = batch was cancelled — **read the cancellation state before `finish_batch` removes the batch token at `queue.rs:505`**) then `trim(effective_retention_days, now_ms)` (trim failure is logged, never propagated).
+**Write points:** `process_batch` after preflight passes → `append_session_start` (folder = settings `output_folder`, `file_count = file_ids.len()` — **capture `file_ids.len()` before the N≤1 loop, which consumes the vec by value at `queue.rs:314`**). Every terminal outcome in `process_single_job` (done / best-effort / already-under-target, failed, cancelled, unsupported) → `append_file`. Cancel-all skipped files (both the sequential loop and the lane `on_skipped` closure), the "cancelled while pending" skip paths, and entries individually cancelled while Pending (never placed into a lane) → `append_file` with `status: "cancelled"`, `output_path: None`, `compressed_size: None`, `duration_ms: 0`. `finish_batch` → `append_session_end` (counts over all recorded file records, `cancelled` = batch was cancelled — **read the cancellation state before `finish_batch` removes the batch token at `queue.rs:773`**) then `trim(effective_retention_days, now_ms)` (trim failure is logged, never propagated).
 
 **Status string format (must not drift):** `FileResultRecord.status` is the snake_case `FileStatus` string exactly as serialized by serde (`"done"`, `"best_effort"`, `"already_under_target"`, `"failed"`, `"cancelled"`, `"unsupported"`) — never `format!("{:?}")` (which would emit `"AlreadyUnderTarget"` and silently break Task 4 filters). Add a helper `fn status_key(status: &FileStatus) -> &'static str` with an exhaustive match that is **total and safe for every `FileStatus` variant** (including `Pending` / `Compressing`) — map each variant to its snake_case serde string; no `unreachable!()`, no panic.
 
-**Category string:** `FileResultRecord.category` for file records is always `category_key(&entry.category)` — reuse the existing `category_key` helper at `queue.rs:517` (do not add a second mapping).
+**Category string:** `FileResultRecord.category` for file records is always `category_key(&entry.category)` — reuse the existing `category_key` helper at `queue.rs:886` (do not add a second mapping).
 
 **Acceptance Criteria:**
 - Preflight failure writes nothing (no phantom session); successful preflight writes `session_start` with the settings folder and the batch's file count (spec §4.1).
@@ -1103,6 +1103,16 @@ git commit -m "feat(history): add 90-day retention trim and clear"
 - `finish_batch_trims_old_history` — seeded 11-day-old session + retention 10 → gone after batch
 - `session_start_output_folder_matches_settings` — folder equals settings value
 - `duration_ms_positive_for_processed_outcome` — processed file record has duration_ms > 0 (sidecar-less failure path still measures)
+- `lane_pending_cancelled_entry_recorded_once` — maxConcurrent "3", one entry pre-marked Cancelled before start_batch: every batch id recorded exactly once, cancelled count includes it, no `file:cancelled` re-emitted by the lane sweep
+- `cancel_skip_entry_ignores_non_pending` — Done/Failed/unknown ids not swept; Cancelled returned as-is; Pending flips
+- `done_entry_not_recorded_on_skip_path` — a stale Done row is never recorded by cancel skips and is not clobbered
+- `trim_failure_does_not_fail_batch` — rewrite temp path occupied by a directory with a seeded old session: batch completes, original history intact, outcomes unchanged
+- `history_error_flag_cleared_between_batches` — two sequential failing batches in one app emit 2 `history:error` events and clear both flag entries
+- `history_records_accumulator_cleared_after_batch` — accumulator drained after batch; second batch session counts unaffected
+- `cancel_skipped_records_have_zero_duration_and_no_output` — real 1KB file pre-cancelled: original_size == 1024, duration 0, null output/compressed; all cancelled records keep entry sizes (mid-flight duration is measured per spec §3.2 and not asserted here — not deterministically simulatable without sidecars)
+- `unsupported_outcome_recorded` — also asserts duration_ms > 0
+- `cancel_all_records_cancelled_files` / `sequential_cancel_all_records_cancelled` — recorded fileId set equals batch ids exactly (no duplicates, no gaps)
+- `history_write_failure_does_not_fail_batch` — also asserts exactly 1 `history:error` event
 - `status_key_snake_case` — `status_key` returns `"already_under_target"` etc. for all variants including `pending` / `compressing` (exhaustive, total match pinned; no panic paths)
 - `category_key_snake_case` — `category_key` returns lowercase strings (`"image"` / `"video"` / `"pdf"` / `"document"` / `"other"`), so file records never carry `format!("{:?}")`-style casing
 
