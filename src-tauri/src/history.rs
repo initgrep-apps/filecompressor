@@ -16,9 +16,16 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{LockResult, Mutex, MutexGuard};
+
+fn poison_recover<T>(lock: LockResult<MutexGuard<'_, T>>) -> MutexGuard<'_, T> {
+    lock.unwrap_or_else(|e| {
+        eprintln!("warn: history mutex was poisoned, recovering: {e}");
+        e.into_inner()
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -95,48 +102,72 @@ impl HistoryStore {
         &self.path
     }
 
-    pub fn append_session_start(&self, rec: &SessionStartRecord) -> Result<(), String> {
-        self.append(HistoryRecordRef::SessionStart(rec))
+    pub fn append_session_start(&self, record: &SessionStartRecord) -> Result<(), String> {
+        self.append(HistoryRecordRef::SessionStart(record))
     }
 
-    pub fn append_file(&self, rec: &FileResultRecord) -> Result<(), String> {
-        self.append(HistoryRecordRef::File(rec))
+    pub fn append_file(&self, record: &FileResultRecord) -> Result<(), String> {
+        self.append(HistoryRecordRef::File(record))
     }
 
-    pub fn append_session_end(&self, rec: &SessionEndRecord) -> Result<(), String> {
-        self.append(HistoryRecordRef::SessionEnd(rec))
+    pub fn append_session_end(&self, record: &SessionEndRecord) -> Result<(), String> {
+        self.append(HistoryRecordRef::SessionEnd(record))
     }
 
     pub(crate) fn read_lines(&self) -> Result<Vec<String>, String> {
-        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let content = match std::fs::read_to_string(&self.path) {
-            Ok(content) => content,
+        let _guard = poison_recover(self.lock.lock());
+        let bytes = match std::fs::read(&self.path) {
+            Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-            Err(e) => return Err(format!("history read failed: {e}")),
+            Err(e) => {
+                return Err(format!(
+                    "history read failed: read {}: {e}",
+                    self.path.display()
+                ))
+            }
         };
-        Ok(content
-            .lines()
-            .map(str::trim)
+        Ok(bytes
+            .split(|b| *b == b'\n')
+            .map(|line| String::from_utf8_lossy(line).trim().to_string())
             .filter(|line| !line.is_empty())
-            .map(str::to_string)
             .collect())
     }
 
     fn append(&self, record: HistoryRecordRef<'_>) -> Result<(), String> {
-        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let line =
-            serde_json::to_string(&record).map_err(|e| format!("history write failed: {e}"))?;
+        let _guard = poison_recover(self.lock.lock());
+        let path = self.path.display();
+        let line = serde_json::to_string(&record)
+            .map_err(|e| format!("history write failed: serialize record for {path}: {e}"))?;
         if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("history write failed: {e}"))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                format!(
+                    "history write failed: create parent dir {} for {path}: {e}",
+                    parent.display()
+                )
+            })?;
         }
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
+            .read(true)
             .open(&self.path)
-            .map_err(|e| format!("history write failed: {e}"))?;
-        file.write_all(line.as_bytes())
-            .and_then(|_| file.write_all(b"\n"))
-            .map_err(|e| format!("history write failed: {e}"))
+            .map_err(|e| format!("history write failed: open {path}: {e}"))?;
+        let mut buf = Vec::with_capacity(line.len() + 2);
+        if file.metadata().map(|m| m.len()).unwrap_or(0) > 0 {
+            let mut last = [0u8; 1];
+            let ends_with_newline = file
+                .seek(SeekFrom::End(-1))
+                .and_then(|_| file.read_exact(&mut last))
+                .map(|_| last[0] == b'\n')
+                .unwrap_or(false);
+            if !ends_with_newline {
+                buf.push(b'\n');
+            }
+        }
+        buf.extend_from_slice(line.as_bytes());
+        buf.push(b'\n');
+        file.write_all(&buf)
+            .map_err(|e| format!("history write failed: write {path}: {e}"))
     }
 }
 
