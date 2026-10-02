@@ -197,20 +197,23 @@ mod tests {
     use tempfile::tempdir;
 
     fn small_end(session_id: &str) -> SessionEndRecord {
+        big_end(session_id.into())
+    }
+
+    fn big_end(session_id: String) -> SessionEndRecord {
         SessionEndRecord {
-            session_id: session_id.into(),
+            session_id,
             ended_at: 0,
             total_saved_bytes: 0,
-            counts: Counts {
-                done: 0,
-                best_effort: 0,
-                failed: 0,
-                cancelled: 0,
-                unsupported: 0,
-                already_under_target: 0,
-            },
+            counts: Counts::default(),
             cancelled: false,
         }
+    }
+
+    fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
+        let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        keys
     }
 
     #[test]
@@ -320,7 +323,6 @@ mod tests {
         let store = HistoryStore::new_in(dir.path());
         std::fs::create_dir(store.file_path()).unwrap();
         let err = store.read_lines().unwrap_err();
-        assert!(err.starts_with("history read failed:"), "{err}");
         assert!(err.starts_with("history read failed: read "), "{err}");
         assert!(
             err.contains(&store.file_path().display().to_string()),
@@ -336,11 +338,7 @@ mod tests {
         assert!(store.file_path().exists());
         assert_eq!(
             store.file_path(),
-            dir.path()
-                .join("a")
-                .join("b")
-                .join("history.jsonl")
-                .as_path()
+            dir.path().join("a").join("b").join("history.jsonl")
         );
     }
 
@@ -355,6 +353,16 @@ mod tests {
             err.contains(&store.file_path().display().to_string()),
             "{err}"
         );
+    }
+
+    #[test]
+    fn write_failure_surfaces_write_stage_error() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.jsonl");
+        std::fs::write(&path, "").unwrap();
+        let mut file = std::fs::File::open(&path).unwrap();
+        let err = write_terminated(&mut file, b"{\"a\":1}\n", &path).unwrap_err();
+        assert!(err.starts_with("history write failed: write "), "{err}");
     }
 
     #[test]
@@ -386,7 +394,6 @@ mod tests {
 
         store.append_session_end(&small_end("s1")).unwrap();
         let raw = std::fs::read(store.file_path()).unwrap();
-        assert!(raw.ends_with(b"\n"));
         assert_eq!(raw.iter().rev().take_while(|b| **b == b'\n').count(), 1);
         assert_ne!(raw[0], b'\n');
 
@@ -466,9 +473,9 @@ mod tests {
                 scope.spawn(move || {
                     barrier.wait();
                     for i in 0..25 {
-                        let mut record = small_end(&format!("t{t}-{i}"));
-                        record.session_id = format!("t{t}-{i}-{}", "x".repeat(8192));
-                        store.append_session_end(&record).unwrap();
+                        store
+                            .append_session_end(&big_end(format!("t{t}-{i}-{}", "x".repeat(8192))))
+                            .unwrap();
                     }
                 });
             }
@@ -478,7 +485,6 @@ mod tests {
         let mut ids = std::collections::HashSet::new();
         for line in &lines {
             let parsed: SessionEndRecord = serde_json::from_str(line).unwrap();
-            assert!(parsed.session_id.len() > 8192);
             ids.insert(parsed.session_id);
         }
         for t in 0..2 {
@@ -490,6 +496,14 @@ mod tests {
         assert_eq!(ids.len(), 50);
     }
 
+    struct StopGuard<'a>(&'a std::sync::atomic::AtomicBool);
+
+    impl Drop for StopGuard<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     #[test]
     fn read_during_write_never_sees_torn_line() {
         let dir = tempdir().unwrap();
@@ -497,12 +511,12 @@ mod tests {
         let stop = std::sync::atomic::AtomicBool::new(false);
         std::thread::scope(|scope| {
             scope.spawn(|| {
+                let _guard = StopGuard(&stop);
                 for i in 0..100 {
-                    let mut record = small_end(&format!("w-{i}"));
-                    record.session_id = format!("w-{i}-{}", "y".repeat(8192));
-                    store.append_session_end(&record).unwrap();
+                    store
+                        .append_session_end(&big_end(format!("w-{i}-{}", "y".repeat(8192))))
+                        .unwrap();
                 }
-                stop.store(true, std::sync::atomic::Ordering::SeqCst);
             });
             while !stop.load(std::sync::atomic::Ordering::SeqCst) {
                 for line in store.read_lines().unwrap() {
@@ -516,6 +530,56 @@ mod tests {
     }
 
     #[test]
+    fn append_blocks_until_lock_released() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let store = &store;
+        let guard = store.lock.lock().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(move || {
+                store.append_session_end(&small_end("s1")).unwrap();
+                tx.send(()).unwrap();
+            });
+            assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
+            drop(guard);
+            assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
+            handle.join().unwrap();
+        });
+        let lines = store.read_lines().unwrap();
+        assert_eq!(lines.len(), 1);
+        let parsed: SessionEndRecord = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(parsed.session_id, "s1");
+    }
+
+    #[test]
+    fn read_lines_blocks_until_lock_released() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        std::fs::write(store.file_path(), "{\"a\":1}\n").unwrap();
+        let store = &store;
+        let guard = store.lock.lock().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(move || {
+                let lines = store.read_lines().unwrap();
+                tx.send(lines).unwrap();
+            });
+            assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
+            drop(guard);
+            let lines = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(lines, vec!["{\"a\":1}".to_string()]);
+            handle.join().unwrap();
+        });
+    }
+
+    #[test]
     fn record_schema_keys_are_pinned() {
         let start = serde_json::to_value(HistoryRecordRef::SessionStart(&SessionStartRecord {
             session_id: "s1".into(),
@@ -524,10 +588,8 @@ mod tests {
             output_folder: "/out".into(),
         }))
         .unwrap();
-        let mut start_keys: Vec<String> = start.as_object().unwrap().keys().cloned().collect();
-        start_keys.sort();
         assert_eq!(
-            start_keys,
+            sorted_keys(&start),
             vec![
                 "fileCount",
                 "outputFolder",
@@ -555,10 +617,8 @@ mod tests {
             duration_ms: 0,
         }))
         .unwrap();
-        let mut file_keys: Vec<String> = file.as_object().unwrap().keys().cloned().collect();
-        file_keys.sort();
         assert_eq!(
-            file_keys,
+            sorted_keys(&file),
             vec![
                 "category",
                 "completedAt",
@@ -580,10 +640,8 @@ mod tests {
         );
 
         let end = serde_json::to_value(HistoryRecordRef::SessionEnd(&small_end("s1"))).unwrap();
-        let mut end_keys: Vec<String> = end.as_object().unwrap().keys().cloned().collect();
-        end_keys.sort();
         assert_eq!(
-            end_keys,
+            sorted_keys(&end),
             vec![
                 "cancelled",
                 "counts",
@@ -593,11 +651,8 @@ mod tests {
                 "type",
             ]
         );
-        let mut counts_keys: Vec<String> =
-            end["counts"].as_object().unwrap().keys().cloned().collect();
-        counts_keys.sort();
         assert_eq!(
-            counts_keys,
+            sorted_keys(&end["counts"]),
             vec![
                 "alreadyUnderTarget",
                 "bestEffort",
@@ -633,10 +688,6 @@ mod tests {
         store.append_file(&file).unwrap();
         let line = store.read_lines().unwrap().pop().unwrap();
         let parsed: FileResultRecord = serde_json::from_str(&line).unwrap();
-        assert_eq!(parsed.path, file.path);
-        assert_eq!(parsed.output_path, file.output_path);
-        assert_eq!(parsed.error, file.error);
-        assert_eq!(parsed.name, file.name);
-        assert_eq!(parsed.session_id, file.session_id);
+        assert_eq!(parsed, file);
     }
 }
