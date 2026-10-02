@@ -782,11 +782,16 @@ impl<R: Runtime> QueueState<R> {
         let _ = append_history(app, HistoryRecordRef::SessionEnd(&end));
 
         let settings = crate::commands::load_settings(app);
-        if let Some(store) = app.try_state::<HistoryStore>() {
-            if let Err(e) =
-                store.trim(settings.history.effective_retention_days(), now_ms())
-            {
-                eprintln!("warn: history trim after batch {batch_id} failed: {e}");
+        match app.try_state::<HistoryStore>() {
+            Some(store) => {
+                if let Err(e) =
+                    store.trim(settings.history.effective_retention_days(), now_ms())
+                {
+                    eprintln!("warn: history trim after batch {batch_id} failed: {e}");
+                }
+            }
+            None => {
+                eprintln!("warn: history store not managed, skipping history trim");
             }
         }
 
@@ -831,7 +836,9 @@ fn history_counts_of(files: &[FileResultRecord]) -> Counts {
             "cancelled" => counts.cancelled += 1,
             "unsupported" => counts.unsupported += 1,
             "already_under_target" => counts.already_under_target += 1,
-            _ => {}
+            other => {
+                eprintln!("warn: history counts ignored unknown status: {other}");
+            }
         }
     }
     counts
@@ -842,6 +849,7 @@ fn append_history<R: tauri::Runtime>(
     record: HistoryRecordRef<'_>,
 ) -> Result<(), String> {
     let Some(store) = app.try_state::<HistoryStore>() else {
+        eprintln!("warn: history store not managed, skipping history record");
         return Ok(());
     };
     let result = match record {
