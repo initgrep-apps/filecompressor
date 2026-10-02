@@ -442,7 +442,13 @@ mod tests {
         })
     }
 
-    fn file(sid: &str, fid: &str, at: i64, status: &str, sizes: (u64, Option<u64>)) -> serde_json::Value {
+    fn file(
+        sid: &str,
+        fid: &str,
+        at: i64,
+        status: &str,
+        sizes: (u64, Option<u64>),
+    ) -> serde_json::Value {
         serde_json::json!({
             "type": "file", "sessionId": sid, "fileId": fid, "completedAt": at,
             "name": "a.jpg", "path": "/in/a.jpg", "outputPath": "/out/a.jpg",
@@ -990,6 +996,8 @@ mod tests {
         assert!(!s.interrupted);
         assert_eq!(s.total_saved_bytes, 100);
         assert_eq!(s.outcome.done, 1);
+        assert_eq!(s.file_count, 1);
+        assert_eq!(s.matched_files, None);
         assert_eq!(s.files.len(), 1);
         assert_eq!(s.files[0].quality_used, Some(70));
         assert_eq!(s.files[0].output_path, Some(PathBuf::from("/out/a.jpg")));
@@ -998,7 +1006,6 @@ mod tests {
     #[test]
     fn fold_uses_session_end_values_verbatim() {
         let mut end_record = end("s1", 120);
-        end_record["totalSavedBytes"] = serde_json::json!(100);
         end_record["counts"] = serde_json::json!({
             "done": 0, "bestEffort": 2, "failed": 0,
             "cancelled": 0, "unsupported": 0, "alreadyUnderTarget": 0
@@ -1078,17 +1085,36 @@ mod tests {
         let out = fold_records(&lines);
         let ids: Vec<&str> = out.sessions.iter().map(|s| s.session_id.as_str()).collect();
         assert_eq!(ids, vec!["new", "old"]);
-        let names: Vec<&str> = out.sessions[0].files.iter().map(|f| f.name.as_str()).collect();
-        assert_eq!(names.len(), 2);
-        assert!(out.sessions[0].files[0].completed_at <= out.sessions[0].files[1].completed_at);
+        let files = &out.sessions[0].files;
+        assert_eq!(files.len(), 2);
+        assert!(files[0].completed_at <= files[1].completed_at);
     }
 
     #[test]
     fn fold_repeated_session_start_last_wins() {
-        let lines = vec![line(start("s1", 10)), line(start("s1", 20))];
+        let mut second = start("s1", 20);
+        second["outputFolder"] = serde_json::json!("/out2");
+        second["fileCount"] = serde_json::json!(7);
+        let lines = vec![
+            line(start("s1", 10)),
+            line(file("s1", "f1", 11, "done", (5, Some(1)))),
+            line(end("s1", 12)),
+            line(second),
+        ];
         let out = fold_records(&lines);
         assert_eq!(out.sessions.len(), 1);
-        assert_eq!(out.sessions[0].started_at, 20);
+        let s = &out.sessions[0];
+        assert_eq!(s.started_at, 20);
+        assert_eq!(s.output_folder, "/out2");
+        assert_eq!(s.file_count, 7);
+        assert_eq!(s.files.len(), 1, "prior files retained");
+        assert_eq!(s.files[0].name, "a.jpg");
+        assert_eq!(
+            s.ended_at,
+            Some(12),
+            "end recorded before restart preserved"
+        );
+        assert_eq!(s.total_saved_bytes, 100);
     }
 
     #[test]
@@ -1096,11 +1122,52 @@ mod tests {
         let lines = vec![
             "not json".to_string(),
             line(serde_json::json!({ "type": "future_record", "sessionId": "x" })),
+            line(serde_json::json!({ "type": "file", "sessionId": "s1" })),
             line(start("s1", 10)),
         ];
         let out = fold_records(&lines);
-        assert_eq!(out.skipped_lines, 1, "malformed counted; unknown type ignored silently");
+        assert_eq!(
+            out.skipped_lines, 2,
+            "malformed and typed-invalid counted; unknown type ignored silently"
+        );
         assert_eq!(out.sessions.len(), 1);
+        assert!(out.sessions[0].files.is_empty());
+    }
+
+    #[test]
+    fn fold_counts_non_object_and_non_string_type_lines() {
+        let lines = vec![
+            "[]".to_string(),
+            "123".to_string(),
+            "\"str\"".to_string(),
+            "null".to_string(),
+            "{}".to_string(),
+            line(serde_json::json!({ "type": 123 })),
+            line(serde_json::json!({ "type": null })),
+            line(serde_json::json!({ "type": "future_record" })),
+            line(start("s1", 10)),
+        ];
+        let out = fold_records(&lines);
+        assert_eq!(
+            out.skipped_lines, 7,
+            "non-record lines counted as malformed"
+        );
+        assert_eq!(out.sessions.len(), 1);
+    }
+
+    #[test]
+    fn fold_file_after_session_end_is_skipped_and_counted() {
+        let lines = vec![
+            line(start("s1", 10)),
+            line(end("s1", 12)),
+            line(file("s1", "f1", 13, "done", (5, Some(1)))),
+        ];
+        let out = fold_records(&lines);
+        assert_eq!(out.skipped_lines, 1);
+        let s = &out.sessions[0];
+        assert!(s.files.is_empty(), "post-end file record not added");
+        assert_eq!(s.outcome.done, 1, "end-derived outcome stays frozen");
+        assert_eq!(s.total_saved_bytes, 100, "end-derived total stays frozen");
     }
 
     #[test]
@@ -1142,6 +1209,78 @@ mod tests {
     }
 
     #[test]
+    fn fold_interrupted_saturates_total_saved() {
+        let lines = vec![
+            line(start("s1", 10)),
+            line(file("s1", "f1", 11, "done", (0, Some(u64::MAX)))),
+            line(file("s1", "f2", 12, "done", (u64::MAX, Some(0)))),
+            line(file("s1", "f3", 13, "done", (u64::MAX, Some(0)))),
+        ];
+        let out = fold_records(&lines);
+        assert_eq!(
+            out.sessions[0].total_saved_bytes,
+            u64::MAX,
+            "saturating_add clamps the sum instead of panicking"
+        );
+    }
+
+    #[test]
+    fn fold_interrupted_flag_matches_ended_at_biconditional() {
+        let complete = fold_records(&[line(start("s1", 10)), line(end("s1", 12))]);
+        let s = &complete.sessions[0];
+        assert_eq!(s.interrupted, s.ended_at.is_none());
+
+        let interrupted = fold_records(&[line(start("s2", 10))]);
+        let s = &interrupted.sessions[0];
+        assert_eq!(s.interrupted, s.ended_at.is_none());
+        assert!(s.interrupted);
+    }
+
+    #[test]
+    fn fold_output_serde_keys_are_pinned() {
+        let lines = vec![
+            line(start("s1", 100)),
+            line(file("s1", "f1", 110, "done", (500, Some(100)))),
+            line(end("s1", 120)),
+        ];
+        let out = fold_records(&lines);
+        let value = serde_json::to_value(&out.sessions[0]).unwrap();
+        for key in [
+            "sessionId",
+            "startedAt",
+            "endedAt",
+            "outputFolder",
+            "fileCount",
+            "files",
+            "outcome",
+            "totalSavedBytes",
+            "cancelled",
+            "interrupted",
+            "matchedFiles",
+        ] {
+            assert!(value.get(key).is_some(), "missing top-level key {key}");
+        }
+        assert_eq!(value["endedAt"], 120);
+        assert!(value["matchedFiles"].is_null());
+        let file = &value["files"][0];
+        for key in [
+            "outputPath",
+            "completedAt",
+            "qualityUsed",
+            "strategyUsed",
+            "durationMs",
+        ] {
+            assert!(file.get(key).is_some(), "missing file key {key}");
+        }
+        assert_eq!(file["outputPath"], "/out/a.jpg");
+        assert!(file["outputPath"].is_string());
+        assert_eq!(file["completedAt"], 110);
+        assert_eq!(file["qualityUsed"], 70);
+        assert_eq!(file["strategyUsed"], "quality=70");
+        assert_eq!(file["durationMs"], 12);
+    }
+
+    #[test]
     fn fold_tolerates_absent_optional_keys() {
         let minimal = serde_json::json!({
             "type": "file", "sessionId": "s1", "fileId": "f1", "completedAt": 11,
@@ -1175,29 +1314,33 @@ mod tests {
     fn load_roundtrips_through_file() {
         let dir = tempdir().unwrap();
         let store = HistoryStore::new_in(dir.path());
-        store.append_session_start(&SessionStartRecord {
-            session_id: "s1".into(),
-            started_at: 10,
-            file_count: 1,
-            output_folder: "/out".into(),
-        }).unwrap();
-        store.append_file(&FileResultRecord {
-            session_id: "s1".into(),
-            file_id: "f1".into(),
-            completed_at: 11,
-            name: "a.jpg".into(),
-            path: "/in/a.jpg".into(),
-            output_path: Some("/out/a.jpg".into()),
-            category: "image".into(),
-            target_bytes: 1024,
-            original_size: 5,
-            compressed_size: Some(1),
-            status: "done".into(),
-            quality_used: Some(70),
-            strategy_used: Some("quality=70".into()),
-            error: None,
-            duration_ms: 12,
-        }).unwrap();
+        store
+            .append_session_start(&SessionStartRecord {
+                session_id: "s1".into(),
+                started_at: 10,
+                file_count: 1,
+                output_folder: "/out".into(),
+            })
+            .unwrap();
+        store
+            .append_file(&FileResultRecord {
+                session_id: "s1".into(),
+                file_id: "f1".into(),
+                completed_at: 11,
+                name: "a.jpg".into(),
+                path: "/in/a.jpg".into(),
+                output_path: Some("/out/a.jpg".into()),
+                category: "image".into(),
+                target_bytes: 1024,
+                original_size: 5,
+                compressed_size: Some(1),
+                status: "done".into(),
+                quality_used: Some(70),
+                strategy_used: Some("quality=70".into()),
+                error: None,
+                duration_ms: 12,
+            })
+            .unwrap();
         let out = store.load().unwrap();
         assert_eq!(out.skipped_lines, 0);
         assert_eq!(out.sessions[0].session_id, "s1");
