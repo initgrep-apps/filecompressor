@@ -336,6 +336,67 @@ describe('HistoryView', () => {
     )
   })
 
+  it('multi chip un-toggle keeps per-group payloads', async () => {
+    const user = userEvent.setup()
+    invokeMock.mockResolvedValue(emptyResponse)
+    renderView()
+    await user.click(await screen.findByRole('button', { name: 'Failed' }))
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'get_history',
+      expect.objectContaining({ filters: { statuses: ['failed'] }, page: 0 })
+    )
+    await user.click(screen.getByRole('button', { name: 'Done' }))
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'get_history',
+      expect.objectContaining({ filters: { statuses: ['failed', 'done'] }, page: 0 })
+    )
+    await user.click(screen.getByRole('button', { name: 'Failed' }))
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'get_history',
+      expect.objectContaining({ filters: { statuses: ['done'] }, page: 0 })
+    )
+    await user.click(screen.getByRole('button', { name: 'PDF' }))
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'get_history',
+      expect.objectContaining({
+        filters: { statuses: ['done'], categories: ['pdf'] },
+        page: 0,
+      })
+    )
+    await user.click(screen.getByRole('button', { name: 'Image' }))
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'get_history',
+      expect.objectContaining({
+        filters: { statuses: ['done'], categories: ['pdf', 'image'] },
+        page: 0,
+      })
+    )
+    await user.click(screen.getByRole('button', { name: 'PDF' }))
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'get_history',
+      expect.objectContaining({
+        filters: { statuses: ['done'], categories: ['image'] },
+        page: 0,
+      })
+    )
+  })
+
+  it('category chip produces payload and pressed state', async () => {
+    const user = userEvent.setup()
+    invokeMock.mockResolvedValue(emptyResponse)
+    renderView()
+    const chip = await screen.findByRole('button', { name: 'PDF' })
+    await user.click(chip)
+    expect(screen.getByRole('button', { name: 'PDF' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(invokeMock).toHaveBeenLastCalledWith(
+      'get_history',
+      expect.objectContaining({ filters: { categories: ['pdf'] }, page: 0 })
+    )
+  })
+
   it('date preset maps to sinceMs payload', async () => {
     const user = userEvent.setup()
     invokeMock.mockResolvedValue(emptyResponse)
@@ -487,6 +548,24 @@ describe('HistoryView', () => {
     expect(screen.getByRole('table')).toBeInTheDocument()
   })
 
+  it('shows plural match count', async () => {
+    invokeMock.mockResolvedValue(
+      responseWith([
+        session({
+          sessionId: 's1',
+          matchedFiles: 3,
+          files: [
+            doneFile(),
+            doneFile({ name: 'b.jpg', path: '/in/b.jpg', outputPath: '/out/b.jpg' }),
+            doneFile({ name: 'c.jpg', path: '/in/c.jpg', outputPath: '/out/c.jpg' }),
+          ],
+        }),
+      ])
+    )
+    renderView()
+    expect(await screen.findByText('3 matches')).toBeInTheDocument()
+  })
+
   it('session level matches stay collapsed and show all files when opened', async () => {
     const user = userEvent.setup()
     invokeMock.mockResolvedValue(
@@ -567,6 +646,44 @@ describe('HistoryView', () => {
     await user.click(await screen.findByRole('button', { name: 'Copy output path' }))
     expect(writeText).toHaveBeenCalledWith('/out/a.jpg')
     expect(toast.success).toHaveBeenCalledWith('Path copied')
+  })
+
+  it('copy source path writes clipboard and toasts', async () => {
+    const user = userEvent.setup()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    })
+    invokeMock.mockResolvedValue(
+      responseWith([session({ sessionId: 's1', matchedFiles: 1, files: [doneFile()] })])
+    )
+    renderView()
+    await user.click(await screen.findByRole('button', { name: 'Copy source path' }))
+    expect(writeText).toHaveBeenCalledWith('/in/a.jpg')
+    expect(toast.success).toHaveBeenCalledWith('Path copied')
+  })
+
+  it('open output folder invokes with session folder', async () => {
+    const user = userEvent.setup()
+    invokeMock.mockResolvedValue(
+      responseWith([
+        session({ sessionId: 's1', outputFolder: '/session-out', files: [doneFile()] }),
+      ])
+    )
+    renderView()
+    const button = await screen.findByRole('button', { name: 'Open output folder' })
+    expect(button).toBeEnabled()
+    await user.click(button)
+    expect(invokeMock).toHaveBeenCalledWith('open_folder', { path: '/session-out' })
+  })
+
+  it('open output folder disabled when session lacks outputs', async () => {
+    invokeMock.mockResolvedValue(
+      responseWith([session({ sessionId: 's1', files: [failedFile()] })])
+    )
+    renderView()
+    expect(await screen.findByRole('button', { name: 'Open output folder' })).toBeDisabled()
   })
 
   it('reveal actions invoke with correct paths', async () => {
