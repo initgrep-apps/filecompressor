@@ -33,8 +33,14 @@ describe('historyFormat', () => {
     expect(presetSinceMs('today', spring)).toBe(new Date(2026, 2, 8).getTime())
     const fall = new Date(2026, 10, 1, 15, 0)
     expect(presetSinceMs('today', fall)).toBe(new Date(2026, 10, 1).getTime())
+    const euSpring = new Date(2026, 2, 29, 15, 0)
+    expect(presetSinceMs('today', euSpring)).toBe(new Date(2026, 2, 29).getTime())
+    const euFall = new Date(2026, 9, 25, 15, 0)
+    expect(presetSinceMs('today', euFall)).toBe(new Date(2026, 9, 25).getTime())
     const rollover = new Date(2027, 0, 1, 1, 0)
     expect(presetSinceMs('last7', rollover)).toBe(new Date(2026, 11, 26).getTime())
+    const spanning = new Date(2026, 9, 25, 15, 0)
+    expect(presetSinceMs('last7', spanning)).toBe(new Date(2026, 9, 19).getTime())
   })
 
   it('keys days by local calendar date', () => {
@@ -51,6 +57,12 @@ describe('historyFormat', () => {
     expect(formatDuration(1_000)).toBe('1s')
     expect(formatDuration(59_999)).toBe('59s')
     expect(formatDuration(60_000)).toBe('1m 00s')
+    expect(formatDuration(3_599_999)).toBe('59m 59s')
     expect(formatDuration(3_600_000)).toBe('1h 00m')
+  })
+
+  it('labels yesterday across year boundary', () => {
+    const now = new Date(2027, 0, 1, 3, 0)
+    expect(dayLabel(new Date(2026, 11, 31, 20, 0).getTime(), now)).toBe('Yesterday')
   })
 })
