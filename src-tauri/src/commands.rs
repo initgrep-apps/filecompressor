@@ -227,7 +227,10 @@ pub fn cancel_file<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-pub fn cancel_all(queue: State<'_, crate::queue::QueueState>) {
+pub fn cancel_all<R: tauri::Runtime>(
+    _app: tauri::AppHandle<R>,
+    queue: State<'_, crate::queue::QueueState<R>>,
+) {
     queue.cancel_all();
 }
 

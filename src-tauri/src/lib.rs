@@ -55,7 +55,9 @@ pub(crate) fn setup_hook<R: tauri::Runtime>(
     app: &mut tauri::App<R>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle().clone();
-    app.manage(QueueState::new(handle));
+    if !app.manage(QueueState::new(handle)) {
+        eprintln!("warn: QueueState already managed, new state and its worker discarded");
+    }
     temp::cleanup_stale_temp_files(app.handle());
     setup_history(app.handle());
     Ok(())

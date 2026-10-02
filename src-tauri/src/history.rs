@@ -449,8 +449,8 @@ pub fn query_history(
     page_size: u32,
 ) -> HistoryResponse {
     debug_assert!(
-        page_size <= MAX_PAGE_SIZE,
-        "query_history page_size {page_size} exceeds MAX_PAGE_SIZE {MAX_PAGE_SIZE}; the command layer must clamp before calling"
+        page_size >= 1 && page_size <= MAX_PAGE_SIZE,
+        "query_history page_size {page_size} outside 1..={MAX_PAGE_SIZE}; the command layer must clamp before calling"
     );
     let output_folders: Vec<String> = fold
         .sessions
@@ -2242,13 +2242,23 @@ mod tests {
 
     #[test]
     fn query_page_size_zero_is_safe() {
-        let resp = query_history(two_sessions(), &no_filters(), 0, 0);
-        assert_eq!(resp.page_size, 1);
-        assert_eq!(resp.sessions.len(), 1);
-        assert_eq!(resp.sessions[0].session_id, "s2");
-        let clamped = query_history(two_sessions(), &no_filters(), 9, 0);
-        assert_eq!(clamped.page, 1);
-        assert_eq!(clamped.sessions[0].session_id, "s1");
+        if cfg!(debug_assertions) {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                query_history(two_sessions(), &no_filters(), 0, 0);
+            }));
+            assert!(
+                result.is_err(),
+                "debug builds catch page_size 0 through the query_history debug_assert contract"
+            );
+        } else {
+            let resp = query_history(two_sessions(), &no_filters(), 0, 0);
+            assert_eq!(resp.page_size, 1);
+            assert_eq!(resp.sessions.len(), 1);
+            assert_eq!(resp.sessions[0].session_id, "s2");
+            let clamped = query_history(two_sessions(), &no_filters(), 9, 0);
+            assert_eq!(clamped.page, 1);
+            assert_eq!(clamped.sessions[0].session_id, "s1");
+        }
     }
 
     #[test]
