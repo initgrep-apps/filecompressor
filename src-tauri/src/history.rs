@@ -182,7 +182,7 @@ fn saved_for(file: &HistoryFile) -> u64 {
     file.compressed_size.map_or(0, |compressed| {
         if compressed > file.original_size {
             eprintln!(
-                "warn: history file {} compressedSize {compressed} > originalSize {}, clamping saved to 0",
+                "info: history file {} output {compressed} larger than original {}, saved clamped to 0",
                 file.path, file.original_size
             );
         }
