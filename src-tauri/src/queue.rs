@@ -1827,6 +1827,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn queued_entry_individually_cancelled_records_on_dispatch() {
+        let _temp_guard = temp_guard();
+        let (_root, app, out) = setup_app("3");
+        let ids = add_entries(&app, &[
+            ("queued.jpg", crate::models::Category::Image, "/tmp/queued.jpg"),
+        ]);
+        set_status(&app, &ids[0], crate::models::FileStatus::Cancelled);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let store = store.inner();
+        let settings = crate::commands::load_settings(app.handle());
+        let reserved = crate::output::ReservedNames::new();
+        let saved = QueueState::process_single_job(
+            app.handle().clone(),
+            "hist-queued-cancel".into(),
+            ids[0].clone(),
+            out.to_str().unwrap().to_string(),
+            settings,
+            &reserved,
+        )
+        .await;
+
+        assert_eq!(saved, 0, "a cancelled entry must contribute no saved bytes");
+        let recorded = raw_file_records(store);
+        assert_eq!(recorded.len(), 1, "dispatch of a cancelled entry records once");
+        let f = &recorded[0];
+        assert_eq!(f.file_id, ids[0]);
+        assert_eq!(f.status, "cancelled");
+        assert_eq!(f.duration_ms, 0, "cancelled before a worker slot means zero duration");
+        assert!(f.output_path.is_none());
+        assert!(f.compressed_size.is_none());
+        assert!(f.quality_used.is_none());
+        assert!(f.strategy_used.is_none());
+    }
+
+    #[tokio::test]
     async fn failed_batch_writes_session_records() {
         let _temp_guard = temp_guard();
         let (_root, app, _out) = setup_app("1");
@@ -1847,12 +1883,24 @@ mod tests {
         assert_eq!(s.session_id, "hist-1");
         assert_eq!(s.file_count, 2);
         assert!(!s.interrupted, "session_end must be written by finish_batch");
+        assert!(!s.cancelled, "a batch that ran to completion is not cancelled");
         assert_eq!(s.outcome.failed, 2, "sidecar-less jobs fail");
         assert_eq!(s.files.len(), 2);
         assert_eq!(
             s.files.iter().map(|f| f.name.as_str()).collect::<std::collections::HashSet<_>>(),
             std::collections::HashSet::from(["a.jpg", "b.jpg"])
         );
+        let started_at = s.started_at;
+        let ended_at = s.ended_at.expect("session_end carries ended_at");
+        assert!(started_at > 0, "session start must carry a real timestamp");
+        assert!(ended_at >= started_at, "session end must not precede session start");
+        for f in &s.files {
+            let completed_at = f.completed_at;
+            assert!(
+                completed_at >= started_at && completed_at <= ended_at,
+                "file {completed_at} must fall within [{started_at}, {ended_at}]"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1860,7 +1908,7 @@ mod tests {
         use std::io::Write;
 
         let _temp_guard = temp_guard();
-        let (root, app, _out) = setup_app("1");
+        let (root, app, out) = setup_app("1");
 
         let src = root.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
@@ -1883,7 +1931,16 @@ mod tests {
         let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
         QueueState::start_batch(queue.inner(), &app.handle(), "hist-totals".into(), ids);
         wait_idle(&queue, "hist-totals");
-        drain_until_complete(&rx);
+
+        let mut batch_complete: Option<serde_json::Value> = None;
+        loop {
+            let (topic, payload) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            if topic == "batch:complete" {
+                batch_complete = Some(payload);
+                break;
+            }
+        }
+        let batch_complete = batch_complete.expect("batch:complete fires");
 
         let store = app.state::<crate::history::HistoryStore>();
         let fold = store.load().unwrap();
@@ -1899,16 +1956,29 @@ mod tests {
             s.total_saved_bytes, expected_saved,
             "session_end total must equal the worker-accumulated saved bytes ({expected_saved})"
         );
+        assert_eq!(
+            batch_complete["totalSavedBytes"].as_u64(),
+            Some(expected_saved),
+            "batch:complete must carry the same total as session_end: {batch_complete}"
+        );
         assert!(
             s.total_saved_bytes > 0,
             "fixture must accumulate a non-zero saved amount so a zero total cannot pass"
         );
         let processed = s.files.iter().find(|f| f.status == "already_under_target").unwrap();
+        assert_eq!(processed.category, "document");
         assert_eq!(processed.original_size, 4096);
         assert_eq!(processed.compressed_size, Some(on_disk));
-        assert!(processed.output_path.is_some());
-        assert!(processed.quality_used.is_some());
-        assert!(processed.strategy_used.is_some());
+        assert_eq!(
+            processed.output_path,
+            Some(out.join("report.docx")),
+            "the recorded output path is the exact resolved destination"
+        );
+        assert_eq!(processed.quality_used, Some(100));
+        assert_eq!(
+            processed.strategy_used.as_deref(),
+            Some(crate::engine::result::STRATEGY_ALREADY_UNDER_TARGET)
+        );
         assert!(!s.interrupted);
     }
 
@@ -2053,6 +2123,12 @@ mod tests {
             u32::try_from(ids.len()).unwrap(),
             "counts must cover every recorded file"
         );
+        for f in s.files.iter().filter(|f| f.status == "cancelled") {
+            assert_eq!(
+                f.duration_ms, 0,
+                "cancelled-before-slot records carry zero duration: {f:?}"
+            );
+        }
         assert!(s.cancelled, "batch ended via cancel-all");
     }
 
@@ -2093,6 +2169,12 @@ mod tests {
         let cancelled = s.files.iter().filter(|f| f.status == "cancelled").count();
         assert!(cancelled >= 1, "remaining queue must be recorded cancelled: {failed} failed / {cancelled} cancelled");
         assert_eq!(failed + cancelled, ids.len());
+        for f in s.files.iter().filter(|f| f.status == "cancelled") {
+            assert_eq!(
+                f.duration_ms, 0,
+                "cancelled-before-slot records carry zero duration: {f:?}"
+            );
+        }
         assert_eq!(s.outcome.failed + s.outcome.cancelled, ids.len() as u32);
         assert!(s.cancelled);
     }
@@ -2187,6 +2269,7 @@ mod tests {
         assert_eq!(s.files.len(), 1);
         let f = &s.files[0];
         assert_eq!(f.status, "unsupported");
+        assert_eq!(f.category, "other");
         assert!(f.output_path.is_none());
         assert!(f.compressed_size.is_none());
         assert!(f.quality_used.is_none());
