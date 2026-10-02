@@ -746,7 +746,7 @@ git commit -m "feat(history): fold records into sessions with interrupted detect
 - `history_filters_deserialize_camel_case` — `{"sinceMs":5,"outputFolder":"/x","statuses":["failed"]}` → fields set, others `None`
 - `history_filters_deserialize_rejects_unknown_keys` — `{"category":"image"}` fails deserialization (`deny_unknown_fields`)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the `history.rs` test module (helpers: reuse `line`/`start`/`file`/`end` from Task 3, plus `sess(...)` builder as needed):
 
@@ -852,23 +852,23 @@ Add to the `history.rs` test module (helpers: reuse `line`/`start`/`file`/`end` 
 
 (Note: the `file()` helper writes `outputPath: "/out/a.jpg"` and `category: "image"`; `start()` writes `outputFolder: "/out"`, `two_sessions()` overrides `s2` to `"/outB"` — so the unfiltered folder list is `["/out", "/outB"]` sorted. Keep assertions aligned with the fixtures you actually use.)
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd src-tauri && cargo test history`
 Expected: FAIL — `query_history` not defined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src-tauri/src/history.rs` implement `query_history` per the semantics block above. Helpers: `matches_search(s: &str, needle: &str) -> bool` (lowercase contains); `file_hit(f, needle)`; `normalize_list(Option<&[String]>) -> Option<Vec<String>>` (trim entries, drop empties, empty result → `None`); `file_matches(file, statuses: Option<&[String]>, categories: Option<&[String]>, needle: Option<&str>) -> bool` via `is_none_or` chains (needle `None` = session matched at folder level only, do not constrain files by search). Compute normalized statuses/categories once before the loop; reduce each session with `files.retain(...)` only when file-level constraints are active (`matchedFiles = Some(returned len)`; skip empty sessions), otherwise keep files untouched with `matchedFiles = None`. `saved_for` logs `info: history file {path} output {compressed} larger than original {original}, saved clamped to 0` when a best-effort result grew the file (legitimate, not corruption) and saturates the subtraction at 0. Clamp `page_size` to `max(1, page_size)` before the page math (`query_history` clamps only 0 → 1; Task 7 owns 0 → 50 and 500 → 200 at the command layer). `output_folders` sorted via `BTreeSet`, built from stored folders trimmed, excluding those empty after trim. `normalize_text(Option<&str>) -> Option<&str>` (trim + drop empty) is shared by search/output_folder normalization and stored-folder comparison; the folder filter trims both sides (filter value and stored folder); search trims only the filter value. Keep everything pure (no file IO; warnings go to stderr) so tests are trivial. Optionally add a `debug_assert_eq!` tying `response.total_sessions`/`total_files` to `summary.sessions`/`files` where the response is built.
 
 **Note on the `fold_repeated_session_start` edge (from analysis):** duplicate `session_start` for the same id resets the session header (last start wins) — already added in Task 3 (`fold_repeated_session_start_last_wins` in `history.rs` tests); no further test needed here.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd src-tauri && cargo test history`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/history.rs
