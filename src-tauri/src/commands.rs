@@ -308,6 +308,7 @@ pub fn open_folder<R: tauri::Runtime>(
 mod tests {
     use super::*;
     use crate::detection;
+    use crate::history::{FileResultRecord, HistoryFilters, HistoryStore, SessionStartRecord};
     use crate::models::Category;
     use std::fs;
     use std::io::Write;
@@ -535,11 +536,11 @@ mod tests {
         app
     }
 
-    fn seed_session(store: &crate::history::HistoryStore, session_id: &str) {
+    fn seed_session(store: &HistoryStore, session_id: &str, started_at: i64) {
         store
-            .append_session_start(&crate::history::SessionStartRecord {
+            .append_session_start(&SessionStartRecord {
                 session_id: session_id.into(),
-                started_at: 0,
+                started_at,
                 file_count: 1,
                 output_folder: "/o".into(),
             })
@@ -567,11 +568,10 @@ mod tests {
 
     #[tokio::test]
     async fn get_history_over_tempdir_store_filters_and_counts_skipped() {
-        use crate::history::{HistoryFilters, HistoryStore};
         let dir = tempfile::tempdir().unwrap();
         let store = HistoryStore::new_in(dir.path());
         store
-            .append_session_start(&crate::history::SessionStartRecord {
+            .append_session_start(&SessionStartRecord {
                 session_id: "s1".into(),
                 started_at: 100,
                 file_count: 1,
@@ -579,7 +579,7 @@ mod tests {
             })
             .unwrap();
         store
-            .append_file(&crate::history::FileResultRecord {
+            .append_file(&FileResultRecord {
                 session_id: "s1".into(),
                 file_id: "f1".into(),
                 completed_at: 101,
@@ -597,7 +597,7 @@ mod tests {
                 duration_ms: 3,
             })
             .unwrap();
-        std::fs::OpenOptions::new()
+        fs::OpenOptions::new()
             .append(true)
             .open(store.file_path())
             .unwrap()
@@ -627,9 +627,8 @@ mod tests {
 
     #[tokio::test]
     async fn get_history_propagates_load_error() {
-        use crate::history::{HistoryFilters, HistoryStore};
         let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir(dir.path().join("history.jsonl")).unwrap();
+        fs::create_dir(dir.path().join("history.jsonl")).unwrap();
         let app = history_test_app(dir.path(), Some(HistoryStore::new_in(dir.path())));
         let err = get_history(HistoryFilters::default(), 0, 50, app.handle().clone())
             .await
@@ -642,10 +641,9 @@ mod tests {
 
     #[tokio::test]
     async fn get_history_clamped_page_size_in_response() {
-        use crate::history::{HistoryFilters, HistoryStore};
         let dir = tempfile::tempdir().unwrap();
         let store = HistoryStore::new_in(dir.path());
-        seed_session(&store, "s1");
+        seed_session(&store, "s1", 0);
         let app = history_test_app(dir.path(), Some(store));
 
         let resp = get_history(HistoryFilters::default(), 0, 500, app.handle().clone())
@@ -660,13 +658,41 @@ mod tests {
         assert_eq!(resp.page_size, 50);
     }
 
+    #[tokio::test]
+    async fn get_history_page_argument_is_clamped_and_echoed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        seed_session(&store, "s1", 100);
+        seed_session(&store, "s2", 200);
+        let app = history_test_app(dir.path(), Some(store));
+
+        let resp = get_history(HistoryFilters::default(), 9, 1, app.handle().clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.page, 1,
+            "page 9 with two sessions of size 1 clamps to the last page"
+        );
+        assert_eq!(resp.page_size, 1);
+        assert_eq!(resp.total_sessions, 2);
+        let ids: Vec<&str> = resp
+            .sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["s1"],
+            "page 1 of two single-session pages holds the older session; the point is page 9 clamps to the last page"
+        );
+    }
+
     #[test]
     fn clear_history_removes_file_and_is_idempotent() {
-        use crate::history::HistoryStore;
         let dir = tempfile::tempdir().unwrap();
         let history = dir.path().join("history.jsonl");
         let store = HistoryStore::new_in(dir.path());
-        seed_session(&store, "s1");
+        seed_session(&store, "s1", 0);
         assert!(history.exists());
         let app = history_test_app(dir.path(), Some(store));
 
@@ -676,12 +702,20 @@ mod tests {
     }
 
     #[test]
+    fn clear_history_missing_store_is_noop_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = history_test_app(dir.path(), None);
+        assert!(app.try_state::<HistoryStore>().is_none());
+
+        clear_history(app.handle().clone()).unwrap();
+    }
+
+    #[test]
     fn clear_history_error_when_remove_fails() {
-        use crate::history::HistoryStore;
         let dir = tempfile::tempdir().unwrap();
         let history = dir.path().join("history.jsonl");
-        std::fs::create_dir(&history).unwrap();
-        std::fs::write(history.join("occupied.txt"), b"x").unwrap();
+        fs::create_dir(&history).unwrap();
+        fs::write(history.join("occupied.txt"), b"x").unwrap();
         let app = history_test_app(dir.path(), Some(HistoryStore::new_in(dir.path())));
 
         assert!(clear_history(app.handle().clone()).is_err());
@@ -697,8 +731,8 @@ mod tests {
 
         let err = open_folder(missing_str.clone(), app.handle().clone()).unwrap_err();
         assert!(
-            err.starts_with("Could not open folder "),
-            "unexpected error: {err}"
+            err.starts_with(&format!("Could not open folder {missing_str}: ")),
+            "pinned copy must name the path and keep the separator: {err}"
         );
         assert!(
             err.contains(&missing_str),
@@ -707,35 +741,61 @@ mod tests {
     }
 
     #[test]
+    fn history_store_new_resolves_under_app_data_dir() {
+        let root = tempdir().unwrap();
+        let app = history_test_app(root.path(), None);
+
+        let store =
+            HistoryStore::new(app.handle()).expect("app data dir must resolve under the override");
+        seed_session(&store, "s1", 100);
+
+        let path = root.path().join("history.jsonl");
+        assert!(path.exists(), "store must write under app_data_dir");
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.sessions.len(), 1);
+        assert_eq!(loaded.sessions[0].session_id, "s1");
+    }
+
+    #[test]
     fn trim_runs_with_effective_retention_from_settings() {
-        use crate::history::HistoryStore;
-        use crate::settings::Settings;
-        let dir = tempfile::tempdir().unwrap();
-        let store = HistoryStore::new_in(dir.path());
-        store
-            .append_session_start(&crate::history::SessionStartRecord {
-                session_id: "old".into(),
-                started_at: 0,
-                file_count: 1,
-                output_folder: "/o".into(),
-            })
+        use tauri::utils::config::AppDirectoriesOverride;
+
+        let root = tempdir().unwrap();
+        let seeded = HistoryStore::new_in(root.path());
+        let thirty_days_ago = crate::queue::now_ms() - 30 * 86_400_000;
+        seed_session(&seeded, "old", thirty_days_ago);
+        fs::write(
+            root.path().join("settings.json"),
+            serde_json::json!({ "settings": { "history": { "retentionDays": 10 } } }).to_string(),
+        )
+        .unwrap();
+
+        let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
+        ctx.config_mut().app.app_directories_override =
+            Some(AppDirectoriesOverride::Root(root.path().to_path_buf()));
+        ctx.config_mut().identifier = "com.app.test".into();
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_store::Builder::default().build())
+            .build(ctx)
             .unwrap();
-        let mut settings = Settings::default();
-        settings.history.retention_days = 10;
-        let dropped = store
-            .trim(
-                settings.history.effective_retention_days(),
-                100 * 86_400_000,
-            )
-            .unwrap();
-        assert_eq!(dropped, 1);
+
+        crate::setup_history(app.handle());
+
+        let managed = app
+            .try_state::<HistoryStore>()
+            .expect("setup_history must manage the store on the success path");
+        assert_eq!(
+            managed.load().unwrap().sessions.len(),
+            0,
+            "30-day-old session must be trimmed with retention 10 (default 90 would keep it)"
+        );
     }
 
     #[tokio::test]
     async fn missing_app_data_dir_skips_manage_and_app_still_works() {
         let root = tempfile::TempDir::new().unwrap();
         let blocker = root.path().join("blocker.txt");
-        std::fs::write(&blocker, b"x").unwrap();
+        fs::write(&blocker, b"x").unwrap();
 
         let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
         ctx.config_mut().app.app_directories_override =
@@ -748,22 +808,30 @@ mod tests {
         ctx.config_mut().identifier = "com.app.test".into();
         let app = tauri::test::mock_builder().build(ctx).unwrap();
 
-        let err = match crate::history::HistoryStore::new(&app.handle()) {
-            Ok(_) => panic!("expected app data dir resolution to fail"),
+        crate::setup_history(app.handle());
+        assert!(app.try_state::<HistoryStore>().is_none());
+
+        let err = match HistoryStore::new(app.handle()) {
+            Ok(_) => panic!("expected app data dir creation to fail"),
             Err(e) => e,
         };
-        assert!(!err.is_empty());
-        assert!(app.try_state::<crate::history::HistoryStore>().is_none());
+        assert!(
+            err.starts_with("history store: create data dir "),
+            "store construction errors are prefixed for greppability: {err}"
+        );
 
-        let resp = get_history(
-            crate::history::HistoryFilters::default(),
-            0,
-            50,
-            app.handle().clone(),
-        )
-        .await
-        .unwrap();
+        let resp = get_history(HistoryFilters::default(), 0, 50, app.handle().clone())
+            .await
+            .unwrap();
         assert_eq!(resp.total_sessions, 0);
         assert_eq!(resp.page_size, 50);
+
+        let resp = get_history(HistoryFilters::default(), 0, 500, app.handle().clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.page_size, 200,
+            "missing-store echo must be the requested clamp, not a hardcoded default"
+        );
     }
 }
