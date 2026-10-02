@@ -79,13 +79,17 @@ export function useHistory() {
       setNonce((n) => n + 1)
     })
       .then(done)
-      .catch((err) => reportListenFailure('batch:complete', err))
+      .catch((err) => {
+        if (disposed) return
+        reportListenFailure('batch:complete', err)
+      })
 
     listen('history:error', () => {
       toast.error(HISTORY_ERROR_TOAST)
     })
       .then(done)
       .catch((err) => {
+        if (disposed) return
         reportListenFailure('history:error', err)
         toast.error('History error notifications are unavailable.')
       })

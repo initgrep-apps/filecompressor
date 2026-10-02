@@ -1508,10 +1508,20 @@ git commit -m "feat(ipc): add get_history, clear_history and open_folder command
 - `error clears on successful reload` — rejection then success → `error` null with populated response
 - `listener registration failure degrades gracefully` — listen rejects → data still loads, no unhandled rejection, degraded toast fires (`batch:complete` variant log-only: no toast, hook loads fine, emit has no effect)
 - `unmount before listen resolves unregisters handlers` — unmount while the listen() promises are still pending unregisters both handlers once they resolve (covers the disposed branch in `done`)
+- `listener rejection after unmount stays silent` — held listen() promises rejected after unmount → no degraded toast and no console.error (both listener catches consult `disposed`)
 - `stale response ignored` rejection extension — superseded by the split above (`stale rejection ignored after newer resolves` rejects a still-pending page-1 promise; a reject on an already-settled promise is a no-op and was removed from the resolve-half test)
 - `presetSinceMs_dst_transition_days` extension — EU transition dates (Mar 29 / Oct 25 2026) alongside US (Mar 8 / Nov 1), plus a `last7` case spanning a transition (now = Oct 26 2026 15:00 → `new Date(2026,9,20).getTime()`; the 25-hour EU fall-back day Oct 25 lies inside the window, so the test discriminates naive hour arithmetic on timezones whose fall-back transition falls inside the window — EU Oct 25/26, e.g. dev CEST; US runners transition Nov 1, other TZs unchanged — `setDate` is correct by construction regardless)
 - `dayLabel yesterday across year boundary` — now = Jan 1 2027 03:00, label for Dec 31 2026 20:00 → `Yesterday`
 - `formats duration boundaries` extension — `3_599_999` → `59m 59s` (plan-required boundary pair completion)
+
+Required-test title mapping (bullets above are behavior aliases; shipped `it()` titles):
+- `formatDuration_boundaries` → `formats duration boundaries`
+- `presetSinceMs_dst_transition_days` → `pins DST transition midnights and year rollover`
+- `presetSinceMs_year_rollover` → covered by `pins DST transition midnights and year rollover`
+- `dayKey_same_day_and_midnight_boundary` → `keys days by local calendar date`
+- `clearHistory refetches` → `clearHistory refetches and updates response`
+- `clearHistory failure toasts` → `clearHistory failure toasts and keeps response`
+- `dayLabel yesterday across year boundary` → `labels yesterday across year boundary`
 
 - [ ] **Step 1: Write the failing tests**
 

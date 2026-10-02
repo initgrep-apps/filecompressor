@@ -133,3 +133,4 @@ export interface HistoryResponse {
   outputFolders: string[]
   skippedLines: number
 }
+

@@ -21,6 +21,7 @@ const registry = new Map<string, Set<(e: { payload: unknown }) => void>>()
 let failListenEvent: string | null = null
 let holdListen = false
 let heldResolves: Array<(u: unknown) => void> = []
+let heldRejects: Array<(err: unknown) => void> = []
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn((event: string, handler: (e: { payload: unknown }) => void) => {
@@ -31,7 +32,10 @@ vi.mock('@tauri-apps/api/event', () => ({
     registry.get(event)!.add(handler)
     const unlisten = vi.fn(() => registry.get(event)?.delete(handler))
     if (holdListen) {
-      return new Promise((resolve) => { heldResolves.push(() => resolve(unlisten)) })
+      return new Promise((resolve, reject) => {
+        heldResolves.push(() => resolve(unlisten))
+        heldRejects.push(reject)
+      })
     }
     return Promise.resolve(unlisten)
   }),
@@ -57,6 +61,7 @@ beforeEach(() => {
   failListenEvent = null
   holdListen = false
   heldResolves = []
+  heldRejects = []
 })
 
 describe('useHistory', () => {
@@ -91,13 +96,15 @@ describe('useHistory', () => {
 
   it('toasts on history:error', async () => {
     vi.mocked(invoke).mockResolvedValue(emptyResponse)
-    renderHook(() => useHistory())
+    const { result } = renderHook(() => useHistory())
     await waitFor(() => expect(registry.get('history:error')?.size).toBe(1))
     emit('history:error', { message: 'disk full' })
     expect(toast.error).toHaveBeenCalledWith('History could not be saved — compression was not affected.')
+    expect(result.current.error).toBeNull()
+    expect(result.current.response?.totalSessions).toBe(emptyResponse.totalSessions)
   })
 
-  it('surfaces load errors and clearHistory refetches', async () => {
+  it('clearHistory refetches and updates response', async () => {
     vi.mocked(invoke)
       .mockResolvedValueOnce(emptyResponse)
       .mockResolvedValueOnce(undefined)
@@ -320,5 +327,20 @@ describe('useHistory', () => {
     const calls = vi.mocked(invoke).mock.calls.length
     emit('batch:complete', { batchId: 'b', totalSavedBytes: 0 })
     expect(vi.mocked(invoke).mock.calls.length).toBe(calls)
+  })
+
+  it('listener rejection after unmount stays silent', async () => {
+    const errSpy = vi.spyOn(console, 'error')
+    vi.mocked(invoke).mockResolvedValue(emptyResponse)
+    holdListen = true
+    const { unmount } = renderHook(() => useHistory())
+    expect(registry.get('batch:complete')?.size).toBe(1)
+    expect(registry.get('history:error')?.size).toBe(1)
+    unmount()
+    heldRejects.forEach((reject) => reject(new Error('late bus failure')))
+    await act(async () => {})
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(errSpy).not.toHaveBeenCalled()
+    errSpy.mockRestore()
   })
 })
