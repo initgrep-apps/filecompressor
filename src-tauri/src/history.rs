@@ -128,6 +128,7 @@ pub struct FoldResult {
 }
 
 pub const DEFAULT_PAGE_SIZE: u32 = 50;
+pub const MAX_PAGE_SIZE: u32 = 200;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -148,7 +149,7 @@ pub struct HistorySummary {
     pub failed_files: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryResponse {
     pub sessions: Vec<HistorySession>,
@@ -159,6 +160,15 @@ pub struct HistoryResponse {
     pub summary: HistorySummary,
     pub output_folders: Vec<String>,
     pub skipped_lines: usize,
+}
+
+impl HistoryResponse {
+    pub fn empty(page_size: u32) -> Self {
+        HistoryResponse {
+            page_size,
+            ..HistoryResponse::default()
+        }
+    }
 }
 
 fn history_file_from(record: &FileResultRecord) -> HistoryFile {
@@ -605,9 +615,9 @@ impl HistoryStore {
         let dir = app
             .path()
             .app_data_dir()
-            .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+            .map_err(|e| format!("history store: app data dir unavailable: {e}"))?;
         std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed to create app data dir {}: {e}", dir.display()))?;
+            .map_err(|e| format!("history store: create data dir {}: {e}", dir.display()))?;
         Ok(HistoryStore::new_in(&dir))
     }
 
