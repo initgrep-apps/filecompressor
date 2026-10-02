@@ -2078,9 +2078,18 @@ mod tests {
     #[test]
     fn query_since_ms_inclusive_boundary() {
         let exact = HistoryFilters { since_ms: Some(100), ..no_filters() };
-        assert_eq!(query_history(two_sessions(), &exact, 0, 50).sessions.len(), 2);
+        let resp = query_history(two_sessions(), &exact, 0, 50);
+        assert_eq!(resp.sessions.len(), 2);
+        assert!(
+            resp.sessions.iter().all(|session| session.matched_files.is_none()),
+            "since_ms is session-level only; it must never reduce the file set"
+        );
         let later = HistoryFilters { since_ms: Some(101), ..no_filters() };
-        assert_eq!(query_history(two_sessions(), &later, 0, 50).sessions.len(), 1);
+        let resp = query_history(two_sessions(), &later, 0, 50);
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].session_id, "s2");
+        assert_eq!(resp.sessions[0].matched_files, None);
+        assert_eq!(resp.sessions[0].files.len(), 1, "files untouched by the date filter");
     }
 
     #[test]
@@ -2093,6 +2102,7 @@ mod tests {
             "old session with a fresh file is still excluded"
         );
         assert_eq!(resp.sessions[0].session_id, "new");
+        assert_eq!(resp.sessions[0].matched_files, None);
     }
 
     #[test]
@@ -2269,8 +2279,8 @@ mod tests {
     fn two_locked_files() -> FoldResult {
         let lines = vec![
             start_in("s1", 10, "/out"),
-            qfile("s1", "f1", 11, "a.jpg", "/in/a.jpg", Some("/out/a.jpg"), "image", "done", (10, Some(5)), Some("locked")),
-            qfile("s1", "f2", 12, "b.jpg", "/in/b.jpg", None, "image", "failed", (10, None), Some("locked")),
+            qfile("s1", "f1", 11, "a.jpg", "/in/a.jpg", Some("/out/a.jpg"), "image", "failed", (10, Some(5)), Some("locked")),
+            qfile("s1", "f2", 12, "b.jpg", "/in/b.jpg", None, "image", "failed", (10, None), Some("boom")),
         ];
         fold_records(&lines)
     }
@@ -2284,8 +2294,8 @@ mod tests {
         };
         let resp = query_history(two_locked_files(), &filters, 0, 50);
         assert_eq!(resp.sessions.len(), 1);
-        assert_eq!(resp.sessions[0].files.len(), 1);
-        assert_eq!(resp.sessions[0].files[0].status, "failed");
+        assert_eq!(resp.sessions[0].files.len(), 1, "search ∩ status, not just status");
+        assert_eq!(resp.sessions[0].files[0].name, "a.jpg");
         assert_eq!(resp.sessions[0].matched_files, Some(1));
         assert_eq!(resp.summary.files, 1);
     }
