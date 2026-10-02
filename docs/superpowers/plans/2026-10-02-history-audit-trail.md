@@ -1457,9 +1457,9 @@ git commit -m "feat(ipc): add get_history, clear_history and open_folder command
   - `HistoryFilters { search?: string; statuses?: FileStatus[]; categories?: Category[]; sinceMs?: number; outputFolder?: string }`
   - `HistorySummary { sessions, files, savedBytes, failedFiles }`
   - `HistoryResponse { sessions: HistorySession[]; page; pageSize; totalSessions; totalFiles; summary: HistorySummary; outputFolders: string[]; skippedLines: number }`
-  - `Settings` gains `history: { retentionDays: number }` (mirrors Rust `HistorySettings`, spec §4.3)
+  - `Settings` gains `history: HistorySettings` where `HistorySettings { retentionDays: number }` (named interface mirroring Rust `HistorySettings`, sibling pattern of `PerformanceSettings`↔`performance`, spec §4.3)
 - `useHistory()` → `{ response, loading, error, filters, setFilters, page, setPage, refresh, clearHistory, clearError }`:
-  - `setFilters(partial)` merges partials and resets page to 0 **only when the merged filters actually change** (compare before touching state — no-op when unchanged keeps filters identity, keeps the current page, and causes no refetch).
+  - `setFilters(partial)` merges partials and resets page to 0 **only when the merged filters actually change** (compare before touching state — no-op when unchanged keeps filters identity, keeps the current page, and causes no refetch). Tolerance: one `setFilters` call per render/event cycle (component calls `setFilters` once per discrete event; same-tick double calls are not supported).
   - Query on mount, on `filters`/`page` change, on manual `refresh`, and on `batch:complete` (listen; unlisten on unmount). Debounce search input updates 300 ms **in the component** (hook receives settled values).
   - `history:error` listener → `toast.error('History could not be saved — compression was not affected.')`. Listener registration failure for `history:error` degrades gracefully: `console.error` + one-shot `toast.error('History error notifications are unavailable.')` (not error state); `batch:complete` registration failure stays log-only (manual refresh is the fallback).
   - `clearHistory` invokes `clear_history`, then `refresh()`; on failure `console.error('clear_history failed:', err)` + `toast.error('Could not clear history')` + rethrow suppressed.
@@ -1492,22 +1492,24 @@ git commit -m "feat(ipc): add get_history, clear_history and open_folder command
 - `dayKey_same_day_and_midnight_boundary` — 09:00 and 23:59 same key; next day differs
 - `loads on mount` — invoke payload `{ filters: {}, page: 0, pageSize: 50 }`
 - `setFilters merges and resets page` — page 2 → filter change → page 0 payload
-- `setFilters unchanged keeps identity` — same value → no new invoke
+- `setFilters unchanged keeps identity` — same value → no new invoke; `setPage(2)` → exactly one new invoke (dedupe count)
 - `refetches on batch:complete` — invoke count grows
 - `toasts on history:error` — pinned copy
 - `load rejection sets error` — rejected invoke → `error` set, `loading` false
 - `clearHistory refetches` — clear_history called + response updated
-- `clearHistory failure toasts` — rejection → `toast.error('Could not clear history')`, response kept
+- `clearHistory failure toasts` — rejection → `console.error('clear_history failed:', …)`, `toast.error('Could not clear history')`, response kept
 - `clearError resets error` — Retry dependency
 - `manual refresh refetches` — refresh() triggers a new invoke
+- `response retained during refetch` — refresh() held pending mid-flight: `loading` true and previous response non-null; resolves → new response, error null
 - `unlisten on unmount` — registry handlers removed
-- `stale response ignored` — two invokes resolved out of order → newest wins
+- `stale response ignored` — page-2 resolves before the held page-1 promise; resolving the held stale page-1 payload after page 2 wins does not overwrite the response (may be split as `stale response ignored` + `stale rejection ignored after newer resolves`: rejecting the held page-1 promise after a newer resolve is also ignored — `error` stays null, response kept; resolve/reject wrapped in awaited `act` so microtasks flush before asserts)
 - `setFilters merge accumulation` — successive partials accumulate: `statuses` then `search` → last invoke payload contains both keys, page 0
-- `setFilters unchanged page-preserving` — on page 2, an unchanged `setFilters` leaves page and filters untouched, no refetch
+- `setFilters unchanged page-preserving` — on page 2, an unchanged `setFilters` leaves page and filters untouched, no refetch (covered by `setFilters unchanged keeps identity`)
 - `error clears on successful reload` — rejection then success → `error` null with populated response
-- `listener registration failure degrades gracefully` — listen rejects → data still loads, no unhandled rejection, degraded toast fires
-- `stale response ignored` rejection extension — a stale rejection after a newer resolve is also ignored (`error` stays null, response kept); resolve/reject wrapped in awaited `act` so microtasks flush before asserts
-- `presetSinceMs_dst_transition_days` extension — EU transition dates (Mar 29 / Oct 25 2026) alongside US (Mar 8 / Nov 1), plus a `last7` case spanning a transition (now = Oct 25 2026 15:00 → `new Date(2026,9,19).getTime()`; local Date construction must win over naive hour arithmetic)
+- `listener registration failure degrades gracefully` — listen rejects → data still loads, no unhandled rejection, degraded toast fires (`batch:complete` variant log-only: no toast, hook loads fine, emit has no effect)
+- `unmount before listen resolves unregisters handlers` — unmount while the listen() promises are still pending unregisters both handlers once they resolve (covers the disposed branch in `done`)
+- `stale response ignored` rejection extension — superseded by the split above (`stale rejection ignored after newer resolves` rejects a still-pending page-1 promise; a reject on an already-settled promise is a no-op and was removed from the resolve-half test)
+- `presetSinceMs_dst_transition_days` extension — EU transition dates (Mar 29 / Oct 25 2026) alongside US (Mar 8 / Nov 1), plus a `last7` case spanning a transition (now = Oct 26 2026 15:00 → `new Date(2026,9,20).getTime()`; the 25-hour EU fall-back day Oct 25 lies inside the window, so the test discriminates naive hour arithmetic on timezones whose fall-back transition falls inside the window — EU Oct 25/26, e.g. dev CEST; US runners transition Nov 1, other TZs unchanged — `setDate` is correct by construction regardless)
 - `dayLabel yesterday across year boundary` — now = Jan 1 2027 03:00, label for Dec 31 2026 20:00 → `Yesterday`
 - `formats duration boundaries` extension — `3_599_999` → `59m 59s` (plan-required boundary pair completion)
 
