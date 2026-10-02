@@ -252,6 +252,8 @@ impl<R: Runtime> QueueState<R> {
         let settings = crate::commands::load_settings(app);
         let output_folder = settings.output_folder.clone();
         if let Err(e) = ensure_output_folder_writable(&output_folder) {
+            poison_recover(queue.history_records.lock()).remove(&batch_id);
+            poison_recover(queue.history_error_sent.lock()).remove(&batch_id);
             poison_recover(queue.batch_tokens.lock()).remove(&batch_id);
             let _ = app.emit(
                 "batch:error",
@@ -819,7 +821,9 @@ fn append_history<R: tauri::Runtime>(
         let queue = app.state::<QueueState<R>>();
         let first = poison_recover(queue.history_error_sent.lock()).insert(batch_id_of(&record).to_string());
         if first {
-            let _ = app.emit("history:error", serde_json::json!({ "message": e }));
+            if let Err(emit_err) = app.emit("history:error", serde_json::json!({ "message": e })) {
+                eprintln!("warn: failed to emit history:error: {emit_err}");
+            }
         }
     }
     result
