@@ -108,6 +108,7 @@ Field notes:
 - Lines with invalid UTF-8 are warned to stderr by `read_lines` and consumed in lossy
   form; if the resulting line still fails JSON parsing it is counted as malformed like any
   other bad line.
+- Orphan `file`/`session_end` records for an unknown session are skipped and counted.
 - No migration needed: no history file exists before this feature.
 
 ### 3.4 Folding (read path)
@@ -119,6 +120,8 @@ Field notes:
 - `session_end` present ⇒ `endedAt`, exact `counts`, `cancelled` flag.
 - `session_end` absent ⇒ `interrupted: true`; `endedAt = null`; counts and
   `totalSavedBytes` computed from the recorded files.
+- File records after a session's `session_end`, and duplicate `session_end` records for the
+  same session, are skipped + counted (first `session_end` wins).
 - Reads and writes share a mutex, so a read never observes a partially written line.
 
 ### 3.5 Query execution (filters + pagination, core-side)

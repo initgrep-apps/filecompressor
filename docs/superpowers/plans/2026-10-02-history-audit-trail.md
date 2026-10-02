@@ -27,7 +27,7 @@
 - **Clock/DST boundaries** — "Today" starts at local midnight, not 24h ago; `sinceMs` computed webview-side (`Date`), inclusive comparison in Rust.
 - **Interrupted sessions** — force-kill mid-batch must show partial files as Interrupted, never drop the session or invent one for preflight failures.
 - **Search coverage** — search must match names/paths/errors across the *entire* retained log, not the loaded page; folder-text hits keep whole sessions.
-- **Corrupt/foreign lines** — malformed or unknown-`type` lines are skipped, counted, and shown as a notice; old files keep loading.
+- **Corrupt/foreign lines** — malformed lines are skipped + counted (shown as a notice); unknown-`type` lines are ignored silently for forward compatibility.
 - **Filter × pagination interaction** — any filter change resets to page 0; totals/summary stay page-independent; a session row is never split across pages.
 - **Missing/changed files** — copy path always works; reveal/open-folder degrade gracefully with a toast.
 
@@ -468,19 +468,25 @@ git commit -m "feat(history): add JSONL records and append store"
 - `fold_interrupted_computes_all_six_status_counts` — outcome built from files across all six statuses
 - `fold_session_end_cancelled_flag` — `cancelled: true` in end record → session.cancelled
 - `fold_orders_sessions_newest_first_and_files_by_time` — ordering both axes
-- `fold_skips_malformed_counts_them_and_ignores_unknown_types` — malformed counted; unknown type silent
+- `fold_skips_malformed_counts_them_and_ignores_unknown_types` — malformed counted; unknown type silent; typed-invalid start/end counted
 - `fold_orphan_file_lines_are_skipped` — file for unknown session → skipped + counted
 - `fold_orphan_session_end_is_skipped` — end for unknown session → skipped + counted
 - `fold_duplicate_file_id_last_wins` — replace semantics
+- `fold_duplicate_session_end_is_skipped_and_counted` — first end wins; duplicate skipped + counted
+- `fold_file_category_passthrough` — category value survives folding
+- `fold_file_error_text_passthrough` — error string survives folding
+- `fold_file_ids_are_scoped_per_session` — same fileId in two sessions stays independent
+- `fold_interrupted_unknown_status_not_counted` — unknown file status leaves all six outcome counts at zero
 - `fold_saturates_when_compressed_exceeds_original` — original 5, compressed 10 → saved 0, no panic
 - `fold_interrupted_saturates_total_saved` — large saved deltas saturate to u64::MAX without panic
-- `fold_interrupted_flag_matches_ended_at_biconditional` — `interrupted == ended_at.is_none()` on complete + interrupted fixtures
+- `fold_interrupted_flag_matches_ended_at_biconditional` — interrupted true + ended_at None on interrupted fixture; false + Some on complete fixture
 - `fold_counts_non_object_and_non_string_type_lines` — `[]`/`123`/`"str"`/`null`/`{}`/`{"type":123}`/`{"type":null}` counted as malformed; `future_record` silent
 - `fold_file_after_session_end_is_skipped_and_counted` — post-end file skipped; end-derived outcome/totals frozen
 - `fold_output_serde_keys_are_pinned` — camelCase golden keys for `HistorySession` + `files[0]` (PathBuf outputPath wire format)
 - `fold_tolerates_absent_optional_keys` — keys entirely absent (not just null) parse
 - `fold_zero_file_interrupted_session_still_appears` — start-only session → session with empty files, Interrupted
 - `load_roundtrips_through_file` — start + file appended → load
+- `load_counts_lossy_non_json_line_as_skipped` — invalid-UTF-8 line lossy-decoded, not valid JSON → counted
 - `load_surfaces_read_error` — history.jsonl as a directory → `Err`
 
 - [ ] **Step 1: Write the failing tests**
@@ -573,10 +579,13 @@ Add to the `history.rs` test module:
         let lines = vec![
             "not json".to_string(),
             line(serde_json::json!({ "type": "future_record", "sessionId": "x" })),
+            line(serde_json::json!({ "type": "file", "sessionId": "s1" })),
+            line(serde_json::json!({ "type": "session_start" })),
+            line(serde_json::json!({ "type": "session_end", "sessionId": "nobody" })),
             line(start("s1", 10)),
         ];
         let out = fold_records(&lines);
-        assert_eq!(out.skipped_lines, 1, "malformed counted; unknown type ignored silently");
+        assert_eq!(out.skipped_lines, 4, "malformed and typed-invalid counted; unknown type ignored silently");
         assert_eq!(out.sessions.len(), 1);
     }
 
@@ -646,6 +655,7 @@ In `src-tauri/src/history.rs`:
 - `fold_records(lines)`:
   - Parse each line with `serde_json::from_str::<serde_json::Value>`; on error → `skipped_lines += 1`.
   - Match `value["type"]`: `"session_start"` → deserialize `SessionStartRecord`, push session into an index map (`HashMap<String, usize>`) with empty files/outcome; `"file"` → deserialize `FileResultRecord`; unknown session id → `skipped_lines += 1`, else append/replace by `file_id` (last wins); `"session_end"` → deserialize `SessionEndRecord`, set `ended_at`, `total_saved_bytes`, `cancelled`, `outcome` from counts; **unknown types are ignored silently** (forward compatibility — a future record kind must not trigger the corrupt-line notice or be dropped on retention rewrite).
+  - Anomaly counting: non-string/missing `type` lines counted; typed parse failures (e.g. `{"type":"session_start"}` missing fields) counted; orphan `file`/`session_end` (unknown session) skipped + counted with an stderr warn; a `file` after its session's `session_end` skipped + counted; a duplicate `session_end` skipped + counted (first end wins, values from the first end). Every skip warn carries the 0-based line number.
   - After the pass: for sessions without `ended_at`, compute `outcome` from files and `total_saved_bytes = Σ original − compressed` (saturating); `interrupted = true`.
   - Sort files by `completed_at`; sort sessions by `started_at` descending.
 - `HistoryStore::load` = `read_lines()` → `fold_records`; `read_lines` failure → `Err`.
