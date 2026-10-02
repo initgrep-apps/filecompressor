@@ -3040,6 +3040,11 @@ mod tests {
         assert!(!dir.path().join("history.jsonl.tmp").exists());
 
         let after_first_drop = std::fs::read(store.file_path()).unwrap();
+        #[cfg(unix)]
+        let ino_after_first_drop = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(store.file_path()).unwrap().ino()
+        };
         let dropped_again = store.trim(1, 100 * DAY_MS).unwrap();
         assert_eq!(dropped_again, 0);
         assert_eq!(
@@ -3047,6 +3052,15 @@ mod tests {
             after_first_drop,
             "no-op trim leaves the file byte-identical"
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            let ino_after_noop = std::fs::metadata(store.file_path()).unwrap().ino();
+            assert_eq!(
+                ino_after_first_drop, ino_after_noop,
+                "no-op trim does not rewrite the file (inode unchanged)"
+            );
+        }
     }
 
     #[test]
@@ -3066,6 +3080,18 @@ mod tests {
             before,
             "original bytes are byte-identical after a failed rewrite"
         );
+    }
+
+    #[test]
+    fn trim_read_error_propagates() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        std::fs::create_dir(store.file_path()).unwrap();
+
+        let err = store.trim(1, 100 * DAY_MS).unwrap_err();
+
+        assert!(err.starts_with("history read failed: read "), "{err}");
+        assert!(!dir.path().join("history.jsonl.tmp").exists());
     }
 
     #[test]
