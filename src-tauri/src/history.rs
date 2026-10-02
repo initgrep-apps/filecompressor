@@ -774,6 +774,15 @@ mod tests {
         }
     }
 
+    fn old_start() -> SessionStartRecord {
+        SessionStartRecord {
+            session_id: "old".into(),
+            started_at: 0,
+            file_count: 1,
+            output_folder: "/o".into(),
+        }
+    }
+
     fn sorted_keys(value: &serde_json::Value) -> Vec<String> {
         let mut keys: Vec<String> = value.as_object().unwrap().keys().cloned().collect();
         keys.sort();
@@ -1228,6 +1237,71 @@ mod tests {
             assert_eq!(lines, vec!["{\"a\":1}".to_string()]);
             handle.join().unwrap();
         });
+    }
+
+    #[test]
+    fn trim_blocks_until_lock_released() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store.append_session_start(&old_start()).unwrap();
+        let store = &store;
+        let guard = store.lock.lock().unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(move || {
+                started_tx.send(()).unwrap();
+                let dropped = store.trim(1, 100 * DAY_MS).unwrap();
+                done_tx.send(dropped).unwrap();
+            });
+            started_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("worker thread never reached trim");
+            assert!(
+                done_rx.recv_timeout(Duration::from_millis(150)).is_err(),
+                "trim completed while the store lock was held"
+            );
+            drop(guard);
+            let dropped = done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(dropped, 1);
+            handle.join().unwrap();
+        });
+        assert!(store.read_lines().unwrap().is_empty());
+    }
+
+    #[test]
+    fn clear_blocks_until_lock_released() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store.append_session_end(&small_end("s1")).unwrap();
+        let store = &store;
+        let guard = store.lock.lock().unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        std::thread::scope(|scope| {
+            let handle = scope.spawn(move || {
+                started_tx.send(()).unwrap();
+                store.clear().unwrap();
+                done_tx.send(()).unwrap();
+            });
+            started_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("worker thread never reached clear");
+            assert!(
+                done_rx.recv_timeout(Duration::from_millis(150)).is_err(),
+                "clear completed while the store lock was held"
+            );
+            drop(guard);
+            assert!(done_rx.recv_timeout(Duration::from_secs(5)).is_ok());
+            handle.join().unwrap();
+        });
+        assert!(!store.file_path().exists());
     }
 
     #[test]
@@ -2856,17 +2930,33 @@ mod tests {
     }
 
     #[test]
+    fn trim_orphan_end_before_start_does_not_anchor_session() {
+        let now = 100 * DAY_MS;
+        let orphan_end = line(end("X", now - 1));
+        let old_start_line = line(start("X", now - 30 * DAY_MS));
+        let old_file = line(file("X", "f", now - 30 * DAY_MS + 1, "done", (1, Some(1))));
+        let lines = vec![orphan_end.clone(), old_start_line, old_file];
+
+        let (kept, dropped) = split_by_retention(lines, 10, now);
+
+        assert_eq!(
+            dropped, 1,
+            "an orphan end line must not seed newest_by_session; start+file at now-30d decide the drop"
+        );
+        assert_eq!(
+            kept,
+            vec![orphan_end],
+            "the orphan end line is kept verbatim, its own timestamp ignored"
+        );
+    }
+
+    #[test]
     fn trim_store_removes_whole_session_lines() {
         let dir = tempdir().unwrap();
         let store = HistoryStore::new_in(dir.path());
         let now = 100 * DAY_MS;
         store
-            .append_session_start(&SessionStartRecord {
-                session_id: "old".into(),
-                started_at: 0,
-                file_count: 1,
-                output_folder: "/o".into(),
-            })
+            .append_session_start(&old_start())
             .unwrap();
         store
             .append_file(&FileResultRecord {
@@ -2943,16 +3033,20 @@ mod tests {
     fn trim_rewrites_only_when_something_drops_and_is_atomic() {
         let dir = tempdir().unwrap();
         let store = HistoryStore::new_in(dir.path());
-        store.append_session_start(&SessionStartRecord {
-            session_id: "old".into(), started_at: 0, file_count: 1, output_folder: "/o".into(),
-        }).unwrap();
+        store.append_session_start(&old_start()).unwrap();
         let dropped = store.trim(1, 100 * DAY_MS).unwrap();
         assert_eq!(dropped, 1);
         assert!(store.load().unwrap().sessions.is_empty());
         assert!(!dir.path().join("history.jsonl.tmp").exists());
 
+        let after_first_drop = std::fs::read(store.file_path()).unwrap();
         let dropped_again = store.trim(1, 100 * DAY_MS).unwrap();
         assert_eq!(dropped_again, 0);
+        assert_eq!(
+            std::fs::read(store.file_path()).unwrap(),
+            after_first_drop,
+            "no-op trim leaves the file byte-identical"
+        );
     }
 
     #[test]
@@ -2960,9 +3054,7 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join("history.jsonl.tmp")).unwrap();
         let store = HistoryStore::new_in(dir.path());
-        store.append_session_start(&SessionStartRecord {
-            session_id: "old".into(), started_at: 0, file_count: 1, output_folder: "/o".into(),
-        }).unwrap();
+        store.append_session_start(&old_start()).unwrap();
         let before = std::fs::read(store.file_path()).unwrap();
         let err = store.trim(1, 100 * DAY_MS).unwrap_err();
         assert!(
@@ -2985,7 +3077,7 @@ mod tests {
         let fresh = start("fresh", now);
         std::fs::write(
             store.file_path(),
-            format!("{}\n{}\n", line(old.clone()), line(fresh.clone())),
+            format!("{}\n{}\n", line(old), line(fresh.clone())),
         )
         .unwrap();
 
@@ -3003,6 +3095,37 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn trim_rewrite_replaces_inode() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let now = 100 * DAY_MS;
+        std::fs::write(
+            store.file_path(),
+            format!(
+                "{}\n{}\n",
+                line(start("old", 0)),
+                line(start("fresh", now))
+            ),
+        )
+        .unwrap();
+        let before = std::fs::metadata(store.file_path())
+            .unwrap()
+            .ino();
+
+        let dropped = store.trim(1, now).unwrap();
+
+        assert_eq!(dropped, 1);
+        let after = std::fs::metadata(store.file_path()).unwrap().ino();
+        assert_ne!(
+            before, after,
+            "rename replaces the inode; an in-place truncate-write would keep it"
+        );
+    }
+
     #[test]
     fn trim_missing_file_is_noop() {
         let dir = tempdir().unwrap();
@@ -3016,9 +3139,7 @@ mod tests {
     fn trim_stale_tmp_regular_file_is_replaced() {
         let dir = tempdir().unwrap();
         let store = HistoryStore::new_in(dir.path());
-        store.append_session_start(&SessionStartRecord {
-            session_id: "old".into(), started_at: 0, file_count: 1, output_folder: "/o".into(),
-        }).unwrap();
+        store.append_session_start(&old_start()).unwrap();
         std::fs::write(dir.path().join("history.jsonl.tmp"), "stale").unwrap();
         let dropped = store.trim(1, 100 * DAY_MS).unwrap();
         assert_eq!(dropped, 1);
