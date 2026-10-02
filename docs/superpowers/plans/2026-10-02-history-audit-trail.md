@@ -1457,13 +1457,15 @@ git commit -m "feat(ipc): add get_history, clear_history and open_folder command
   - `HistoryFilters { search?: string; statuses?: FileStatus[]; categories?: Category[]; sinceMs?: number; outputFolder?: string }`
   - `HistorySummary { sessions, files, savedBytes, failedFiles }`
   - `HistoryResponse { sessions: HistorySession[]; page; pageSize; totalSessions; totalFiles; summary: HistorySummary; outputFolders: string[]; skippedLines: number }`
-  - `Settings` gains `history: { retentionDays: number }` (mirrors Rust `HistorySettings`, spec §4.3)
+  - `Settings` gains `history: HistorySettings` where `HistorySettings { retentionDays: number }` (named interface mirroring Rust `HistorySettings`, sibling pattern of `PerformanceSettings`↔`performance`, spec §4.3)
 - `useHistory()` → `{ response, loading, error, filters, setFilters, page, setPage, refresh, clearHistory, clearError }`:
-  - `setFilters(partial)` merges and resets page to 0 (functional compare — no-op when unchanged keeps identity).
+  - `setFilters(partial)` merges partials and resets page to 0 **only when the merged filters actually change** (compare before touching state — no-op when unchanged keeps filters identity, keeps the current page, and causes no refetch). Tolerance: one `setFilters` call per render/event cycle (component calls `setFilters` once per discrete event; same-tick double calls are not supported).
   - Query on mount, on `filters`/`page` change, on manual `refresh`, and on `batch:complete` (listen; unlisten on unmount). Debounce search input updates 300 ms **in the component** (hook receives settled values).
-  - `history:error` listener → `toast.error('History could not be saved — compression was not affected.')`.
-  - `clearHistory` invokes `clear_history`, then `refresh()`; on failure `toast.error('Could not clear history')` + rethrow suppressed.
+  - `history:error` listener → `toast.error('History could not be saved — compression was not affected.')`. Listener registration failure for `history:error` degrades gracefully: `console.error` + one-shot `toast.error('History error notifications are unavailable.')` (not error state); `batch:complete` registration failure stays log-only (manual refresh is the fallback).
+  - `clearHistory` invokes `clear_history`, then `refresh()`; on failure `console.error('clear_history failed:', err)` + `toast.error('Could not clear history')` + rethrow suppressed.
   - `clearError()` resets the error banner state for Retry.
+  - Hook-return note: `response` is retained during a refetch — Task 9 derives the busy state via `loading && response` (spec §5.4); the skeleton shows only when `loading && !response`.
+  - Typing tolerance note: `HistoryFile.status` / `HistoryFilters.statuses` keep the full `FileStatus` union — `pending`/`compressing` can never occur in history records (spec §3.2 records only terminal statuses); accepted tolerance, Task 9 maps chips off `FileStatus` keys.
 - `src/lib/historyFormat.ts`:
   - `export function formatDuration(ms: number): string` — exact semantics: `0` or negative → `—`; `1..59_999` → floored seconds with a 1s minimum (`999` → `1s`, `45_000` → `45s`, `59_999` → `59s`); `60_000..3_599_999` → `Xm YYs` zero-padded (`102_000` → `1m 42s`, `60_000` → `1m 00s`); `≥3_600_000` → `Xh YYm` zero-padded (`7_500_000` → `2h 05m`).
   - `export function presetSinceMs(preset: 'today' | 'last7' | 'last30' | 'all', now: Date): number | undefined` — `all` → `undefined`; else local midnight of the range start (today = `new Date(y,m,d)`; last7 = today − 6 days; last30 = today − 29 days).
@@ -1490,18 +1492,38 @@ git commit -m "feat(ipc): add get_history, clear_history and open_folder command
 - `dayKey_same_day_and_midnight_boundary` — 09:00 and 23:59 same key; next day differs
 - `loads on mount` — invoke payload `{ filters: {}, page: 0, pageSize: 50 }`
 - `setFilters merges and resets page` — page 2 → filter change → page 0 payload
-- `setFilters unchanged keeps identity` — same value → no new invoke
+- `setFilters unchanged keeps identity` — same value → no new invoke; `setPage(2)` → exactly one new invoke (dedupe count)
 - `refetches on batch:complete` — invoke count grows
 - `toasts on history:error` — pinned copy
 - `load rejection sets error` — rejected invoke → `error` set, `loading` false
 - `clearHistory refetches` — clear_history called + response updated
-- `clearHistory failure toasts` — rejection → `toast.error('Could not clear history')`, response kept
+- `clearHistory failure toasts` — rejection → `console.error('clear_history failed:', …)`, `toast.error('Could not clear history')`, response kept
 - `clearError resets error` — Retry dependency
 - `manual refresh refetches` — refresh() triggers a new invoke
+- `response retained during refetch` — refresh() held pending mid-flight: `loading` true and previous response non-null; resolves → new response, error null
 - `unlisten on unmount` — registry handlers removed
-- `stale response ignored` — two invokes resolved out of order → newest wins
+- `stale response ignored` — page-2 resolves before the held page-1 promise; resolving the held stale page-1 payload after page 2 wins does not overwrite the response (may be split as `stale response ignored` + `stale rejection ignored after newer resolves`: rejecting the held page-1 promise after a newer resolve is also ignored — `error` stays null, response kept; resolve/reject wrapped in awaited `act` so microtasks flush before asserts)
+- `setFilters merge accumulation` — successive partials accumulate: `statuses` then `search` → last invoke payload contains both keys, page 0
+- `setFilters unchanged page-preserving` — on page 2, an unchanged `setFilters` leaves page and filters untouched, no refetch (covered by `setFilters unchanged keeps identity`)
+- `error clears on successful reload` — rejection then success → `error` null with populated response
+- `listener registration failure degrades gracefully` — listen rejects → data still loads, no unhandled rejection, degraded toast fires (`batch:complete` variant log-only: no toast, hook loads fine, emit has no effect)
+- `unmount before listen resolves unregisters handlers` — unmount while the listen() promises are still pending unregisters both handlers once they resolve (covers the disposed branch in `done`)
+- `listener rejection after unmount stays silent` — held listen() promises rejected after unmount → no degraded toast and no console.error (both listener catches consult `disposed`)
+- `stale response ignored` rejection extension — superseded by the split above (`stale rejection ignored after newer resolves` rejects a still-pending page-1 promise; a reject on an already-settled promise is a no-op and was removed from the resolve-half test)
+- `presetSinceMs_dst_transition_days` extension — EU transition dates (Mar 29 / Oct 25 2026) alongside US (Mar 8 / Nov 1), plus a `last7` case spanning a transition (now = Oct 26 2026 15:00 → `new Date(2026,9,20).getTime()`; the 25-hour EU fall-back day Oct 25 lies inside the window, so the test discriminates naive hour arithmetic on timezones whose fall-back transition falls inside the window — EU Oct 25/26, e.g. dev CEST; US runners transition Nov 1, other TZs unchanged — `setDate` is correct by construction regardless)
+- `dayLabel yesterday across year boundary` — now = Jan 1 2027 03:00, label for Dec 31 2026 20:00 → `Yesterday`
+- `formats duration boundaries` extension — `3_599_999` → `59m 59s` (plan-required boundary pair completion)
 
-- [ ] **Step 1: Write the failing tests**
+Required-test title mapping (bullets above are behavior aliases; shipped `it()` titles):
+- `formatDuration_boundaries` → `formats duration boundaries`
+- `presetSinceMs_dst_transition_days` → `pins DST transition midnights and year rollover`
+- `presetSinceMs_year_rollover` → covered by `pins DST transition midnights and year rollover`
+- `dayKey_same_day_and_midnight_boundary` → `keys days by local calendar date`
+- `clearHistory refetches` → `clearHistory refetches and updates response`
+- `clearHistory failure toasts` → `clearHistory failure toasts and keeps response`
+- `dayLabel yesterday across year boundary` → `labels yesterday across year boundary`
+
+- [x] **Step 1: Write the failing tests**
 
 `src/lib/historyFormat.test.ts`:
 
@@ -1652,23 +1674,23 @@ describe('useHistory', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `yarn test historyFormat useHistory`
 Expected: FAIL — modules not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `src/types.ts`: add the interfaces exactly as in Interfaces above, including `Settings.history` (GPL header already present; append at the end).
 - `src/hooks/useHistory.ts`: state `response/loading/error/filters/page`; effect keyed on `JSON.stringify({filters, page})` invoking `get_history` (cancelled-flag guard like `useSettings.ts:37-58`); one effect for listeners (`batch:complete` → refetch, `history:error` → toast) with the disposed/unlisten pattern from `useCompression.ts:79-185`; `refresh` bumps a numeric nonce included in the effect key.
 - `src/lib/historyFormat.ts`: pure helpers as specified; use `toLocaleDateString`/`Intl.DateTimeFormat` for labels. Add the GPL header to both new TS files (copy from `src/views/HistoryView.tsx:1-15`).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `yarn test historyFormat useHistory && yarn build`
 Expected: PASS + clean build.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/types.ts src/hooks/useHistory.ts src/hooks/useHistory.test.ts src/lib/historyFormat.ts src/lib/historyFormat.test.ts
@@ -1688,6 +1710,7 @@ git commit -m "feat(history): add frontend types, query hook and format helpers"
 **Interfaces:**
 - Consumes: `useHistory`, `HistorySession`, `HistoryFile`, `formatSize`, `historyFormat` helpers, existing `Table`, `Badge`, `Button`, `Select`, `Skeleton`, `Empty`, `Card`, `Input` (create if missing: `src/components/ui/input.tsx` already exists per file list — reuse).
 - Produces: exported `HistoryView` (same name/signature, App.tsx unchanged), `HistoryPagination` component.
+- Note: status/category chip maps reuse `FileStatus` keys — filters accept the full `FileStatus` union (`pending`/`compressing` never occur in history records, spec §3.2), but the UI offers only the 6 terminal statuses.
 
 **UI composition (spec §5):**
 - Filter bar (pinned): search `Input` (placeholder "Search name, path, error…", Esc clears), Status chips (6 toggle buttons, `aria-pressed`), Category chips (5), Date `Select` (4 presets, default All time), Output folder `Select` (options from `response.outputFolders`, plus an "All folders" reset), `Clear filters` button + active count when any filter set. Date preset maps through `presetSinceMs` → `sinceMs` filter (omit when undefined).
