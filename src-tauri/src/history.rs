@@ -161,10 +161,20 @@ fn outcome_from_files(files: &[HistoryFile]) -> Counts {
             "cancelled" => counts.cancelled += 1,
             "unsupported" => counts.unsupported += 1,
             "already_under_target" => counts.already_under_target += 1,
-            _ => {}
+            other => eprintln!("warn: history file has unknown status: {other}"),
         }
     }
     counts
+}
+
+fn parse_or_skip<T: serde::de::DeserializeOwned>(line: &str, kind: &str) -> Option<T> {
+    match serde_json::from_str(line) {
+        Ok(parsed) => Some(parsed),
+        Err(e) => {
+            eprintln!("warn: history fold skipped invalid {kind} record: {e}");
+            None
+        }
+    }
 }
 
 pub fn fold_records(lines: &[String]) -> FoldResult {
@@ -176,19 +186,23 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
     for line in lines {
         let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
-            Err(_) => {
+            Err(e) => {
+                eprintln!("warn: history fold skipped malformed line: {e}");
                 skipped_lines += 1;
                 continue;
             }
         };
-        match value["type"].as_str() {
-            Some("session_start") => {
-                let record: SessionStartRecord = match serde_json::from_str(line) {
-                    Ok(record) => record,
-                    Err(_) => {
-                        skipped_lines += 1;
-                        continue;
-                    }
+        let Some(kind) = value.get("type").and_then(|t| t.as_str()) else {
+            eprintln!("warn: history fold skipped line without a string \"type\"");
+            skipped_lines += 1;
+            continue;
+        };
+        match kind {
+            "session_start" => {
+                let Some(record) = parse_or_skip::<SessionStartRecord>(line, "session_start")
+                else {
+                    skipped_lines += 1;
+                    continue;
                 };
                 match session_index.get(&record.session_id).copied() {
                     Some(index) => {
@@ -216,18 +230,23 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
                     }
                 }
             }
-            Some("file") => {
-                let record: FileResultRecord = match serde_json::from_str(line) {
-                    Ok(record) => record,
-                    Err(_) => {
-                        skipped_lines += 1;
-                        continue;
-                    }
+            "file" => {
+                let Some(record) = parse_or_skip::<FileResultRecord>(line, "file") else {
+                    skipped_lines += 1;
+                    continue;
                 };
                 let Some(index) = session_index.get(&record.session_id).copied() else {
                     skipped_lines += 1;
                     continue;
                 };
+                if sessions[index].ended_at.is_some() {
+                    eprintln!(
+                        "warn: history fold skipped file record after session_end: {}",
+                        record.file_id
+                    );
+                    skipped_lines += 1;
+                    continue;
+                }
                 let history_file = history_file_from(&record);
                 match file_indexes[index].get(&record.file_id).copied() {
                     Some(file_index) => sessions[index].files[file_index] = history_file,
@@ -238,13 +257,10 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
                     }
                 }
             }
-            Some("session_end") => {
-                let record: SessionEndRecord = match serde_json::from_str(line) {
-                    Ok(record) => record,
-                    Err(_) => {
-                        skipped_lines += 1;
-                        continue;
-                    }
+            "session_end" => {
+                let Some(record) = parse_or_skip::<SessionEndRecord>(line, "session_end") else {
+                    skipped_lines += 1;
+                    continue;
                 };
                 let Some(index) = session_index.get(&record.session_id).copied() else {
                     skipped_lines += 1;
@@ -272,7 +288,7 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
         }
         session.files.sort_by_key(|file| file.completed_at);
     }
-    sessions.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+    sessions.sort_by_key(|session| std::cmp::Reverse(session.started_at));
 
     FoldResult {
         sessions,
