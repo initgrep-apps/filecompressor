@@ -36,7 +36,7 @@ pub struct SessionStartRecord {
     pub output_folder: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileResultRecord {
     pub session_id: String,
@@ -66,7 +66,7 @@ pub struct SessionEndRecord {
     pub cancelled: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Counts {
     pub done: u32,
@@ -98,7 +98,7 @@ impl HistoryStore {
         }
     }
 
-    pub fn file_path(&self) -> &Path {
+    pub(crate) fn file_path(&self) -> &Path {
         &self.path
     }
 
@@ -126,9 +126,15 @@ impl HistoryStore {
                 ))
             }
         };
+        let path = self.path.display();
         Ok(bytes
             .split(|b| *b == b'\n')
-            .map(|line| String::from_utf8_lossy(line).trim().to_string())
+            .map(|line| {
+                if let Err(e) = std::str::from_utf8(line) {
+                    eprintln!("warn: history line had invalid UTF-8, lossy-decoded ({path}): {e}");
+                }
+                String::from_utf8_lossy(line).trim().to_string()
+            })
             .filter(|line| !line.is_empty())
             .collect())
     }
@@ -152,23 +158,37 @@ impl HistoryStore {
             .read(true)
             .open(&self.path)
             .map_err(|e| format!("history write failed: open {path}: {e}"))?;
+        let len = file
+            .seek(SeekFrom::End(0))
+            .map_err(|e| format!("history write failed: seek {path}: {e}"))?;
         let mut buf = Vec::with_capacity(line.len() + 2);
-        if file.metadata().map(|m| m.len()).unwrap_or(0) > 0 {
+        if len > 0 {
             let mut last = [0u8; 1];
-            let ends_with_newline = file
+            let ends_with_newline = match file
                 .seek(SeekFrom::End(-1))
                 .and_then(|_| file.read_exact(&mut last))
-                .map(|_| last[0] == b'\n')
-                .unwrap_or(false);
+            {
+                Ok(()) => last[0] == b'\n',
+                Err(e) => {
+                    eprintln!(
+                        "warn: history append newline probe {path} failed, inserting separator: {e}"
+                    );
+                    false
+                }
+            };
             if !ends_with_newline {
                 buf.push(b'\n');
             }
         }
         buf.extend_from_slice(line.as_bytes());
         buf.push(b'\n');
-        file.write_all(&buf)
-            .map_err(|e| format!("history write failed: write {path}: {e}"))
+        write_terminated(&mut file, &buf, &self.path)
     }
+}
+
+fn write_terminated(file: &mut std::fs::File, buf: &[u8], path: &Path) -> Result<(), String> {
+    file.write_all(buf)
+        .map_err(|e| format!("history write failed: write {}: {e}", path.display()))
 }
 
 #[cfg(test)]
