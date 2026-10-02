@@ -105,9 +105,12 @@ Field notes:
 - Any future field must be optional or serde-defaulted — old files keep loading.
 - Malformed lines are **skipped and counted**; the count surfaces to the UI as a muted
   notice. Corrupt lines never crash the app and never block reading the rest.
-- Lines containing invalid UTF-8 are warned to stderr by `read_lines` and consumed in
-  lossy form (accepted v1 behavior); they are **not** counted in `skippedLines` — only
-  JSON-malformed lines are.
+- Lines with invalid UTF-8 are warned to stderr by `read_lines` and consumed in lossy
+  form; if the resulting line still fails JSON parsing it is counted as malformed like any
+  other bad line. (`read_lines`'s warn reports its 0-based physical split index.)
+- Fold skip warns reported while parsing carry a 0-based `entry {N}` index among non-blank
+  lines (`read_lines` filters blanks before folding), not a physical-file line number.
+- Orphan `file`/`session_end` records for an unknown session are skipped and counted.
 - No migration needed: no history file exists before this feature.
 
 ### 3.4 Folding (read path)
@@ -116,9 +119,18 @@ Field notes:
 
 - Session = records sharing `sessionId`. Files sorted by `completedAt`.
 - Duplicate `fileId` within a session: last record wins (defensive; worker writes once).
+- Repeated `session_start` for the same session id (hybrid session): the last start wins for
+  the start-derived fields (`startedAt`, `outputFolder`, `fileCount`); previously recorded
+  files and any prior `endedAt`/`cancelled`/`counts` are retained — a restart reuses the id
+  without clearing the earlier history.
+- `fileCount` is the planned file count reported by `session_start`, not `files.len()` —
+  an interrupted session can record fewer files than planned (and the UI shows the recorded
+  files only).
 - `session_end` present ⇒ `endedAt`, exact `counts`, `cancelled` flag.
 - `session_end` absent ⇒ `interrupted: true`; `endedAt = null`; counts and
   `totalSavedBytes` computed from the recorded files.
+- File records after a session's `session_end`, and duplicate `session_end` records for the
+  same session, are skipped + counted (first `session_end` wins).
 - Reads and writes share a mutex, so a read never observes a partially written line.
 
 ### 3.5 Query execution (filters + pagination, core-side)
@@ -193,7 +205,7 @@ impl HistoryStore {
     pub fn clear(&self) -> Result<(), String>;
 }
 
-pub fn fold_records(lines: &[String]) -> FoldResult;                 // pure
+pub fn fold_records(lines: &[String]) -> FoldResult;                 // pure (no file/state IO; skip diagnostics to stderr)
 pub fn query_history(
     fold: FoldResult,
     filters: &HistoryFilters,
