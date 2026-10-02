@@ -48,14 +48,12 @@ export function dayKey(ms: number): string {
 }
 
 export function dayLabel(ms: number, now: Date): string {
-  const date = new Date(ms)
   const key = dayKey(ms)
-  const todayKey = dayKey(now.getTime())
+  if (key === dayKey(now.getTime())) return 'Today'
   const yesterday = new Date(now)
   yesterday.setDate(yesterday.getDate() - 1)
-  const yesterdayKey = dayKey(yesterday.getTime())
-  if (key === todayKey) return 'Today'
-  if (key === yesterdayKey) return 'Yesterday'
+  if (key === dayKey(yesterday.getTime())) return 'Yesterday'
+  const date = new Date(ms)
   const includeYear = date.getFullYear() !== now.getFullYear()
   return new Intl.DateTimeFormat(undefined, {
     month: 'short',

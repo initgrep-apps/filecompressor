@@ -32,10 +32,8 @@ export function useHistory() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filters, setFiltersState] = useState<HistoryFilters>({})
-  const [page, setPageState] = useState(0)
+  const [page, setPage] = useState(0)
   const [nonce, setNonce] = useState(0)
-
-  const queryKey = JSON.stringify({ filters, page })
 
   useEffect(() => {
     let cancelled = false
@@ -61,7 +59,7 @@ export function useHistory() {
     return () => {
       cancelled = true
     }
-  }, [queryKey, nonce])
+  }, [filters, page, nonce])
 
   useEffect(() => {
     let disposed = false
@@ -103,14 +101,10 @@ export function useHistory() {
       const next = { ...filters, ...partial }
       if (JSON.stringify(filters) === JSON.stringify(next)) return
       setFiltersState(next)
-      setPageState(0)
+      setPage(0)
     },
-    [filters]
+    [filters, setPage]
   )
-
-  const setPage = useCallback((next: number) => {
-    setPageState(next)
-  }, [])
 
   const refresh = useCallback(() => {
     setNonce((n) => n + 1)
