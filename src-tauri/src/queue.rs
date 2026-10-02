@@ -312,7 +312,37 @@ impl<R: Runtime> QueueState<R> {
         }
 
         let reserved = std::sync::Arc::new(crate::output::ReservedNames::new());
-        let lanes = group_lanes(&state, &file_ids);
+        let (lanes, placed) = group_lanes(&state, &file_ids);
+
+        // A file individually cancelled while Pending never enters a lane.
+        // commands::cancel_file already emitted file:cancelled, so record the
+        // terminal outcome here without emitting again.
+        let unplaced_cancelled: Vec<FileEntry> = {
+            let list = poison_recover(state.0.lock());
+            file_ids
+                .iter()
+                .filter(|file_id| !placed.contains(*file_id))
+                .filter_map(|file_id| {
+                    list.iter()
+                        .find(|e| &e.id == file_id && e.status == FileStatus::Cancelled)
+                        .cloned()
+                })
+                .collect()
+        };
+        for entry in unplaced_cancelled {
+            queue.record_file(
+                app,
+                &batch_id,
+                &entry,
+                FileStatus::Cancelled,
+                None,
+                None,
+                None,
+                None,
+                None,
+                0,
+            );
+        }
 
         let batch_app = app.clone();
         let stop_batch_id = batch_id.clone();
@@ -660,7 +690,7 @@ impl<R: Runtime> QueueState<R> {
                     None,
                     None,
                     None,
-                    0,
+                    elapsed_ms(),
                 );
                 emit_file_cancelled(&app, &file_id);
             }
@@ -831,9 +861,10 @@ fn lane_weight(category: &crate::models::Category) -> u32 {
 fn group_lanes(
     state: &tauri::State<'_, FileListState>,
     file_ids: &[String],
-) -> Vec<scheduler::LaneSpec<String>> {
+) -> (Vec<scheduler::LaneSpec<String>>, HashSet<String>) {
     let list = poison_recover(state.0.lock());
     let mut lanes: Vec<scheduler::LaneSpec<String>> = Vec::new();
+    let mut placed: HashSet<String> = HashSet::new();
     for file_id in file_ids {
         let Some(entry) = list
             .iter()
@@ -841,6 +872,7 @@ fn group_lanes(
         else {
             continue;
         };
+        placed.insert(file_id.clone());
         let key = category_key(&entry.category).to_string();
         if let Some(lane) = lanes.iter_mut().find(|l| l.key == key) {
             lane.jobs.push_back(file_id.clone());
@@ -852,7 +884,7 @@ fn group_lanes(
             });
         }
     }
-    lanes
+    (lanes, placed)
 }
 
 /// Emits the file:cancelled event (used by the worker and the cancel command).
@@ -1596,6 +1628,51 @@ mod tests {
             .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
     }
 
+    fn raw_file_records(
+        store: &crate::history::HistoryStore,
+    ) -> Vec<crate::history::FileResultRecord> {
+        store
+            .read_lines()
+            .unwrap()
+            .iter()
+            .filter_map(|line| {
+                let value: serde_json::Value = serde_json::from_str(line).ok()?;
+                if value["type"] != "file" {
+                    return None;
+                }
+                serde_json::from_value(value).ok()
+            })
+            .collect()
+    }
+
+    fn set_status(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        file_id: &str,
+        status: crate::models::FileStatus,
+    ) {
+        let state = app.state::<FileListState>();
+        let mut list = state.0.lock().unwrap();
+        let entry = list
+            .iter_mut()
+            .find(|e| e.id == file_id)
+            .expect("entry must exist");
+        entry.status = status;
+    }
+
+    fn update_entry(
+        app: &tauri::App<tauri::test::MockRuntime>,
+        file_id: &str,
+        update: impl FnOnce(&mut FileEntry),
+    ) {
+        let state = app.state::<FileListState>();
+        let mut list = state.0.lock().unwrap();
+        let entry = list
+            .iter_mut()
+            .find(|e| e.id == file_id)
+            .expect("entry must exist");
+        update(entry);
+    }
+
     fn seed_session_start(
         store: &crate::history::HistoryStore,
         session_id: &str,
@@ -1714,6 +1791,67 @@ mod tests {
         let v = serde_json::to_value(&payload).unwrap();
         assert_eq!(v["qualityUsed"], 70);
         assert_eq!(v["strategyUsed"], "quality=70");
+    }
+
+    #[tokio::test]
+    async fn lane_pending_cancelled_entry_recorded_once() {
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("3");
+        let ids = add_entries(&app, &[
+            ("i1.jpg", crate::models::Category::Image, "/tmp/i1.jpg"),
+            ("i2.jpg", crate::models::Category::Image, "/tmp/i2.jpg"),
+            ("p1.pdf", crate::models::Category::Pdf, "/tmp/p1.pdf"),
+        ]);
+        // Pre-mark one entry Cancelled before start_batch: commands::cancel_file
+        // does this for a Pending file, so group_lanes never places it.
+        set_status(&app, &ids[1], crate::models::FileStatus::Cancelled);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let store = store.inner();
+        let rx = events_of(&app.handle(), &["file:error", "file:cancelled", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-lane-cancel".into(), ids.clone());
+        wait_idle(&queue, "hist-lane-cancel");
+
+        let mut cancelled_events = 0usize;
+        loop {
+            let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            if topic == "file:cancelled" {
+                cancelled_events += 1;
+            }
+            if topic == "batch:complete" {
+                break;
+            }
+        }
+        assert_eq!(
+            cancelled_events, 0,
+            "the lane sweep must not re-emit file:cancelled (commands::cancel_file owns that event)"
+        );
+
+        let recorded: Vec<String> = raw_file_records(store)
+            .iter()
+            .map(|r| r.file_id.clone())
+            .collect();
+        let recorded_set: std::collections::HashSet<&String> = recorded.iter().collect();
+        let expected: std::collections::HashSet<&String> = ids.iter().collect();
+        assert_eq!(
+            recorded_set, expected,
+            "one file record per batch id, got {recorded:?}"
+        );
+        assert_eq!(recorded.len(), ids.len(), "no duplicate file records");
+
+        let fold = store.load().unwrap();
+        let s = &fold.sessions[0];
+        assert_eq!(
+            s.outcome.cancelled, 1,
+            "the pre-cancelled pending file must be counted cancelled"
+        );
+        assert_eq!(
+            s.outcome.failed + s.outcome.cancelled,
+            u32::try_from(ids.len()).unwrap(),
+            "every file terminal outcome accounted"
+        );
+        assert_eq!(s.files.len(), ids.len());
     }
 
     #[tokio::test]
@@ -1887,15 +2025,27 @@ mod tests {
     #[tokio::test]
     async fn cancel_skipped_records_have_zero_duration_and_no_output() {
         let _temp_guard = temp_guard();
-        let (_root, app, _out) = setup_app("3");
+        let (root, app, _out) = setup_app("3");
+        let real = root.path().join("real.jpg");
+        std::fs::write(&real, vec![7u8; 1024]).unwrap();
         let ids = add_entries(&app, &[
-            ("i1.jpg", crate::models::Category::Image, "/tmp/missing-i1.jpg"),
+            ("real.jpg", crate::models::Category::Image, real.to_str().unwrap()),
             ("i2.jpg", crate::models::Category::Image, "/tmp/missing-i2.jpg"),
             ("p1.pdf", crate::models::Category::Pdf, "/tmp/missing-p1.pdf"),
             ("p2.pdf", crate::models::Category::Pdf, "/tmp/missing-p2.pdf"),
             ("v1.mp4", crate::models::Category::Video, "/tmp/missing-v1.mp4"),
             ("v2.mp4", crate::models::Category::Video, "/tmp/missing-v2.mp4"),
         ]);
+        // Pre-mark one real-file entry Cancelled: commands::cancel_file does
+        // this for a Pending file, so group_lanes never places it and the lane
+        // sweep records it deterministically with the entry's real size.
+        set_status(&app, &ids[0], crate::models::FileStatus::Cancelled);
+        let entries: Vec<FileEntry> = {
+            let state = app.state::<FileListState>();
+            let list = state.0.lock().unwrap();
+            list.clone()
+        };
+
         let rx = events_of(&app.handle(), &["file:error", "file:cancelled", "batch:complete"]);
         let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
         QueueState::start_batch(queue.inner(), &app.handle(), "hist-skip".into(), ids.clone());
@@ -1906,17 +2056,44 @@ mod tests {
         drain_until_complete(&rx);
 
         let store = app.state::<crate::history::HistoryStore>();
-        let fold = store.load().unwrap();
-        let s = &fold.sessions[0];
-        assert_eq!(s.files.len(), ids.len(), "terminal outcome per file");
-        let skipped: Vec<_> = s.files.iter().filter(|f| f.status == "cancelled").collect();
+        let recorded = raw_file_records(&store);
+        let recorded_ids: Vec<&str> = recorded.iter().map(|r| r.file_id.as_str()).collect();
+        assert_eq!(
+            recorded_ids.len(),
+            ids.len(),
+            "terminal outcome exactly once per file, got {recorded_ids:?}"
+        );
+        assert_eq!(
+            recorded_ids.iter().cloned().collect::<std::collections::HashSet<_>>(),
+            ids.iter().map(String::as_str).collect::<std::collections::HashSet<_>>(),
+            "no duplicates and no missing ids"
+        );
+
+        let skipped: Vec<_> = recorded.iter().filter(|f| f.status == "cancelled").collect();
         assert!(!skipped.is_empty(), "cancel-all must record at least one skipped file");
-        for f in skipped {
-            assert_eq!(f.duration_ms, 0);
+        let real_record = skipped
+            .iter()
+            .find(|f| f.file_id == ids[0])
+            .expect("pre-cancelled real-file entry must be recorded");
+        assert_eq!(
+            real_record.original_size, 1024,
+            "sizes come from the entry, not from disk again"
+        );
+        assert_eq!(real_record.target_bytes, 1 << 20);
+        assert_eq!(
+            real_record.duration_ms, 0,
+            "cancelled-before-slot records must carry zero duration (spec §3.2)"
+        );
+
+        // Scope the zero-duration assertion to known skip records only: a job
+        // cancelled mid-flight legitimately carries positive duration, and the
+        // missing-sidecar test environment cannot force that path.
+        for f in &skipped {
+            let entry = entries.iter().find(|e| e.id == f.file_id).unwrap();
             assert!(f.output_path.is_none());
             assert!(f.compressed_size.is_none());
-            assert_eq!(f.original_size, 0, "sizes come from the entry");
-            assert_eq!(f.target_bytes, 1 << 20);
+            assert_eq!(f.original_size, entry.original_size, "recorded size is the entry's size");
+            assert_eq!(f.target_bytes, entry.target_bytes);
         }
     }
 
