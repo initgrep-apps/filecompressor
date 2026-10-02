@@ -518,43 +518,20 @@ pub fn query_history(
     }
 }
 
-enum LineRef {
-    Unbound,
-    Start { session_id: String, at: i64 },
-    FileRecord { session_id: String, at: i64 },
-    End { session_id: String, at: i64 },
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum LineRecord {
+    SessionStart(SessionStartRecord),
+    File(FileResultRecord),
+    SessionEnd(SessionEndRecord),
 }
 
-fn parse_line_ref(line: &str) -> LineRef {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-        return LineRef::Unbound;
-    };
-    let Some(kind) = value.get("type").and_then(|kind| kind.as_str()) else {
-        return LineRef::Unbound;
-    };
-    match kind {
-        "session_start" => match serde_json::from_str::<SessionStartRecord>(line) {
-            Ok(record) => LineRef::Start {
-                session_id: record.session_id,
-                at: record.started_at,
-            },
-            Err(_) => LineRef::Unbound,
-        },
-        "file" => match serde_json::from_str::<FileResultRecord>(line) {
-            Ok(record) => LineRef::FileRecord {
-                session_id: record.session_id,
-                at: record.completed_at,
-            },
-            Err(_) => LineRef::Unbound,
-        },
-        "session_end" => match serde_json::from_str::<SessionEndRecord>(line) {
-            Ok(record) => LineRef::End {
-                session_id: record.session_id,
-                at: record.ended_at,
-            },
-            Err(_) => LineRef::Unbound,
-        },
-        _ => LineRef::Unbound,
+fn parse_line_ref(line: &str) -> Option<(String, i64, bool)> {
+    match serde_json::from_str::<LineRecord>(line) {
+        Ok(LineRecord::SessionStart(record)) => Some((record.session_id, record.started_at, true)),
+        Ok(LineRecord::File(record)) => Some((record.session_id, record.completed_at, false)),
+        Ok(LineRecord::SessionEnd(record)) => Some((record.session_id, record.ended_at, false)),
+        Err(_) => None,
     }
 }
 
@@ -574,14 +551,9 @@ pub fn split_by_retention(
     let mut bound: Vec<Option<String>> = Vec::with_capacity(lines.len());
 
     for line in &lines {
-        let (session_id, at, is_start) = match parse_line_ref(line) {
-            LineRef::Start { session_id, at } => (session_id, at, true),
-            LineRef::FileRecord { session_id, at } => (session_id, at, false),
-            LineRef::End { session_id, at } => (session_id, at, false),
-            LineRef::Unbound => {
-                bound.push(None);
-                continue;
-            }
+        let Some((session_id, at, is_start)) = parse_line_ref(line) else {
+            bound.push(None);
+            continue;
         };
         if is_start {
             started.insert(session_id.clone());
@@ -603,11 +575,8 @@ pub fn split_by_retention(
         .collect();
 
     let mut kept = Vec::with_capacity(lines.len());
-    for (index, line) in lines.into_iter().enumerate() {
-        let dropped = bound[index]
-            .as_ref()
-            .is_some_and(|session_id| drop.contains(session_id));
-        if !dropped {
+    for (line, session_id) in lines.into_iter().zip(bound) {
+        if !session_id.is_some_and(|session_id| drop.contains(&session_id)) {
             kept.push(line);
         }
     }
@@ -654,10 +623,10 @@ impl HistoryStore {
 
     pub(crate) fn read_lines(&self) -> Result<Vec<String>, String> {
         let _guard = poison_recover(self.lock.lock());
-        self.decode_lines()
+        self.read_lines_unlocked()
     }
 
-    fn decode_lines(&self) -> Result<Vec<String>, String> {
+    fn read_lines_unlocked(&self) -> Result<Vec<String>, String> {
         let bytes = match std::fs::read(&self.path) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -696,11 +665,15 @@ impl HistoryStore {
 
     pub fn trim(&self, retention_days: u32, now_ms: i64) -> Result<u32, String> {
         let _guard = poison_recover(self.lock.lock());
-        let lines = self.decode_lines()?;
+        let lines = self.read_lines_unlocked()?;
         let (kept, dropped) = split_by_retention(lines, retention_days, now_ms);
         let tmp = self.tmp_path();
-        remove_if_exists(&tmp)
-            .map_err(|e| format!("history write failed: remove stale temp {}: {e}", tmp.display()))?;
+        remove_if_exists(&tmp).map_err(|e| {
+            format!(
+                "history write failed: remove stale temp {}: {e}",
+                tmp.display()
+            )
+        })?;
         if dropped == 0 {
             return Ok(0);
         }
@@ -731,9 +704,8 @@ impl HistoryStore {
         let tmp = self.tmp_path();
         remove_if_exists(&tmp)
             .map_err(|e| format!("history clear failed: remove {}: {e}", tmp.display()))?;
-        remove_if_exists(&self.path).map_err(|e| {
-            format!("history clear failed: remove {}: {e}", self.path.display())
-        })?;
+        remove_if_exists(&self.path)
+            .map_err(|e| format!("history clear failed: remove {}: {e}", self.path.display()))?;
         Ok(())
     }
 
