@@ -546,7 +546,6 @@ pub fn split_by_retention(
         retention_days
     };
     let cutoff = now_ms.saturating_sub(i64::from(retention_days) * 86_400_000);
-    let mut started: HashSet<String> = HashSet::new();
     let mut newest_by_session: HashMap<String, i64> = HashMap::new();
     let mut bound: Vec<Option<String>> = Vec::with_capacity(lines.len());
 
@@ -555,16 +554,12 @@ pub fn split_by_retention(
             bound.push(None);
             continue;
         };
-        if is_start {
-            started.insert(session_id.clone());
-        } else if !started.contains(&session_id) {
+        if !is_start && !newest_by_session.contains_key(&session_id) {
             bound.push(None);
             continue;
         }
         let newest = newest_by_session.entry(session_id.clone()).or_insert(at);
-        if at > *newest {
-            *newest = at;
-        }
+        *newest = (*newest).max(at);
         bound.push(Some(session_id));
     }
 
@@ -576,7 +571,7 @@ pub fn split_by_retention(
 
     let mut kept = Vec::with_capacity(lines.len());
     for (line, session_id) in lines.into_iter().zip(bound) {
-        if !session_id.is_some_and(|session_id| drop.contains(&session_id)) {
+        if session_id.is_none_or(|session_id| !drop.contains(&session_id)) {
             kept.push(line);
         }
     }
@@ -654,11 +649,7 @@ impl HistoryStore {
     }
 
     fn tmp_path(&self) -> PathBuf {
-        let mut name = self
-            .path
-            .file_name()
-            .map(|name| name.to_os_string())
-            .unwrap_or_default();
+        let mut name = self.path.file_name().unwrap_or_default().to_os_string();
         name.push(".tmp");
         self.path.with_file_name(name)
     }
