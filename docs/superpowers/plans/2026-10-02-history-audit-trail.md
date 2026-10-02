@@ -1793,7 +1793,7 @@ git commit -m "feat(history): add frontend types, query hook and format helpers"
 - `setFiltersRef.current = setFilters` moved into a `useEffect` (no render-phase ref write); debounce timing unchanged.
 - `toggleSession` reuses `isSessionExpanded` (single default-rule source); `SessionRow` uses `matched`/`matchedFiles` aliases with aliased-condition narrowing; `STATUS_CHIP_STYLES`/`STATUS_LABELS`/`STATUS_DOT_COLORS` merged into `STATUS_META`; `activeCount` reduced to the 5-term optional-chained form; two redundant in-test `vi.useRealTimers()` removed (afterEach already restores); first click and pressed-state assert reuse the bound chip element.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Rewrite `src/views/HistoryView.test.tsx` (GPL header + mock `@tauri-apps/api/core`/`event`/`sonner` like Task 8; helper `session(overrides)` builds a `HistorySession`; `renderView()` renders `<HistoryView />`):
 
@@ -1874,12 +1874,12 @@ Rewrite `src/views/HistoryView.test.tsx` (GPL header + mock `@tauri-apps/api/cor
 
 Also update the old `renders history empty state` test (keeps asserting `[data-slot="empty"]` with new copy). Fix `src/App.test.tsx`: its `invoke` mock currently resolves `undefined`, but the new HistoryView calls `get_history` on mount (`App.test.tsx:48`, `:122`) — configure the mock to resolve an empty `HistoryResponse` so the click-through tests do not skeleton-flake (the History heading assertion spans `:122-125`).
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `yarn test HistoryView`
 Expected: FAIL — new UI not implemented.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `yarn dlx shadcn@latest add alert-dialog` then adapt to base-ui composition if the CLI emits Radix-style (existing repo components are base-ui — follow `dropdown-menu.tsx` patterns).
 - Add a small `copyToClipboard(text: string)` helper inside `HistoryView.tsx` (`navigator.clipboard.writeText` → `toast.success('Path copied')`; catch → `toast.error('Could not copy path')`).
@@ -1888,12 +1888,12 @@ Expected: FAIL — new UI not implemented.
 - A11y: disclosure buttons get `aria-expanded`/`aria-controls`; day headers non-interactive; every icon button labelled; table has an `aria-label`; chips are `<button aria-pressed>`.
 - Search input debounce lives in the view (300 ms) before calling `setFilters`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `yarn test HistoryView && yarn build`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/views/HistoryView.tsx src/views/HistoryView.test.tsx src/components/HistoryPagination.tsx src/components/ui/alert-dialog.tsx src/App.test.tsx
