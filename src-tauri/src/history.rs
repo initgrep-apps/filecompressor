@@ -20,6 +20,7 @@ use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{LockResult, Mutex, MutexGuard};
+use tauri::{AppHandle, Manager, Runtime};
 
 fn poison_recover<T>(lock: LockResult<MutexGuard<'_, T>>) -> MutexGuard<'_, T> {
     lock.unwrap_or_else(|e| {
@@ -598,6 +599,16 @@ impl HistoryStore {
             path: dir.join("history.jsonl"),
             lock: Mutex::new(()),
         }
+    }
+
+    pub fn new<R: Runtime>(app: &AppHandle<R>) -> Result<HistoryStore, String> {
+        let dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("Failed to create app data dir {}: {e}", dir.display()))?;
+        Ok(HistoryStore::new_in(&dir))
     }
 
     pub(crate) fn file_path(&self) -> &Path {

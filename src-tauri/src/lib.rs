@@ -28,9 +28,16 @@ mod sidecar;
 mod temp;
 
 use commands::FileListState;
+use history::HistoryStore;
 use queue::QueueState;
 use std::sync::Mutex;
 use tauri::Manager;
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -43,6 +50,21 @@ pub fn run() {
             let handle = app.handle().clone();
             app.manage(QueueState::new(handle));
             temp::cleanup_stale_temp_files(app.handle());
+            match HistoryStore::new(app.handle()) {
+                Ok(store) => {
+                    app.manage(store);
+                    let settings = commands::load_settings(app.handle());
+                    let store = app.state::<HistoryStore>();
+                    if let Err(e) =
+                        store.trim(settings.history.effective_retention_days(), now_ms())
+                    {
+                        eprintln!("warn: startup history trim failed: {e}");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("warn: history store unavailable, history disabled: {e}");
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -56,6 +78,9 @@ pub fn run() {
             commands::cancel_file,
             commands::cancel_all,
             commands::reveal_in_folder,
+            commands::get_history,
+            commands::clear_history,
+            commands::open_folder,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
