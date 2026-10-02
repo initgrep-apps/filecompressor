@@ -214,12 +214,15 @@ Default target = host triple (fresh clone on a machine: `yarn app:build` just wo
 4. **Clean-room gs smoke** — spawn gs with only bundled resources and env stripped of Homebrew paths; render/compress a fixture; assert exit 0 and output bytes.
 5. Existing checks retained: no absolute non-system dylib paths, @rpath deps present in `frameworks/`, valid signatures, tauri.conf ↔ frameworks consistency.
 
-## 10. CI & Release (Phase 2/3 — automated)
+## 10. CI Contract (consumed by the CI/CD spec)
 
-- `release.yml`: matrix of the 4 native runners; each job: checkout → Node + Rust (target added) → `yarn binaries:all --target` → gate (`yarn build && yarn test && cargo test`) → `yarn tauri build --target` → upload installer artifacts (`.dmg`, `.exe`/`.msi`) named by version + arch. Exact action versions and runner labels pinned in the implementation plan.
-- `binaries-drift.yml` (scheduled): runs refresh in dry-run mode and opens an issue when upstream versions move. Notification only — never auto-adopts.
-- **SBOM + licenses**: `yarn sbom` generates `sbom.json` (engines + versions + licenses + hashes from the lock) and `THIRD_PARTY_LICENSES.md` (GPLv3 app must ship FFmpeg GPLv2+ notice, Ghostscript AGPLv3 notice + source pointer, vips LGPL, qpdf Apache). Artifacts attach to the release.
-- Runners: `macos-latest`, `macos-15-intel`, `windows-latest`, `windows-11-arm`.
+The full CI/CD flow is defined in `docs/superpowers/specs/2026-10-02-cicd-devops-tbd.md` (placeholder — to be designed). This spec only commits to the interface CI consumes:
+
+- The binary steps are exactly the local yarn commands: `yarn binaries:fetch|prep|audit|all --target <triple>` then `yarn tauri build --target <triple>`. No CI-only binary logic.
+- CI must run on: `macos-latest`, `macos-15-intel`, `windows-latest`, `windows-11-arm` (one job per target triple).
+- Runners need: Node, Rust with the target installed, Homebrew (macOS jobs, for vips/gs ingredients), network access to vendor URLs.
+- `yarn sbom` (section 7) ships in this spec's scope; attaching artifacts to a release is the CI/CD spec's scope.
+- Drift detection (`binaries:refresh --dry-run`) is a scheduled CI concern owned by the CI/CD spec.
 
 ## 11. Testing Strategy
 
@@ -248,6 +251,6 @@ Default target = host triple (fresh clone on a machine: `yarn app:build` just wo
 2. macOS arm64 complete pipeline + gs resources + Rust changes + tests (local manual verification).
 3. Windows x64 + Windows arm64 prep scripts (verified by cloning repo on those OSes).
 4. macOS Intel target.
-5. CI release workflow + SBOM + drift check.
+5. SBOM generation (`yarn sbom`).
 
-Each step is independently verifiable; phases 2–4 may be reordered after step 1 lands. The implementation plan (separate document) will break these into tasks with required tests per the repo's plan conventions.
+Each step is independently verifiable; phases 2–4 may be reordered after step 1 lands. The implementation plan (separate document) will break these into tasks with required tests per the repo's plan conventions. CI/CD workflows are out of scope for this plan and live in `docs/superpowers/specs/2026-10-02-cicd-devops-tbd.md`.
