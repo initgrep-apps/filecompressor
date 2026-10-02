@@ -549,11 +549,35 @@ describe('HistoryView', () => {
 
   it('auto-expands filtered sessions with match count', async () => {
     invokeMock.mockResolvedValue(
-      responseWith([session({ sessionId: 's1', matchedFiles: 1, files: [doneFile()] })])
+      responseWith([
+        session({
+          sessionId: 's1',
+          matchedFiles: 2,
+          files: [doneFile(), doneFile({ name: 'b.jpg', path: '/in/b.jpg', outputPath: '/out/b.jpg' })],
+          outcome: { done: 1, bestEffort: 0, failed: 1, cancelled: 0, unsupported: 0, alreadyUnderTarget: 0 },
+        }),
+      ])
     )
     renderView()
-    expect(await screen.findByText('1 match')).toBeInTheDocument()
+    expect(await screen.findByText('2 matches')).toBeInTheDocument()
     expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByText('Done 2')).toBeInTheDocument()
+    expect(screen.queryByText('Failed 1')).not.toBeInTheDocument()
+  })
+
+  it('clamps saved percent at zero when file grew', async () => {
+    invokeMock.mockResolvedValue(
+      responseWith([
+        session({
+          sessionId: 's1',
+          matchedFiles: 1,
+          files: [doneFile({ originalSize: 1024, compressedSize: 2048 })],
+        }),
+      ])
+    )
+    renderView()
+    expect(await screen.findByText('1 KB → 2 KB · 0%')).toBeInTheDocument()
+    expect(screen.queryByText(/· -\d+%/)).not.toBeInTheDocument()
   })
 
   it('shows plural match count', async () => {
@@ -714,21 +738,29 @@ describe('HistoryView', () => {
 
   it('reveal failure toasts', async () => {
     const user = userEvent.setup()
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     invokeMock
       .mockResolvedValueOnce(
         responseWith([session({ sessionId: 's1', matchedFiles: 1, files: [doneFile()] })])
       )
       .mockRejectedValueOnce(new Error('gone'))
+      .mockRejectedValueOnce('locked')
       .mockResolvedValue(emptyResponse)
     renderView()
     await user.click(await screen.findByRole('button', { name: 'Reveal output' }))
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith('Could not open folder: gone')
     )
+    await user.click(screen.getByRole('button', { name: 'Reveal output' }))
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Could not open folder: locked')
+    )
+    errSpy.mockRestore()
   })
 
   it('open folder failure toasts', async () => {
     const user = userEvent.setup()
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     invokeMock.mockImplementation((cmd: unknown) =>
       cmd === 'open_folder'
         ? Promise.reject(new Error('explorer died'))
@@ -743,6 +775,7 @@ describe('HistoryView', () => {
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith('Could not open folder: explorer died')
     )
+    errSpy.mockRestore()
   })
 
   it('actions disabled without output path', async () => {
@@ -766,6 +799,7 @@ describe('HistoryView', () => {
 
   it('copy failure toasts', async () => {
     const user = userEvent.setup()
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const writeText = vi.fn().mockRejectedValue(new Error('denied'))
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText },
@@ -777,6 +811,7 @@ describe('HistoryView', () => {
     renderView()
     await user.click(await screen.findByRole('button', { name: 'Copy output path' }))
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Could not copy path'))
+    errSpy.mockRestore()
   })
 
   it('shows a notice when lines were skipped', async () => {

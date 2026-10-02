@@ -273,12 +273,28 @@ describe('useHistory', () => {
     expect(result.current.loading).toBe(false)
   })
 
+  it('malformed response page leaves page untouched', async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      ...emptyResponse,
+      page: 'bad' as unknown as number,
+      totalSessions: 5,
+    })
+    const { result } = renderHook(() => useHistory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.response?.totalSessions).toBe(5)
+    await act(async () => {})
+    expect(vi.mocked(invoke).mock.calls.length).toBe(1)
+    expect(result.current.page).toBe(0)
+    expect(result.current.error).toBeNull()
+  })
+
   it('page syncs when backend clamps response', async () => {
     vi.mocked(invoke)
       .mockResolvedValueOnce(emptyResponse)
       .mockResolvedValue({ ...emptyResponse, page: 0, totalSessions: 40 })
     const { result } = renderHook(() => useHistory())
     await waitFor(() => expect(result.current.loading).toBe(false))
+    const callsBefore = vi.mocked(invoke).mock.calls.length
     act(() => result.current.setPage(2))
     await waitFor(() =>
       expect(invoke).toHaveBeenLastCalledWith(
@@ -292,6 +308,7 @@ describe('useHistory', () => {
         expect.objectContaining({ page: 0 })
       )
     )
+    expect(vi.mocked(invoke).mock.calls.length).toBe(callsBefore + 2)
     expect(result.current.page).toBe(0)
   })
 
