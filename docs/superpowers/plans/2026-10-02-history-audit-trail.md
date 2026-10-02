@@ -45,7 +45,7 @@
 
 **Acceptance Criteria:**
 - `history.retentionDays` roundtrips camelCase; max value 3650 roundtrips (spec §4.3).
-- Missing, empty (`{}`), and corrupt `history` all resolve to 90 without wiping other settings (spec §4.3, §5.8).
+- Missing/empty (`{}`) `history` resolves to 90 while other settings are preserved; corrupt `history` falls back to whole-Settings defaults (existing corrupt-value convention) (spec §4.3, §5.8).
 - Clamp pinned including off-by-one neighbors: 0→90, 3649→3649, 3651→3650, 5000→3650 (spec §3.6).
 - All Required Tests pass.
 - Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
@@ -807,7 +807,7 @@ git commit -m "feat(history): core-side query with filters, summary and paginati
   - `HistoryStore::trim(&self, retention_days: u32, now_ms: i64) -> Result<u32, String>` — rewrite only when `dropped > 0`; atomic via `history.jsonl.tmp` + `fs::rename`; returns dropped session count.
   - `HistoryStore::clear(&self) -> Result<(), String>` — remove file if present; also remove a stray `.tmp`.
 
-**Retention semantics:** session is dropped when `max(started_at, all file completed_at, ended_at) < now_ms - retention_days * 86_400_000` (strictly older). Missing `session_end` → newest record is max of start + files. `retention_days = 0` is treated as 90 (callers clamp, but the pure function must still be safe).
+**Retention semantics:** session is dropped when `max(started_at, all file completed_at, ended_at) < now_ms - i64::from(retention_days) * 86_400_000` (strictly older; widen to i64 before multiplying so `u32` retention values cannot overflow). Missing `session_end` → newest record is max of start + files. `retention_days = 0` is treated as 90 (callers clamp, but the pure function must still be safe).
 
 **Acceptance Criteria:**
 - Exactly-at-cutoff sessions are kept; strictly older drop — with `ended_at` counted as a session record (spec §3.6).
