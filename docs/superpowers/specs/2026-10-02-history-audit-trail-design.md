@@ -185,23 +185,23 @@ impl HistoryStore {
     pub fn append_session_start(&self, rec: &SessionStartRecord) -> Result<(), String>;
     pub fn append_file(&self, rec: &FileResultRecord) -> Result<(), String>;
     pub fn append_session_end(&self, rec: &SessionEndRecord) -> Result<(), String>;
-    pub fn load(&self) -> Result<LoadedHistory, String>;     // records + skippedLines
+    pub fn load(&self) -> Result<FoldResult, String>;        // sessions + skippedLines
     pub fn trim(&self, retention_days: u32, now_ms: i64) -> Result<u32, String>; // dropped
     pub fn clear(&self) -> Result<(), String>;
 }
 
-pub fn fold_sessions(records: &[Record]) -> Vec<HistorySession>;   // pure
+pub fn fold_records(lines: &[String]) -> FoldResult;                 // pure
 pub fn query_history(
-    sessions: Vec<HistorySession>,
+    fold: FoldResult,
     filters: &HistoryFilters,
     page: u32,
     page_size: u32,
-    now_ms: i64,
-) -> HistoryResponse;                                              // pure, unit-tested
+) -> HistoryResponse;                                                // pure, unit-tested
 ```
 
-`now_ms` is injectable for retention and date-preset boundary tests (`today` / `last7` /
-`last30` resolved against it). All file access serialized by the mutex. Registered in
+`now_ms` is injectable for retention boundary tests only (`trim`). Date filtering compares
+`started_at` against `filters.since_ms`, which the webview computes (§3.5). All file access
+serialized by the mutex. Registered in
 `lib.rs` setup; `queue.rs` reaches it via `app.state::<HistoryStore>()`.
 
 ---
@@ -348,12 +348,10 @@ Every filter change is a query to `get_history` — search and filters always ru
 
 | File | Purpose |
 |---|---|
-| `src/views/HistoryView.tsx` (rewrite) | composition, states, query wiring, pagination |
+| `src/views/HistoryView.tsx` (rewrite) | composition, states, query wiring, filter bar + session row + file table (single consumer today), pagination footer |
 | `src/hooks/useHistory.ts` | query/clear/refresh with filters + page, `history:error` toast listener |
-| `src/components/HistoryFilterBar.tsx` | search input + chip rows + selects + clear |
-| `src/components/HistorySessionRow.tsx` | session summary row + inline file table |
 | `src/components/HistoryPagination.tsx` | `Page X of Y` + Prev/Next |
-| `src/lib/historyFormat.ts` | pure presentation helpers: day grouping, durations, percent — unit-testable |
+| `src/lib/historyFormat.ts` | pure presentation helpers: day grouping/labels, durations, date-preset → `sinceMs` — unit-testable |
 | `src/types.ts` | `HistorySession`, `HistoryFile`, `HistoryFilters`, `HistoryResponse`, `HistorySummary` |
 
 - New shadcn components via CLI: `alert-dialog` (confirm). Toggle chips reuse existing

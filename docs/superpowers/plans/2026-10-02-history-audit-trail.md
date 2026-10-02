@@ -44,17 +44,21 @@
 - Produces: `Settings.history: HistorySettings` with `retention_days: u32`, serde-defaulted to 90 on missing/corrupt; `HistorySettings::effective_retention_days(&self) -> u32` clamping to `1..=3650` with 90 fallback for 0. Tasks 5, 8, 10 consume both.
 
 **Acceptance Criteria:**
-- `history` key serializes camelCase (`retentionDays`), roundtrips equal.
-- Missing / empty / corrupt `history` falls back to 90 via serde default.
-- Clamp pinned: 0 → 90, 5000 → 3650, valid values verbatim.
-- All Required Tests pass; gate green.
+- `history.retentionDays` roundtrips camelCase; max value 3650 roundtrips (spec §4.3).
+- Missing, empty (`{}`), and corrupt `history` all resolve to 90 without wiping other settings (spec §4.3, §5.8).
+- Clamp pinned including off-by-one neighbors: 0→90, 3649→3649, 3651→3650, 5000→3650 (spec §3.6).
+- All Required Tests pass.
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
 
 **Required Tests:**
 - `history_retention_defaults_to_90` — `Settings::default().history.retention_days == 90`
 - `history_serde_roundtrip_camel_case` — serialized JSON contains `history.retentionDays`; roundtrip equal
+- `history_retention_max_roundtrips` — 3650 survives a serialize/deserialize roundtrip
 - `parse_settings_value_missing_history_fills_default` — `{ "outputFolder": "/tmp/out" }` → 90
+- `parse_settings_value_empty_history_fills_default` — `{ "history": {} }` → 90 with `outputFolder` preserved (spec "old settings keep loading")
 - `parse_settings_value_corrupt_history_fills_default` — `{ "history": { "retentionDays": "lots" } }` → whole Settings falls back to defaults (existing corrupt-value convention)
-- `effective_retention_days_clamps` — (0→90, 1→1, 90→90, 3650→3650, 5000→3650)
+- `effective_retention_days_clamps` — 0→90, 1→1, 90→90, 3649→3649, 3650→3650, 3651→3650, 5000→3650
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -76,9 +80,28 @@ In `src-tauri/src/settings.rs` test module add:
     }
 
     #[test]
+    fn history_retention_max_roundtrips() {
+        let mut s = Settings::default();
+        s.history.retention_days = 3650;
+        let value = serde_json::to_value(&s).unwrap();
+        let roundtripped: Settings = serde_json::from_value(value).unwrap();
+        assert_eq!(roundtripped.history.retention_days, 3650);
+    }
+
+    #[test]
     fn parse_settings_value_missing_history_fills_default() {
         let parsed = parse_settings_value(Some(serde_json::json!({ "outputFolder": "/tmp/out" })));
         assert_eq!(parsed.history.retention_days, 90);
+    }
+
+    #[test]
+    fn parse_settings_value_empty_history_fills_default() {
+        let parsed = parse_settings_value(Some(serde_json::json!({
+            "outputFolder": "/tmp/out",
+            "history": {}
+        })));
+        assert_eq!(parsed.history.retention_days, 90);
+        assert_eq!(parsed.output_folder, "/tmp/out", "other settings preserved");
     }
 
     #[test]
@@ -92,7 +115,15 @@ In `src-tauri/src/settings.rs` test module add:
 
     #[test]
     fn effective_retention_days_clamps() {
-        for (raw, want) in [(0u32, 90u32), (1, 1), (90, 90), (3650, 3650), (5000, 3650)] {
+        for (raw, want) in [
+            (0u32, 90u32),
+            (1, 1),
+            (90, 90),
+            (3649, 3649),
+            (3650, 3650),
+            (3651, 3650),
+            (5000, 3650),
+        ] {
             let mut s = Settings::default();
             s.history.retention_days = raw;
             assert_eq!(s.history.effective_retention_days(), want, "raw={raw}");
@@ -174,6 +205,29 @@ git commit -m "feat(settings): add history.retentionDays with clamp"
   - `HistoryStore::file_path(&self) -> &Path` (test accessor)
   - `HistoryStore::append_session_start / append_file / append_session_end -> Result<(), String>`
   - `HistoryStore::read_lines(&self) -> Result<Vec<String>, String>` (pub(crate); `Ok(vec![])` when the file does not exist)
+  - `pub(crate) enum HistoryRecordRef<'a>::{SessionStart(&SessionStartRecord), File(&FileResultRecord), SessionEnd(&SessionEndRecord)}` — the single "type"-tagged serializer used by all three append methods (Task 6's helper takes `&HistoryRecordRef<'_>`; it must be `pub(crate)`, not private, because `queue.rs` is another module)
+
+**Acceptance Criteria:**
+- `new_in(dir)` resolves to `dir/history.jsonl`; append creates missing parent dirs and appends exactly one compact JSON line per call under a mutex (spec §3.1).
+- Records serialize exactly as spec §3.2 with camelCase keys and `type` discriminator `session_start` / `file` / `session_end`; optional fields serialize as `null` (spec §3.2 field notes).
+- `read_lines` returns `Ok(vec![])` for a missing file, filters blank lines, and returns `Err` (not panic, not empty) for IO failures — the error drives the UI error card (spec §5.6).
+- Concurrent appends from two threads produce 2N parseable, non-interleaved lines (spec §3.4 mutex guarantee).
+- All Required Tests pass.
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
+
+**Required Tests:**
+- `append_session_start_writes_camel_case_line` — tag + camelCase keys + values
+- `append_file_serializes_optional_fields_as_null` — nulls for outputPath/compressedSize; status verbatim
+- `append_session_end_writes_counts_and_cancelled` — camelCase counts keys (`bestEffort`, `alreadyUnderTarget`)
+- `read_lines_missing_file_returns_empty` — fresh store → `Ok(vec![])`
+- `read_lines_skips_blank_lines` — file ending `\n\n` / containing a blank line → no empty entries
+- `read_lines_io_error_returns_err` — `history.jsonl` replaced by a directory → `Err`, not `Ok(vec![])`
+- `append_creates_parent_directories` — `new_in(dir/a/b)` + append succeeds
+- `append_propagates_write_error` — `history.jsonl` occupied by a directory → `Err` starting `history write failed:`, no panic
+- `append_creates_file_and_appends_in_order` — two appends → two ordered lines
+- `append_session_end_roundtrips` — append → read → deserialize `SessionEndRecord` equal
+- `concurrent_appends_keep_lines_intact` — 2 threads × 25 appends → 50 parseable lines
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -313,8 +367,8 @@ In `src-tauri/src/history.rs` (above the test module), implement:
 
 - The five structs with `#[serde(rename_all = "camelCase")]` + `Serialize, Deserialize, Debug, Clone`. `Counts` derives the same; `SessionStartRecord`/`SessionEndRecord`/`Counts` derive `PartialEq` for test equality.
 - `HistoryStore { path: PathBuf, lock: Mutex<()> }` with `new_in(dir)` = `dir.join("history.jsonl")`, `file_path()` accessor.
-- Record-level serialization discriminator: a private `#[derive(Serialize)] #[serde(tag = "type", rename_all = "snake_case")] enum RecordRef<'a> { SessionStart(&'a SessionStartRecord), File(&'a FileResultRecord), SessionEnd(&'a SessionEndRecord) }` so the `"type"` tag lives in exactly one place. `append()` serializes `RecordRef` to a compact line, creates parent dirs (`create_dir_all`) if missing, opens with `OpenOptions::new().create(true).append(true)`, writes `line + "\n"` inside `self.lock`. Errors → `Err(format!("history write failed: {e}"))`.
-- `read_lines`: `NotFound` → `Ok(vec![])`; other errors → `Err(String)`; reads whole file inside the lock, returns non-empty lines.
+- Record-level serialization discriminator: a `pub(crate)` `#[derive(Serialize)] #[serde(tag = "type", rename_all = "snake_case")] enum HistoryRecordRef<'a> { SessionStart(&'a SessionStartRecord), File(&'a FileResultRecord), SessionEnd(&'a SessionEndRecord) }` so the `"type"` tag lives in exactly one place and `queue.rs` (Task 6) can name the type. `append()` serializes `HistoryRecordRef` to a compact line, creates parent dirs (`create_dir_all`) if missing, opens with `OpenOptions::new().create(true).append(true)`, writes `line + "\n"` inside `self.lock`. Errors → `Err(format!("history write failed: {e}"))`.
+- `read_lines`: `NotFound` → `Ok(vec![])`; other errors → `Err(String)`; reads whole file inside the lock, returns non-empty, trimmed lines (blank lines filtered).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -344,6 +398,33 @@ git commit -m "feat(history): add JSONL records and append store"
   - `FoldResult { sessions: Vec<HistorySession>, skipped_lines: usize }` — sessions newest-first by `started_at`
   - `pub fn fold_records(lines: &[String]) -> FoldResult` (pure)
   - `HistoryStore::load(&self) -> Result<FoldResult, String>`
+
+**Acceptance Criteria:**
+- Grouping by `sessionId`; files sorted by `completedAt`; sessions sorted newest-first by `startedAt` (spec §3.4).
+- Missing `session_end` ⇒ `interrupted: true`, `ended_at: null`, outcome + `total_saved_bytes` computed from recorded files with saturating subtraction (spec §3.4).
+- Present `session_end` ⇒ `ended_at`, `total_saved_bytes`, `cancelled`, and counts taken verbatim from the end record (spec §3.4).
+- Malformed JSON lines skipped + counted; unknown record `type`s ignored silently; orphan file/end lines (unknown session) skipped + counted (plan Task 3 implementation note; spec §3.3).
+- Duplicate `fileId` within a session: last record wins (spec §3.4).
+- All Required Tests pass.
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
+
+**Required Tests:**
+- `fold_single_complete_session` — end-derived values + quality passthrough
+- `fold_uses_session_end_values_verbatim` — end fixture values (totalSavedBytes 100, counts) win over file-derived values
+- `fold_missing_session_end_is_interrupted` — interrupted true, ended_at None, saved from files
+- `fold_interrupted_computes_all_six_status_counts` — outcome built from files across all six statuses
+- `fold_session_end_cancelled_flag` — `cancelled: true` in end record → session.cancelled
+- `fold_orders_sessions_newest_first_and_files_by_time` — ordering both axes
+- `fold_skips_malformed_counts_them_and_ignores_unknown_types` — malformed counted; unknown type silent
+- `fold_orphan_file_lines_are_skipped` — file for unknown session → skipped + counted
+- `fold_orphan_session_end_is_skipped` — end for unknown session → skipped + counted
+- `fold_duplicate_file_id_last_wins` — replace semantics
+- `fold_saturates_when_compressed_exceeds_original` — original 5, compressed 10 → saved 0, no panic
+- `fold_tolerates_absent_optional_keys` — keys entirely absent (not just null) parse
+- `fold_zero_file_interrupted_session_still_appears` — start-only session → session with empty files, Interrupted
+- `load_roundtrips_through_file` — start + file appended → load
+- `load_surfaces_read_error` — history.jsonl as a directory → `Err`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -543,15 +624,44 @@ git commit -m "feat(history): fold records into sessions with interrupted detect
   - `pub const DEFAULT_PAGE_SIZE: u32 = 50;`
 
 **Filter semantics (locked with spec §3.5):**
-- Date: `since_ms` absent or session `started_at >= since_ms` (inclusive). Session-level.
-- Output folder: exact match on session `output_folder`; `None` when a session has an empty folder (excluded by an active folder filter). Session-level.
-- Search: case-insensitive substring. File-level hit = name / path / output_path / error. **Session-level hit on `output_folder` keeps the session with `matched_files = None`.** Both hit → file set wins with `Some(n)`.
+- Date: `since_ms` absent or session `started_at >= since_ms` (inclusive). Session-level — compares `started_at`, never file times.
+- Output folder: exact match on session `output_folder`; a session with an empty folder is excluded by an active folder filter. Session-level.
+- Search: case-insensitive substring. File-level hit = name / path / output_path / error. **Session-level hit on `output_folder` keeps the session with `matched_files = None`** unless a file also hits (then the file set wins with `Some(n)`). `Some("")` or whitespace-only search is treated as absent (no filter); `Some(vec![])` for statuses/categories is treated as absent.
 - Status / categories: file-level; a session is visible when ≥1 file matches and only matching files are returned; `matched_files = Some(returned_len)`. Category compares against `HistoryFile.category`.
-- File-level filter active ⇔ any of search / statuses / categories present (search alone is file-level only when it also matches folder text? — no: search sets `matched_files = None` only when the hit is folder-only without file hits).
+- File-level filter active ⇔ (non-empty search that has file hits) OR non-empty statuses OR non-empty categories.
 - `output_folders`: distinct non-empty session folders, sorted, from the **unfiltered** fold.
-- `summary`: always the whole filtered set (independent of page): `files` = Σ displayed files (all files of visible sessions when `matched_files = None`, else matches); `saved_bytes` = Σ (`original_size - compressed_size`) saturating over those files; `failed_files` = count of `status == "failed"` over those files.
-- Ordering: sessions already newest-first; then stable page slice: effective page = `page.min(max(0, ceil(total/page_size) - 1))`; empty set → page 0.
-- `total_files` = same as `summary.files`.
+- `summary`: always the whole filtered set (independent of page): `files` = Σ displayed files (all files of visible sessions when `matched_files = None`, else matches); `saved_bytes` = Σ (`original_size - compressed_size`) saturating over those files; `failed_files` = count of `status == "failed"` over those files. `summary.sessions == total_sessions`; `total_files == summary.files`.
+- Ordering: sessions already newest-first; then stable page slice: `page_size` clamped to ≥1; effective page = `page.min(max(0, ceil(total/page_size) - 1))`; empty set → page 0.
+
+**Acceptance Criteria:**
+- Every filter combination narrows correctly over the full session set; file-level filters reduce each session's files and set `matchedFiles`; session-level-only matches keep `matchedFiles = null` (spec §3.5, §5.4).
+- Search positively covers name, source path, output path, error text, and session output folder; folder-only hit keeps all files (spec §5.4, review focus).
+- Totals and summary are page-independent and never split a session's file set across pages; page clamps for middle, last partial, beyond-end, and empty result; `page_size = 0` does not panic (spec §3.5).
+- `output_folders` is unfiltered, deduped, sorted, excludes empty folders (spec §3.5).
+- `since_ms` compares session `started_at` only — inclusive at the boundary (spec §3.5).
+- All Required Tests pass.
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
+
+**Required Tests:**
+- `query_returns_first_page_and_totals` — page 1 of 2, totals + summary
+- `query_page_middle_and_last_partial_page` — 5 sessions, page_size 2: pages 0/1/2 sizes 2/2/1
+- `query_page_beyond_end_clamps_to_last_page` — page 9 → last page
+- `query_empty_result_is_page_zero` — no matches → page 0, empty sessions, zeroed summary
+- `query_page_size_zero_is_safe` — no panic; effective size clamped (test calls with 0 and asserts a sane page slice)
+- `query_status_filter_reduces_files_and_counts_them` — file reduction + matchedFiles Some
+- `query_category_filter` — negative then positive
+- `query_search_hits_name_source_path_output_path_error_and_folder` — five positive targets + one negative; folder-only hit `matchedFiles = None`
+- `query_search_file_and_folder_hit_file_set_wins` — both hit → Some(n) with reduced files
+- `query_empty_and_whitespace_search_are_inactive` — `Some("")`/`Some("  ")` treated as absent
+- `query_empty_status_and_category_vecs_are_inactive` — toggling last chip off does not hide everything
+- `query_since_ms_inclusive_boundary` — at boundary included; one ms later excluded
+- `query_since_ms_uses_session_start_not_file_times` — session started before cutoff with a file after → excluded
+- `query_combined_filters` — since_ms + statuses + output_folder together
+- `query_summary_is_page_independent` — page 1 request returns page 0's totals/summary under filters
+- `query_never_splits_session_across_pages` — session with 2 files + page_size 1 → both files in the row
+- `query_output_folders_list_is_unfiltered_deduped_sorted` — active filter still returns all folders sorted
+- `query_output_folder_filter_excludes_empty_folder_sessions` — empty-folder session excluded by active filter
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -666,7 +776,9 @@ Expected: FAIL — `query_history` not defined.
 
 - [ ] **Step 3: Implement**
 
-In `src-tauri/src/history.rs` implement `query_history` per the semantics block above. Helpers: `matches_search(s: &str, needle: &str) -> bool` (lowercase contains); `file_hit(f, needle)`; `session_folder_hit(s, needle)`; `file_filters_active(filters) -> bool`; per-session reduction builds a clone with `files` reduced + `matched_files` set. `output_folders` sorted via `BTreeSet`. Keep everything pure (no IO) so tests are trivial.
+In `src-tauri/src/history.rs` implement `query_history` per the semantics block above. Helpers: `matches_search(s: &str, needle: &str) -> bool` (lowercase contains); `file_hit(f, needle)`; `session_folder_hit(s, needle)`; `file_filters_active(filters) -> bool` (empty/whitespace search and empty vecs count as inactive); per-session reduction builds a clone with `files` reduced + `matched_files` set. Clamp `page_size` to `max(1, page_size)` before the page math. `output_folders` sorted via `BTreeSet`, excluding empty strings. Keep everything pure (no IO) so tests are trivial.
+
+**Note on the `fold_repeated_session_start` edge (from analysis):** duplicate `session_start` for the same id resets the session header (last start wins) — add a one-line test `fold_repeated_session_start_last_wins` if it costs nothing; not required.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -695,7 +807,30 @@ git commit -m "feat(history): core-side query with filters, summary and paginati
   - `HistoryStore::trim(&self, retention_days: u32, now_ms: i64) -> Result<u32, String>` — rewrite only when `dropped > 0`; atomic via `history.jsonl.tmp` + `fs::rename`; returns dropped session count.
   - `HistoryStore::clear(&self) -> Result<(), String>` — remove file if present; also remove a stray `.tmp`.
 
-**Retention semantics:** session is dropped when `max(started_at, all file completed_at, ended_at) < now_ms - retention_days * 86_400_000` (strictly older). Missing `session_end` → newest record is max of start + files.
+**Retention semantics:** session is dropped when `max(started_at, all file completed_at, ended_at) < now_ms - retention_days * 86_400_000` (strictly older). Missing `session_end` → newest record is max of start + files. `retention_days = 0` is treated as 90 (callers clamp, but the pure function must still be safe).
+
+**Acceptance Criteria:**
+- Exactly-at-cutoff sessions are kept; strictly older drop — with `ended_at` counted as a session record (spec §3.6).
+- Whole session moves together; malformed, unknown-type, and orphan lines are never dropped (spec §3.6, forward compat).
+- Rewrite happens only when something drops; atomic temp-file + rename; on failure the original file is byte-identical (spec §3.1).
+- `clear()` is idempotent and also removes a stray `history.jsonl.tmp` (spec §3.6).
+- All Required Tests pass.
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
+
+**Required Tests:**
+- `trim_keeps_session_exactly_at_boundary` — edge kept, older dropped
+- `trim_newest_exactly_at_cutoff_kept` — session whose newest record == cutoff is kept (strict `<`)
+- `trim_ended_at_counts_as_newest_record` — old start + fresh end → kept; fresh start + old end → dropped
+- `trim_counts_files_after_start_for_interrupted_sessions` — file after start keeps the session
+- `trim_keeps_malformed_and_orphan_lines` — never dropped
+- `trim_keeps_unknown_type_lines_verbatim` — future record kinds survive
+- `trim_rewrites_only_when_something_drops_and_is_atomic` — dropped count, no tmp leftover, second trim no-op
+- `trim_failure_leaves_original_intact` — tmp path as directory → Err + bytes unchanged
+- `trim_missing_file_is_noop` — fresh store → Ok(0), no tmp created
+- `trim_stale_tmp_regular_file_is_replaced` — pre-existing regular tmp file does not break trim
+- `clear_removes_file_and_is_idempotent` — plus stray tmp removal
+- `clear_failure_returns_err` — history.jsonl as a non-empty directory → Err, data left in place
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -792,9 +927,9 @@ Expected: FAIL — `split_by_retention` not defined.
 
 - [ ] **Step 3: Implement**
 
-- `split_by_retention`: first pass parses lines into `(index, type, session_id, newest_ms)`; builds `drop: HashSet<String>` for sessions whose newest < cutoff; second pass keeps lines whose session is not in `drop`, plus all malformed/unknown/orphan lines; `dropped = drop.len()`.
-- `HistoryStore::trim`: `lines = read_lines()`; `(kept, dropped) = split_by_retention(...)`; if `dropped == 0` → `Ok(0)`; else write `history.jsonl.tmp` (`create_new` after removing a stale tmp file), `fs::rename(tmp, path)`, errors leave the original untouched; guard with the mutex.
-- `HistoryStore::clear`: remove `history.jsonl` (ignore `NotFound`) and any stale `history.jsonl.tmp` (ignore `NotFound`).
+- `split_by_retention`: first pass parses lines into `(index, type, session_id, newest_ms)`; builds `drop: HashSet<String>` for sessions whose newest < cutoff; second pass keeps lines whose session is not in `drop`, plus all malformed/unknown/orphan lines; `dropped = drop.len()`. Treat `retention_days == 0` as 90 inside the pure function.
+- `HistoryStore::trim`: `lines = read_lines()`; `(kept, dropped) = split_by_retention(...)`; if `dropped == 0` → `Ok(0)`; else write `history.jsonl.tmp` (remove a stale regular tmp file first with `remove_file`, ignore `NotFound`; do NOT remove a directory — that failure surfaces as Err), `fs::rename(tmp, path)`, errors leave the original untouched; guard with the mutex.
+- `HistoryStore::clear`: remove `history.jsonl` (ignore `NotFound`; a directory → Err) and any stale `history.jsonl.tmp` file (ignore `NotFound`) — a tmp directory also errors out so the failure is visible.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -825,7 +960,39 @@ git commit -m "feat(history): add 90-day retention trim and clear"
   - `history:error` event: `{ "message": String }`, emitted **once per batch** on the first write failure.
   - Private helper `fn append_history<R: tauri::Runtime>(app: &AppHandle<R>, record: HistoryRecordRef<'_>) -> Result<(), String>` — resolves `app.try_state::<HistoryStore>()`, missing store → `Ok(())` (tests that don't manage history still pass), write error → first-failure `history:error` emit (per-batch flag in `QueueState`), returns the error.
 
-**Write points:** `process_batch` after preflight passes → `append_session_start` (folder = settings `output_folder`, `file_count = file_ids.len()`). Every terminal outcome in `process_single_job` (done / best-effort / already-under-target, failed, cancelled, unsupported) → `append_file`. Cancel-all skipped files (both the sequential loop and the lane `on_skipped` closure) and the "cancelled while pending" skip paths → `append_file` with `status: "cancelled"`, `output_path: None`, `compressed_size: None`, `duration_ms: 0`. `finish_batch` → `append_session_end` (counts over all recorded file records, `cancelled` = batch was cancelled) then `trim(effective_retention_days, now_ms)`.
+**Write points:** `process_batch` after preflight passes → `append_session_start` (folder = settings `output_folder`, `file_count = file_ids.len()` — **capture `file_ids.len()` before the N≤1 loop, which consumes the vec by value at `queue.rs:222`**). Every terminal outcome in `process_single_job` (done / best-effort / already-under-target, failed, cancelled, unsupported) → `append_file`. Cancel-all skipped files (both the sequential loop and the lane `on_skipped` closure) and the "cancelled while pending" skip paths → `append_file` with `status: "cancelled"`, `output_path: None`, `compressed_size: None`, `duration_ms: 0`. `finish_batch` → `append_session_end` (counts over all recorded file records, `cancelled` = batch was cancelled — **read the cancellation state before `finish_batch` removes the batch token at `queue.rs:505`**) then `trim(effective_retention_days, now_ms)` (trim failure is logged, never propagated).
+
+**Status string format (must not drift):** `FileResultRecord.status` is the snake_case `FileStatus` string exactly as serialized by serde (`"done"`, `"best_effort"`, `"already_under_target"`, `"failed"`, `"cancelled"`, `"unsupported"`) — never `format!("{:?}")` (which would emit `"AlreadyUnderTarget"` and silently break Task 4 filters). Add a helper `fn status_key(status: &FileStatus) -> &'static str` with an exhaustive match.
+
+**Acceptance Criteria:**
+- Preflight failure writes nothing (no phantom session); successful preflight writes `session_start` with the settings folder and the batch's file count (spec §4.1).
+- Every terminal outcome is recorded exactly once per file, including unsupported (early-return branch) and cancel-all skips in both sequential and lane paths (spec §4.1).
+- Cancel-skipped records carry original sizes, `outputPath`/`compressedSize` null, `durationMs` 0; processed records carry positive duration (spec §3.2).
+- `session_end` carries worker-accumulated counts (all six statuses) and totals matching the recorded file lines; `cancelled` true only for cancel-all batches (spec §3.2).
+- History write failure: batch still completes with normal events; at most one `history:error` `{ message }` per batch; missing `HistoryStore` state → recording silently no-ops (spec §4.1, §5.8).
+- `FileCompletePayload` gains `qualityUsed` / `strategyUsed`, additive (spec §3.2).
+- Existing queue tests unchanged and green (spec AC8).
+- All Required Tests pass.
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
+
+**Required Tests:**
+- `history_counts_map_all_statuses` — six counted, `"pending"` excluded
+- `file_complete_payload_carries_strategy_fields` — camelCase additive keys
+- `failed_batch_writes_session_records` — start + 2 files + end, not interrupted, counts exact
+- `session_end_totals_match_accumulated_records` — totalSavedBytes + all six counts exactness
+- `preflight_failure_writes_nothing` — sessions empty
+- `cancel_all_records_cancelled_files` — every id once; failed + cancelled == 3
+- `sequential_cancel_all_records_cancelled` — max_concurrent "1" path records cancelled skips
+- `cancel_skipped_records_have_zero_duration_and_no_output` — duration 0, output null, sizes from entry
+- `unsupported_outcome_recorded` — Category::Other → status `unsupported`, nulls for output/quality/strategy
+- `history_write_failure_does_not_fail_batch` — history path unwritable → batch:complete still fires, file outcomes unchanged
+- `history_error_emitted_once_per_batch` — persistent failure across 2 files → exactly 1 `history:error` `{ message }`
+- `missing_store_still_completes_batch` — no HistoryStore managed → batch completes normally
+- `finish_batch_trims_old_history` — seeded 11-day-old session + retention 10 → gone after batch
+- `session_start_output_folder_matches_settings` — folder equals settings value
+- `duration_ms_positive_for_processed_outcome` — processed file record has duration_ms > 0 (sidecar-less failure path still measures)
+- `status_key_snake_case` — `status_key` returns `"already_under_target"` etc. (exhaustive match pinned)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -972,12 +1139,14 @@ Expected: FAIL — `history_counts_of` not defined / history assertions fail.
 In `queue.rs`:
 - Import `crate::history::{...}`; add `use tauri::Manager;` for `try_state` (already imported).
 - Add `quality_used: Option<u32>, strategy_used: Option<String>` to `FileCompletePayload`; fill from `compression_result.quality_used` / `.strategy_used` for successful jobs; `None` everywhere else.
-- Accumulator: thread-safe per batch — add to `QueueState`: `history_counts: Mutex<HashMap<String, Vec<crate::history::FileResultRecord>>>` keyed by batch id; worker pushes each recorded file record there; `finish_batch` drains the vector, computes `history_counts_of`, writes `session_end`, calls `trim` with `crate::settings::Settings` loaded from `load_settings(app)` (call `load_settings` in `finish_batch`; it is already pub).
-- `history:error` once-per-batch: add `history_error_sent: Mutex<HashSet<String>>` keyed by batch id; helper clears entries on `finish_batch`.
+- `fn status_key(status: &FileStatus) -> &'static str` — exhaustive match to the serde snake_case strings; all history `status` values come from this helper.
+- Accumulator: thread-safe per batch — add to `QueueState`: `history_records: Mutex<HashMap<String, Vec<crate::history::FileResultRecord>>>` keyed by batch id; worker pushes each recorded file record there; `finish_batch` drains the vector, computes `history_counts_of`, writes `session_end`, calls `trim` with `crate::settings::Settings` loaded from `load_settings(app)` (call `load_settings` in `finish_batch`; it is already pub). `trim` errors are logged via `eprintln!`, never propagated.
+- `history:error` once-per-batch: add `history_error_sent: Mutex<HashSet<String>>` keyed by batch id; helper checks+inserts before emitting; `finish_batch` removes the batch's entry.
+- Write-failure test technique: point the store at a path whose parent is a regular file (e.g. `HistoryStore::new_in(&blocker.join("child"))`) or put a directory at `history.jsonl` — `append` must return Err; the batch must still complete.
 - `duration_ms`: measure `std::time::Instant::now()` at job start, `elapsed().as_millis() as u64` at each terminal outcome.
-- Unsupported branch currently returns before the generic match — record there too (`status "unsupported"`, no sizes/output).
-- Cancel-skip paths: sequential loop cancel-all branch, lane `on_skipped`, and the two "cancelled while pending" guards in `process_single_job` → record `cancelled` with original sizes from the entry.
-- Wrap helper: `fn record_file<R: Runtime>(app, batch_id, entry, status, output_path, compressed_size, quality_used, strategy_used, error, duration_ms)` builds the record, pushes to the accumulator, appends.
+- Unsupported branch currently returns before the generic match — record there too (`status "unsupported"`, no sizes/output, duration measured).
+- Cancel-skip paths: sequential loop cancel-all branch, lane `on_skipped`, and the "cancelled while pending" guards in `process_single_job` → record `cancelled` with original sizes from the entry.
+- Wrap helper: `fn record_file<R: Runtime>(app, batch_id, entry, status, output_path, compressed_size, quality_used, strategy_used, error, duration_ms)` builds the record with `status_key`, pushes to the accumulator, appends via the `HistoryRecordRef::File` variant.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1002,11 +1171,34 @@ git commit -m "feat(queue): record session, file and end records to history"
 **Interfaces:**
 - Consumes: `HistoryStore` (Tasks 2–5), `query_history` (Task 4).
 - Produces:
-  - `pub async fn get_history(filters: crate::history::HistoryFilters, page: u32, page_size: u32, app: tauri::AppHandle) -> Result<crate::history::HistoryResponse, String>` — clamps `page_size` to `1..=200` (0 → 50); folds + queries; missing store → all-empty `HistoryResponse`.
+  - `pub async fn get_history(filters: crate::history::HistoryFilters, page: u32, page_size: u32, app: tauri::AppHandle) -> Result<crate::history::HistoryResponse, String>` — clamps `page_size` to `1..=200` (0 → 50, so `pageSize 0` → 50 and `500` → 200); folds + queries; missing store → all-empty `HistoryResponse` with the requested page and clamped size.
   - `pub fn clear_history(app: tauri::AppHandle) -> Result<(), String>`
-  - `pub fn open_folder(path: String, app: tauri::AppHandle) -> Result<(), String>` — `opener().open_path`, error copy `Could not open folder {path}: {e}`
-  - `lib.rs`: `mod history;`, manage `HistoryStore` in setup (`HistoryStore::new(app.handle())` — falls back to a store under `app_data_dir`; if app_data_dir is unavailable, log + skip managing, and Task 8's missing-store paths keep the app functional), register the three commands, and run startup `trim` via `settings.history.effective_retention_days()` + `now_ms`.
-  - `HistoryStore::new<R: Runtime>(app: &AppHandle<R>) -> Result<HistoryStore, String>` — `app.path().app_data_dir()` + `create_dir_all`.
+  - `pub fn open_folder(path: String, app: tauri::AppHandle) -> Result<(), String>` — `opener().open_path(path, None::<&str>)`, error copy `Could not open folder {path}: {e}`
+  - `lib.rs`: `mod history;`, manage `HistoryStore` in setup (`HistoryStore::new(app.handle())` — app_data_dir + `create_dir_all`; if app_data_dir is unavailable, log + skip managing, missing-store paths keep the app functional), register the three commands, and run startup `trim` via `settings.history.effective_retention_days()` + `now_ms` (trim failure logs, app still launches).
+  - `HistoryStore::new<R: Runtime>(app: &AppHandle<R>) -> Result<HistoryStore, String>`
+  - `commands.rs` needs `use tauri::Manager;` added for `app.try_state::<HistoryStore>()` (current imports only carry `State`; `Manifest` — verified `Manager::try_state` requires the trait in scope).
+
+**Acceptance Criteria:**
+- `get_history` clamps `pageSize` (0→50, 500→200) in both the query and the echoed response; missing store returns an empty response, never `Err` (spec §4.2, review focus).
+- `get_history` propagates load errors as `Err` so the UI error card can render (spec §5.6).
+- `clear_history` success/idempotent; failure returns `Err` leaving data in place (spec §5.8).
+- `open_folder` error copy pinned `Could not open folder {path}: {e}` (spec §4.2).
+- Startup trim runs with effective retention and never blocks launch; trim failure logged (spec §3.6).
+- All Required Tests pass.
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
+
+**Required Tests:**
+- `page_size_clamps_helper` — 0→50, 1→1, 200→200, 201→200
+- `get_history_empty_response_when_store_missing` — helper-level: clamped page/size echoed, empty totals, `summary` default, no error
+- `get_history_end_to_end_filters_pagination_skipped_lines` — tempdir store with valid + corrupt lines: filtered sessions, totals, `skippedLines > 0`
+- `get_history_propagates_load_error` — history.jsonl as a directory → `Err`
+- `get_history_clamped_page_size_in_response` — response.pageSize reflects the clamp
+- `clear_history_removes_file_and_is_idempotent` — command-level success + second call ok
+- `clear_history_error_when_remove_fails` — directory in place → `Err`
+- `open_folder_error_path` — nonexistent path → `Err` starting `Could not open folder `
+- `startup_trim_runs_with_effective_retention` — seeded old session + retention 10 → trimmed on setup-equivalent call
+- `missing_app_data_dir_skips_manage_and_app_still_works` — `HistoryStore::new` error branch is tolerated (helper-level test of the fallback path)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1020,6 +1212,59 @@ In `commands.rs` test module (pure):
         assert_eq!(clamp_page_size(200), 200);
         assert_eq!(clamp_page_size(201), 200);
     }
+
+    #[test]
+    fn empty_history_response_echoes_clamped_page() {
+        let resp = empty_history_response(9, 0);
+        assert_eq!(resp.page_size, 50);
+        assert_eq!(resp.total_sessions, 0);
+        assert_eq!(resp.sessions.len(), 0);
+        assert_eq!(resp.summary.files, 0);
+    }
+
+    #[test]
+    fn get_history_over_tempdir_store_filters_and_counts_skipped() {
+        use crate::history::{HistoryFilters, HistoryStore};
+        let dir = tempfile::tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store.append_session_start(&crate::history::SessionStartRecord {
+            session_id: "s1".into(), started_at: 100, file_count: 1,
+            output_folder: "/out".into(),
+        }).unwrap();
+        store.append_file(&crate::history::FileResultRecord {
+            session_id: "s1".into(), file_id: "f1".into(), completed_at: 101,
+            name: "a.jpg".into(), path: "/in/a.jpg".into(),
+            output_path: Some("/out/a.jpg".into()), category: "image".into(),
+            target_bytes: 1, original_size: 5, compressed_size: Some(1),
+            status: "done".into(), quality_used: Some(70),
+            strategy_used: Some("quality=70".into()), error: None, duration_ms: 3,
+        }).unwrap();
+        std::fs::OpenOptions::new().append(true).open(store.file_path()).unwrap()
+            .write_all(b"garbage\n").unwrap();
+
+        let fold = store.load().unwrap();
+        let resp = crate::history::query_history(fold, &HistoryFilters::default(), 0, 50);
+        assert_eq!(resp.total_sessions, 1);
+        assert_eq!(resp.skipped_lines, 1);
+    }
+
+    #[test]
+    fn trim_runs_with_effective_retention_from_settings() {
+        use crate::history::HistoryStore;
+        use crate::settings::Settings;
+        let dir = tempfile::tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store.append_session_start(&crate::history::SessionStartRecord {
+            session_id: "old".into(), started_at: 0, file_count: 1,
+            output_folder: "/o".into(),
+        }).unwrap();
+        let mut settings = Settings::default();
+        settings.history.retention_days = 10;
+        let dropped = store
+            .trim(settings.history.effective_retention_days(), 100 * 86_400_000)
+            .unwrap();
+        assert_eq!(dropped, 1);
+    }
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1030,10 +1275,10 @@ Expected: FAIL — `clamp_page_size` not defined.
 - [ ] **Step 3: Implement**
 
 - `fn clamp_page_size(n: u32) -> u32` (private, tested); `get_history` uses it.
-- `get_history`: `app.try_state::<HistoryStore>()` → `None` ⇒ `Ok(empty_response(page, clamped))`; `Some(store)` ⇒ `fold = store.load()?` then `Ok(query_history(fold, &filters, page, clamped))`. Mark `async` and keep the body synchronous (async command runs off the main thread).
-- `clear_history` / `open_folder` as above; `open_folder` reuses the plugin (`tauri_plugin_opener::OpenerExt`), matching `reveal_in_folder` error style (`commands.rs:232-237`).
-- `lib.rs`: add `mod history;` (Task 2 added the declaration — confirm it exists once), `use history::HistoryStore`, manage in setup after `QueueState`, call `trim` right after managing (log `dropped` at debug via `eprintln!` only on error), register commands in `invoke_handler`.
-- Empty response helper: `HistoryResponse { sessions: vec![], page: 0, page_size: clamped, total_sessions: 0, total_files: 0, summary: HistorySummary::default(), output_folders: vec![], skipped_lines: 0 }` (`HistorySummary` derives `Default`).
+- `fn empty_history_response(page: u32, requested_size: u32) -> HistoryResponse` — echoes clamped `page_size`, `page: 0`.
+- `get_history`: `app.try_state::<HistoryStore>()` → `None` ⇒ `Ok(empty_history_response(page, page_size))`; `Some(store)` ⇒ `fold = store.load()?` then `Ok(query_history(fold, &filters, page, clamp_page_size(page_size)))`. Mark `async` and keep the body synchronous (async command runs off the main thread). Add `use tauri::Manager;` to `commands.rs` for `try_state`.
+- `clear_history` / `open_folder` as above; `open_folder` reuses the plugin (`tauri_plugin_opener::OpenerExt`) with `open_path(path, None::<&str>)`, matching `reveal_in_folder` error style (`commands.rs:232-237`).
+- `lib.rs`: add `mod history;` (Task 2 added the declaration — confirm it exists once), `use history::HistoryStore`, manage in setup after `QueueState`, call `trim` right after managing (log errors via `eprintln!`; never fail setup), register commands in `invoke_handler`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1070,10 +1315,41 @@ git commit -m "feat(ipc): add get_history, clear_history and open_folder command
   - `clearHistory` invokes `clear_history`, then `refresh()`; on failure `toast.error('Could not clear history')` + rethrow suppressed.
   - `clearError()` resets the error banner state for Retry.
 - `src/lib/historyFormat.ts`:
-  - `export function formatDuration(ms: number): string` — `<1s` → `1s`-style: `45s`, `1m 42s`, `2h 05m`; 0 → `—`.
+  - `export function formatDuration(ms: number): string` — exact semantics: `0` or negative → `—`; `1..59_999` → floored seconds with a 1s minimum (`999` → `1s`, `45_000` → `45s`, `59_999` → `59s`); `60_000..3_599_999` → `Xm YYs` zero-padded (`102_000` → `1m 42s`, `60_000` → `1m 00s`); `≥3_600_000` → `Xh YYm` zero-padded (`7_500_000` → `2h 05m`).
   - `export function presetSinceMs(preset: 'today' | 'last7' | 'last30' | 'all', now: Date): number | undefined` — `all` → `undefined`; else local midnight of the range start (today = `new Date(y,m,d)`; last7 = today − 6 days; last30 = today − 29 days).
   - `export function dayKey(ms: number): string` and `export function dayLabel(ms: number, now: Date): string` — `Today` / `Yesterday` / localized date via `Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: ... })` (year omitted in the current year).
   - Reuse `formatSize` from `@/components/FileList` for all size rendering (import where needed).
+
+**Acceptance Criteria:**
+- Types match Rust camelCase field-for-field, including `SessionOutcome` mirroring `Counts` (spec §3.2, §5.7).
+- `setFilters` merges partials and resets page to 0; unchanged filters are a no-op identity (no redundant refetch); stale responses never overwrite newer ones (spec §5.4).
+- Hook refetches on mount, filter/page change, manual refresh, and `batch:complete`; unlistens on unmount; `history:error` maps to the pinned toast copy; load rejection surfaces `error` (spec §5.6, §4.1).
+- `presetSinceMs` uses local midnight via `Date` construction, correct on DST transition days and year rollover; `all` → `undefined` (spec §3.5, §8 risks).
+- `dayKey` groups by local calendar day; `dayLabel` renders Today/Yesterday/localized with year only when not the current year (spec §5.2).
+- All Required Tests pass.
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
+
+**Required Tests:**
+- `formats durations` — 0→`—`, 45s, 1m 42s, 2h 05m
+- `formatDuration_boundaries` — 999/1000 ms, 59_999/60_000, 3_599_999/3_600_000, negative → `—`
+- `maps presets to local midnights` — today/last7/last30/all
+- `presetSinceMs_dst_transition_days` — US spring-forward and fall-back local dates resolve to local midnight, not ±1h
+- `presetSinceMs_year_rollover` — Jan 1 `last7` → Dec 26 previous year
+- `labels today and yesterday` — plus cross-month and different-year label (year shown)
+- `dayKey_same_day_and_midnight_boundary` — 09:00 and 23:59 same key; next day differs
+- `loads on mount` — invoke payload `{ filters: {}, page: 0, pageSize: 50 }`
+- `setFilters merges and resets page` — page 2 → filter change → page 0 payload
+- `setFilters unchanged keeps identity` — same value → no new invoke
+- `refetches on batch:complete` — invoke count grows
+- `toasts on history:error` — pinned copy
+- `load rejection sets error` — rejected invoke → `error` set, `loading` false
+- `clearHistory refetches` — clear_history called + response updated
+- `clearHistory failure toasts` — rejection → `toast.error('Could not clear history')`, response kept
+- `clearError resets error` — Retry dependency
+- `manual refresh refetches` — refresh() triggers a new invoke
+- `unlisten on unmount` — registry handlers removed
+- `stale response ignored` — two invokes resolved out of order → newest wins
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1104,7 +1380,37 @@ describe('historyFormat', () => {
     const now = new Date(2026, 9, 2, 14, 30)
     expect(dayLabel(new Date(2026, 9, 2, 9, 0).getTime(), now)).toBe('Today')
     expect(dayLabel(new Date(2026, 9, 1, 9, 0).getTime(), now)).toBe('Yesterday')
-    expect(dayLabel(new Date(2026, 8, 20).getTime(), now)).toMatch(/Sep/)
+    const sep = dayLabel(new Date(2026, 8, 20).getTime(), now)
+    expect(sep).toMatch(/Sep/)
+    expect(sep).not.toMatch(/2026/)
+    expect(dayLabel(new Date(2025, 8, 20).getTime(), now)).toMatch(/2025/)
+  })
+
+  it('pins DST transition midnights and year rollover', () => {
+    const spring = new Date(2026, 2, 8, 15, 0)
+    expect(presetSinceMs('today', spring)).toBe(new Date(2026, 2, 8).getTime())
+    const fall = new Date(2026, 10, 1, 15, 0)
+    expect(presetSinceMs('today', fall)).toBe(new Date(2026, 10, 1).getTime())
+    const rollover = new Date(2027, 0, 1, 1, 0)
+    expect(presetSinceMs('last7', rollover)).toBe(new Date(2026, 11, 26).getTime())
+  })
+
+  it('keys days by local calendar date', () => {
+    const now = new Date(2026, 9, 2, 14, 30)
+    const morning = new Date(2026, 9, 2, 9, 0).getTime()
+    const night = new Date(2026, 9, 2, 23, 59).getTime()
+    const nextDay = new Date(2026, 9, 3, 0, 1).getTime()
+    expect(dayKey(morning)).toBe(dayKey(night))
+    expect(dayKey(morning)).not.toBe(dayKey(nextDay))
+  })
+
+  it('formats duration boundaries', () => {
+    expect(formatDuration(-5)).toBe('—')
+    expect(formatDuration(999)).toBe('1s')
+    expect(formatDuration(1_000)).toBe('1s')
+    expect(formatDuration(59_999)).toBe('59s')
+    expect(formatDuration(60_000)).toBe('1m 00s')
+    expect(formatDuration(3_600_000)).toBe('1h 00m')
   })
 })
 ```
@@ -1234,14 +1540,57 @@ git commit -m "feat(history): add frontend types, query hook and format helpers"
 - Produces: exported `HistoryView` (same name/signature, App.tsx unchanged), `HistoryPagination` component.
 
 **UI composition (spec §5):**
-- Filter bar (pinned): search `Input` (placeholder "Search name, path, error…", Esc clears), Status chips (6 toggle buttons, `aria-pressed`), Category chips (5), Date `Select` (4 presets, default All time), Output folder `Select` (options from `response.outputFolders`, plus an "All folders" reset), `Clear filters` button + active count when any filter set.
-- Summary line (pinned): from `response.summary` — `{sessions} sessions · {files} files · {saved} saved · {failed} failed`; `Clear history` button (destructive ghost) → `AlertDialog` confirm (title "Clear history?", body "Permanently deletes all compression history. Files on disk are not affected.", confirm button "Delete history") → `clearHistory`.
+- Filter bar (pinned): search `Input` (placeholder "Search name, path, error…", Esc clears), Status chips (6 toggle buttons, `aria-pressed`), Category chips (5), Date `Select` (4 presets, default All time), Output folder `Select` (options from `response.outputFolders`, plus an "All folders" reset), `Clear filters` button + active count when any filter set. Date preset maps through `presetSinceMs` → `sinceMs` filter (omit when undefined).
+- Summary line (pinned): from `response.summary` — `{sessions} sessions · {files} files · {saved} saved · {failed} failed`; `Clear history` button (destructive ghost) → `AlertDialog` confirm (title "Clear history?", body "Permanently deletes all compression history. Files on disk are not affected.", confirm button "Delete history", cancel dismisses) → `clearHistory`.
 - `skippedLines > 0` → muted notice line above the list.
-- Session list: sticky day headers (`dayLabel`), each session = disclosure `<button aria-expanded aria-controls aria-label="Toggle session details">` row: time (`Intl`), `fileCount`/`N matches` label, `original → compressed` (Σ original, Σ compressed over displayed files), `% saved`, `formatDuration(endedAt - startedAt)` (or `—` when interrupted), Interrupted/Cancelled chip, outcome chips (icon + text; count from `outcome` filtered to displayed files when `matchedFiles != null`), `Open output folder` icon button (disabled when no file has `outputPath`).
-- Expanded file table (semantic `<table>`): File (name + muted parent dir, title = full path), Type badge, Status → reuse status presentation (copy the label/style maps or export from FileList — do **not** refactor FileList), Target (`formatSize`), Result (`x → y · z%` or `—`), error inline under name in destructive text, Actions: reveal output (disabled without `outputPath`), copy output path, reveal source, copy source path — each `aria-label`ed; copy uses `navigator.clipboard.writeText` + `toast.success('Path copied')`.
+- Session list: sticky day headers (`dayLabel`), each session = disclosure `<button aria-expanded aria-controls aria-label="Toggle session details">` row: time (`Intl`), `fileCount`/`N matches` label (singular "1 match" / plural "N matches"), `original → compressed` (Σ original, Σ compressed over displayed files), `% saved`, `formatDuration(endedAt - startedAt)` (or `—` when interrupted), Interrupted/Cancelled chip, outcome chips (icon + text; count from `outcome` filtered to displayed files when `matchedFiles != null`), `Open output folder` icon button (disabled when no file has `outputPath`).
+- Expanded file table (semantic `<table>` with `aria-label`): File (name + muted parent dir, title = full path), Type badge, Status → reuse status presentation (copy the label/style maps from `FileList.tsx:67-104` — no export exists, do **not** refactor FileList), Target (`formatSize`), Result (`x → y · z%` or `—`), error inline under name in destructive text, Actions: reveal output (disabled without `outputPath`), copy output path (same), reveal source, copy source path — each `aria-label`ed; reveal calls `invoke('reveal_in_folder', { filePath })`; copy uses `navigator.clipboard.writeText` + `toast.success('Path copied')`, failure → `toast.error('Could not copy path')`.
 - Auto-expand: sessions with `matchedFiles != null` start expanded; user toggles override per session id (state map reset when `response` identity changes).
-- Pagination footer: `HistoryPagination { page, pageSize, totalSessions, onPageChange }` → `Page X of Y` + Prev/Next (disabled bounds).
+- Pagination footer: `HistoryPagination { page, pageSize, totalSessions, onPageChange }` → `Page X of Y` + Prev/Next (Prev disabled page 0, Next disabled last page).
 - States: loading → 3 skeleton rows; error → card + Retry (`clearError` + `refresh`); empty (no filters, zero sessions) → existing Empty card copy "Compressed files and their results will appear here."; no matches → Empty "No matches" + `Clear filters`.
+
+**Acceptance Criteria:**
+- Filter bar produces correct `get_history` payloads for every control (search debounce + Esc, status/category chips, date preset → `sinceMs`, output folder, Clear filters, active count); any filter change resets page to 0 (spec §5.4, review focus).
+- Summary bar renders `response.summary` (page-independent), not per-page sums (spec §5.5, review focus).
+- Sessions group under day headers; disclosure is keyboard-operable (Enter/Space, `aria-expanded`/`aria-controls`), collapsed by default; `matchedFiles != null` sessions auto-expand with `N matches` and user toggle overrides (spec §5.2, §5.4).
+- Actions: reveal/copy source and output invoke the right commands with the right paths; disabled states when `outputPath` is null; `Open output folder` disabled when the session has no outputs (spec §5.3, §5.8, AC4).
+- States: loading skeletons, error + Retry, empty, no-matches + Clear filters, skipped-lines notice (spec §5.6).
+- Clear history confirms via AlertDialog; dismiss does nothing; confirm invokes (spec §5.5).
+- Day headers render `Today`/`Yesterday`/localized dates (spec §5.2).
+- All Required Tests pass.
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
+
+**Required Tests:**
+- `renders empty state when history is empty` — `No history yet` empty card
+- `shows loading skeleton rows` — 3 skeletons while pending
+- `load error card retries` — error card + Retry clears error and refetches
+- `renders a session row with outcome chips and metrics` — aria-expanded false, chips
+- `groups sessions by day headers` — two sessions on different days → Today + Yesterday headers
+- `expands on keyboard and shows the file table with inline errors` — Enter expand, error text
+- `disclosure space toggles and collapse works` — Space toggles open then closed; `aria-controls` target exists
+- `shows Interrupted chip for interrupted sessions` — `Interrupted` text; duration `—`
+- `shows Cancelled chip for cancelled sessions` — `Cancelled` text
+- `search input debounces into a filtered query` — payload `{ search, page: 0 }` after 300 ms
+- `esc clears search` — Esc → filter removed
+- `status chips produce payload and aria-pressed` — click failed chip → payload statuses; pressed state
+- `date preset maps to sinceMs payload` — Today → sinceMs present; All time → absent
+- `output folder select produces payload` — folder chosen → filter; All folders → removed
+- `clear filters resets all and page` — active count gone, payload empty
+- `filter change resets page from pagination` — page 2 → chip click → page 0 request
+- `renders pagination and requests next page` — `Page 1 of 3`, Next → page 1
+- `pagination prev next bounds` — Prev disabled page 0; Next disabled last page
+- `summary bar renders response summary` — page-independent numbers from `response.summary`
+- `auto-expands filtered sessions with match count` — `1 match`, table visible
+- `session level matches stay collapsed and show all files when opened` — `matchedFiles: null` → no auto-expand
+- `user toggle overrides auto expand` — click collapse on auto-expanded session stays collapsed
+- `clear history confirms before invoking` — confirm button → `clear_history`
+- `clear history cancel does not invoke` — dismiss → no call
+- `copy output path writes clipboard and toasts` — `writeText` called + toast
+- `reveal actions invoke with correct paths` — output reveal → outputPath; source reveal → path
+- `actions disabled without output path` — reveal/copy output disabled; still enabled for source
+- `copy failure toasts` — clipboard rejection → error toast
+- `shows a notice when lines were skipped` — muted notice
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1322,7 +1671,7 @@ Rewrite `src/views/HistoryView.test.tsx` (GPL header + mock `@tauri-apps/api/cor
   })
 ```
 
-Also update the old `renders history empty state` test (keeps asserting `[data-slot="empty"]` with new copy) and check `src/App.test.tsx:122-124` still passes (History heading removed by design — it asserts absence, so it should pass).
+Also update the old `renders history empty state` test (keeps asserting `[data-slot="empty"]` with new copy). Fix `src/App.test.tsx`: its `invoke` mock currently resolves `undefined`, but the new HistoryView calls `get_history` on mount (`App.test.tsx:48`, `:122`) — configure the mock to resolve an empty `HistoryResponse` so the click-through tests do not skeleton-flake (the History heading assertion spans `:122-125`).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1332,10 +1681,11 @@ Expected: FAIL — new UI not implemented.
 - [ ] **Step 3: Implement**
 
 - `yarn dlx shadcn@latest add alert-dialog` then adapt to base-ui composition if the CLI emits Radix-style (existing repo components are base-ui — follow `dropdown-menu.tsx` patterns).
-- Add a small `copyToClipboard(text: string)` helper inside `HistoryView.tsx` (`navigator.clipboard.writeText` → toast; catch → `toast.error('Could not copy path')`).
+- Add a small `copyToClipboard(text: string)` helper inside `HistoryView.tsx` (`navigator.clipboard.writeText` → `toast.success('Path copied')`; catch → `toast.error('Could not copy path')`).
 - Build the view per composition above; keep files focused: session row + file table in `HistoryView.tsx` (single consumer today), pagination in its own component file.
-- Status chip styling: reuse the dot+label pattern from `FileList.tsx:67-104` by copying the maps into the view (no FileList refactor — YAGNI).
-- A11y: disclosure buttons get `aria-expanded`/`aria-controls`; day headers non-interactive; every icon button labelled; table has a `<caption className="sr-only">` or `aria-label`; chips are `<button aria-pressed>`.
+- Status chip styling: copy the dot+label maps from `FileList.tsx:67-104` into the view (no export exists; no FileList refactor — YAGNI).
+- A11y: disclosure buttons get `aria-expanded`/`aria-controls`; day headers non-interactive; every icon button labelled; table has an `aria-label`; chips are `<button aria-pressed>`.
+- Search input debounce lives in the view (300 ms) before calling `setFilters`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1354,12 +1704,27 @@ git commit -m "feat(history): build filterable session list UI with pagination"
 ### Task 10: Settings History card
 
 **Files:**
-- Modify: `src/views/SettingsView.tsx`, `src/views/SettingsView.test.tsx`, `src/hooks/useSettings.test.ts` (only if the fixture Settings object is typed — add `history`)
+- Modify: `src/views/SettingsView.tsx`, `src/views/SettingsView.test.tsx`, `src/hooks/useSettings.test.ts` (typed fixture — REQUIRED: add `history`), `src/types.ts` (`Settings.history` was added in Task 8's types update)
 - Test: `src/views/SettingsView.test.tsx`
 
 **Interfaces:**
-- Consumes: `Settings.history.retentionDays` (type in Task 8's `types.ts` update: add `history: { retentionDays: number }` to `Settings`), existing `NumberStepper`, `Card` composition (`SettingsView.tsx:268-401`).
-- Produces: new **History** card (between Quality Floors and the footer) with `NumberStepper` min 1 max 3650 + description; `updateHistoryRetention` draft updater.
+- Consumes: `Settings.history.retentionDays` (type added in Task 8), existing `NumberStepper`, `Card` composition (`SettingsView.tsx:268-401`).
+- Produces: new **History** card (between Quality Floors and the footer) with `NumberStepper` min 1 max 3650 + description "Sessions older than this are removed automatically. Files on disk are never deleted."; `updateHistoryRetention` draft updater.
+
+**Acceptance Criteria:**
+- History card renders after Quality Floors with the exact description copy; stepper min 1 / max 3650, `ariaLabel="History retention (days)"` (spec §4.3).
+- Saving sends `settings.history.retentionDays` for the draft value; reset-to-defaults restores 90 (spec §4.3).
+- All typed `Settings` fixtures updated (`useSettings.test.ts`, `SettingsView.test.tsx` baseSettings/resetDefaults); the existing "four cards" assertion updated to five (spec AC gate `yarn build`).
+- All Required Tests pass.
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
+- Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
+
+**Required Tests:**
+- `saves a changed history retention value` — 30 → save_settings payload includes `history: { retentionDays: 30 }`
+- `clamps history retention through the stepper bounds` — increase from 90 → 91; decrease at 1 stays 1; increase at 3650 stays 3650
+- `reset to defaults restores history retention 90` — set 30, reset, save payload has 90
+- `renders history card after quality floors` — card order + description copy
+- `cancel discards history retention draft` — cancel → re-render shows 90
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1385,7 +1750,25 @@ Add to `SettingsView.test.tsx` (follow its existing `loadView()`/`pickOption` pa
     await user.click(screen.getByRole('button', { name: /increase history retention/i }))
     expect(screen.getByLabelText('History retention (days)')).toHaveValue(91)
   })
+
+  it('reset to defaults restores history retention 90', async () => {
+    const user = userEvent.setup()
+    await loadView()
+    const input = screen.getByLabelText('History retention (days)')
+    await user.clear(input)
+    await user.type(input, '30')
+    await user.click(screen.getByRole('button', { name: /reset to defaults/i }))
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    expect(invoke).toHaveBeenCalledWith('save_settings', expect.objectContaining({
+      settings: expect.objectContaining({ history: { retentionDays: 90 } }),
+    }))
+  })
 ```
+
+Fixture updates (REQUIRED — the Settings type gained `history` in Task 8):
+- `src/hooks/useSettings.test.ts` `mockSettings` and `src/views/SettingsView.test.tsx` `baseSettings`/`resetDefaults`: add `history: { retentionDays: 90 }`.
+- `src/views/SettingsView.test.tsx:281` "renders four cards" — update to five cards.
+- Update the reset defaults fixture to include `history: { retentionDays: 90 }` so the reset payload is complete.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1395,7 +1778,8 @@ Expected: FAIL — no History retention control.
 - [ ] **Step 3: Implement**
 
 - Add the History card after the Quality Floors card; wire `NumberStepper` with `id="history-retention-days"`, `ariaLabel="History retention (days)"`, `min={1}`, `max={3650}`, `updateHistoryRetention` writes `draft.history.retentionDays`.
-- Update `types.ts` `Settings` with `history: { retentionDays: number }` and any SettingsView fixtures.
+- Update the typed fixtures listed above and the card-count assertion (both would otherwise fail `yarn build`/`yarn test`).
+- Note: the stepper input renders `type="text"` (base-ui) — repo convention asserts with `toHaveDisplayValue` (`NumberStepper.test.tsx:31-41`); `toHaveValue` also works but prefer the convention.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -1415,15 +1799,33 @@ git commit -m "feat(settings): add history retention control"
 
 **Files:**
 - Create: `docs/superpowers/plans/2026-10-02-history-audit-trail-acceptance-table.md`
+- Test: `src-tauri/src/history.rs` test module (automated AC proxies below)
 
-This task is **verification only** — no production code changes. It runs the spec's acceptance criteria against the built app and records evidence. Use `yarn tauri dev`.
+This task is **verification only** for production code — no production behavior changes. It adds automated AC proxies (tests) and runs the spec's acceptance criteria against the built app, recording evidence. Use `yarn tauri dev`.
+
+**Acceptance Criteria:**
+- Automated AC proxies pass in CI (`cargo test history`): search beyond page 1, retention-after-settings-change wiring, mixed corrupt file through load, partial-write/restart fold, keyboard proxy where testable.
+- Manual rows (kill -9, native reveal, keyboard-only flow) recorded with evidence or explicit deviations in the acceptance table (spec §7).
+- Gate green: `yarn build && yarn test && cd src-tauri && cargo test` (AGENTS.md GATE_COMMAND; `GATE_E2E_COMMAND = none`).
+- Acceptance table committed with per-row result.
+
+**Required Tests:**
+- `ac3_search_finds_file_beyond_first_page` — seed 60 sessions where the last (oldest) contains a uniquely named file; `query_history(filters{search}, page 0, 50)` → `total_sessions == 1` and the response includes it (search covers full history, not the page)
+- `ac5_trim_uses_effective_retention_from_settings` — settings retention 10 + seeded old session → `trim(settings.history.effective_retention_days(), now)` drops it
+- `ac6_mixed_corrupt_file_loads_with_count` — real file with malformed + unknown-type + valid lines → `load().skipped_lines` matches malformed count; sessions intact
+- `ac2_partial_write_restart_folds_interrupted` — write start + 2 files, no end, reload from disk → Interrupted with exactly those 2 files (restart proxy)
+- `ac8_compression_pipeline_unchanged` — proxy is the existing queue suite staying green (no new test; recorded in the acceptance table)
 
 - [ ] **Step 1: Gate**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: all green.
 
-- [ ] **Step 2: Manual pass (record evidence per row)**
+- [ ] **Step 2: Add the automated AC proxies**
+
+Add the five `ac*` tests from Required Tests to `src-tauri/src/history.rs`; run `cd src-tauri && cargo test history` and expect PASS.
+
+- [ ] **Step 3: Manual pass (record evidence per row)**
 
 | # | Spec AC | How to prove | Result |
 |---|---|---|---|
@@ -1436,12 +1838,12 @@ Expected: all green.
 | 7 | Keyboard-only flow | Tab through filter bar → toggle chips → expand session → paginate → activate action | |
 | 8 | Compression unchanged | Full gate green; compress a mixed batch and compare events/toasts to pre-change behavior | |
 
-- [ ] **Step 3: Write the acceptance table file with evidence + deviations**
+- [ ] **Step 4: Write the acceptance table file with evidence + deviations**
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add docs/superpowers/plans/2026-10-02-history-audit-trail-acceptance-table.md
+git add docs/superpowers/plans/2026-10-02-history-audit-trail-acceptance-table.md src-tauri/src/history.rs
 git commit -m "docs(history): record acceptance evidence for history audit trail"
 ```
 
