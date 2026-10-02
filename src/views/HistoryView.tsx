@@ -148,7 +148,8 @@ async function copyToClipboard(text: string) {
   try {
     await navigator.clipboard.writeText(text)
     toast.success('Path copied')
-  } catch {
+  } catch (err) {
+    console.error('copy to clipboard failed:', err)
     toast.error('Could not copy path')
   }
 }
@@ -159,6 +160,7 @@ async function revealFile(filePath: string) {
   try {
     await invoke('reveal_in_folder', { filePath })
   } catch (err) {
+    console.error('reveal_in_folder failed:', err)
     toast.error(`Could not open folder: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
@@ -167,6 +169,7 @@ async function openSessionFolder(path: string) {
   try {
     await invoke('open_folder', { path })
   } catch (err) {
+    console.error('open_folder failed:', err)
     toast.error(`Could not open folder: ${err instanceof Error ? err.message : String(err)}`)
   }
 }
