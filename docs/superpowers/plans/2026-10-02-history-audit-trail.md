@@ -272,6 +272,7 @@ git commit -m "feat(settings): add history.retentionDays with clamp"
 - `append_repairs_missing_trailing_newline` — raw partial line without trailing `\n` → append → both lines readable, new record intact
 - `append_writes_single_terminated_line` — raw file bytes end with exactly one `\n` on every append
 - `read_lines_tolerates_invalid_utf8_bytes` — valid line + invalid UTF-8 bytes + valid line → `Ok` with 3 entries
+- `read_lines_trims_whitespace_around_lines` — blank-ish `"  "` line + JSON record padded with spaces/CRLF → only the trimmed JSON line; `load` skips 0
 - `read_during_write_never_sees_torn_line` — reader loop during concurrent large appends → every returned line parses as JSON
 - `record_schema_keys_are_pinned` — golden sorted key lists for session_start/file/session_end + Counts
 - `append_and_read_roundtrip_unicode_paths` — café/漢字/😀 in names, paths and errors roundtrip
@@ -419,7 +420,7 @@ In `src-tauri/src/history.rs` (above the test module), implement:
   - gets the current length via `seek(SeekFrom::End(0))` (error → `history write failed: seek {path}: {e}`);
   - if length > 0, probes the last byte (`seek(SeekFrom::End(-1))` + `read_exact`); probe errors log `warn: history append newline probe {path} failed, inserting separator: {e}` and are treated as "not a newline" (safe direction). When the tail is not `\n`, a separator `\n` is inserted before the new line — repairing torn/partial tails (spec §3.4).
   - builds one buffer (`separator? + line + "\n"`) and writes it via the private `write_terminated(file, buf, path)` helper in a single `write_all` inside `self.lock`. Write errors → `Err(format!("history write failed: write {path}: {e}"))`; all other append stages carry `path` + stage in their messages (serialize / create parent dir / open / seek / write).
-- `read_lines`: `NotFound` → `Ok(vec![])`; other errors → `Err(format!("history read failed: read {path}: {e}"))`; reads the whole file inside the lock, then per line warns `warn: history line had invalid UTF-8, lossy-decoded ({path}): {e}` when `std::str::from_utf8` fails, lossy-decodes, trims, and filters blank lines.
+- `read_lines`: `NotFound` → `Ok(vec![])`; other errors → `Err(format!("history read failed: read {path}: {e}"))`; reads the whole file inside the lock, then per line enumerates the split before decoding and warns `warn: history line {i} had invalid UTF-8, lossy-decoded ({path}): {e}` when `std::str::from_utf8` fails, lossy-decodes, trims, and filters blank lines (`i` is the 0-based split index — physical line — since blanks are still present at this stage).
 
 - [x] **Step 4: Run test to verify it passes**
 
@@ -447,14 +448,14 @@ git commit -m "feat(history): add JSONL records and append store"
   - `HistoryFile { name, path, output_path: Option<PathBuf>, category, target_bytes: u64, original_size: u64, compressed_size: Option<u64>, status, quality_used: Option<u32>, strategy_used: Option<String>, error: Option<String>, duration_ms: u64, completed_at: i64 }` — camelCase serde (all fields)
   - `HistorySession { session_id, started_at: i64, ended_at: Option<i64>, output_folder: String, file_count: usize, files: Vec<HistoryFile>, outcome: Counts, total_saved_bytes: u64, cancelled: bool, interrupted: bool, matched_files: Option<usize> }` — camelCase; `matched_files` = `None` when no file-level filter (set in Task 4); `outcome` reuses the `Counts` struct from Task 2 (one counts type, not two)
   - `FoldResult { sessions: Vec<HistorySession>, skipped_lines: usize }` — sessions newest-first by `started_at`
-  - `pub fn fold_records(lines: &[String]) -> FoldResult` (pure)
+  - `pub fn fold_records(lines: &[String]) -> FoldResult` — pure (no file/state IO; skip diagnostics go to stderr)
   - `HistoryStore::load(&self) -> Result<FoldResult, String>`
 
 **Acceptance Criteria:**
 - Grouping by `sessionId`; files sorted by `completedAt`; sessions sorted newest-first by `startedAt` (spec §3.4).
 - Missing `session_end` ⇒ `interrupted: true`, `ended_at: null`, outcome + `total_saved_bytes` computed from recorded files with saturating subtraction (spec §3.4).
 - Present `session_end` ⇒ `ended_at`, `total_saved_bytes`, `cancelled`, and counts taken verbatim from the end record (spec §3.4).
-- Malformed JSON lines skipped + counted; unknown record `type`s ignored silently; orphan file/end lines (unknown session) skipped + counted (plan Task 3 implementation note; spec §3.3). Lines with invalid UTF-8 are consumed lossy (stderr-warned by `read_lines`); if the lossy line still fails JSON parsing it is counted as malformed like any other bad line (spec §3.3).
+- Malformed JSON lines skipped + counted; unknown record `type`s ignored silently; orphan file/end lines (unknown session) skipped + counted (plan Task 3 implementation note; spec §3.3). Lines with invalid UTF-8 are consumed lossy (stderr-warned by `read_lines`); if the lossy line still fails JSON parsing it is counted as malformed like any other bad line (spec §3.3). `fold_records` skip warns report a 0-based entry index among non-blank lines (`read_lines` filters blanks), not a physical-file line number; `read_lines`'s own UTF-8 warn uses the physical split index instead.
 - Anomaly semantics: lines that parse as JSON but have no string `type` (`[]`, `123`, `"str"`, `null`, `{}`, `{"type":123}`) are counted as malformed; a typed record (`session_start`/`file`/`session_end`) whose struct parse fails is counted as malformed; a `file` record arriving after its session's `session_end` is skipped + counted (end-derived outcome/totals stay frozen).
 - Duplicate `fileId` within a session: last record wins (spec §3.4).
 - All Required Tests pass.
@@ -475,7 +476,7 @@ git commit -m "feat(history): add JSONL records and append store"
 - `fold_duplicate_session_end_is_skipped_and_counted` — first end wins; duplicate skipped + counted
 - `fold_file_category_passthrough` — category value survives folding
 - `fold_file_error_text_passthrough` — error string survives folding
-- `fold_file_ids_are_scoped_per_session` — same fileId in two sessions stays independent
+- `fold_file_ids_are_scoped_per_session` — same fileId in two sessions stays independent; duplicate `f1` inside the non-first session is last-wins
 - `fold_interrupted_unknown_status_not_counted` — unknown file status leaves all six outcome counts at zero
 - `fold_saturates_when_compressed_exceeds_original` — original 5, compressed 10 → saved 0, no panic
 - `fold_interrupted_saturates_total_saved` — large saved deltas saturate to u64::MAX without panic
@@ -655,7 +656,7 @@ In `src-tauri/src/history.rs`:
 - `fold_records(lines)`:
   - Parse each line with `serde_json::from_str::<serde_json::Value>`; on error → `skipped_lines += 1`.
   - Match `value["type"]`: `"session_start"` → deserialize `SessionStartRecord`, push session into an index map (`HashMap<String, usize>`) with empty files/outcome; `"file"` → deserialize `FileResultRecord`; unknown session id → `skipped_lines += 1`, else append/replace by `file_id` (last wins); `"session_end"` → deserialize `SessionEndRecord`, set `ended_at`, `total_saved_bytes`, `cancelled`, `outcome` from counts; **unknown types are ignored silently** (forward compatibility — a future record kind must not trigger the corrupt-line notice or be dropped on retention rewrite).
-  - Anomaly counting: non-string/missing `type` lines counted; typed parse failures (e.g. `{"type":"session_start"}` missing fields) counted; orphan `file`/`session_end` (unknown session) skipped + counted with an stderr warn; a `file` after its session's `session_end` skipped + counted; a duplicate `session_end` skipped + counted (first end wins, values from the first end). Every skip warn carries the 0-based line number.
+  - Anomaly counting: non-string/missing `type` lines counted; typed parse failures (e.g. `{"type":"session_start"}` missing fields) counted; orphan `file`/`session_end` (unknown session) skipped + counted with an stderr warn; a `file` after its session's `session_end` skipped + counted; a duplicate `session_end` skipped + counted (first end wins, values from the first end). Every skip warn carries the 0-based `entry {N}` index — an index among non-blank lines (`read_lines` filters blanks before folding), not a physical-file line number.
   - After the pass: for sessions without `ended_at`, compute `outcome` from files and `total_saved_bytes = Σ original − compressed` (saturating); `interrupted = true`.
   - Sort files by `completed_at`; sort sessions by `started_at` descending.
 - `HistoryStore::load` = `read_lines()` → `fold_records`; `read_lines` failure → `Err`.
@@ -845,7 +846,7 @@ Expected: FAIL — `query_history` not defined.
 
 In `src-tauri/src/history.rs` implement `query_history` per the semantics block above. Helpers: `matches_search(s: &str, needle: &str) -> bool` (lowercase contains); `file_hit(f, needle)`; `session_folder_hit(s, needle)`; `file_filters_active(filters) -> bool` (empty/whitespace search and empty vecs count as inactive); per-session reduction builds a clone with `files` reduced + `matched_files` set. Clamp `page_size` to `max(1, page_size)` before the page math. `output_folders` sorted via `BTreeSet`, excluding empty strings. Keep everything pure (no IO) so tests are trivial.
 
-**Note on the `fold_repeated_session_start` edge (from analysis):** duplicate `session_start` for the same id resets the session header (last start wins) — add a one-line test `fold_repeated_session_start_last_wins` if it costs nothing; not required.
+**Note on the `fold_repeated_session_start` edge (from analysis):** duplicate `session_start` for the same id resets the session header (last start wins) — already added in Task 3 (`fold_repeated_session_start_last_wins` in `history.rs` tests); no further test needed here.
 
 - [ ] **Step 4: Run test to verify it passes**
 

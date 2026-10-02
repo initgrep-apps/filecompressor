@@ -107,7 +107,9 @@ Field notes:
   notice. Corrupt lines never crash the app and never block reading the rest.
 - Lines with invalid UTF-8 are warned to stderr by `read_lines` and consumed in lossy
   form; if the resulting line still fails JSON parsing it is counted as malformed like any
-  other bad line.
+  other bad line. (`read_lines`'s warn reports its 0-based physical split index.)
+- Fold skip warns reported while parsing carry a 0-based `entry {N}` index among non-blank
+  lines (`read_lines` filters blanks before folding), not a physical-file line number.
 - Orphan `file`/`session_end` records for an unknown session are skipped and counted.
 - No migration needed: no history file exists before this feature.
 
@@ -117,6 +119,13 @@ Field notes:
 
 - Session = records sharing `sessionId`. Files sorted by `completedAt`.
 - Duplicate `fileId` within a session: last record wins (defensive; worker writes once).
+- Repeated `session_start` for the same session id (hybrid session): the last start wins for
+  the start-derived fields (`startedAt`, `outputFolder`, `fileCount`); previously recorded
+  files and any prior `endedAt`/`cancelled`/`counts` are retained — a restart reuses the id
+  without clearing the earlier history.
+- `fileCount` is the planned file count reported by `session_start`, not `files.len()` —
+  an interrupted session can record fewer files than planned (and the UI shows the recorded
+  files only).
 - `session_end` present ⇒ `endedAt`, exact `counts`, `cancelled` flag.
 - `session_end` absent ⇒ `interrupted: true`; `endedAt = null`; counts and
   `totalSavedBytes` computed from the recorded files.
@@ -196,7 +205,7 @@ impl HistoryStore {
     pub fn clear(&self) -> Result<(), String>;
 }
 
-pub fn fold_records(lines: &[String]) -> FoldResult;                 // pure
+pub fn fold_records(lines: &[String]) -> FoldResult;                 // pure (no file/state IO; skip diagnostics to stderr)
 pub fn query_history(
     fold: FoldResult,
     filters: &HistoryFilters,
