@@ -149,7 +149,7 @@ pub struct HistorySummary {
     pub failed_files: usize,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryResponse {
     pub sessions: Vec<HistorySession>,
@@ -162,11 +162,31 @@ pub struct HistoryResponse {
     pub skipped_lines: usize,
 }
 
+pub(crate) fn clamp_page_size(n: u32) -> u32 {
+    if n == 0 {
+        DEFAULT_PAGE_SIZE
+    } else {
+        n.min(MAX_PAGE_SIZE)
+    }
+}
+
+impl Default for HistoryResponse {
+    fn default() -> Self {
+        Self::empty(DEFAULT_PAGE_SIZE)
+    }
+}
+
 impl HistoryResponse {
     pub fn empty(page_size: u32) -> Self {
         HistoryResponse {
-            page_size,
-            ..HistoryResponse::default()
+            sessions: Vec::new(),
+            page: 0,
+            page_size: clamp_page_size(page_size),
+            total_sessions: 0,
+            total_files: 0,
+            summary: HistorySummary::default(),
+            output_folders: Vec::new(),
+            skipped_lines: 0,
         }
     }
 }
@@ -428,6 +448,10 @@ pub fn query_history(
     page: u32,
     page_size: u32,
 ) -> HistoryResponse {
+    debug_assert!(
+        page_size <= MAX_PAGE_SIZE,
+        "query_history page_size {page_size} exceeds MAX_PAGE_SIZE {MAX_PAGE_SIZE}; the command layer must clamp before calling"
+    );
     let output_folders: Vec<String> = fold
         .sessions
         .iter()

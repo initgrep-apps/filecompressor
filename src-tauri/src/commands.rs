@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::history::clamp_page_size;
 use crate::models::{Category, FileEntry, FileStatus};
 use std::sync::Mutex;
 use tauri::{Manager, State};
@@ -236,16 +237,8 @@ pub fn reveal_in_folder(file_path: String, app: tauri::AppHandle) -> Result<(), 
         .map_err(|e| format!("Could not reveal file {}: {}", file_path, e))
 }
 
-fn clamp_page_size(n: u32) -> u32 {
-    if n == 0 {
-        crate::history::DEFAULT_PAGE_SIZE
-    } else {
-        n.min(crate::history::MAX_PAGE_SIZE)
-    }
-}
-
 fn empty_history_response(requested_size: u32) -> crate::history::HistoryResponse {
-    crate::history::HistoryResponse::empty(clamp_page_size(requested_size))
+    crate::history::HistoryResponse::empty(requested_size)
 }
 
 fn warn_missing_store_get_history() {

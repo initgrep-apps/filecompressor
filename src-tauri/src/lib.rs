@@ -37,11 +37,13 @@ pub(crate) fn setup_history<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     match HistoryStore::new(app) {
         Ok(store) => {
             let settings = commands::load_settings(app);
-            if let Err(e) = store.trim(settings.history.effective_retention_days(), queue::now_ms())
-            {
-                eprintln!("warn: startup history trim failed: {e}");
+            let retention = settings.history.effective_retention_days();
+            if let Err(e) = store.trim(retention, queue::now_ms()) {
+                eprintln!("warn: startup history trim failed (retentionDays={retention}): {e}");
             }
-            app.manage(store);
+            if !app.manage(store) {
+                eprintln!("warn: HistoryStore already managed, new store discarded");
+            }
         }
         Err(e) => {
             eprintln!("warn: history store unavailable, history disabled: {e}");
