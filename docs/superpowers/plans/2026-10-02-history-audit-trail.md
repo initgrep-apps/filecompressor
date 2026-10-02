@@ -685,21 +685,22 @@ git commit -m "feat(history): fold records into sessions with interrupted detect
 **Interfaces:**
 - Consumes: Task 3 `FoldResult`, `HistorySession`, `HistoryFile`.
 - Produces:
-  - `HistoryFilters { search: Option<String>, statuses: Option<Vec<String>>, categories: Option<Vec<String>>, since_ms: Option<i64>, output_folder: Option<String> }` — camelCase serde, `Default`
-  - `HistorySummary { sessions: usize, files: usize, saved_bytes: u64, failed_files: usize }` — camelCase
+  - `HistoryFilters { search: Option<String>, statuses: Option<Vec<String>>, categories: Option<Vec<String>>, since_ms: Option<i64>, output_folder: Option<String> }` — camelCase serde, `Default`, `deny_unknown_fields`
+  - `HistorySummary { sessions: usize, files: usize, saved_bytes: u64, failed_files: usize }` — camelCase (response-only, no `Deserialize`)
   - `HistoryResponse { sessions: Vec<HistorySession>, page: u32, page_size: u32, total_sessions: usize, total_files: usize, summary: HistorySummary, output_folders: Vec<String>, skipped_lines: usize }` — camelCase
   - `pub fn query_history(fold: FoldResult, filters: &HistoryFilters, page: u32, page_size: u32) -> HistoryResponse`
   - `pub const DEFAULT_PAGE_SIZE: u32 = 50;`
 
 **Filter semantics (locked with spec §3.5):**
+- Normalization: `output_folder` is trimmed; blank/whitespace-only is inactive. `statuses`/`categories` entries are trimmed and empties dropped; a resulting empty vec is inactive (same as absent). Unknown JSON keys are rejected (`deny_unknown_fields`) so a typo'd filter fails loudly instead of silently defaulting.
 - Date: `since_ms` absent or session `started_at >= since_ms` (inclusive). Session-level — compares `started_at`, never file times.
-- Output folder: exact match on session `output_folder`; a session with an empty folder is excluded by an active folder filter. Session-level.
+- Output folder: exact match on session `output_folder` (after trim); a session with an empty folder is excluded by an active folder filter. Session-level.
 - Search: case-insensitive substring. File-level hit = name / path / output_path / error. **Session-level hit on `output_folder` keeps the session with `matched_files = None`** unless a file also hits (then the file set wins with `Some(n)`). `Some("")` or whitespace-only search is treated as absent (no filter); `Some(vec![])` for statuses/categories is treated as absent.
 - Status / categories: file-level; a session is visible when ≥1 file matches and only matching files are returned; `matched_files = Some(returned_len)`. Category compares against `HistoryFile.category`.
 - File-level filter active ⇔ (non-empty search that has file hits) OR non-empty statuses OR non-empty categories.
 - `output_folders`: distinct non-empty session folders, sorted, from the **unfiltered** fold.
 - `summary`: always the whole filtered set (independent of page): `files` = Σ displayed files (all files of visible sessions when `matched_files = None`, else matches); `saved_bytes` = Σ (`original_size - compressed_size`) saturating over those files; `failed_files` = count of `status == "failed"` over those files. `summary.sessions == total_sessions`; `total_files == summary.files`.
-- Ordering: sessions already newest-first; then stable page slice: `page_size` clamped to ≥1; effective page = `page.min(max(0, ceil(total/page_size) - 1))`; empty set → page 0.
+- Ordering: sessions already newest-first; then stable page slice: `page_size` clamped to ≥1; effective page = `page.min(max(0, ceil(total/page_size) - 1))`; empty set → page 0. Clamp ownership: `query_history` clamps only 0-size → 1; the command layer (Task 7) owns 0 → `DEFAULT_PAGE_SIZE` (50) and 500 → 200.
 
 **Acceptance Criteria:**
 - Every filter combination narrows correctly over the full session set; file-level filters reduce each session's files and set `matchedFiles`; session-level-only matches keep `matchedFiles = null` (spec §3.5, §5.4).
@@ -730,6 +731,16 @@ git commit -m "feat(history): fold records into sessions with interrupted detect
 - `query_never_splits_session_across_pages` — session with 2 files + page_size 1 → both files in the row
 - `query_output_folders_list_is_unfiltered_deduped_sorted` — active filter still returns all folders sorted
 - `query_output_folder_filter_excludes_empty_folder_sessions` — empty-folder session excluded by active filter
+- `query_multi_status_filters_are_a_union` — done+failed+cancelled files; `["failed","cancelled"]` → session visible, `matchedFiles Some(2)`, summary files 2; category union variant where only the second element matches
+- `query_matched_files_uses_returned_len_not_planned_file_count` — fixture `fileCount = 3` with 2 files, one matching → `matchedFiles Some(1)` (never 3)
+- `query_summary_failed_files_respects_file_filter` — `["done"]` → `failed_files 0`; `["failed"]` → 1; end-record counts disagree → summary still from displayed files
+- `query_file_search_hit_intersects_status_filter` — two files share the searched error; status filter keeps only the matching-status file, `matchedFiles Some(1)`
+- `query_summary_saved_bytes_saturates` — two files `(u64::MAX, Some(0))` → `summary.saved_bytes == u64::MAX`, no panic
+- `query_skipped_lines_passthrough` — fold with one valid + one malformed line → `skippedLines == 1`
+- `query_blank_and_whitespace_filters_are_inactive` — blank `output_folder` inactive; blank-only status vec inactive; padded `" failed "` / `" /outB "` normalized and active
+- `query_response_serde_keys_are_pinned` — exact sorted keys for response + summary; `DEFAULT_PAGE_SIZE == 50`
+- `history_filters_deserialize_camel_case` — `{"sinceMs":5,"outputFolder":"/x","statuses":["failed"]}` → fields set, others `None`
+- `history_filters_deserialize_rejects_unknown_keys` — `{"category":"image"}` fails deserialization (`deny_unknown_fields`)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -844,7 +855,7 @@ Expected: FAIL — `query_history` not defined.
 
 - [ ] **Step 3: Implement**
 
-In `src-tauri/src/history.rs` implement `query_history` per the semantics block above. Helpers: `matches_search(s: &str, needle: &str) -> bool` (lowercase contains); `file_hit(f, needle)`; `session_folder_hit(s, needle)`; `file_filters_active(filters) -> bool` (empty/whitespace search and empty vecs count as inactive); per-session reduction builds a clone with `files` reduced + `matched_files` set. Clamp `page_size` to `max(1, page_size)` before the page math. `output_folders` sorted via `BTreeSet`, excluding empty strings. Keep everything pure (no IO) so tests are trivial.
+In `src-tauri/src/history.rs` implement `query_history` per the semantics block above. Helpers: `matches_search(s: &str, needle: &str) -> bool` (lowercase contains); `file_hit(f, needle)`; `normalize_list(Option<&[String]>) -> Option<Vec<String>>` (trim entries, drop empties, empty result → `None`); `file_matches(file, statuses: Option<&[String]>, categories: Option<&[String]>, needle: Option<&str>) -> bool` via `is_none_or` chains (needle `None` = session matched at folder level only, do not constrain files by search). Compute normalized statuses/categories once before the loop; reduce each session with `files.retain(...)` only when file-level constraints are active (`matchedFiles = Some(returned len)`; skip empty sessions), otherwise keep files untouched with `matchedFiles = None`. `saved_for` logs `warn: history file {path} compressedSize {compressed} > originalSize {original}, clamping saved to 0` before saturating when data is corrupt. Clamp `page_size` to `max(1, page_size)` before the page math (`query_history` clamps only 0 → 1; Task 7 owns 0 → 50 and 500 → 200 at the command layer). `output_folders` sorted via `BTreeSet`, excluding empty strings. Keep everything pure (no IO) so tests are trivial.
 
 **Note on the `fold_repeated_session_start` edge (from analysis):** duplicate `session_start` for the same id resets the session header (last start wins) — already added in Task 3 (`fold_repeated_session_start_last_wins` in `history.rs` tests); no further test needed here.
 
@@ -1242,7 +1253,7 @@ git commit -m "feat(queue): record session, file and end records to history"
 **Interfaces:**
 - Consumes: `HistoryStore` (Tasks 2–5), `query_history` (Task 4).
 - Produces:
-  - `pub async fn get_history(filters: crate::history::HistoryFilters, page: u32, page_size: u32, app: tauri::AppHandle) -> Result<crate::history::HistoryResponse, String>` — clamps `page_size` to `1..=200` (0 → 50, so `pageSize 0` → 50 and `500` → 200); folds + queries; missing store → all-empty `HistoryResponse` with the requested page and clamped size.
+  - `pub async fn get_history(filters: crate::history::HistoryFilters, page: u32, page_size: u32, app: tauri::AppHandle) -> Result<crate::history::HistoryResponse, String>` — clamps `page_size` to `1..=200` (0 → `crate::history::DEFAULT_PAGE_SIZE` (50), 500 → 200); folds + queries; missing store → all-empty `HistoryResponse` with the requested page and clamped size.
   - `pub fn clear_history(app: tauri::AppHandle) -> Result<(), String>`
   - `pub fn open_folder(path: String, app: tauri::AppHandle) -> Result<(), String>` — `opener().open_path(path, None::<&str>)`, error copy `Could not open folder {path}: {e}`
   - `lib.rs`: `mod history;`, manage `HistoryStore` in setup (`HistoryStore::new(app.handle())` — app_data_dir + `create_dir_all`; if app_data_dir is unavailable, log + skip managing, missing-store paths keep the app functional), register the three commands, and run startup `trim` via `settings.history.effective_retention_days()` + `now_ms` (trim failure logs, app still launches).
@@ -1345,7 +1356,7 @@ Expected: FAIL — `clamp_page_size` not defined.
 
 - [ ] **Step 3: Implement**
 
-- `fn clamp_page_size(n: u32) -> u32` (private, tested); `get_history` uses it.
+- `fn clamp_page_size(n: u32) -> u32` (private, tested; 0 → `crate::history::DEFAULT_PAGE_SIZE`, cap 200); `get_history` uses it.
 - `fn empty_history_response(page: u32, requested_size: u32) -> HistoryResponse` — echoes clamped `page_size`, `page: 0`.
 - `get_history`: `app.try_state::<HistoryStore>()` → `None` ⇒ `Ok(empty_history_response(page, page_size))`; `Some(store)` ⇒ `fold = store.load()?` then `Ok(query_history(fold, &filters, page, clamp_page_size(page_size)))`. Mark `async` and keep the body synchronous (async command runs off the main thread). Add `use tauri::Manager;` to `commands.rs` for `try_state`.
 - `clear_history` / `open_folder` as above; `open_folder` reuses the plugin (`tauri_plugin_opener::OpenerExt`) with `open_path(path, None::<&str>)`, matching `reveal_in_folder` error style (`commands.rs:232-237`).
