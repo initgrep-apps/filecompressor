@@ -97,7 +97,7 @@ describe('useHistory', () => {
   it('toasts on history:error', async () => {
     vi.mocked(invoke).mockResolvedValue(emptyResponse)
     const { result } = renderHook(() => useHistory())
-    await waitFor(() => expect(registry.get('history:error')?.size).toBe(1))
+    await waitFor(() => expect(result.current.loading).toBe(false))
     emit('history:error', { message: 'disk full' })
     expect(toast.error).toHaveBeenCalledWith('History could not be saved — compression was not affected.')
     expect(result.current.error).toBeNull()
