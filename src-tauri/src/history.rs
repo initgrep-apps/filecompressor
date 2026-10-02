@@ -602,6 +602,22 @@ mod tests {
     }
 
     #[test]
+    fn read_lines_trims_whitespace_around_lines() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let start_line = line(start("s1", 10));
+        std::fs::write(store.file_path(), format!("  \n {start_line} \r\n")).unwrap();
+
+        let lines = store.read_lines().unwrap();
+        assert_eq!(lines, vec![start_line.clone()], "only padded JSON survives");
+
+        let out = store.load().unwrap();
+        assert_eq!(out.skipped_lines, 0, "padded record parses after trimming");
+        assert_eq!(out.sessions.len(), 1);
+        assert_eq!(out.sessions[0].session_id, "s1");
+    }
+
+    #[test]
     fn read_lines_io_error_returns_err() {
         let dir = tempdir().unwrap();
         let store = HistoryStore::new_in(dir.path());
@@ -1266,6 +1282,7 @@ mod tests {
             line(file("s1", "f1", 11, "done", (5, Some(1)))),
             line(start("s2", 20)),
             line(file("s2", "f1", 21, "failed", (5, None))),
+            line(file("s2", "f1", 22, "done", (5, Some(2)))),
         ];
         let out = fold_records(&lines);
         assert_eq!(out.sessions.len(), 2);
@@ -1280,9 +1297,10 @@ mod tests {
             .find(|s| s.session_id == "s1")
             .unwrap();
         assert_eq!(s1.files.len(), 1);
-        assert_eq!(s2.files.len(), 1);
+        assert_eq!(s2.files.len(), 1, "last record for f1 within s2 replaces");
         assert_eq!(s1.files[0].status, "done");
-        assert_eq!(s2.files[0].status, "failed");
+        assert_eq!(s2.files[0].status, "done", "second s2 record wins");
+        assert_eq!(s2.files[0].completed_at, 22, "second s2 record's timestamp");
     }
 
     #[test]
