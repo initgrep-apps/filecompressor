@@ -352,9 +352,6 @@ impl<R: Runtime> QueueState<R> {
         let reserved = std::sync::Arc::new(crate::output::ReservedNames::new());
         let (lanes, placed) = group_lanes(&state, &file_ids);
 
-        // A file individually cancelled while Pending never enters a lane.
-        // commands::cancel_file already emitted file:cancelled, so record the
-        // terminal outcome here without emitting again.
         let unplaced_cancelled: Vec<FileEntry> = {
             let list = poison_recover(state.0.lock());
             file_ids
@@ -1842,8 +1839,6 @@ mod tests {
             ("i2.jpg", crate::models::Category::Image, "/tmp/i2.jpg"),
             ("p1.pdf", crate::models::Category::Pdf, "/tmp/p1.pdf"),
         ]);
-        // Pre-mark one entry Cancelled before start_batch: commands::cancel_file
-        // does this for a Pending file, so group_lanes never places it.
         set_status(&app, &ids[1], crate::models::FileStatus::Cancelled);
 
         let store = app.state::<crate::history::HistoryStore>();
@@ -1943,9 +1938,6 @@ mod tests {
             ("report.docx", crate::models::Category::Document, docx.to_str().unwrap()),
             ("b.jpg", crate::models::Category::Image, "/tmp/b.jpg"),
         ]);
-        // The entry records a 4096-byte original; the processor copies the
-        // smaller on-disk file as-is, so the worker accumulates a real,
-        // exact saved amount (4096 - actual bytes) instead of 0.
         update_entry(&app, &ids[0], |entry| entry.original_size = 4096);
         let on_disk = std::fs::metadata(&docx).unwrap().len();
         let expected_saved = 4096u64.saturating_sub(on_disk);
@@ -1998,8 +1990,6 @@ mod tests {
         let entry = crate::models::FileEntry::new("x.jpg", 1024);
         app.state::<FileListState>().0.lock().unwrap().push(entry.clone());
         let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
-        // Per-batch bookkeeping seeded ahead of the batch must be cleared by
-        // the preflight early return, not left behind for a later session.
         queue.seed_history_state("preflight");
         QueueState::start_batch(queue.inner(), &app.handle(), "preflight".into(), vec![entry.id.clone()]);
         wait_idle(&queue, "preflight");
@@ -2060,8 +2050,6 @@ mod tests {
             ("stale.jpg", crate::models::Category::Image, "/tmp/stale.jpg"),
             ("fresh.jpg", crate::models::Category::Image, "/tmp/fresh.jpg"),
         ]);
-        // A stale Done row never enters a lane; the sweep must skip it (only
-        // Cancelled entries are swept) and must not clobber its status.
         set_status(&app, &ids[0], crate::models::FileStatus::Done);
 
         let rx = events_of(&app.handle(), &["file:error", "file:cancelled", "batch:complete"]);
@@ -2187,9 +2175,6 @@ mod tests {
             ("v1.mp4", crate::models::Category::Video, "/tmp/missing-v1.mp4"),
             ("v2.mp4", crate::models::Category::Video, "/tmp/missing-v2.mp4"),
         ]);
-        // Pre-mark one real-file entry Cancelled: commands::cancel_file does
-        // this for a Pending file, so group_lanes never places it and the lane
-        // sweep records it deterministically with the entry's real size.
         set_status(&app, &ids[0], crate::models::FileStatus::Cancelled);
         let entries: Vec<FileEntry> = {
             let state = app.state::<FileListState>();
@@ -2236,9 +2221,6 @@ mod tests {
             "cancelled-before-slot records must carry zero duration (spec §3.2)"
         );
 
-        // Scope the zero-duration assertion to known skip records only: a job
-        // cancelled mid-flight legitimately carries positive duration, and the
-        // missing-sidecar test environment cannot force that path.
         for f in &skipped {
             let entry = entries.iter().find(|e| e.id == f.file_id).unwrap();
             assert!(f.output_path.is_none());
@@ -2470,8 +2452,6 @@ mod tests {
         );
         let store = app.state::<crate::history::HistoryStore>();
         seed_session_start(&store, "trim-old", wall_now_ms() - 30 * 86_400_000, "/old");
-        // Occupy the atomic-rewrite temp path with a directory so trim's
-        // remove_if_exists fails after the seeded old session is read.
         std::fs::create_dir_all(root.path().join("history.jsonl.tmp")).unwrap();
 
         let ids = add_entries(&app, &[
