@@ -55,8 +55,8 @@ describe('historyFormat', () => {
     expect(presetSinceMs('today', euFall)).toBe(new Date(2026, 9, 25).getTime())
     const rollover = new Date(2027, 0, 1, 1, 0)
     expect(presetSinceMs('last7', rollover)).toBe(new Date(2026, 11, 26).getTime())
-    const spanning = new Date(2026, 9, 25, 15, 0)
-    expect(presetSinceMs('last7', spanning)).toBe(new Date(2026, 9, 19).getTime())
+    const spanning = new Date(2026, 9, 26, 15, 0)
+    expect(presetSinceMs('last7', spanning)).toBe(new Date(2026, 9, 20).getTime())
   })
 
   it('keys days by local calendar date', () => {

@@ -19,6 +19,8 @@ import { renderHook, act, waitFor } from '@testing-library/react'
 
 const registry = new Map<string, Set<(e: { payload: unknown }) => void>>()
 let failListenEvent: string | null = null
+let holdListen = false
+let heldResolves: Array<(u: unknown) => void> = []
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn((event: string, handler: (e: { payload: unknown }) => void) => {
@@ -27,7 +29,11 @@ vi.mock('@tauri-apps/api/event', () => ({
     }
     if (!registry.has(event)) registry.set(event, new Set())
     registry.get(event)!.add(handler)
-    return Promise.resolve(vi.fn(() => registry.get(event)?.delete(handler)))
+    const unlisten = vi.fn(() => registry.get(event)?.delete(handler))
+    if (holdListen) {
+      return new Promise((resolve) => { heldResolves.push(() => resolve(unlisten)) })
+    }
+    return Promise.resolve(unlisten)
   }),
 }))
 vi.mock('sonner', () => ({ toast: { error: vi.fn() } }))
@@ -49,6 +55,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   registry.clear()
   failListenEvent = null
+  holdListen = false
+  heldResolves = []
 })
 
 describe('useHistory', () => {
@@ -111,8 +119,10 @@ describe('useHistory', () => {
     act(() => result.current.setFilters({ search: 'abc' }))
     await waitFor(() => expect(vi.mocked(invoke).mock.calls.length).toBe(calls + 1))
     expect(result.current.filters).toEqual({ search: 'abc' })
+    const callsBeforePage = vi.mocked(invoke).mock.calls.length
     act(() => result.current.setPage(2))
     await waitFor(() => expect(invoke).toHaveBeenLastCalledWith('get_history', expect.objectContaining({ page: 2 })))
+    expect(vi.mocked(invoke).mock.calls.length).toBe(callsBeforePage + 1)
     const callsAtPage2 = vi.mocked(invoke).mock.calls.length
     act(() => result.current.setFilters({}))
     expect(result.current.page).toBe(2)
@@ -129,6 +139,7 @@ describe('useHistory', () => {
   })
 
   it('clearHistory failure toasts and keeps response', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     vi.mocked(invoke)
       .mockResolvedValueOnce(emptyResponse)
       .mockRejectedValueOnce('locked')
@@ -136,8 +147,11 @@ describe('useHistory', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     const responseBefore = result.current.response
     await act(async () => { await result.current.clearHistory() })
+    expect(invoke).toHaveBeenCalledWith('clear_history')
+    expect(console.error).toHaveBeenCalledWith('clear_history failed:', 'locked')
     expect(toast.error).toHaveBeenCalledWith('Could not clear history')
     expect(result.current.response).toBe(responseBefore)
+    errSpy.mockRestore()
   })
 
   it('clearError resets error', async () => {
@@ -157,6 +171,28 @@ describe('useHistory', () => {
     await waitFor(() => expect(vi.mocked(invoke).mock.calls.length).toBe(calls + 1))
   })
 
+  it('response retained during refetch', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({ ...emptyResponse, totalSessions: 3 })
+    const { result } = renderHook(() => useHistory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    let resolver: (value: unknown) => void = () => {}
+    vi.mocked(invoke).mockImplementationOnce(
+      () =>
+        new Promise((res) => {
+          resolver = res
+        })
+    )
+    act(() => result.current.refresh())
+    expect(result.current.loading).toBe(true)
+    expect(result.current.response?.totalSessions).toBe(3)
+    await act(async () => {
+      resolver({ ...emptyResponse, totalSessions: 7 })
+    })
+    expect(result.current.loading).toBe(false)
+    expect(result.current.response?.totalSessions).toBe(7)
+    expect(result.current.error).toBeNull()
+  })
+
   it('unlisten on unmount', async () => {
     vi.mocked(invoke).mockResolvedValue(emptyResponse)
     const { unmount } = renderHook(() => useHistory())
@@ -167,16 +203,27 @@ describe('useHistory', () => {
     expect(registry.get('history:error')?.size).toBe(0)
   })
 
+  it('unmount before listen resolves unregisters handlers', async () => {
+    vi.mocked(invoke).mockResolvedValue(emptyResponse)
+    holdListen = true
+    const { unmount } = renderHook(() => useHistory())
+    expect(registry.get('batch:complete')?.size).toBe(1)
+    expect(registry.get('history:error')?.size).toBe(1)
+    unmount()
+    heldResolves.forEach((resolve) => resolve(undefined))
+    await act(async () => {})
+    expect(registry.get('batch:complete')?.size ?? 0).toBe(0)
+    expect(registry.get('history:error')?.size ?? 0).toBe(0)
+  })
+
   it('stale response ignored', async () => {
     let resolveStale: (value: unknown) => void = () => {}
-    let rejectStale: (err: unknown) => void = () => {}
     vi.mocked(invoke)
       .mockResolvedValueOnce(emptyResponse)
       .mockImplementationOnce(
         () =>
-          new Promise((res, rej) => {
+          new Promise((res) => {
             resolveStale = res
-            rejectStale = rej
           })
       )
       .mockResolvedValueOnce({ ...emptyResponse, page: 2, totalSessions: 5 })
@@ -189,12 +236,33 @@ describe('useHistory', () => {
       resolveStale({ ...emptyResponse, page: 1, totalSessions: 99 })
     })
     expect(result.current.response?.totalSessions).toBe(5)
+    expect(result.current.response?.page).toBe(2)
     expect(result.current.error).toBeNull()
+  })
+
+  it('stale rejection ignored after newer resolves', async () => {
+    let rejectStale: (err: unknown) => void = () => {}
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(emptyResponse)
+      .mockImplementationOnce(
+        () =>
+          new Promise((_res, rej) => {
+            rejectStale = rej
+          })
+      )
+      .mockResolvedValueOnce({ ...emptyResponse, page: 2, totalSessions: 5 })
+    const { result } = renderHook(() => useHistory())
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    act(() => result.current.setPage(1))
+    act(() => result.current.setPage(2))
+    await waitFor(() => expect(result.current.response?.totalSessions).toBe(5))
     await act(async () => {
-      rejectStale(new Error('stale disk error'))
+      rejectStale(new Error('stale'))
     })
     expect(result.current.response?.totalSessions).toBe(5)
+    expect(result.current.response?.page).toBe(2)
     expect(result.current.error).toBeNull()
+    expect(result.current.loading).toBe(false)
   })
 
   it('setFilters merge accumulation', async () => {
@@ -237,5 +305,20 @@ describe('useHistory', () => {
     expect(result.current.error).toBeNull()
     expect(toast.error).toHaveBeenCalledWith('History error notifications are unavailable.')
     expect(registry.get('history:error')?.size ?? 0).toBe(0)
+  })
+
+  it('batch:complete listener failure stays log-only', async () => {
+    vi.mocked(invoke).mockResolvedValue(emptyResponse)
+    failListenEvent = 'batch:complete'
+    const { result } = renderHook(() => useHistory())
+    failListenEvent = null
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.response?.totalSessions).toBe(0)
+    expect(result.current.error).toBeNull()
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(registry.get('batch:complete')?.size ?? 0).toBe(0)
+    const calls = vi.mocked(invoke).mock.calls.length
+    emit('batch:complete', { batchId: 'b', totalSavedBytes: 0 })
+    expect(vi.mocked(invoke).mock.calls.length).toBe(calls)
   })
 })
