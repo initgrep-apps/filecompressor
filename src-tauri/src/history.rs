@@ -356,6 +356,23 @@ mod tests {
     }
 
     #[test]
+    fn append_parent_is_file_surfaces_create_stage_error() {
+        let dir = tempdir().unwrap();
+        let blocker = dir.path().join("blocker.txt");
+        std::fs::write(&blocker, b"x").unwrap();
+        let store = HistoryStore::new_in(&blocker.join("child"));
+        let err = store.append_session_end(&small_end("s1")).unwrap_err();
+        assert!(
+            err.starts_with("history write failed: create parent dir "),
+            "{err}"
+        );
+        assert!(
+            err.contains(&store.file_path().display().to_string()),
+            "{err}"
+        );
+    }
+
+    #[test]
     fn write_failure_surfaces_write_stage_error() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("history.jsonl");
@@ -538,15 +555,23 @@ mod tests {
         let store = HistoryStore::new_in(dir.path());
         let store = &store;
         let guard = store.lock.lock().unwrap();
-        let (tx, rx) = mpsc::channel();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
         std::thread::scope(|scope| {
             let handle = scope.spawn(move || {
+                started_tx.send(()).unwrap();
                 store.append_session_end(&small_end("s1")).unwrap();
-                tx.send(()).unwrap();
+                done_tx.send(()).unwrap();
             });
-            assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
+            started_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("worker thread never reached append");
+            assert!(
+                done_rx.recv_timeout(Duration::from_millis(150)).is_err(),
+                "append completed while the store lock was held"
+            );
             drop(guard);
-            assert!(rx.recv_timeout(Duration::from_secs(5)).is_ok());
+            assert!(done_rx.recv_timeout(Duration::from_secs(5)).is_ok());
             handle.join().unwrap();
         });
         let lines = store.read_lines().unwrap();
@@ -565,15 +590,23 @@ mod tests {
         std::fs::write(store.file_path(), "{\"a\":1}\n").unwrap();
         let store = &store;
         let guard = store.lock.lock().unwrap();
-        let (tx, rx) = mpsc::channel();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
         std::thread::scope(|scope| {
             let handle = scope.spawn(move || {
+                started_tx.send(()).unwrap();
                 let lines = store.read_lines().unwrap();
-                tx.send(lines).unwrap();
+                done_tx.send(lines).unwrap();
             });
-            assert!(rx.recv_timeout(Duration::from_millis(150)).is_err());
+            started_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("worker thread never reached read_lines");
+            assert!(
+                done_rx.recv_timeout(Duration::from_millis(150)).is_err(),
+                "read_lines completed while the store lock was held"
+            );
             drop(guard);
-            let lines = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let lines = done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
             assert_eq!(lines, vec!["{\"a\":1}".to_string()]);
             handle.join().unwrap();
         });
