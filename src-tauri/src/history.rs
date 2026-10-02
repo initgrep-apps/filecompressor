@@ -1779,6 +1779,22 @@ mod tests {
         fold_records(&lines)
     }
 
+    fn five_sessions_mixed_statuses() -> FoldResult {
+        let lines = vec![
+            start_in("s5", 500, "/out"),
+            qfile("s5", "f1", 501, "a.jpg", "/in/a.jpg", Some("/out/a.jpg"), "image", "done", (10, Some(5)), None),
+            start_in("s4", 400, "/out"),
+            qfile("s4", "f1", 401, "b.jpg", "/in/b.jpg", None, "image", "failed", (10, None), Some("boom")),
+            start_in("s3", 300, "/out"),
+            qfile("s3", "f1", 301, "c.jpg", "/in/c.jpg", Some("/out/c.jpg"), "image", "done", (10, Some(5)), None),
+            start_in("s2", 200, "/out"),
+            qfile("s2", "f1", 201, "d.jpg", "/in/d.jpg", None, "image", "failed", (10, None), Some("boom")),
+            start_in("s1", 100, "/out"),
+            qfile("s1", "f1", 101, "e.jpg", "/in/e.jpg", None, "image", "failed", (10, None), Some("boom")),
+        ];
+        fold_records(&lines)
+    }
+
     fn search_fixture() -> FoldResult {
         let lines = vec![
             start_in("alpha", 100, "/out/alpha"),
@@ -1806,6 +1822,19 @@ mod tests {
                 "failed",
                 (100, None),
                 Some("cannot read locked file"),
+            ),
+            start_in("gamma", 300, "/out/gamma"),
+            qfile(
+                "gamma",
+                "f3",
+                301,
+                "sunset.jpg",
+                "/in/zzz.bin",
+                None,
+                "image",
+                "done",
+                (500, Some(100)),
+                None,
             ),
         ];
         fold_records(&lines)
@@ -1865,6 +1894,18 @@ mod tests {
                 "a.jpg",
                 "/in/a.jpg",
                 Some("/out/a.jpg"),
+                "image",
+                "done",
+                (10, Some(5)),
+                None,
+            ),
+            qfile(
+                "new",
+                "f2",
+                50,
+                "early.jpg",
+                "/in/early.jpg",
+                Some("/out/early.jpg"),
                 "image",
                 "done",
                 (10, Some(5)),
@@ -1996,12 +2037,22 @@ mod tests {
         let resp = query_history(two_sessions(), &filters, 0, 50);
         assert_eq!(resp.sessions.len(), 2);
         assert_eq!(resp.sessions[0].matched_files, Some(1));
+        let substring = HistoryFilters {
+            categories: Some(vec!["imag".into()]),
+            ..no_filters()
+        };
+        let resp = query_history(two_sessions(), &substring, 0, 50);
+        assert_eq!(
+            resp.sessions.len(),
+            0,
+            "category filter is exact, not a substring match"
+        );
     }
 
     #[test]
     fn query_search_hits_name_source_path_output_path_error_and_folder() {
         for (query, want_ids) in [
-            ("SUNSET", vec!["alpha"]),
+            ("SUNSET", vec!["gamma", "alpha"]),
             ("photos/sunset", vec!["alpha"]),
             ("alpha/sunset", vec!["alpha"]),
             ("LOCKED", vec!["beta"]),
@@ -2013,6 +2064,15 @@ mod tests {
             let ids: Vec<&str> = resp.sessions.iter().map(|s| s.session_id.as_str()).collect();
             assert_eq!(ids, want_ids, "query {query:?}");
         }
+        let name_only = HistoryFilters { search: Some("SUNSET".into()), ..no_filters() };
+        let resp = query_history(search_fixture(), &name_only, 0, 50);
+        let gamma = resp
+            .sessions
+            .iter()
+            .find(|s| s.session_id == "gamma")
+            .expect("name-only hit is found even when path/outputPath/error do not match");
+        assert_eq!(gamma.files.len(), 1);
+        assert_eq!(gamma.matched_files, Some(1));
         let folder_only = HistoryFilters { search: Some("/out/beta".into()), ..no_filters() };
         let resp = query_history(search_fixture(), &folder_only, 0, 50);
         assert_eq!(resp.sessions[0].matched_files, None, "folder-only hit keeps all files");
@@ -2103,6 +2163,38 @@ mod tests {
         );
         assert_eq!(resp.sessions[0].session_id, "new");
         assert_eq!(resp.sessions[0].matched_files, None);
+
+        let inclusive = HistoryFilters { since_ms: Some(100), ..no_filters() };
+        let resp = query_history(old_start_new_file_fixture(), &inclusive, 0, 50);
+        assert_eq!(resp.sessions.len(), 2, "old session included at the boundary");
+        let old = resp
+            .sessions
+            .iter()
+            .find(|s| s.session_id == "old")
+            .expect("old session present");
+        assert_eq!(
+            old.files.len(),
+            1,
+            "since_ms never filters file records; files stay untouched"
+        );
+        assert_eq!(old.matched_files, None, "since_ms is session-level only");
+
+        let session_incl_file_before = HistoryFilters { since_ms: Some(200), ..no_filters() };
+        let resp = query_history(old_start_new_file_fixture(), &session_incl_file_before, 0, 50);
+        let new = resp
+            .sessions
+            .iter()
+            .find(|s| s.session_id == "new")
+            .expect("new session present");
+        assert_eq!(
+            new.files.len(),
+            2,
+            "a file completed before the cutoff does not shrink an included session's file set"
+        );
+        assert_eq!(
+            new.matched_files, None,
+            "a mutant applying since_ms to files without setting matched_files must fail"
+        );
     }
 
     #[test]
@@ -2180,7 +2272,55 @@ mod tests {
         let resp = query_history(mixed_folders(), &filters, 0, 50);
         assert_eq!(resp.sessions.len(), 2);
         assert!(resp.sessions.iter().all(|s| s.output_folder == "/b"));
+        assert!(
+            resp.sessions.iter().all(|s| s.matched_files.is_none()),
+            "folder filter is session-level; matchedFiles stays None"
+        );
         assert!(!resp.sessions.iter().any(|s| s.session_id == "d"));
+    }
+
+    fn folder_filter_sessions_with_files() -> FoldResult {
+        let lines = vec![
+            start_in("a", 400, "/b"),
+            qfile("a", "f1", 401, "a.jpg", "/in/a.jpg", Some("/out/a.jpg"), "image", "done", (10, Some(5)), None),
+            start_in("b", 300, "/a"),
+            qfile("b", "f1", 301, "b.jpg", "/in/b.jpg", Some("/out/b.jpg"), "image", "failed", (10, None), Some("boom")),
+            start_in("c", 200, "/b"),
+            qfile("c", "f1", 201, "c.jpg", "/in/c.jpg", Some("/out/c.jpg"), "image", "done", (10, Some(5)), None),
+        ];
+        fold_records(&lines)
+    }
+
+    #[test]
+    fn query_output_folder_filter_is_session_level() {
+        let filters = HistoryFilters { output_folder: Some("/b".into()), ..no_filters() };
+        let resp = query_history(folder_filter_sessions_with_files(), &filters, 0, 50);
+        assert_eq!(resp.sessions.len(), 2);
+        assert!(
+            resp.sessions.iter().all(|s| s.matched_files.is_none()),
+            "folder filter is session-level; it must never set matchedFiles"
+        );
+        assert!(
+            resp.sessions.iter().all(|s| s.files.len() == 1),
+            "file sets stay untouched under a folder filter"
+        );
+        assert_eq!(resp.summary.files, 2);
+    }
+
+    #[test]
+    fn query_page_beyond_end_clamps_with_active_filter() {
+        let filters = HistoryFilters {
+            statuses: Some(vec!["failed".into()]),
+            ..no_filters()
+        };
+        let resp = query_history(five_sessions_mixed_statuses(), &filters, 9, 1);
+        assert_eq!(
+            resp.page, 2,
+            "page clamps to the last page of the filtered set, not the unfiltered set"
+        );
+        assert_eq!(resp.sessions.len(), 1, "clamped page still returns a session");
+        assert_eq!(resp.sessions[0].session_id, "s1");
+        assert_eq!(resp.total_sessions, 3, "three of five sessions are failed");
     }
 
     fn three_status_session() -> FoldResult {
@@ -2276,26 +2416,73 @@ mod tests {
         );
     }
 
-    fn two_locked_files() -> FoldResult {
+    fn search_status_fixture() -> FoldResult {
         let lines = vec![
             start_in("s1", 10, "/out"),
             qfile("s1", "f1", 11, "a.jpg", "/in/a.jpg", Some("/out/a.jpg"), "image", "failed", (10, Some(5)), Some("locked")),
             qfile("s1", "f2", 12, "b.jpg", "/in/b.jpg", None, "image", "failed", (10, None), Some("boom")),
+            qfile("s1", "f3", 13, "c.jpg", "/in/c.jpg", Some("/out/c.jpg"), "image", "done", (10, Some(5)), Some("locked")),
         ];
         fold_records(&lines)
     }
 
     #[test]
     fn query_file_search_hit_intersects_status_filter() {
+        let search_only = HistoryFilters { search: Some("locked".into()), ..no_filters() };
+        let resp = query_history(search_status_fixture(), &search_only, 0, 50);
+        assert_eq!(resp.sessions.len(), 1, "search alone keeps the session");
+        assert_eq!(resp.sessions[0].files.len(), 2, "f1 and f3 match the searched error");
+        assert_eq!(resp.sessions[0].matched_files, Some(2));
+
+        let status_only = HistoryFilters {
+            statuses: Some(vec!["failed".into()]),
+            ..no_filters()
+        };
+        let resp = query_history(search_status_fixture(), &status_only, 0, 50);
+        assert_eq!(resp.sessions[0].files.len(), 2, "f1 and f2 are failed");
+
         let filters = HistoryFilters {
             search: Some("locked".into()),
             statuses: Some(vec!["failed".into()]),
             ..no_filters()
         };
-        let resp = query_history(two_locked_files(), &filters, 0, 50);
+        let resp = query_history(search_status_fixture(), &filters, 0, 50);
         assert_eq!(resp.sessions.len(), 1);
-        assert_eq!(resp.sessions[0].files.len(), 1, "search ∩ status, not just status");
+        assert_eq!(
+            resp.sessions[0].files.len(),
+            1,
+            "search ∩ status: status narrows within the search and search narrows within the status"
+        );
         assert_eq!(resp.sessions[0].files[0].name, "a.jpg");
+        assert_eq!(resp.sessions[0].matched_files, Some(1));
+        assert_eq!(resp.summary.files, 1);
+    }
+
+    fn pdf_and_image_errors_fixture() -> FoldResult {
+        let lines = vec![
+            start_in("s1", 10, "/out"),
+            qfile("s1", "f1", 11, "a.pdf", "/in/a.pdf", Some("/out/a.pdf"), "pdf", "failed", (10, None), Some("locked")),
+            qfile("s1", "f2", 12, "b.pdf", "/in/b.pdf", Some("/out/b.pdf"), "pdf", "failed", (10, None), Some("boom")),
+            qfile("s1", "f3", 13, "c.jpg", "/in/c.jpg", Some("/out/c.jpg"), "image", "failed", (10, None), Some("locked")),
+        ];
+        fold_records(&lines)
+    }
+
+    #[test]
+    fn query_file_search_hit_intersects_category_filter() {
+        let filters = HistoryFilters {
+            search: Some("locked".into()),
+            categories: Some(vec!["pdf".into()]),
+            ..no_filters()
+        };
+        let resp = query_history(pdf_and_image_errors_fixture(), &filters, 0, 50);
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(
+            resp.sessions[0].files.len(),
+            1,
+            "search ∩ category: category narrows within the search and search narrows within the category"
+        );
+        assert_eq!(resp.sessions[0].files[0].name, "a.pdf");
         assert_eq!(resp.sessions[0].matched_files, Some(1));
         assert_eq!(resp.summary.files, 1);
     }
@@ -2388,6 +2575,10 @@ mod tests {
             "trimmed filter matches trimmed stored folder on both sides"
         );
         assert_eq!(filtered.total_sessions, 2);
+        assert!(
+            filtered.sessions.iter().all(|s| s.matched_files.is_none()),
+            "folder filter is session-level; matchedFiles stays None"
+        );
     }
 
     #[test]
