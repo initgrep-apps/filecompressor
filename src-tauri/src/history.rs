@@ -568,7 +568,7 @@ pub fn split_by_retention(
     } else {
         retention_days
     };
-    let cutoff = now_ms - i64::from(retention_days) * 86_400_000;
+    let cutoff = now_ms.saturating_sub(i64::from(retention_days) * 86_400_000);
     let mut started: HashSet<String> = HashSet::new();
     let mut newest_by_session: HashMap<String, i64> = HashMap::new();
     let mut bound: Vec<Option<String>> = Vec::with_capacity(lines.len());
@@ -613,6 +613,14 @@ pub fn split_by_retention(
     }
 
     (kept, drop.len())
+}
+
+fn remove_if_exists(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 pub struct HistoryStore {
@@ -690,27 +698,24 @@ impl HistoryStore {
         let _guard = poison_recover(self.lock.lock());
         let lines = self.decode_lines()?;
         let (kept, dropped) = split_by_retention(lines, retention_days, now_ms);
+        let tmp = self.tmp_path();
+        remove_if_exists(&tmp)
+            .map_err(|e| format!("history write failed: remove stale temp {}: {e}", tmp.display()))?;
         if dropped == 0 {
             return Ok(0);
-        }
-        let tmp = self.tmp_path();
-        match std::fs::remove_file(&tmp) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(format!(
-                    "history write failed: remove stale temp {}: {e}",
-                    tmp.display()
-                ))
-            }
         }
         let mut contents = String::new();
         for line in &kept {
             contents.push_str(line);
             contents.push('\n');
         }
-        std::fs::write(&tmp, contents)
+        let mut file = std::fs::File::create(&tmp)
+            .map_err(|e| format!("history write failed: create {}: {e}", tmp.display()))?;
+        file.write_all(contents.as_bytes())
             .map_err(|e| format!("history write failed: write {}: {e}", tmp.display()))?;
+        file.sync_all()
+            .map_err(|e| format!("history write failed: sync {}: {e}", tmp.display()))?;
+        drop(file);
         std::fs::rename(&tmp, &self.path).map_err(|e| {
             format!(
                 "history write failed: rename {} to {}: {e}",
@@ -723,27 +728,12 @@ impl HistoryStore {
 
     pub fn clear(&self) -> Result<(), String> {
         let _guard = poison_recover(self.lock.lock());
-        match std::fs::remove_file(&self.path) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(format!(
-                    "history clear failed: remove {}: {e}",
-                    self.path.display()
-                ))
-            }
-        }
         let tmp = self.tmp_path();
-        match std::fs::remove_file(&tmp) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                return Err(format!(
-                    "history clear failed: remove {}: {e}",
-                    tmp.display()
-                ))
-            }
-        }
+        remove_if_exists(&tmp)
+            .map_err(|e| format!("history clear failed: remove {}: {e}", tmp.display()))?;
+        remove_if_exists(&self.path).map_err(|e| {
+            format!("history clear failed: remove {}: {e}", self.path.display())
+        })?;
         Ok(())
     }
 
@@ -2978,5 +2968,47 @@ mod tests {
         let err = store.clear().unwrap_err();
         assert!(err.starts_with("history clear failed: remove "), "{err}");
         assert!(store.file_path().join("inner").join("data.txt").exists());
+    }
+
+    #[test]
+    fn clear_tmp_failure_leaves_main_intact() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store.append_session_end(&small_end("s1")).unwrap();
+        std::fs::create_dir_all(dir.path().join("history.jsonl.tmp")).unwrap();
+        let before = std::fs::read(store.file_path()).unwrap();
+
+        let err = store.clear().unwrap_err();
+
+        assert!(err.starts_with("history clear failed: remove "), "{err}");
+        assert!(
+            store.file_path().exists(),
+            "history.jsonl must survive a tmp removal failure (data left in place)"
+        );
+        assert_eq!(std::fs::read(store.file_path()).unwrap(), before);
+        let lines = store.read_lines().unwrap();
+        assert_eq!(lines.len(), 1, "history.jsonl stays readable");
+    }
+
+    #[test]
+    fn trim_missing_file_cleans_stale_regular_tmp() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let tmp = dir.path().join("history.jsonl.tmp");
+        std::fs::write(&tmp, "stale").unwrap();
+
+        assert_eq!(store.trim(1, 100 * DAY_MS).unwrap(), 0);
+
+        assert!(!tmp.exists(), "stale regular tmp is cleaned even with no history file");
+        assert!(!store.file_path().exists());
+    }
+
+    #[test]
+    fn trim_extreme_now_ms_does_not_panic() {
+        let now = i64::MIN;
+        let lines = vec![line(start("s1", now)), line(start("s2", now + DAY_MS))];
+        let (kept, dropped) = split_by_retention(lines.clone(), 90, now);
+        assert_eq!(dropped, 0, "cutoff saturates at i64::MIN; nothing is older");
+        assert_eq!(kept, lines, "every line survives, in order");
     }
 }
