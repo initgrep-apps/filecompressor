@@ -675,8 +675,7 @@ impl HistoryStore {
         }
         let mut file = std::fs::File::create(&tmp)
             .map_err(|e| format!("history write failed: create {}: {e}", tmp.display()))?;
-        file.write_all(contents.as_bytes())
-            .map_err(|e| format!("history write failed: write {}: {e}", tmp.display()))?;
+        write_terminated(&mut file, contents.as_bytes(), &tmp)?;
         file.sync_all()
             .map_err(|e| format!("history write failed: sync {}: {e}", tmp.display()))?;
         drop(file);
@@ -687,7 +686,7 @@ impl HistoryStore {
                 self.path.display()
             )
         })?;
-        Ok(dropped as u32)
+        Ok(u32::try_from(dropped).unwrap_or(u32::MAX))
     }
 
     pub fn clear(&self) -> Result<(), String> {
