@@ -84,8 +84,8 @@ pub fn load_settings<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> crate::set
     crate::settings::parse_settings_value(value)
 }
 
-fn save_settings_to_store(
-    app: &tauri::AppHandle,
+fn save_settings_to_store<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     settings: &crate::settings::Settings,
 ) -> Result<(), String> {
     let store = match app.store(STORE_FILE) {
@@ -107,30 +107,32 @@ fn save_settings_to_store(
 }
 
 #[tauri::command]
-pub fn get_settings(app: tauri::AppHandle) -> crate::settings::Settings {
+pub fn get_settings<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> crate::settings::Settings {
     load_settings(&app)
 }
 
 #[tauri::command]
-pub fn save_settings(
-    app: tauri::AppHandle,
+pub fn save_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     settings: crate::settings::Settings,
 ) -> Result<(), String> {
     save_settings_to_store(&app, &settings)
 }
 
 #[tauri::command]
-pub fn reset_settings(app: tauri::AppHandle) -> Result<crate::settings::Settings, String> {
+pub fn reset_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<crate::settings::Settings, String> {
     let defaults = crate::settings::Settings::default();
     save_settings_to_store(&app, &defaults)?;
     Ok(defaults)
 }
 
 #[tauri::command]
-pub fn add_files(
+pub fn add_files<R: tauri::Runtime>(
     file_paths: Vec<String>,
-    state: State<FileListState>,
-    app: tauri::AppHandle,
+    state: State<'_, FileListState>,
+    app: tauri::AppHandle<R>,
 ) -> Vec<FileEntry> {
     let settings = load_settings(&app);
     let mut list = state.0.lock().unwrap_or_else(|e| {
@@ -171,10 +173,10 @@ pub fn clear_list(state: State<FileListState>) {
 }
 
 #[tauri::command]
-pub fn compress_all(
-    app: tauri::AppHandle,
+pub fn compress_all<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, FileListState>,
-    queue: State<'_, crate::queue::QueueState>,
+    queue: State<'_, crate::queue::QueueState<R>>,
 ) -> String {
     let list = state.0.lock().unwrap_or_else(|e| {
         eprintln!("warn: file list mutex was poisoned, recovering: {e}");
@@ -198,11 +200,11 @@ pub fn compress_all(
 }
 
 #[tauri::command]
-pub fn cancel_file(
-    app: tauri::AppHandle,
+pub fn cancel_file<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     file_id: String,
     state: State<'_, FileListState>,
-    queue: State<'_, crate::queue::QueueState>,
+    queue: State<'_, crate::queue::QueueState<R>>,
 ) {
     queue.cancel_file(&file_id);
     // Not-yet-started file has no token — mark Cancelled so the worker skips it
@@ -230,7 +232,10 @@ pub fn cancel_all(queue: State<'_, crate::queue::QueueState>) {
 }
 
 #[tauri::command]
-pub fn reveal_in_folder(file_path: String, app: tauri::AppHandle) -> Result<(), String> {
+pub fn reveal_in_folder<R: tauri::Runtime>(
+    file_path: String,
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     app.opener()
         .reveal_item_in_dir(&file_path)

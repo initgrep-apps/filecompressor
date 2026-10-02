@@ -102,7 +102,7 @@ pub(crate) fn cleanup_stale_temp_files_in(app_temp: &Path, now: SystemTime) {
     }
 }
 
-pub(crate) fn cleanup_stale_temp_files(app: &AppHandle) {
+pub(crate) fn cleanup_stale_temp_files<R: tauri::Runtime>(app: &AppHandle<R>) {
     let temp_base = match app.path().temp_dir() {
         Ok(temp_base) => temp_base,
         Err(e) => {

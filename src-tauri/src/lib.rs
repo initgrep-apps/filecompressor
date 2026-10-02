@@ -51,21 +51,19 @@ pub(crate) fn setup_history<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_store::Builder::default().build())
-        .manage(FileListState(Mutex::new(Vec::new())))
-        .setup(|app| {
-            let handle = app.handle().clone();
-            app.manage(QueueState::new(handle));
-            temp::cleanup_stale_temp_files(app.handle());
-            setup_history(app.handle());
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
+pub(crate) fn setup_hook<R: tauri::Runtime>(
+    app: &mut tauri::App<R>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let handle = app.handle().clone();
+    app.manage(QueueState::new(handle));
+    temp::cleanup_stale_temp_files(app.handle());
+    setup_history(app.handle());
+    Ok(())
+}
+
+macro_rules! invoke_handlers {
+    () => {
+        tauri::generate_handler![
             commands::add_files,
             commands::remove_file,
             commands::clear_list,
@@ -79,7 +77,19 @@ pub fn run() {
             commands::get_history,
             commands::clear_history,
             commands::open_folder,
-        ])
+        ]
+    };
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .manage(FileListState(Mutex::new(Vec::new())))
+        .setup(setup_hook)
+        .invoke_handler(invoke_handlers!())
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {
             eprintln!("fatal: failed to start application: {e:#}");
