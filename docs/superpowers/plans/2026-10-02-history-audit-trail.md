@@ -890,7 +890,7 @@ git commit -m "feat(history): core-side query with filters, summary and paginati
   - `HistoryStore::trim(&self, retention_days: u32, now_ms: i64) -> Result<u32, String>` — rewrite only when `dropped > 0`; atomic via `history.jsonl.tmp` + `fs::rename`; returns dropped session count.
   - `HistoryStore::clear(&self) -> Result<(), String>` — remove file if present; also remove a stray `.tmp`.
 
-**Retention semantics:** session is dropped when `max(started_at, all file completed_at, ended_at) < now_ms - i64::from(retention_days) * 86_400_000` (strictly older; widen to i64 before multiplying so `u32` retention values cannot overflow). Missing `session_end` → newest record is max of start + files. `retention_days = 0` is treated as 90 (callers clamp, but the pure function must still be safe).
+**Retention semantics:** session is dropped when `max(started_at, all file completed_at, ended_at) < now_ms - i64::from(retention_days) * 86_400_000` (strictly older; widen to i64 before multiplying so `u32` retention values cannot overflow; the subtraction saturates so an extreme `now_ms` cannot panic). Missing `session_end` → newest record is max of start + files. `retention_days = 0` is treated as 90 (callers clamp, but the pure function must still be safe).
 
 **Acceptance Criteria:**
 - Exactly-at-cutoff sessions are kept; strictly older drop — with `ended_at` counted as a session record (spec §3.6).
@@ -904,16 +904,23 @@ git commit -m "feat(history): core-side query with filters, summary and paginati
 **Required Tests:**
 - `trim_keeps_session_exactly_at_boundary` — edge kept, older dropped
 - `trim_newest_exactly_at_cutoff_kept` — session whose newest record == cutoff is kept (strict `<`)
-- `trim_ended_at_counts_as_newest_record` — old start + fresh end → kept; fresh start + old end → dropped
+- `trim_ended_at_counts_as_newest_record` — old start + fresh end → kept; fresh start + old end → kept (ended_at counts toward newest)
 - `trim_counts_files_after_start_for_interrupted_sessions` — file after start keeps the session
+- `trim_dropped_session_lines_move_together` — dropped session's start/file/end lines all drop; kept vector is exactly the survivor
+- `trim_store_removes_whole_session_lines` — store trim drops a complete old session; load() reports zero skipped lines
 - `trim_keeps_malformed_and_orphan_lines` — never dropped
 - `trim_keeps_unknown_type_lines_verbatim` — future record kinds survive
+- `trim_wide_retention_does_not_overflow` — wide retention keeps a 200-day-old record (a wrapped cutoff would drop it)
+- `trim_extreme_now_ms_does_not_panic` — `now_ms = i64::MIN` saturates the cutoff; nothing drops
 - `trim_rewrites_only_when_something_drops_and_is_atomic` — dropped count, no tmp leftover, second trim no-op
-- `trim_failure_leaves_original_intact` — tmp path as directory → Err + bytes unchanged
+- `trim_failure_leaves_original_intact` — tmp path as directory → Err at the stale-remove stage + original bytes unchanged
+- `trim_direct_write_and_rename_paths_are_used` — successful trim leaves no tmp and writes kept.join("\n") exactly
 - `trim_missing_file_is_noop` — fresh store → Ok(0), no tmp created
+- `trim_missing_file_cleans_stale_regular_tmp` — no history file + stale regular tmp → Ok(0), tmp gone
 - `trim_stale_tmp_regular_file_is_replaced` — pre-existing regular tmp file does not break trim
 - `clear_removes_file_and_is_idempotent` — plus stray tmp removal
 - `clear_failure_returns_err` — history.jsonl as a non-empty directory → Err, data left in place
+- `clear_tmp_failure_leaves_main_intact` — tmp removal failure → Err, history.jsonl still present and readable
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1010,9 +1017,9 @@ Expected: FAIL — `split_by_retention` not defined.
 
 - [ ] **Step 3: Implement**
 
-- `split_by_retention`: first pass parses lines into `(index, type, session_id, newest_ms)`; builds `drop: HashSet<String>` for sessions whose newest < cutoff; second pass keeps lines whose session is not in `drop`, plus all malformed/unknown/orphan lines; `dropped = drop.len()`. Treat `retention_days == 0` as 90 inside the pure function.
-- `HistoryStore::trim`: `lines = read_lines()`; `(kept, dropped) = split_by_retention(...)`; if `dropped == 0` → `Ok(0)`; else write `history.jsonl.tmp` (remove a stale regular tmp file first with `remove_file`, ignore `NotFound`; do NOT remove a directory — that failure surfaces as Err), `fs::rename(tmp, path)`, errors leave the original untouched; guard with the mutex.
-- `HistoryStore::clear`: remove `history.jsonl` (ignore `NotFound`; a directory → Err) and any stale `history.jsonl.tmp` file (ignore `NotFound`) — a tmp directory also errors out so the failure is visible.
+- `split_by_retention`: first pass parses lines into `(index, type, session_id, newest_ms)`; builds `drop: HashSet<String>` for sessions whose newest < cutoff; second pass keeps lines whose session is not in `drop`, plus all malformed/unknown/orphan lines; `dropped = drop.len()`. Treat `retention_days == 0` as 90 inside the pure function. Cutoff uses `now_ms.saturating_sub(i64::from(retention_days) * 86_400_000)`.
+- `HistoryStore::trim`: `lines = read_lines()`; remove a stale regular `history.jsonl.tmp` first (ignore `NotFound`; do NOT remove a directory — that failure surfaces as Err) **before** the `dropped == 0` early return so a stale tmp never survives a no-op trim; then `(kept, dropped) = split_by_retention(...)`; if `dropped == 0` → `Ok(0)`; else write `history.jsonl.tmp` via `File::create` + `write_all` + `sync_all` (fsync before rename), drop the handle, `fs::rename(tmp, path)`, errors leave the original untouched; guard with the mutex.
+- `HistoryStore::clear`: remove any stale `history.jsonl.tmp` first (ignore `NotFound`; a tmp directory errors out so the failure is visible), then remove `history.jsonl` (ignore `NotFound`; a directory → Err) — tmp removal before main means a failure leaves the history data in place (spec §5.8).
 
 - [ ] **Step 4: Run test to verify it passes**
 
