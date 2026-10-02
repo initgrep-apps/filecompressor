@@ -2875,12 +2875,96 @@ mod tests {
     }
 
     #[test]
+    fn trim_dropped_session_lines_move_together() {
+        let now = 10 * DAY_MS;
+        let old_start = line(start("old", now - 30 * DAY_MS));
+        let old_file = line(file("old", "f", now - 30 * DAY_MS + 1, "done", (1, Some(1))));
+        let old_end = line(end("old", now - 30 * DAY_MS + 2));
+        let fresh_start = line(start("fresh", now - 1));
+        let lines = vec![old_start, old_file, old_end, fresh_start.clone()];
+
+        let (kept, dropped) = split_by_retention(lines, 10, now);
+
+        assert_eq!(dropped, 1);
+        assert_eq!(
+            kept,
+            vec![fresh_start],
+            "dropped session's start, file, and end lines all move together"
+        );
+    }
+
+    #[test]
+    fn trim_store_removes_whole_session_lines() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let now = 100 * DAY_MS;
+        store
+            .append_session_start(&SessionStartRecord {
+                session_id: "old".into(),
+                started_at: 0,
+                file_count: 1,
+                output_folder: "/o".into(),
+            })
+            .unwrap();
+        store
+            .append_file(&FileResultRecord {
+                session_id: "old".into(),
+                file_id: "f1".into(),
+                completed_at: 1,
+                name: "a.jpg".into(),
+                path: "/in/a.jpg".into(),
+                output_path: Some("/o/a.jpg".into()),
+                category: "image".into(),
+                target_bytes: 1024,
+                original_size: 5,
+                compressed_size: Some(1),
+                status: "done".into(),
+                quality_used: Some(70),
+                strategy_used: Some("quality=70".into()),
+                error: None,
+                duration_ms: 12,
+            })
+            .unwrap();
+        store
+            .append_session_end(&SessionEndRecord {
+                session_id: "old".into(),
+                ended_at: 2,
+                total_saved_bytes: 4,
+                counts: Counts::default(),
+                cancelled: false,
+            })
+            .unwrap();
+        let fresh = SessionStartRecord {
+            session_id: "fresh".into(),
+            started_at: now,
+            file_count: 1,
+            output_folder: "/o".into(),
+        };
+        store.append_session_start(&fresh).unwrap();
+
+        let dropped = store.trim(1, now).unwrap();
+
+        assert_eq!(dropped, 1);
+        let lines = store.read_lines().unwrap();
+        assert_eq!(lines.len(), 1, "exactly one line survives");
+        let parsed: SessionStartRecord = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(parsed, fresh);
+        assert_eq!(store.load().unwrap().skipped_lines, 0);
+    }
+
+    #[test]
     fn trim_wide_retention_does_not_overflow() {
         let now = 10 * DAY_MS;
-        let lines = vec![line(start("s1", now))];
+        let recent = line(start("recent", now));
+        let ancient = line(start("ancient", now - 200 * DAY_MS));
+        let lines = vec![recent.clone(), ancient.clone()];
         let (kept, dropped) = split_by_retention(lines, u32::MAX, now);
         assert_eq!(dropped, 0);
-        assert_eq!(kept.len(), 1, "cutoff math widens before multiplying");
+        assert_eq!(
+            kept,
+            vec![recent, ancient],
+            "cutoff math widens before multiplying; a u32-wrapped cutoff would drop the ancient line"
+        );
     }
 
     #[test]
@@ -2917,10 +3001,44 @@ mod tests {
         store.append_session_start(&SessionStartRecord {
             session_id: "old".into(), started_at: 0, file_count: 1, output_folder: "/o".into(),
         }).unwrap();
-        let before = store.read_lines().unwrap();
-        let err = store.trim(1, 100 * DAY_MS);
-        assert!(err.is_err(), "tmp path occupied by a directory ⇒ rewrite fails");
-        assert_eq!(store.read_lines().unwrap(), before);
+        let before = std::fs::read(store.file_path()).unwrap();
+        let err = store.trim(1, 100 * DAY_MS).unwrap_err();
+        assert!(
+            err.contains("remove stale temp"),
+            "tmp occupied by a directory fails at the stale-remove stage: {err}"
+        );
+        assert_eq!(
+            std::fs::read(store.file_path()).unwrap(),
+            before,
+            "original bytes are byte-identical after a failed rewrite"
+        );
+    }
+
+    #[test]
+    fn trim_direct_write_and_rename_paths_are_used() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let now = 100 * DAY_MS;
+        let old = start("old", 0);
+        let fresh = start("fresh", now);
+        std::fs::write(
+            store.file_path(),
+            format!("{}\n{}\n", line(old.clone()), line(fresh.clone())),
+        )
+        .unwrap();
+
+        let dropped = store.trim(1, now).unwrap();
+
+        assert_eq!(dropped, 1);
+        assert!(
+            !dir.path().join("history.jsonl.tmp").exists(),
+            "rename consumed the tmp file"
+        );
+        assert_eq!(
+            std::fs::read(store.file_path()).unwrap(),
+            format!("{}\n", line(fresh)).into_bytes(),
+            "rewrite produced exactly the kept line with a trailing newline"
+        );
     }
 
     #[test]
