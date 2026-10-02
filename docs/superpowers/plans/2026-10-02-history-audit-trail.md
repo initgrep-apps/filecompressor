@@ -1348,7 +1348,7 @@ git commit -m "feat(queue): record session, file and end records to history"
 - `registered_commands_answer_ipc_dispatch` (lib.rs `wiring_tests`) — `get_ipc_response` dispatches of `get_history` (returns `Ok` with `page: 0`, clamped `pageSize: 50`), `clear_history` (returns `Ok`), and `open_folder` on a nonexistent path (returns the pinned `Could not open folder {path}: {e}` error); dropping any of them from `invoke_handlers!` fails it
 - `startup_trim_failure_still_manages_history_store` (lib.rs `wiring_tests`) — `history.jsonl` as a directory + retention settings → `HistoryStore` still managed; an early-return on trim error fails it
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `commands.rs` test module (pure):
 
@@ -1416,12 +1416,12 @@ In `commands.rs` test module (pure):
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd src-tauri && cargo test commands`
 Expected: FAIL — `clamp_page_size` not defined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `fn clamp_page_size(n: u32) -> u32` (private, tested; 0 → `crate::history::DEFAULT_PAGE_SIZE`, cap 200); `get_history` uses it.
 - `fn empty_history_response(requested_size: u32) -> HistoryResponse` — `page: 0`, `page_size: clamp_page_size(requested_size)`, zeroed `HistorySummary::default()` (Default derived in Task 4).
@@ -1429,12 +1429,12 @@ Expected: FAIL — `clamp_page_size` not defined.
 - `clear_history` / `open_folder` as above; `open_folder` reuses the plugin (`tauri_plugin_opener::OpenerExt`) with `open_path(path, None::<&str>)`, matching `reveal_in_folder` error style (`commands.rs:232-237`).
 - `lib.rs`: add `mod history;` (Task 2 added the declaration — confirm it exists once), `use history::HistoryStore`, manage in setup after `QueueState`, call `trim` right after managing (log errors via `eprintln!`; never fail setup), register commands in `invoke_handler`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd src-tauri && cargo test commands && cargo test history`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/commands.rs src-tauri/src/lib.rs
