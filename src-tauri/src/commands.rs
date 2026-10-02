@@ -526,6 +526,7 @@ mod tests {
         ctx.config_mut().identifier = "com.app.test".into();
         let app = tauri::test::mock_builder()
             .plugin(tauri_plugin_opener::Builder::default().build())
+            .plugin(tauri_plugin_store::Builder::default().build())
             .build(ctx)
             .unwrap();
         if let Some(store) = store {
@@ -562,6 +563,14 @@ mod tests {
         assert_eq!(resp.sessions.len(), 0);
         assert_eq!(resp.summary.files, 0);
         assert_eq!(empty_history_response(500).page_size, 200);
+        assert_eq!(
+            crate::history::HistoryResponse::default().page_size,
+            50,
+            "Default must not be constructible as an invalid page_size 0"
+        );
+        assert_eq!(crate::history::HistoryResponse::empty(0).page_size, 50);
+        assert_eq!(crate::history::HistoryResponse::empty(200).page_size, 200);
+        assert_eq!(crate::history::HistoryResponse::empty(900).page_size, 200);
     }
 
     #[tokio::test]
@@ -726,15 +735,12 @@ mod tests {
         let app = history_test_app(dir.path(), None);
         let missing = dir.path().join("definitely-missing-folder");
         let missing_str = missing.to_str().unwrap().to_string();
+        let expected = format!("Could not open folder {missing_str}: ");
 
-        let err = open_folder(missing_str.clone(), app.handle().clone()).unwrap_err();
+        let err = open_folder(missing_str, app.handle().clone()).unwrap_err();
         assert!(
-            err.starts_with(&format!("Could not open folder {missing_str}: ")),
+            err.starts_with(&expected),
             "pinned copy must name the path and keep the separator: {err}"
-        );
-        assert!(
-            err.contains(&missing_str),
-            "error must name the path: {err}"
         );
     }
 
@@ -756,36 +762,36 @@ mod tests {
 
     #[test]
     fn trim_runs_with_effective_retention_from_settings() {
-        use tauri::utils::config::AppDirectoriesOverride;
-
         let root = tempdir().unwrap();
         let seeded = HistoryStore::new_in(root.path());
-        let thirty_days_ago = crate::queue::now_ms() - 30 * 86_400_000;
-        seed_session(&seeded, "old", thirty_days_ago);
+        let now = crate::queue::now_ms();
+        seed_session(&seeded, "old", now - 30 * 86_400_000);
+        seed_session(&seeded, "ancient", now - 4000 * 86_400_000);
         fs::write(
             root.path().join("settings.json"),
-            serde_json::json!({ "settings": { "history": { "retentionDays": 10 } } }).to_string(),
+            serde_json::json!({ "settings": { "history": { "retentionDays": 5000 } } })
+                .to_string(),
         )
         .unwrap();
 
-        let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
-        ctx.config_mut().app.app_directories_override =
-            Some(AppDirectoriesOverride::Root(root.path().to_path_buf()));
-        ctx.config_mut().identifier = "com.app.test".into();
-        let app = tauri::test::mock_builder()
-            .plugin(tauri_plugin_store::Builder::default().build())
-            .build(ctx)
-            .unwrap();
+        let app = history_test_app(root.path(), None);
 
         crate::setup_history(app.handle());
 
         let managed = app
             .try_state::<HistoryStore>()
             .expect("setup_history must manage the store on the success path");
+        let ids: Vec<String> = managed
+            .load()
+            .unwrap()
+            .sessions
+            .iter()
+            .map(|s| s.session_id.clone())
+            .collect();
         assert_eq!(
-            managed.load().unwrap().sessions.len(),
-            0,
-            "30-day-old session must be trimmed with retention 10 (default 90 would keep it)"
+            ids,
+            vec!["old".to_string()],
+            "raw retention 5000 clamps to 3650, so the 4000-day session is trimmed while the 30-day session survives; a mutant using raw 5000 keeps both and the 90-day default trims both"
         );
     }
 

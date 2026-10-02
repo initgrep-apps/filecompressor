@@ -96,3 +96,86 @@ pub fn run() {
             std::process::exit(1);
         });
 }
+
+#[cfg(test)]
+mod wiring_tests {
+    use super::*;
+
+    fn wiring_app(root: &std::path::Path) -> tauri::App<tauri::test::MockRuntime> {
+        let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
+        ctx.config_mut().app.app_directories_override = Some(
+            tauri::utils::config::AppDirectoriesOverride::Root(root.to_path_buf()),
+        );
+        ctx.config_mut().identifier = "com.app.test".into();
+        tauri::test::mock_builder()
+            .plugin(tauri_plugin_opener::init())
+            .plugin(tauri_plugin_dialog::init())
+            .plugin(tauri_plugin_store::Builder::default().build())
+            .setup(setup_hook)
+            .invoke_handler(invoke_handlers!())
+            .build(ctx)
+            .unwrap()
+    }
+
+    #[test]
+    fn setup_hook_manages_queue_and_history_states() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = wiring_app(root.path());
+        app.run_iteration(|_, _| {});
+        assert!(
+            app.try_state::<HistoryStore>().is_some(),
+            "setup_hook must manage HistoryStore; deleting setup_history from the hook fails here"
+        );
+        assert!(app.try_state::<QueueState<tauri::test::MockRuntime>>().is_some());
+    }
+
+    #[test]
+    fn registered_commands_answer_ipc_dispatch() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = wiring_app(root.path());
+        app.run_iteration(|_, _| {});
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let response = tauri::test::get_ipc_response(
+            &webview,
+            tauri::webview::InvokeRequest {
+                cmd: "get_history".into(),
+                callback: tauri::ipc::CallbackFn(0),
+                error: tauri::ipc::CallbackFn(1),
+                url: "tauri://localhost".parse().unwrap(),
+                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+                    "filters": {},
+                    "page": 0,
+                    "pageSize": 50
+                })),
+                headers: Default::default(),
+                invoke_key: tauri::test::INVOKE_KEY.to_string(),
+            },
+        );
+        let payload = response.expect("registered get_history must answer the ipc dispatch");
+        let value = payload.deserialize::<serde_json::Value>().unwrap();
+        assert_eq!(value["page"], 0);
+        assert_eq!(value["pageSize"], 50);
+        assert_eq!(value["totalSessions"], 0);
+    }
+
+    #[test]
+    fn startup_trim_failure_still_manages_history_store() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("history.jsonl")).unwrap();
+        std::fs::write(
+            root.path().join("settings.json"),
+            serde_json::json!({ "settings": { "history": { "retentionDays": 10 } } }).to_string(),
+        )
+        .unwrap();
+
+        let mut app = wiring_app(root.path());
+        app.run_iteration(|_, _| {});
+
+        assert!(
+            app.try_state::<HistoryStore>().is_some(),
+            "startup trim failure must not disable history for the session"
+        );
+    }
+}
