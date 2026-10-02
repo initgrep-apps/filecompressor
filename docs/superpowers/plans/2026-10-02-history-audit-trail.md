@@ -1114,7 +1114,7 @@ git commit -m "feat(history): add 90-day retention trim and clear"
 - `status_key_snake_case` — `status_key` returns `"already_under_target"` etc. for all variants including `pending` / `compressing` (exhaustive, total match pinned; no panic paths)
 - `category_key_snake_case` — `category_key` returns lowercase strings (`"image"` / `"video"` / `"pdf"` / `"document"` / `"other"`), so file records never carry `format!("{:?}")`-style casing
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the `queue.rs` test module (existing harness: `make_app`, `setup_app`, `add_entries`, `wait_idle` — update `make_app` to `.manage(HistoryStore::new_in(root))` so all queue tests exercise history; the store path is the same root as the mock settings store):
 
@@ -1268,12 +1268,12 @@ Add to the `queue.rs` test module (existing harness: `make_app`, `setup_app`, `a
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd src-tauri && cargo test queue`
 Expected: FAIL — `history_counts_of` not defined / history assertions fail.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `queue.rs`:
 - Import `crate::history::{...}`; add `use tauri::Manager;` for `try_state` (already imported).
@@ -1287,12 +1287,12 @@ In `queue.rs`:
 - Cancel-skip paths: sequential loop cancel-all branch, lane `on_skipped`, the "cancelled while pending" guards in `process_single_job`, and the `!flipped` race branch (reuse `cancel_skip_entry` for the lookup) → `record_cancelled` with original sizes from the entry.
 - Methods on `QueueState`: `fn record_file(&self, app, batch_id, entry, status, output_path, compressed_size, quality_used, strategy_used, error, duration_ms)` builds the record with `status_key` / `category_key`, pushes to the accumulator, appends via the `HistoryRecordRef::File` variant; `fn record_cancelled(&self, app, batch_id, entry, duration_ms)` wraps the cancelled/skip call sites.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd src-tauri && cargo test queue`
 Expected: PASS (existing + new).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/queue.rs
