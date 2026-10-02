@@ -40,6 +40,7 @@ const mockSettings: Settings = {
     document: { minMediaQuality: 50 },
   },
   performance: { maxConcurrent: 'auto' },
+  history: { retentionDays: 90 },
 }
 
 beforeEach(() => vi.clearAllMocks())

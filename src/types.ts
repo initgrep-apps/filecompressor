@@ -62,4 +62,70 @@ export interface Settings {
   categoryTargets: Record<string, CategoryTarget>
   qualityFloors: QualityFloors
   performance: PerformanceSettings
+  history: { retentionDays: number }
+}
+
+export interface HistoryFile {
+  name: string
+  path: string
+  outputPath: string | null
+  category: Category
+  targetBytes: number
+  originalSize: number
+  compressedSize: number | null
+  status: FileStatus
+  qualityUsed: number | null
+  strategyUsed: string | null
+  error: string | null
+  durationMs: number
+  completedAt: number
+}
+
+export interface SessionOutcome {
+  done: number
+  bestEffort: number
+  failed: number
+  cancelled: number
+  unsupported: number
+  alreadyUnderTarget: number
+}
+
+export interface HistorySession {
+  sessionId: string
+  startedAt: number
+  endedAt: number | null
+  outputFolder: string
+  fileCount: number
+  files: HistoryFile[]
+  outcome: SessionOutcome
+  totalSavedBytes: number
+  cancelled: boolean
+  interrupted: boolean
+  matchedFiles: number | null
+}
+
+export interface HistoryFilters {
+  search?: string
+  statuses?: FileStatus[]
+  categories?: Category[]
+  sinceMs?: number
+  outputFolder?: string
+}
+
+export interface HistorySummary {
+  sessions: number
+  files: number
+  savedBytes: number
+  failedFiles: number
+}
+
+export interface HistoryResponse {
+  sessions: HistorySession[]
+  page: number
+  pageSize: number
+  totalSessions: number
+  totalFiles: number
+  summary: HistorySummary
+  outputFolders: string[]
+  skippedLines: number
 }

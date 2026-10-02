@@ -25,6 +25,7 @@ const baseSettings: Settings = {
     document: { minMediaQuality: 40 },
   },
   performance: { maxConcurrent: 'auto' },
+  history: { retentionDays: 90 },
 }
 
 const resetDefaults: Settings = {
