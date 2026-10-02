@@ -138,7 +138,7 @@ pub struct HistoryFilters {
     pub output_folder: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistorySummary {
     pub sessions: usize,
