@@ -30,7 +30,7 @@ import {
   RiPauseCircleLine,
   RiSkipRightLine,
 } from '@remixicon/react'
-import type { Category, FileStatus, HistoryFile, HistoryFilters, HistorySession, SessionOutcome } from '@/types'
+import type { Category, FileStatus, HistoryFile, HistorySession, SessionOutcome } from '@/types'
 import { useHistory } from '@/hooks/useHistory'
 import {
   dayKey,
@@ -67,37 +67,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
-const STATUS_CHIP_STYLES: Record<FileStatus, string> = {
-  pending: 'text-muted-foreground',
-  compressing: 'text-primary',
-  done: 'text-primary',
-  best_effort: 'text-destructive',
-  failed: 'text-destructive',
-  cancelled: 'text-muted-foreground',
-  unsupported: 'text-muted-foreground',
-  already_under_target: 'text-primary',
-}
-
-const STATUS_LABELS: Record<FileStatus, string> = {
-  pending: 'Pending',
-  compressing: 'Compressing',
-  done: 'Done',
-  best_effort: 'Best effort',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
-  unsupported: 'Unsupported',
-  already_under_target: 'Already under target',
-}
-
-const STATUS_DOT_COLORS: Record<FileStatus, string> = {
-  pending: 'bg-muted-foreground/50',
-  compressing: 'bg-primary',
-  done: 'bg-primary',
-  best_effort: 'bg-destructive',
-  failed: 'bg-destructive',
-  cancelled: 'bg-muted-foreground/50',
-  unsupported: 'bg-muted-foreground/30',
-  already_under_target: 'bg-primary',
+const STATUS_META: Record<FileStatus, { label: string; chip: string; dot: string }> = {
+  pending: { label: 'Pending', chip: 'text-muted-foreground', dot: 'bg-muted-foreground/50' },
+  compressing: { label: 'Compressing', chip: 'text-primary', dot: 'bg-primary' },
+  done: { label: 'Done', chip: 'text-primary', dot: 'bg-primary' },
+  best_effort: { label: 'Best effort', chip: 'text-destructive', dot: 'bg-destructive' },
+  failed: { label: 'Failed', chip: 'text-destructive', dot: 'bg-destructive' },
+  cancelled: { label: 'Cancelled', chip: 'text-muted-foreground', dot: 'bg-muted-foreground/50' },
+  unsupported: { label: 'Unsupported', chip: 'text-muted-foreground', dot: 'bg-muted-foreground/30' },
+  already_under_target: {
+    label: 'Already under target',
+    chip: 'text-primary',
+    dot: 'bg-primary',
+  },
 }
 
 const CATEGORY_LABELS: Record<Category, string> = {
@@ -205,10 +187,11 @@ function fileResult(file: HistoryFile): string {
 }
 
 function StatusMarker({ status }: { status: FileStatus }) {
+  const meta = STATUS_META[status]
   return (
-    <span className={`flex items-center gap-1.5 text-xs ${STATUS_CHIP_STYLES[status]}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${STATUS_DOT_COLORS[status]}`} />
-      {STATUS_LABELS[status]}
+    <span className={`flex items-center gap-1.5 text-xs ${meta.chip}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+      {meta.label}
     </span>
   )
 }
@@ -277,12 +260,11 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(session.startedAt))
-  const outcome = session.matchedFiles !== null ? countOutcome(files) : session.outcome
+  const matchedFiles = session.matchedFiles
+  const matched = matchedFiles !== null
+  const outcome = matched ? countOutcome(files) : session.outcome
   const hasOutput = files.some((f) => f.outputPath !== null)
-  const countLabel =
-    session.matchedFiles !== null
-      ? matchLabel(session.matchedFiles)
-      : fileCountLabel(session.fileCount)
+  const countLabel = matched ? matchLabel(matchedFiles) : fileCountLabel(session.fileCount)
 
   return (
     <div className="rounded-2xl border bg-card">
@@ -297,7 +279,7 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
         >
           <div className="flex flex-wrap items-center gap-x-0.5 text-sm tabular-nums">
             <span className="text-muted-foreground">{timeLabel}</span>
-            {session.matchedFiles !== null && (
+            {matched && (
               <>
                 {' · '}
                 <span>{countLabel}</span>
@@ -305,7 +287,7 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
             )}
             {' · '}
             <span>
-              {session.matchedFiles === null ? `${countLabel} · ` : ''}
+              {!matched ? `${countLabel} · ` : ''}
               {formatSize(sumOriginal)} → {formatSize(sumCompressed)} · {pct}% saved ·{' '}
               {duration}
             </span>
@@ -459,8 +441,11 @@ export function HistoryView() {
     setExpandState({})
   }, [response])
 
-  const setFiltersRef = useRef<(partial: Partial<HistoryFilters>) => void>(setFilters)
-  setFiltersRef.current = setFilters
+  const setFiltersRef = useRef(setFilters)
+
+  useEffect(() => {
+    setFiltersRef.current = setFilters
+  }, [setFilters])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -471,8 +456,8 @@ export function HistoryView() {
 
   const activeCount =
     (filters.search ? 1 : 0) +
-    (filters.statuses && filters.statuses.length > 0 ? 1 : 0) +
-    (filters.categories && filters.categories.length > 0 ? 1 : 0) +
+    (filters.statuses?.length ? 1 : 0) +
+    (filters.categories?.length ? 1 : 0) +
     (filters.sinceMs !== undefined ? 1 : 0) +
     (filters.outputFolder ? 1 : 0)
 
@@ -511,15 +496,14 @@ export function HistoryView() {
     return [...map.values()]
   }, [response, now])
 
-  const toggleSession = (session: HistorySession) => {
-    setExpandState((prev) => ({
-      ...prev,
-      [session.sessionId]: !(prev[session.sessionId] ?? session.matchedFiles !== null),
-    }))
-  }
-
   const isSessionExpanded = (session: HistorySession) =>
     expandState[session.sessionId] ?? session.matchedFiles !== null
+
+  const toggleSession = (session: HistorySession) =>
+    setExpandState((prev) => ({
+      ...prev,
+      [session.sessionId]: !isSessionExpanded(session),
+    }))
 
   const initialLoading = loading && response === null
   const busy = loading && response !== null
@@ -590,13 +574,13 @@ export function HistoryView() {
               <Chip
                 key={status}
                 active={filters.statuses?.includes(status) === true}
-                dotColor={STATUS_DOT_COLORS[status]}
+                dotColor={STATUS_META[status].dot}
                 onClick={() => {
                   const next = nextFilterList(filters.statuses, status)
                   setFilters({ statuses: next.length > 0 ? next : undefined })
                 }}
               >
-                {STATUS_LABELS[status]}
+                {STATUS_META[status].label}
               </Chip>
             ))}
             {HISTORY_CATEGORIES.map((category) => (
