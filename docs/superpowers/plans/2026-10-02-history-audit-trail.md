@@ -279,7 +279,7 @@ git commit -m "feat(settings): add history.retentionDays with clamp"
 - `read_lines_blocks_until_lock_released` — holding `store.lock` blocks a spawned `read_lines` until release
 - `write_failure_surfaces_write_stage_error` — read-only handle → `write_terminated` → `Err` starting `history write failed: write `
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src-tauri/src/history.rs` with the GPL header (`queue.rs:1-15` verbatim), `mod tests` included with:
 
@@ -404,12 +404,12 @@ Plus a test-module helper:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd src-tauri && cargo test history`
 Expected: FAIL — `HistoryStore` not defined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src-tauri/src/history.rs` (above the test module), implement:
 
@@ -421,12 +421,12 @@ In `src-tauri/src/history.rs` (above the test module), implement:
   - builds one buffer (`separator? + line + "\n"`) and writes it via the private `write_terminated(file, buf, path)` helper in a single `write_all` inside `self.lock`. Write errors → `Err(format!("history write failed: write {path}: {e}"))`; all other append stages carry `path` + stage in their messages (serialize / create parent dir / open / seek / write).
 - `read_lines`: `NotFound` → `Ok(vec![])`; other errors → `Err(format!("history read failed: read {path}: {e}"))`; reads the whole file inside the lock, then per line warns `warn: history line had invalid UTF-8, lossy-decoded ({path}): {e}` when `std::str::from_utf8` fails, lossy-decodes, trims, and filters blank lines.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd src-tauri && cargo test history`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/history.rs src-tauri/src/lib.rs
