@@ -1743,7 +1743,7 @@ git commit -m "feat(history): add frontend types, query hook and format helpers"
 - `expands on keyboard and shows the file table with inline errors` — Enter expand, error text
 - `disclosure space toggles and collapse works` — Space toggles open then closed; `aria-controls` target exists
 - `shows Interrupted chip for interrupted sessions` — `Interrupted` text; duration `—`
-- `shows Cancelled chip for cancelled sessions` — `Cancelled` text
+- `shows Cancelled chip for cancelled sessions` — `Cancelled` badge text, selector-scoped `span[data-slot="badge"]` (round 2: unscoped text collides with the always-present status filter chip)
 - `search input debounces into a filtered query` — payload `{ search, page: 0 }` after 300 ms
 - `esc clears search` — Esc → filter removed
 - `status chips produce payload and aria-pressed` — click failed chip → payload statuses; pressed state
@@ -1768,6 +1768,7 @@ git commit -m "feat(history): add frontend types, query hook and format helpers"
 - `multi chip un-toggle keeps per-group payloads` — Failed+Done on → `statuses: ['failed','done']`; Failed off → `statuses: ['done']`; PDF+Image on → `categories: ['pdf','image']`; PDF off → `categories: ['image']` (regression pin for chip clearing)
 - `category chip produces payload and pressed state` — PDF chip → `filters: { categories: ['pdf'] }`, `aria-pressed=true`
 - `open output folder invokes with session folder` — click → `open_folder` with `{ path: session.outputFolder }`
+- `open folder failure toasts` — rejected `open_folder` → `Could not open folder: <reason>` toast (review round 2)
 - `open output folder disabled when session lacks outputs` — all files without `outputPath` → button disabled
 - `copy source path writes clipboard and toasts` — `writeText` with source path + `Path copied` toast
 - `shows plural match count` — `matchedFiles: 3` → `3 matches`
@@ -1781,6 +1782,14 @@ git commit -m "feat(history): add frontend types, query hook and format helpers"
 - Disclosure `aria-label` stays `Toggle session details` (plan-pinned; tests query by it).
 - Manual refresh icon button (spec §5.6) intentionally omitted from this task's composition — refresh coverage is mount + `batch:complete`; follow-up owned by Task 11 (add the button or amend the spec).
 - Existing view-level pagination test fixtures switched to page-echoing backend responses (return `page` matching the request) — required for consistency with the new clamp-sync; assertions unchanged.
+
+**Round-2 review fixes (accepted, committed 72351bf–888622e):**
+- Cancelled-chip test selector-scoped to the session badge (`getAllByText('Cancelled')` === 2 confirmed: filter chip + badge; unscoped `findByText` resolved dead on the always-present chip). Interrupted test verified collision-free ("Interrupted" text is unique).
+- `open folder failure toasts` added (`open_folder` rejection → `Could not open folder: <reason>`); Required Tests updated.
+- `useHistory` page sync guarded against malformed `res.page` (number/integer/non-negative before `setPage`); existing clamp-sync hook test unaffected.
+- `console.error` logs added in the three view catch blocks (`copy to clipboard failed`, `reveal_in_folder failed`, `open_folder failed`); toast copies unchanged.
+- `setFiltersRef.current = setFilters` moved into a `useEffect` (no render-phase ref write); debounce timing unchanged.
+- `toggleSession` reuses `isSessionExpanded` (single default-rule source); `SessionRow` uses `matched`/`matchedFiles` aliases with aliased-condition narrowing; `STATUS_CHIP_STYLES`/`STATUS_LABELS`/`STATUS_DOT_COLORS` merged into `STATUS_META`; `activeCount` reduced to the 5-term optional-chained form; two redundant in-test `vi.useRealTimers()` removed (afterEach already restores); status-chip test reuses the bound chip element for click + `aria-pressed`.
 
 - [ ] **Step 1: Write the failing tests**
 
