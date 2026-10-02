@@ -95,3 +95,19 @@ Refine pass (pre-implementation). Drift found by code-explorer against repo fact
 10. Task 9: "N matches" singular/plural — test expected literal `1 match` while spec says `N matches`; plan now specifies singular/plural and the auto-expand test asserts `1 match`.
 11. Spec drift (fixed): spec §3.7 still sketched `fold_sessions` / `LoadedHistory` / `query_history(..., now_ms)` while §3.5 resolves presets to `sinceMs` webview-side. Synced the spec to the plan (`fold_records` / `FoldResult` / no `now_ms`) and updated §5.7's file table to the implemented structure (`HistoryView.tsx` includes the filter bar + session row; `HistoryPagination.tsx` added).
 12. Coverage gaps closed by this refine: write-failure/once-per-batch `history:error` tests, command-level `get_history`/`clear_history`/`open_folder` tests, missing-store empty response, unsupported-outcome record, sequential cancel-all path, stale-response race, DST midnight boundaries, page_size 0 safety, empty/whitespace search and empty-vec filter semantics, session-not-split-across-pages, actions/disabled-state UI tests, summary-bar page-independence UI test, automated AC proxies in Task 11.
+
+## Refinement Drift — 2026-10-02-sidecar-binaries-release
+**Date:** 2026-10-02 | **Plan:** docs/superpowers/plans/2026-10-02-sidecar-binaries-release.md
+
+1. Task 1: committed ffmpeg/ffprobe binaries are x86_64 on disk under aarch64 names (verified via `file`) — the incident the plan fixes; also `git ls-files` shows 5 binaries + 73 framework dylibs currently tracked (~230 MB) — `git rm -r --cached` in Task 1 Step 12 is load-bearing.
+2. Task 1: `audit-sidecars.sh:111` `*"PE32"*) : ;;` silently passes all Windows PE binaries — plan's verify.mjs delegate must add Windows arch checking (Task 3), currently a no-op lane.
+3. Task 1: fresh-clone `audit-sidecars.sh:98-101` message says "FAIL binaries dir missing" but does not name `yarn binaries:all` — Review Focus #2 demands the actionable message; wire when delegating to verify.mjs.
+4. Task 1/13: after `git rm --cached`, `cargo test` on a fresh clone fails until `yarn binaries:all` runs (frameworks dylibs no longer committed; audit requires them) — intentional gate, failing messages must point there.
+5. Task 2: existing pdf.rs tests assert gs-flag MEMBERSHIP, not order (`pdf.rs:697-706, 758-797`) — so `gs_args_without_resources_match_today` (exact vector) is genuinely new, not redundant.
+6. Task 2: `bundle-pdf-macos.sh` fingerprint-mismatch abort (`:53-58`) must be bypassed exactly once for the official-lib replacement of `frameworks/libqpdf.30.dylib` (tauri.conf.json:96 hard-lists that filename — replacement must keep the exact name).
+7. Task 3: `sidecar_candidates_prefer_triple_then_plain_name` (`sidecar.rs:233-246`) pins `candidates.len()==2` — engine-folder candidates change this; test must be updated, easy to miss.
+8. Task 3: run_sidecar spawn chain (`processor.rs:200-207`) has no env hook — PATH prepend requires restructuring into cmd-build → prepend → spawn; helper derives dir from `sidecar_path`.
+9. Task 3/spec: §8.2 originally said "qpdf/ffmpeg/ffprobe static" but msvc qpdf ships VC runtime DLLs → engines/qpdf/ layout wins; spec synced during refine.
+10. Task 3: platform-config merge semantics (externalBin append vs replace for tauri.windows.conf.json) unresolved until Context7 verification in Task 3 Step 4 — could affect base-conf 5-entry list on Windows.
+11. Task 1: plan's "existing tests pin order" claim about gs args was overstated (see #5) — fixed by making the exact-vector test explicit.
+12. Spec §7 audited during refine: fetch row no longer claims brew installs; audit row gained explicit `--target` support; both match plan.
