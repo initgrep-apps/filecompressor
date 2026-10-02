@@ -160,7 +160,8 @@ fn outcome_from_files(session_id: &str, files: &[HistoryFile]) -> Counts {
             "unsupported" => counts.unsupported += 1,
             "already_under_target" => counts.already_under_target += 1,
             other => eprintln!(
-                "warn: history fold session {session_id} has file with unknown status: {other}"
+                "warn: history fold session {session_id} file {} has unknown status: {other}",
+                file.path
             ),
         }
     }
@@ -170,12 +171,14 @@ fn outcome_from_files(session_id: &str, files: &[HistoryFile]) -> Counts {
 fn parse_or_skip<T: serde::de::DeserializeOwned>(
     line: &str,
     kind: &str,
-    line_no: usize,
+    entry_index: usize,
 ) -> Option<T> {
     match serde_json::from_str(line) {
         Ok(parsed) => Some(parsed),
         Err(e) => {
-            eprintln!("warn: history fold skipped invalid {kind} record on line {line_no}: {e}");
+            eprintln!(
+                "warn: history fold skipped invalid {kind} record at entry {entry_index}: {e}"
+            );
             None
         }
     }
@@ -187,11 +190,11 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
     let mut file_indexes: Vec<HashMap<String, usize>> = Vec::new();
     let mut skipped_lines = 0usize;
 
-    for (line_no, line) in lines.iter().enumerate() {
+    for (entry, line) in lines.iter().enumerate() {
         let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
             Err(e) => {
-                eprintln!("warn: history fold skipped malformed line {line_no}: {e}");
+                eprintln!("warn: history fold skipped malformed entry {entry}: {e}");
                 skipped_lines += 1;
                 continue;
             }
@@ -199,7 +202,7 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
         let kind = match value.get("type").and_then(|t| t.as_str()) {
             Some(kind) => kind,
             None => {
-                eprintln!("warn: history fold skipped line {line_no} without a string \"type\"");
+                eprintln!("warn: history fold skipped entry {entry} without a string \"type\"");
                 skipped_lines += 1;
                 continue;
             }
@@ -207,7 +210,7 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
         match kind {
             "session_start" => {
                 let Some(record) =
-                    parse_or_skip::<SessionStartRecord>(line, "session_start", line_no)
+                    parse_or_skip::<SessionStartRecord>(line, "session_start", entry)
                 else {
                     skipped_lines += 1;
                     continue;
@@ -239,13 +242,13 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
                 }
             }
             "file" => {
-                let Some(record) = parse_or_skip::<FileResultRecord>(line, "file", line_no) else {
+                let Some(record) = parse_or_skip::<FileResultRecord>(line, "file", entry) else {
                     skipped_lines += 1;
                     continue;
                 };
                 let Some(index) = session_index.get(&record.session_id).copied() else {
                     eprintln!(
-                        "warn: history fold skipped file record on line {line_no} for unknown session: {}",
+                        "warn: history fold skipped file record at entry {entry} for unknown session: {}",
                         record.session_id
                     );
                     skipped_lines += 1;
@@ -253,7 +256,7 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
                 };
                 if sessions[index].ended_at.is_some() {
                     eprintln!(
-                        "warn: history fold skipped file record on line {line_no} after session_end: session {} file {}",
+                        "warn: history fold skipped file record at entry {entry} after session_end: session {} file {}",
                         record.session_id, record.file_id
                     );
                     skipped_lines += 1;
@@ -270,14 +273,14 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
                 }
             }
             "session_end" => {
-                let Some(record) = parse_or_skip::<SessionEndRecord>(line, "session_end", line_no)
+                let Some(record) = parse_or_skip::<SessionEndRecord>(line, "session_end", entry)
                 else {
                     skipped_lines += 1;
                     continue;
                 };
                 let Some(index) = session_index.get(&record.session_id).copied() else {
                     eprintln!(
-                        "warn: history fold skipped session_end on line {line_no} for unknown session: {}",
+                        "warn: history fold skipped session_end at entry {entry} for unknown session: {}",
                         record.session_id
                     );
                     skipped_lines += 1;
@@ -286,7 +289,7 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
                 let session = &mut sessions[index];
                 if session.ended_at.is_some() {
                     eprintln!(
-                        "warn: history fold skipped duplicate session_end on line {line_no}: {}",
+                        "warn: history fold skipped duplicate session_end at entry {entry}: {}",
                         record.session_id
                     );
                     skipped_lines += 1;
@@ -365,9 +368,12 @@ impl HistoryStore {
         let path = self.path.display();
         Ok(bytes
             .split(|b| *b == b'\n')
-            .map(|line| {
+            .enumerate()
+            .map(|(i, line)| {
                 if let Err(e) = std::str::from_utf8(line) {
-                    eprintln!("warn: history line had invalid UTF-8, lossy-decoded ({path}): {e}");
+                    eprintln!(
+                        "warn: history line {i} had invalid UTF-8, lossy-decoded ({path}): {e}"
+                    );
                 }
                 String::from_utf8_lossy(line).trim().to_string()
             })
