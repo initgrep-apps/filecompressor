@@ -20,6 +20,7 @@ use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{LockResult, Mutex, MutexGuard};
+use tauri::{AppHandle, Manager, Runtime};
 
 fn poison_recover<T>(lock: LockResult<MutexGuard<'_, T>>) -> MutexGuard<'_, T> {
     lock.unwrap_or_else(|e| {
@@ -127,6 +128,7 @@ pub struct FoldResult {
 }
 
 pub const DEFAULT_PAGE_SIZE: u32 = 50;
+pub const MAX_PAGE_SIZE: u32 = 200;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -158,6 +160,35 @@ pub struct HistoryResponse {
     pub summary: HistorySummary,
     pub output_folders: Vec<String>,
     pub skipped_lines: usize,
+}
+
+pub(crate) fn clamp_page_size(n: u32) -> u32 {
+    if n == 0 {
+        DEFAULT_PAGE_SIZE
+    } else {
+        n.min(MAX_PAGE_SIZE)
+    }
+}
+
+impl Default for HistoryResponse {
+    fn default() -> Self {
+        Self::empty(DEFAULT_PAGE_SIZE)
+    }
+}
+
+impl HistoryResponse {
+    pub fn empty(page_size: u32) -> Self {
+        HistoryResponse {
+            sessions: Vec::new(),
+            page: 0,
+            page_size: clamp_page_size(page_size),
+            total_sessions: 0,
+            total_files: 0,
+            summary: HistorySummary::default(),
+            output_folders: Vec::new(),
+            skipped_lines: 0,
+        }
+    }
 }
 
 fn history_file_from(record: &FileResultRecord) -> HistoryFile {
@@ -417,6 +448,10 @@ pub fn query_history(
     page: u32,
     page_size: u32,
 ) -> HistoryResponse {
+    debug_assert!(
+        page_size >= 1 && page_size <= MAX_PAGE_SIZE,
+        "query_history page_size {page_size} outside 1..={MAX_PAGE_SIZE}; the command layer must clamp before calling"
+    );
     let output_folders: Vec<String> = fold
         .sessions
         .iter()
@@ -598,6 +633,16 @@ impl HistoryStore {
             path: dir.join("history.jsonl"),
             lock: Mutex::new(()),
         }
+    }
+
+    pub fn new<R: Runtime>(app: &AppHandle<R>) -> Result<HistoryStore, String> {
+        let dir = app
+            .path()
+            .app_data_dir()
+            .map_err(|e| format!("history store: app data dir unavailable: {e}"))?;
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("history store: create data dir {}: {e}", dir.display()))?;
+        Ok(HistoryStore::new_in(&dir))
     }
 
     pub(crate) fn file_path(&self) -> &Path {
@@ -2197,13 +2242,23 @@ mod tests {
 
     #[test]
     fn query_page_size_zero_is_safe() {
-        let resp = query_history(two_sessions(), &no_filters(), 0, 0);
-        assert_eq!(resp.page_size, 1);
-        assert_eq!(resp.sessions.len(), 1);
-        assert_eq!(resp.sessions[0].session_id, "s2");
-        let clamped = query_history(two_sessions(), &no_filters(), 9, 0);
-        assert_eq!(clamped.page, 1);
-        assert_eq!(clamped.sessions[0].session_id, "s1");
+        if cfg!(debug_assertions) {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                query_history(two_sessions(), &no_filters(), 0, 0);
+            }));
+            assert!(
+                result.is_err(),
+                "debug builds catch page_size 0 through the query_history debug_assert contract"
+            );
+        } else {
+            let resp = query_history(two_sessions(), &no_filters(), 0, 0);
+            assert_eq!(resp.page_size, 1);
+            assert_eq!(resp.sessions.len(), 1);
+            assert_eq!(resp.sessions[0].session_id, "s2");
+            let clamped = query_history(two_sessions(), &no_filters(), 9, 0);
+            assert_eq!(clamped.page, 1);
+            assert_eq!(clamped.sessions[0].session_id, "s1");
+        }
     }
 
     #[test]

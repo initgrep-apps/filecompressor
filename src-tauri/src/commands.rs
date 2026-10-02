@@ -14,9 +14,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+use crate::history::{clamp_page_size, HistoryFilters, HistoryResponse, HistoryStore};
 use crate::models::{Category, FileEntry, FileStatus};
-use std::sync::Mutex;
-use tauri::State;
+use std::sync::{Mutex, OnceLock};
+use tauri::{Manager, State};
 use tauri_plugin_store::StoreExt;
 
 pub struct FileListState(pub Mutex<Vec<FileEntry>>);
@@ -83,8 +84,8 @@ pub fn load_settings<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> crate::set
     crate::settings::parse_settings_value(value)
 }
 
-fn save_settings_to_store(
-    app: &tauri::AppHandle,
+fn save_settings_to_store<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
     settings: &crate::settings::Settings,
 ) -> Result<(), String> {
     let store = match app.store(STORE_FILE) {
@@ -106,30 +107,32 @@ fn save_settings_to_store(
 }
 
 #[tauri::command]
-pub fn get_settings(app: tauri::AppHandle) -> crate::settings::Settings {
+pub fn get_settings<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> crate::settings::Settings {
     load_settings(&app)
 }
 
 #[tauri::command]
-pub fn save_settings(
-    app: tauri::AppHandle,
+pub fn save_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     settings: crate::settings::Settings,
 ) -> Result<(), String> {
     save_settings_to_store(&app, &settings)
 }
 
 #[tauri::command]
-pub fn reset_settings(app: tauri::AppHandle) -> Result<crate::settings::Settings, String> {
+pub fn reset_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<crate::settings::Settings, String> {
     let defaults = crate::settings::Settings::default();
     save_settings_to_store(&app, &defaults)?;
     Ok(defaults)
 }
 
 #[tauri::command]
-pub fn add_files(
+pub fn add_files<R: tauri::Runtime>(
     file_paths: Vec<String>,
-    state: State<FileListState>,
-    app: tauri::AppHandle,
+    state: State<'_, FileListState>,
+    app: tauri::AppHandle<R>,
 ) -> Vec<FileEntry> {
     let settings = load_settings(&app);
     let mut list = state.0.lock().unwrap_or_else(|e| {
@@ -170,10 +173,10 @@ pub fn clear_list(state: State<FileListState>) {
 }
 
 #[tauri::command]
-pub fn compress_all(
-    app: tauri::AppHandle,
+pub fn compress_all<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     state: State<'_, FileListState>,
-    queue: State<'_, crate::queue::QueueState>,
+    queue: State<'_, crate::queue::QueueState<R>>,
 ) -> String {
     let list = state.0.lock().unwrap_or_else(|e| {
         eprintln!("warn: file list mutex was poisoned, recovering: {e}");
@@ -197,11 +200,11 @@ pub fn compress_all(
 }
 
 #[tauri::command]
-pub fn cancel_file(
-    app: tauri::AppHandle,
+pub fn cancel_file<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     file_id: String,
     state: State<'_, FileListState>,
-    queue: State<'_, crate::queue::QueueState>,
+    queue: State<'_, crate::queue::QueueState<R>>,
 ) {
     queue.cancel_file(&file_id);
     // Not-yet-started file has no token — mark Cancelled so the worker skips it
@@ -224,24 +227,96 @@ pub fn cancel_file(
 }
 
 #[tauri::command]
-pub fn cancel_all(queue: State<'_, crate::queue::QueueState>) {
+pub fn cancel_all<R: tauri::Runtime>(
+    _app: tauri::AppHandle<R>,
+    queue: State<'_, crate::queue::QueueState<R>>,
+) {
     queue.cancel_all();
 }
 
 #[tauri::command]
-pub fn reveal_in_folder(file_path: String, app: tauri::AppHandle) -> Result<(), String> {
+pub fn reveal_in_folder<R: tauri::Runtime>(
+    file_path: String,
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
     app.opener()
         .reveal_item_in_dir(&file_path)
         .map_err(|e| format!("Could not reveal file {}: {}", file_path, e))
 }
 
+fn warn_missing_store_get_history() {
+    static WARNED: OnceLock<()> = OnceLock::new();
+    WARNED.get_or_init(|| {
+        eprintln!("warn: get_history: HistoryStore state missing, returning empty history");
+    });
+}
+
+fn warn_missing_store_clear_history() {
+    static WARNED: OnceLock<()> = OnceLock::new();
+    WARNED.get_or_init(|| {
+        eprintln!("warn: clear_history: HistoryStore state missing, nothing to clear");
+    });
+}
+
+#[tauri::command]
+pub async fn get_history<R: tauri::Runtime>(
+    filters: HistoryFilters,
+    page: u32,
+    page_size: u32,
+    app: tauri::AppHandle<R>,
+) -> Result<HistoryResponse, String> {
+    let Some(store) = app.try_state::<HistoryStore>() else {
+        warn_missing_store_get_history();
+        return Ok(HistoryResponse::empty(page_size));
+    };
+    let fold = store.load()?;
+    Ok(crate::history::query_history(
+        fold,
+        &filters,
+        page,
+        clamp_page_size(page_size),
+    ))
+}
+
+#[tauri::command]
+pub fn clear_history<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    let Some(store) = app.try_state::<HistoryStore>() else {
+        warn_missing_store_clear_history();
+        return Ok(());
+    };
+    store.clear()
+}
+
+#[tauri::command]
+pub fn open_folder<R: tauri::Runtime>(
+    path: String,
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(&path, None::<&str>)
+        .map_err(|e| format!("Could not open folder {}: {}", path, e))
+}
+
+#[cfg(test)]
+pub(crate) fn mock_test_context(
+    dirs_override: tauri::utils::config::AppDirectoriesOverride,
+) -> tauri::Context<tauri::test::MockRuntime> {
+    let mut ctx = tauri::test::mock_context(tauri::test::noop_assets());
+    ctx.config_mut().app.app_directories_override = Some(dirs_override);
+    ctx.config_mut().identifier = "com.app.test".into();
+    ctx
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::detection;
+    use crate::history::{FileResultRecord, HistoryFilters, HistoryStore, SessionStartRecord};
     use crate::models::Category;
     use std::fs;
+    use std::io::Write;
     use tempfile::tempdir;
 
     fn make_file(dir: &std::path::Path, name: &str) -> String {
@@ -445,5 +520,329 @@ mod tests {
             crate::settings::parse_settings_value(None),
             crate::settings::Settings::default()
         );
+    }
+
+    fn history_test_app(
+        root: &std::path::Path,
+        store: Option<crate::history::HistoryStore>,
+    ) -> tauri::App<tauri::test::MockRuntime> {
+        let app = tauri::test::mock_builder()
+            .plugin(tauri_plugin_opener::init())
+            .plugin(tauri_plugin_store::Builder::default().build())
+            .build(mock_test_context(
+                tauri::utils::config::AppDirectoriesOverride::Root(root.to_path_buf()),
+            ))
+            .unwrap();
+        if let Some(store) = store {
+            app.manage(store);
+        }
+        app
+    }
+
+    fn seed_session(store: &HistoryStore, session_id: &str, started_at: i64) {
+        store
+            .append_session_start(&SessionStartRecord {
+                session_id: session_id.into(),
+                started_at,
+                file_count: 1,
+                output_folder: "/o".into(),
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn page_size_clamps_helper() {
+        assert_eq!(clamp_page_size(0), 50);
+        assert_eq!(clamp_page_size(1), 1);
+        assert_eq!(clamp_page_size(200), 200);
+        assert_eq!(clamp_page_size(201), 200);
+    }
+
+    #[test]
+    fn get_history_empty_response_when_store_missing() {
+        let resp = HistoryResponse::empty(0);
+        assert_eq!(resp.page, 0);
+        assert_eq!(resp.page_size, 50);
+        assert_eq!(resp.total_sessions, 0);
+        assert_eq!(resp.sessions.len(), 0);
+        assert_eq!(resp.summary.files, 0);
+        assert_eq!(HistoryResponse::empty(500).page_size, 200);
+        assert_eq!(
+            crate::history::HistoryResponse::default().page_size,
+            50,
+            "Default must not be constructible as an invalid page_size 0"
+        );
+        assert_eq!(crate::history::HistoryResponse::empty(0).page_size, 50);
+        assert_eq!(crate::history::HistoryResponse::empty(200).page_size, 200);
+        assert_eq!(crate::history::HistoryResponse::empty(900).page_size, 200);
+    }
+
+    #[tokio::test]
+    async fn get_history_over_tempdir_store_filters_and_counts_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store
+            .append_session_start(&SessionStartRecord {
+                session_id: "s1".into(),
+                started_at: 100,
+                file_count: 1,
+                output_folder: "/out".into(),
+            })
+            .unwrap();
+        store
+            .append_file(&FileResultRecord {
+                session_id: "s1".into(),
+                file_id: "f1".into(),
+                completed_at: 101,
+                name: "a.jpg".into(),
+                path: "/in/a.jpg".into(),
+                output_path: Some("/out/a.jpg".into()),
+                category: "image".into(),
+                target_bytes: 1,
+                original_size: 5,
+                compressed_size: Some(1),
+                status: "done".into(),
+                quality_used: Some(70),
+                strategy_used: Some("quality=70".into()),
+                error: None,
+                duration_ms: 3,
+            })
+            .unwrap();
+        fs::OpenOptions::new()
+            .append(true)
+            .open(store.file_path())
+            .unwrap()
+            .write_all(b"garbage\n")
+            .unwrap();
+
+        let app = history_test_app(dir.path(), Some(store));
+        let resp = get_history(HistoryFilters::default(), 0, 50, app.handle().clone())
+            .await
+            .unwrap();
+        assert_eq!(resp.total_sessions, 1);
+        assert_eq!(resp.skipped_lines, 1);
+
+        let filtered = get_history(
+            HistoryFilters {
+                search: Some("no-such-session".into()),
+                ..HistoryFilters::default()
+            },
+            0,
+            50,
+            app.handle().clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(filtered.total_sessions, 0);
+    }
+
+    #[tokio::test]
+    async fn get_history_propagates_load_error() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("history.jsonl")).unwrap();
+        let app = history_test_app(dir.path(), Some(HistoryStore::new_in(dir.path())));
+        let err = get_history(HistoryFilters::default(), 0, 50, app.handle().clone())
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("history read failed"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_history_clamped_page_size_in_response() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        seed_session(&store, "s1", 0);
+        let app = history_test_app(dir.path(), Some(store));
+
+        let resp = get_history(HistoryFilters::default(), 0, 500, app.handle().clone())
+            .await
+            .unwrap();
+        assert_eq!(resp.page_size, 200);
+        assert_eq!(resp.total_sessions, 1);
+
+        let resp = get_history(HistoryFilters::default(), 0, 0, app.handle().clone())
+            .await
+            .unwrap();
+        assert_eq!(resp.page_size, 50);
+    }
+
+    #[tokio::test]
+    async fn get_history_page_argument_is_clamped_and_echoed() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        seed_session(&store, "s1", 100);
+        seed_session(&store, "s2", 200);
+        let app = history_test_app(dir.path(), Some(store));
+
+        let resp = get_history(HistoryFilters::default(), 9, 1, app.handle().clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.page, 1,
+            "page 9 with two sessions of size 1 clamps to the last page"
+        );
+        assert_eq!(resp.page_size, 1);
+        assert_eq!(resp.total_sessions, 2);
+        let ids: Vec<&str> = resp
+            .sessions
+            .iter()
+            .map(|session| session.session_id.as_str())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["s1"],
+            "page 1 of two single-session pages holds the older session; the point is page 9 clamps to the last page"
+        );
+    }
+
+    #[test]
+    fn clear_history_removes_file_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = dir.path().join("history.jsonl");
+        let store = HistoryStore::new_in(dir.path());
+        seed_session(&store, "s1", 0);
+        assert!(history.exists());
+        let app = history_test_app(dir.path(), Some(store));
+
+        clear_history(app.handle().clone()).unwrap();
+        assert!(!history.exists());
+        clear_history(app.handle().clone()).unwrap();
+    }
+
+    #[test]
+    fn clear_history_missing_store_is_noop_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = history_test_app(dir.path(), None);
+        assert!(app.try_state::<HistoryStore>().is_none());
+
+        clear_history(app.handle().clone()).unwrap();
+    }
+
+    #[test]
+    fn clear_history_error_when_remove_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = dir.path().join("history.jsonl");
+        fs::create_dir(&history).unwrap();
+        fs::write(history.join("occupied.txt"), b"x").unwrap();
+        let app = history_test_app(dir.path(), Some(HistoryStore::new_in(dir.path())));
+
+        assert!(clear_history(app.handle().clone()).is_err());
+        assert!(history.exists(), "failed clear must leave data in place");
+    }
+
+    #[test]
+    fn open_folder_error_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = history_test_app(dir.path(), None);
+        let missing = dir.path().join("definitely-missing-folder");
+        let missing_str = missing.to_str().unwrap().to_string();
+        let expected = format!("Could not open folder {missing_str}: ");
+
+        let err = open_folder(missing_str, app.handle().clone()).unwrap_err();
+        assert!(
+            err.starts_with(&expected),
+            "pinned copy must name the path and keep the separator: {err}"
+        );
+    }
+
+    #[test]
+    fn history_store_new_resolves_under_app_data_dir() {
+        let root = tempdir().unwrap();
+        let app = history_test_app(root.path(), None);
+
+        let store =
+            HistoryStore::new(app.handle()).expect("app data dir must resolve under the override");
+        seed_session(&store, "s1", 100);
+
+        let path = root.path().join("history.jsonl");
+        assert!(path.exists(), "store must write under app_data_dir");
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.sessions.len(), 1);
+        assert_eq!(loaded.sessions[0].session_id, "s1");
+    }
+
+    #[test]
+    fn trim_runs_with_effective_retention_from_settings() {
+        let root = tempdir().unwrap();
+        let seeded = HistoryStore::new_in(root.path());
+        let now = crate::queue::now_ms();
+        seed_session(&seeded, "old", now - 30 * 86_400_000);
+        seed_session(&seeded, "mid", now - 300 * 86_400_000);
+        seed_session(&seeded, "ancient", now - 4000 * 86_400_000);
+        fs::write(
+            root.path().join("settings.json"),
+            serde_json::json!({ "settings": { "history": { "retentionDays": 5000 } } })
+                .to_string(),
+        )
+        .unwrap();
+
+        let app = history_test_app(root.path(), None);
+
+        crate::setup_history(app.handle());
+
+        let managed = app
+            .try_state::<HistoryStore>()
+            .expect("setup_history must manage the store on the success path");
+        let ids: Vec<String> = managed
+            .load()
+            .unwrap()
+            .sessions
+            .iter()
+            .map(|s| s.session_id.clone())
+            .collect();
+        assert_eq!(
+            ids,
+            vec!["old".to_string(), "mid".to_string()],
+            "effective retention 3650 trims the 4000-day session and keeps the 30- and 300-day sessions; a raw-5000 mutant keeps all three and a 90-day-default mutant keeps only the 30-day session"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_app_data_dir_skips_manage_and_app_still_works() {
+        let root = tempfile::TempDir::new().unwrap();
+        let blocker = root.path().join("blocker.txt");
+        fs::write(&blocker, b"x").unwrap();
+
+        let app = tauri::test::mock_builder()
+            .build(mock_test_context(
+                tauri::utils::config::AppDirectoriesOverride::Directories(
+                    tauri::utils::config::AppDirectoryOverrides {
+                        data: Some(blocker.join("child")),
+                        ..Default::default()
+                    },
+                ),
+            ))
+            .unwrap();
+
+        crate::setup_history(app.handle());
+        assert!(app.try_state::<HistoryStore>().is_none());
+
+        let err = match HistoryStore::new(app.handle()) {
+            Ok(_) => panic!("expected app data dir creation to fail"),
+            Err(e) => e,
+        };
+        assert!(
+            err.starts_with("history store: create data dir "),
+            "store construction errors are prefixed for greppability: {err}"
+        );
+
+        let resp = get_history(HistoryFilters::default(), 0, 50, app.handle().clone())
+            .await
+            .unwrap();
+        assert_eq!(resp.total_sessions, 0);
+        assert_eq!(resp.page_size, 50);
+
+        let resp = get_history(HistoryFilters::default(), 0, 500, app.handle().clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.page_size, 200,
+            "missing-store echo must be the requested clamp, not a hardcoded default"
+        );
+
+        clear_history(app.handle().clone()).unwrap();
     }
 }
