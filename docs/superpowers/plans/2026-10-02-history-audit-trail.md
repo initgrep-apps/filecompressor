@@ -1310,11 +1310,11 @@ git commit -m "feat(queue): record session, file and end records to history"
 **Interfaces:**
 - Consumes: `HistoryStore` (Tasks 2–5), `query_history` (Task 4).
 - Produces:
-  - `pub async fn get_history(filters: crate::history::HistoryFilters, page: u32, page_size: u32, app: tauri::AppHandle) -> Result<crate::history::HistoryResponse, String>` — clamps `page_size` to `1..=200` (0 → `crate::history::DEFAULT_PAGE_SIZE` (50), 500 → 200); folds + queries; missing store → all-empty `HistoryResponse` with `page: 0` and the clamped `page_size` echoed.
-  - `pub fn clear_history(app: tauri::AppHandle) -> Result<(), String>`
-  - `pub fn open_folder(path: String, app: tauri::AppHandle) -> Result<(), String>` — `opener().open_path(path, None::<&str>)`, error copy `Could not open folder {path}: {e}`
-  - `lib.rs`: `mod history;`, manage `HistoryStore` in setup (`HistoryStore::new(app.handle())` — app_data_dir + `create_dir_all`; if app_data_dir is unavailable, log + skip managing, missing-store paths keep the app functional), register the three commands, and run startup `trim` via `settings.history.effective_retention_days()` + `now_ms` (trim failure logs, app still launches).
-  - `HistoryStore::new<R: Runtime>(app: &AppHandle<R>) -> Result<HistoryStore, String>`
+  - `pub async fn get_history<R: tauri::Runtime>(filters: crate::history::HistoryFilters, page: u32, page_size: u32, app: tauri::AppHandle<R>) -> Result<crate::history::HistoryResponse, String>` — clamps `page_size` to `1..=MAX_PAGE_SIZE` (0 → `crate::history::DEFAULT_PAGE_SIZE` (50), 500 → 200); folds + queries; missing store → `HistoryResponse::empty(clamped page_size)` with `page: 0` and the clamped `page_size` echoed (once-guarded stderr warn — diagnostics only, still `Ok`).
+  - `pub fn clear_history<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String>` — missing store → once-guarded stderr warn + `Ok(())`.
+  - `pub fn open_folder<R: tauri::Runtime>(path: String, app: tauri::AppHandle<R>) -> Result<(), String>` — `opener().open_path(&path, None::<&str>)`, error copy `Could not open folder {path}: {e}`
+  - `lib.rs`: `mod history;`, `pub(crate) fn setup_history<R: Runtime>(app: &AppHandle<R>)` — constructs `HistoryStore::new`, on Ok runs startup `trim` via `settings.history.effective_retention_days()` + `queue::now_ms()` (trim failure logs, app still launches) then `app.manage(store)`; on Err logs + skips managing (missing-store paths keep the app functional). `setup()` calls `setup_history(app.handle())`. Register the three commands.
+  - `HistoryStore::new<R: Runtime>(app: &AppHandle<R>) -> Result<HistoryStore, String>` — error strings prefixed `history store: ` (`app data dir unavailable: {e}`, `create data dir {path}: {e}`)
   - `commands.rs` needs `use tauri::Manager;` added for `app.try_state::<HistoryStore>()` (current imports only carry `State`; `Manifest` — verified `Manager::try_state` requires the trait in scope).
 
 **Acceptance Criteria:**
@@ -1330,14 +1330,17 @@ git commit -m "feat(queue): record session, file and end records to history"
 **Required Tests:**
 - `page_size_clamps_helper` — 0→50, 1→1, 200→200, 201→200
 - `get_history_empty_response_when_store_missing` — helper-level: `page: 0`, clamped page_size echoed, empty totals, `summary` default, no error
-- `get_history_over_tempdir_store_filters_and_counts_skipped` — tempdir store with valid + corrupt lines: filtered sessions, totals, `skippedLines > 0`
+- `get_history_over_tempdir_store_filters_and_counts_skipped` — **deviation from the snippet: invokes the real `get_history` command** on a MockRuntime app with a tempdir store (exercises the command path, not only `query_history`): filtered sessions, totals, `skippedLines > 0`
 - `get_history_propagates_load_error` — history.jsonl as a directory → `Err`
 - `get_history_clamped_page_size_in_response` — response.pageSize reflects the clamp
+- `get_history_page_argument_is_clamped_and_echoed` — page 9 with 2 sessions at page_size 1 → `page == 1` and the requested/clamped `pageSize` echoed
 - `clear_history_removes_file_and_is_idempotent` — command-level success + second call ok
+- `clear_history_missing_store_is_noop_ok` — no managed store → `Ok(())`
 - `clear_history_error_when_remove_fails` — directory in place → `Err`
-- `open_folder_error_path` — nonexistent path → `Err` starting `Could not open folder `
-- `trim_runs_with_effective_retention_from_settings` — seeded old session + retention 10 → trimmed on setup-equivalent call
-- `missing_app_data_dir_skips_manage_and_app_still_works` — `HistoryStore::new` error branch is tolerated (helper-level test of the fallback path)
+- `open_folder_error_path` — nonexistent path → `Err` starting `Could not open folder {path}: `
+- `history_store_new_resolves_under_app_data_dir` — `HistoryStore::new` success path writes under `app_data_dir`
+- `trim_runs_with_effective_retention_from_settings` — seeded 30-day-old session + retention 10 → dropped by `setup_history` (setup wiring covered; deleting the wiring fails this test)
+- `missing_app_data_dir_skips_manage_and_app_still_works` — `setup_history` on an unresolvable data dir skips managing; both commands keep working with clamped echo
 
 - [ ] **Step 1: Write the failing tests**
 
