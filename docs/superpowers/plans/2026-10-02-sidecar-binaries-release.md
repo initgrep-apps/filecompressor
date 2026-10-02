@@ -89,7 +89,36 @@ docs/bugs.md                       # Modify — record ffmpeg mislabel + gs reso
   - Lock JSON: `{ "generated": ISO8601, "targets": { "<triple>": { "<binary>": { "source": string, "version": string, "url"?: string, "sha256"?: string, "date": ISO8601 } } } }`
   - `lib.mjs` exports: `archForTriple(triple) -> "arm64"|"x86_64"` (throws on unknown), `expectedDest(name, triple) -> "<name>-<triple>[.exe]"`, `sha256File(path) -> Promise<string>`, `readJson(path)`, `writeJson(path, obj)`, `download(url, destPath)`, `extract(archivePath, destDir)` (zip via `unzip`, tar.zst via `tar --zstd`)
   - `verify.mjs` CLI: `node scripts/binaries/verify.mjs --target <triple> [--root <dir>]` → exit 0 pass / 1 fail; reads manifest + lock; checks presence, arch (content vs filename triple), version (execute with `--version`; mac runs prefixed with `DYLD_LIBRARY_PATH=<root>/src-tauri/frameworks`)
-- Consumes: nothing (first task).
+
+**Required Tests:**
+- `archForTriple_maps_apple_triples` / `archForTriple_maps_windows_triples` / `archForTriple_throws_on_unknown_triple` — pure map + error path
+- `expectedDest_appends_triple_and_exe_only_on_windows`
+- `fetch_stages_binary_and_writes_lock_entry` — happy path: staged `<name>-<triple>`, lock has version/url/sha256
+- `fetch_aborts_when_staged_file_disagrees_with_lock` — lock sha X, new download sha Y → abort `sha256 mismatch` + artifact name (spec §6.3)
+- `fetch_aborts_on_sha_mismatch_between_manifest_and_download` — corrupt/interrupted download → non-zero exit
+- `fetch_fails_loudly_when_vendor_artifact_unavailable` — 404 fixture → non-zero, message contains `artifact unavailable (vendor may have pruned it)` + `yarn binaries:refresh` (Review Focus #4)
+- `fetch_fails_with_actionable_error_when_archive_member_missing` — extracted archive lacks `member` → clear error, staging cleaned
+- `fetch_skips_brew_entries_without_side_effects` — machine without brew → fetch exits 0 touching nothing (prep owns brew)
+- `fetch_is_idempotent_when_lock_and_staged_file_match`
+- `extract_handles_zip_and_tar_zst_fixtures`
+- `download_follows_redirects`
+- `lock_write_is_atomic` — tmp+rename; interrupted write leaves no torn lock
+- `manifest_schema_rejects_missing_expectVersion_and_unknown_source` (spec §11 schema row)
+- `verify_missing_binary_reports_run_binaries_all` — empty binaries dir → exit 1, message contains `run 'yarn binaries:all'` (Review Focus #2)
+- `verify_fails_on_arch_flip_fixture` — x86 Mach-O under arm64 name → `arch x86_64 does not match arm64` (repeatable §11 fixture; the live incident run in Step 11 is one-shot, this is the regression pin)
+- `verify_fails_when_version_output_lacks_expect_version` — stub prints garbage → fail (version-vs-lock §9.2)
+- `verify_presents_usage_error_when_target_missing_or_unknown` — clean error naming `--target` (§7 default-target contract)
+- `sidecars_are_self_contained` (existing Rust) — **summary line `sidecar audit: PASS (N binaries, N framework dylibs)` is load-bearing** (parsed at `sidecar.rs:406-428`); verify delegate must not alter it
+
+**Acceptance Criteria:**
+- `yarn binaries:audit` fails BEFORE fetch naming `ffmpeg-aarch64-apple-darwin` (`arch x86_64 does not match arm64`) and succeeds after `yarn binaries:fetch --target aarch64-apple-darwin` (incident TDD, spec §9.1)
+- `binaries:fetch` is idempotent against lock (re-run = no-op), aborts on sha mismatch with manifest, and aborts on lock disagreement (spec §6.3)
+- Fetch failure on vendor-pruned artifact exits non-zero naming the URL and `yarn binaries:refresh` (Review Focus #4)
+- `archForTriple`/`expectedDest` match Rust `sidecar_filename_for` convention (`sidecar.rs:20-24`) — Node/Rust naming stays in lockstep
+- All `scripts/binaries/*.test.mjs` run under `// @vitest-environment node` (vitest.config.ts is jsdom-global)
+- `.gitignore` covers the four artifact dirs; `git ls-files src-tauri/binaries src-tauri/frameworks` returns empty
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test` (note: after `git rm --cached`, a fresh clone's `cargo test` fails until `yarn binaries:all` — the failing message must say so, never ENOENT)
+- Boundary rules enforced (per AGENTS.md: binary logic lives in `scripts/` + Rust core; frontend unchanged)
 
 - [ ] **Step 1: Write failing tests for `lib.mjs` pure functions**
 
@@ -240,6 +269,29 @@ git commit -m "feat(binaries): manifest-driven fetch with arch gate; fix Intel f
 
 **Interfaces:**
 - Consumes: Task 1's manifest/lock/lib/fetch/verify and `--root` option; existing `collect_deps_of`/`rewrite`/`ensure_rpath` in `sidecar-bundle.common.sh`.
+- Update (spec sync during refine): §8.2 qpdf row corrected to "official msvc build is not fully static → engines/qpdf/ with VC runtime DLLs" (Task 3's plan is operative); spec §7 fetch/audit rows updated.
+
+**Required Tests:**
+- `fetch_stages_qpdf_full_bin_and_lib_dir` — qpdf fixture with `member`+`lib` → binary to `binaries/`, lib dir to `.staging/qpdf-<triple>/lib/`
+- `resolve_gs_resources_prefers_bundle_layout` — Resources/gs-resources first; `search_paths` ordered Init, lib, Resource/Font, fonts; `icc_profiles_dir` Some iff `iccprofiles/` exists
+- `resolve_gs_resources_returns_none_when_absent`
+- `resolve_for_attaches_gs_resources`
+- `resolve_gs_resources_pending_candidate_tiebreak` — when only `exe_dir/gs-resources` (dev layout) exists, that candidate wins (second candidate exercised — analyzer gap)
+- `gs_args_prepend_resource_flags_in_order` — resources set → args begin `[ -I<init>, -I<lib>, -I<font>, -I<fonts>, -sICCProfilesDir=<icc>, -sDEVICE=pdfwrite, … ]`
+- `gs_args_without_resources_match_today` — None → byte-identical to current vector (genuine, not redundant: current pdf.rs tests `pdf.rs:697-706,758-797` assert flag membership, not order)
+- `audit_fails_when_gs_resources_missing_entirely` — spec §9.3 gate must not silently skip when dir absent (analyzer critical gap: regression = PDF breaks on clean machines, invisible)
+- `audit_fails_when_iccprofiles_or_fonts_empty` — staged dirs present but empty → fail (§9.3 "non-empty")
+- `audit_fails_on_brew_version_drift` — stub `brew list --versions` returning `ghostscript 10.08.1` vs lock `10.08.0` → fail (§8.1/§11 drift gate)
+- gs clean-room smoke: `env -i HOME=/nonexistent PATH=/usr/bin:/bin` + `-I` staged dirs + `/Helvetica findfont … show` fixture → exit 0, output > 1 KB (script-level, §9.4)
+
+**Acceptance Criteria:**
+- `yarn binaries:prep --target aarch64-apple-darwin` populates `src-tauri/gs-resources/Resource/Init/gs_init.ps` (spec §8.1)
+- Rust `SidecarPaths.gs_resources` resolves in all three layouts (bundle, dev, resources cwd); missing → None, never aborts (existing invariant `sidecar.rs:313-335` preserved)
+- gs args carry `-I` flags BEFORE `-sDEVICE=pdfwrite` when resources resolved; byte-identical to today when absent (spec §8.3)
+- Audit fails on: missing gs-resources, empty icc/fonts, brew version drift (spec §9.3/§9.2); clean-room smoke passes with brew-free env (§9.4)
+- Manual acceptance (spec §11): JPEG + MP4 + PDF compress on this machine with Homebrew Ghostscript temporarily renamed → results recorded in Execution Notes
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+- Boundary rules enforced (per AGENTS.md)
 - Produces:
   - `GsResources` Rust struct `{ search_paths: Vec<String>, icc_profiles_dir: Option<String> }` resolved into `SidecarPaths.gs_resources: Option<GsResources>`.
   - `pub fn resolve_gs_resources(exe_dir: &Path) -> Option<GsResources>` in `sidecar.rs`; candidate dirs (first existing wins): `exe_dir/../Resources/gs-resources`, `exe_dir/../../gs-resources`, `exe_dir/resources/gs-resources`, `exe_dir/gs-resources`.
@@ -322,7 +374,26 @@ git commit -m "feat(binaries): macOS arm64 prep — official qpdf, brew vips/gs,
 - Tests: `sidecar.rs`, `prep-windows.test.mjs`
 
 **Interfaces:**
-- Consumes: Task 1–2 pipeline; `expectedDest` `.exe` support; `archForTriple` windows entries.
+**Required Tests:**
+- `target_triple_returns_triple_per_platform` (extended — `("windows","aarch64") -> "aarch64-pc-windows-msvc"`; note today's generic-Err arm `sidecar.rs:8`)
+- `sidecar_filename_for_returns_exact_name_per_platform` (extended — win-arm64 `.exe` naming)
+- `engine_folder_candidates_windows_layout` — dev (`../../binaries/engines/vips/vips.exe`) + resources layout resolve; **update `sidecar_candidates_prefer_triple_then_plain_name` which pins `len()==2`** (`sidecar.rs:233-246`) — new candidate count must be pinned in the updated test
+- `path_with_dir_front_prepends_and_dedupes` — existing `A;B` + dir `D` → `D;A;B`; dir already present → unchanged
+- `run_sidecar_prepends_engine_dir_on_windows` — wiring test: fake sidecar script asserts its PATH had dir front (wiring regression otherwise silently reverts — analyzer 8/10 gap); missing DLL spawn → `SidecarFailed`, never process crash (Review Focus #5)
+- `resolve_for_windows_still_resolves_exe_dir_binaries` — ffmpeg/qpdf exe-dir candidates unchanged
+- `prep_stages_vips_exe_with_sibling_dlls_and_modules_subdir`
+- `prep_stages_gs_renamed_exe_dlls_and_resources_tree` — `gswin64c.exe` → `engines/gs/gs.exe`; missing `share/ghostscript/...` in pkg → clear error (analyzer gap)
+- `prep_stages_qpdf_exe_with_vc_runtime_dlls`
+- `extract_handles_tar_zst_fixture` (pkg.tar.zst via `tar --zstd`)
+
+**Acceptance Criteria:**
+- `target_triple("windows","aarch64")` returns `aarch64-pc-windows-msvc`; `sidecar_filename` emits `.exe` naming per existing convention
+- Engine-folder candidates exist; `run_sidecar` prepends the engine dir to child PATH on Windows (no global env mutation); missing DLL → `SidecarFailed` with label (Review Focus #5)
+- `prep-windows.mjs` produces `engines/{vips,gs,qpdf}/` layouts per fixtures + `gs-resources/` tree from MSYS2 pkg layout (spec §8.2)
+- `src-tauri/tauri.windows.conf.json` valid JSON; externalBin = ffmpeg/ffprobe only; resources map engines/ + gs-resources/. Platform-merge semantics verified via Context7 (`/tauri-apps/tauri-docs`: "platform specific configuration tauri.windows.conf.json") BEFORE finalizing — if merge *appends* rather than *replaces* externalBin, base-conf 5-entry list would demand non-existent win arm64 binaries → documented resolution in Execution Notes one way or the other
+- All unit tests + Rust tests green on macOS; Windows end-to-end (fetch→prep→audit→build→manual compress) deferred to on-host/CI — Execution Notes state this, never faked
+- Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`
+- Boundary rules enforced (per AGENTS.md)
 - Produces:
   - `sidecar.rs`: `target_triple("windows","aarch64") -> "aarch64-pc-windows-msvc"`; engine-folder candidates from exe_dir: `resources/engines/<name>/<file>`, `../../binaries/engines/<name>/<file>`, `binaries/engines/<name>/<file>` (dev), where `<file>` = `vips.exe`, `gs.exe`, `qpdf.exe`.
   - `pub fn prepend_engine_dir_to_path(cmd: &mut Command, sidecar_path: &str) -> Option<OsString>` — on Windows only, returns the PATH used and sets it (parent dir of sidecar). Unit-testable pure core: `fn path_with_dir_front(existing: Option<&OsStr>, dir: &Path) -> OsString`.
@@ -382,6 +453,17 @@ git commit -m "feat(binaries): Windows x64 + arm64 pipeline (BtbN/qpdf/MXE/MSYS2
 
 **Interfaces:**
 - Consumes: everything from Tasks 1–2; the prep scripts are already host-arch driven (`rustc -Vv host` selects the triple).
+
+**Required Tests:**
+- `manifest_contains_intel_rows_with_pinned_shas` — schema-validated manifest fixture asserting `x86_64-apple-darwin` target exists with 4 binaries carrying the pinned shas (analyzer gap: data-only task currently has zero automated validation)
+- `verify_no_hardcoded_aarch64_in_script_logic` — turns the manual `grep -rn "aarch64"` sweep into a test asserting no non-manifest, non-filename arch hardcode exists in `scripts/*.sh` + `scripts/binaries/*.mjs`
+
+**Acceptance Criteria:**
+- Manifest gains `x86_64-apple-darwin` rows: Riedl amd64 ffmpeg/ffprobe (pinned sha `7c6b4125…cacd4` / `2322438e…fdfd`), qpdf x86_64 (`dd3b01f4…1481`), vips/gs brew rows — JSON valid (spec §5)
+- Zero hardcoded arm64 in script logic (`rustc -Vv host` pattern is the only triple source) — spec §4/§12
+- Intel end-to-end verification documented as deferred (Intel host or `macos-15-intel` CI) with shelf-life notes (Riedl Intel EOL Jan 2027, brew Tier 3, runner EOL Fall 2027) in Execution Notes — spec §12
+- Gate passes clean (manifest-only change, but gate still runs)
+- Boundary rules enforced (per AGENTS.md)
 - Produces: manifest rows only — no new code paths expected. If prep scripts turn out to hardcode arm64 paths, fix them to use the host triple (same pattern they already use via `TRIPLE`).
 
 - [ ] **Step 1: Add Intel manifest entries**
@@ -389,10 +471,11 @@ git commit -m "feat(binaries): Windows x64 + arm64 pipeline (BtbN/qpdf/MXE/MSYS2
 `x86_64-apple-darwin`: ffmpeg `…/macos/amd64/1789931006_9.0.2/ffmpeg.zip` sha `7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4`; ffprobe sha `2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd`; qpdf `…-bin-macos-x86_64.zip` sha `dd3b01f4414d198529bb0f13bba59c2f016a328bb3506695087a96fb80fc1481`; vips/gs brew entries.
 Validate JSON: `python3 -c "import json; json.load(open('scripts/binaries.manifest.json'))"`.
 
-- [ ] **Step 2: Verify no arm64 assumptions exist**
+- [ ] **Step 2: Verify no arm64 assumptions exist + audit gains `--target` passthrough**
 
 Run: `grep -rn "aarch64" scripts/*.sh scripts/binaries/*.mjs | grep -v test | grep -v manifest`
 Expected: only `TRIPLE="$(rustc -Vv | grep '^host:'…)"`-style host resolution and manifest content — no hardcoded arm64 in logic. Fix any found.
+Then wire `audit-sidecars.sh` to accept an optional `--target <triple>` passthrough to `verify.mjs` (host triple default preserved): `yarn binaries:audit --target x86_64-apple-darwin` cross-audits fetched Intel artifacts from an arm64 host (`lipo` reads both arches; spec §7 audit row). Test (vitest, node env): `audit_target_passthrough_cross_audits_fetched_intel_binaries` — fetch Intel ffprobe into a `--root` fixture, audit with `--target x86_64-apple-darwin` passes; flip its filename to aarch64 → fails.
 
 - [ ] **Step 3: Document the verification path**
 
@@ -417,6 +500,20 @@ git commit -m "feat(binaries): macOS Intel target manifest (Riedl amd64, qpdf x8
 
 **Interfaces:**
 - Consumes: `binaries.lock.json` + manifest per-target entries.
+
+**Required Tests:**
+- `components_dedupe_by_name_version_with_merged_targets`
+- `license_for_maps_all_four_engines_and_rejects_unknown` — unknown engine name → error (never silent `UNKNOWN`; a future engine must never ship unlicensed — analyzer gap)
+- `markdown_contains_one_heading_per_component_and_all_four_license_ids`
+- `sbom_fails_clearly_when_lock_missing_or_empty` (analyzer gap)
+- `sbom_handles_brew_rows_without_sha256` — brew components carry `sha256: null` (shape gap)
+
+**Acceptance Criteria:**
+- `yarn sbom` generates `sbom.json` (components deduped by name+version, merged `targets`, license map: ffmpeg/ffprobe GPL-2.0-or-later, gs AGPL-3.0, vips LGPL-3.0, qpdf Apache-2.0) + `THIRD_PARTY_LICENSES.md` (one section per engine: version, license, source URL, license pointer) — spec §7/§10 + Global Constraints
+- Missing lock → clear error, no empty SBOM written
+- Output reflects the real post-Task-2 lock (mac arm64)
+- Gate passes clean
+- Boundary rules enforced (per AGENTS.md)
 - Produces: `sbom.json` (CycloneDX-lite shape: `{ "generated": ISO, "components": [ { "name", "version", "license", "source", "sha256", "targets": [triple] } ] }`) and `THIRD_PARTY_LICENSES.md` with one section per engine: name, version(s), license (FFmpeg GPLv2+, Ghostscript AGPLv3, vips LGPL-3.0, qpdf Apache-2.0), source URL, and the license text pointer.
 
 - [ ] **Step 1: Write failing tests**
@@ -446,6 +543,24 @@ git commit -m "feat(binaries): SBOM + third-party license notices from lock"
 
 **Interfaces:**
 - Consumes: manifest + lock; Task 1 fetch flow.
+
+**Required Tests:**
+- `github_resolver_picks_asset_matching_pattern_and_parses_sha` — fixture API JSON; multiple matching assets → deterministic pick or error (ambiguity pinned)
+- `btbn_sha_parsed_from_checksums_asset`
+- `riedl_resolver_follows_redirect_to_versioned_url_and_reads_sha`
+- `brew_resolver_reports_drift_when_versions_differ` — brew `10.08.1` vs lock `10.08.0` → drift reported (§6.3; analyzer 7/10 gap)
+- `dry_run_makes_zero_writes` — manifest + lock byte-identical after dry-run (§6.3 deliberate-act contract — analyzer critical gap)
+- `default_mode_updates_manifest_and_lock_then_runs_fetch`
+- `missing_asset_yields_clear_error`
+- `manual_pin_entries_report_check_vendor_instruction`
+
+**Acceptance Criteria:**
+- `--dry-run` never writes (byte-compare manifest+lock before/after — §6.3)
+- Default mode: re-resolves latest per source, updates pins + lock, re-runs fetch (§7)
+- brew drift detected and reported, never silently passes (§9.2 counterpart)
+- `yarn binaries:refresh --dry-run` on this repo reports no change for still-present pinned artifacts, exit 0
+- Gate passes clean
+- Boundary rules enforced (per AGENTS.md)
 - Produces: `--dry-run` (report only, exit 0) and default (update manifest pins + re-run fetch) modes. Per-source resolvers:
   - `github-latest`: qpdf, vips-MXE, BtbN — GitHub Releases API latest; pick first asset matching a per-binary regex from the manifest (`assetPattern` field added: e.g. `win64-gpl-9\.0\.zip$`); update url+sha256 (BtbN: read `checksums.sha256` asset).
   - `riedl-latest`: ffmpeg mac — fetch `https://ffmpeg.martin-riedl.de/redirect/latest/macos/<arch>/release/ffmpeg.zip` following redirect → versioned URL; sha256 from sibling `.sha256`.

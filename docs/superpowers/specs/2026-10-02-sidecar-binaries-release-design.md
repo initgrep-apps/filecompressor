@@ -170,9 +170,9 @@ Entry styles: `url` (exact artifact), `release_tag` + `asset` (pinned GitHub rel
 
 | Command | Behavior |
 |---|---|
-| `yarn binaries:fetch --target <triple>` | Download (or brew-install for macOS engines), verify checksum + version, stage into `src-tauri/binaries/` (+ `gs-resources/`), write lock entry |
+| `yarn binaries:fetch --target <triple>` | Download vendor artifacts, verify checksum + version, stage into `src-tauri/binaries/` (+ engine dirs, `gs-resources/` staged by prep), write lock entry. macOS `vips`/`gs` (brew) are owned by prep, not fetch. |
 | `yarn binaries:prep --target <triple>` | Make self-contained: macOS dylib collect + rpath + sign + gs resource staging; Windows engine folders + DLLs + gs resources |
-| `yarn binaries:audit --target <triple>` | Architecture-vs-name, version-vs-lock, linkage/signature, gs resource presence, clean-room gs smoke |
+| `yarn binaries:audit --target <triple>` | Architecture-vs-name, version-vs-lock, linkage/signature, gs resource presence, clean-room gs smoke. Target resolution: host triple by default; explicit `--target` supported. |
 | `yarn binaries:all --target <triple>` | fetch → prep → audit |
 | `yarn binaries:refresh --target <triple>` | Re-resolve latest, update manifest + lock, then `binaries:all` |
 | `yarn app:build --target <triple>` | `binaries:all` + `tauri build --target <triple>` (Tauri runs the frontend build via `beforeBuildCommand`) |
@@ -191,7 +191,8 @@ Default target = host triple (fresh clone on a machine: `yarn app:build` just wo
 
 ### 8.2 Windows (both arches)
 
-- qpdf/ffmpeg/ffprobe: static executables; copied to `binaries/{name}-{triple}.exe` (externalBin).
+- ffmpeg/ffprobe: static BtbN executables; copied to `binaries/{name}-{triple}.exe` (externalBin).
+- qpdf: official msvc build **is not fully static** (ships VC runtime DLLs) → staged into `binaries/engines/qpdf/` with its DLLs and shipped via `bundle.resources`, like vips/gs.
 - vips: MXE zip (`vips-dev-<arch>-all-<ver>.zip`) → `binaries/engines/vips/` containing `vips.exe` + all DLLs; shipped via `bundle.resources`.
 - gs: MSYS2 package extracted → `binaries/engines/gs/` containing `gswin64c.exe` (renamed to the expected name), `libgs-*.dll` + dependent DLLs, and `gs-resources/` (Resource/Init, lib, ICC, fonts); shipped via `bundle.resources`.
 - DLL resolution: the Rust spawner prepends the engine folder to the child process `PATH` (no global state).
