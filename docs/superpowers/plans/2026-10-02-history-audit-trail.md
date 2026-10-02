@@ -40,12 +40,12 @@
 - Test: existing `src-tauri/src/settings.rs` test module
 
 **Interfaces:**
-- Consumes: existing `Settings` struct + `parse_settings_value` fallback pattern (`settings.rs:229-234`).
-- Produces: `Settings.history: HistorySettings` with `retention_days: u32`, serde-defaulted to 90 on missing/corrupt; `HistorySettings::effective_retention_days(&self) -> u32` clamping to `1..=3650` with 90 fallback for 0. Tasks 5, 8, 10 consume both.
+- Consumes: existing `Settings` struct + `parse_settings_value` fallback pattern (`settings.rs:266-273`).
+- Produces: `Settings.history: HistorySettings` with `retention_days: u32`, defaulted to 90 on missing/empty; corrupt values fall back to whole-Settings defaults (existing convention); `HistorySettings::effective_retention_days(&self) -> u32` clamping to `1..=3650` with 90 fallback for 0. Consumers: Tasks 6, 7, 11 call `effective_retention_days()`; Tasks 8, 10 carry `Settings.history` over IPC.
 
 **Acceptance Criteria:**
 - `history.retentionDays` roundtrips camelCase; max value 3650 roundtrips (spec §4.3).
-- Missing, empty (`{}`), and corrupt `history` all resolve to 90 without wiping other settings (spec §4.3, §5.8).
+- Missing/empty (`{}`) `history` resolves to 90 while other settings are preserved; corrupt `history` falls back to whole-Settings defaults (existing corrupt-value convention) (spec §4.3, §5.8).
 - Clamp pinned including off-by-one neighbors: 0→90, 3649→3649, 3651→3650, 5000→3650 (spec §3.6).
 - All Required Tests pass.
 - Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test`.
@@ -58,9 +58,12 @@
 - `parse_settings_value_missing_history_fills_default` — `{ "outputFolder": "/tmp/out" }` → 90
 - `parse_settings_value_empty_history_fills_default` — `{ "history": {} }` → 90 with `outputFolder` preserved (spec "old settings keep loading")
 - `parse_settings_value_corrupt_history_fills_default` — `{ "history": { "retentionDays": "lots" } }` → whole Settings falls back to defaults (existing corrupt-value convention)
+- `parse_settings_value_in_range_history_value_parses` — `{ "history": { "retentionDays": 30 } }` → 30
+- `parse_settings_value_null_history_whole_settings_defaults` — `{ "history": null }` → whole Settings defaults
 - `effective_retention_days_clamps` — 0→90, 1→1, 90→90, 3649→3649, 3650→3650, 3651→3650, 5000→3650
+- `parse_history_effective_retention_integration_pins` — parse `{ "history": { "retentionDays": 5000 } }` → raw 5000 / effective 3650; parse `0` → effective 90
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `src-tauri/src/settings.rs` test module add:
 
@@ -92,6 +95,7 @@ In `src-tauri/src/settings.rs` test module add:
     fn parse_settings_value_missing_history_fills_default() {
         let parsed = parse_settings_value(Some(serde_json::json!({ "outputFolder": "/tmp/out" })));
         assert_eq!(parsed.history.retention_days, 90);
+        assert_eq!(parsed.output_folder, "/tmp/out", "other settings preserved");
     }
 
     #[test]
@@ -114,6 +118,35 @@ In `src-tauri/src/settings.rs` test module add:
     }
 
     #[test]
+    fn parse_settings_value_in_range_history_value_parses() {
+        let parsed =
+            parse_settings_value(Some(serde_json::json!({"history": {"retentionDays": 30}})));
+        assert_eq!(parsed.history.retention_days, 30);
+    }
+
+    #[test]
+    fn parse_settings_value_null_history_whole_settings_defaults() {
+        let with_null = serde_json::json!({
+            "outputFolder": "/tmp/out",
+            "history": null
+        });
+        assert_eq!(parse_settings_value(Some(with_null)), Settings::default());
+    }
+
+    #[test]
+    fn parse_history_effective_retention_integration_pins() {
+        let parsed = parse_settings_value(Some(
+            serde_json::json!({"history": {"retentionDays": 5000}}),
+        ));
+        assert_eq!(parsed.history.retention_days, 5000);
+        assert_eq!(parsed.history.effective_retention_days(), 3650);
+
+        let zero = parse_settings_value(Some(serde_json::json!({"history": {"retentionDays": 0}})));
+        assert_eq!(zero.history.retention_days, 0);
+        assert_eq!(zero.history.effective_retention_days(), 90);
+    }
+
+    #[test]
     fn effective_retention_days_clamps() {
         for (raw, want) in [
             (0u32, 90u32),
@@ -131,12 +164,12 @@ In `src-tauri/src/settings.rs` test module add:
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd src-tauri && cargo test settings`
 Expected: FAIL — no field `history` on `Settings`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src-tauri/src/settings.rs`, add after `Performance` (line ~99):
 
@@ -162,23 +195,31 @@ impl Default for HistorySettings {
 
 impl HistorySettings {
     pub fn effective_retention_days(&self) -> u32 {
-        if self.retention_days == 0 {
-            90
+        let raw = self.retention_days;
+        let effective = if raw == 0 {
+            default_retention_days()
         } else {
-            self.retention_days.clamp(1, 3650)
+            raw.clamp(1, 3650)
+        };
+        if raw != effective {
+            eprintln!("warn: invalid history.retentionDays {raw}, using {effective}");
         }
+        effective
     }
 }
 ```
 
 Extend `Settings` with `#[serde(default)] pub history: HistorySettings,` (after `performance`), extend `Settings::default()` with `history: HistorySettings::default(),`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+Also update `parse_settings_value` so the serde error is logged (it currently discards it):
+`eprintln!("warn: settings parse failed, using defaults: {e}");` inside the `unwrap_or_else` closure, then fall back to `Settings::default()`.
+
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd src-tauri && cargo test settings`
 Expected: PASS (all).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/settings.rs
@@ -803,11 +844,11 @@ git commit -m "feat(history): core-side query with filters, summary and paginati
 **Interfaces:**
 - Consumes: Task 3 `FoldResult`; Task 2 record structs; `read_lines`; `Settings.history.effective_retention_days()` (Task 1).
 - Produces:
-  - `pub fn split_by_retention(lines: Vec<String>, retention_days: u32, now_ms: i64) -> (Vec<String>, usize)` — pure; `(kept_lines, dropped_sessions)`; a whole session's lines move together; lines of unknown `type` are kept verbatim; orphan/malformed lines are kept (never dropped by retention).
+  - `pub fn split_by_retention(lines: Vec<String>, retention_days: u32, now_ms: i64) -> (Vec<String>, usize)` — pure; `(kept_lines, dropped_sessions)`; a whole session's lines move together; lines of unknown `type` are kept verbatim; orphan/malformed lines are kept (never dropped by retention). Cutoff math must widen before multiplying: `i64::from(retention_days) * 86_400_000`.
   - `HistoryStore::trim(&self, retention_days: u32, now_ms: i64) -> Result<u32, String>` — rewrite only when `dropped > 0`; atomic via `history.jsonl.tmp` + `fs::rename`; returns dropped session count.
   - `HistoryStore::clear(&self) -> Result<(), String>` — remove file if present; also remove a stray `.tmp`.
 
-**Retention semantics:** session is dropped when `max(started_at, all file completed_at, ended_at) < now_ms - retention_days * 86_400_000` (strictly older). Missing `session_end` → newest record is max of start + files. `retention_days = 0` is treated as 90 (callers clamp, but the pure function must still be safe).
+**Retention semantics:** session is dropped when `max(started_at, all file completed_at, ended_at) < now_ms - i64::from(retention_days) * 86_400_000` (strictly older; widen to i64 before multiplying so `u32` retention values cannot overflow). Missing `session_end` → newest record is max of start + files. `retention_days = 0` is treated as 90 (callers clamp, but the pure function must still be safe).
 
 **Acceptance Criteria:**
 - Exactly-at-cutoff sessions are kept; strictly older drop — with `ended_at` counted as a session record (spec §3.6).
@@ -1308,6 +1349,7 @@ git commit -m "feat(ipc): add get_history, clear_history and open_folder command
   - `HistoryFilters { search?: string; statuses?: FileStatus[]; categories?: Category[]; sinceMs?: number; outputFolder?: string }`
   - `HistorySummary { sessions, files, savedBytes, failedFiles }`
   - `HistoryResponse { sessions: HistorySession[]; page; pageSize; totalSessions; totalFiles; summary: HistorySummary; outputFolders: string[]; skippedLines: number }`
+  - `Settings` gains `history: { retentionDays: number }` (mirrors Rust `HistorySettings`, spec §4.3)
 - `useHistory()` → `{ response, loading, error, filters, setFilters, page, setPage, refresh, clearHistory, clearError }`:
   - `setFilters(partial)` merges and resets page to 0 (functional compare — no-op when unchanged keeps identity).
   - Query on mount, on `filters`/`page` change, on manual `refresh`, and on `batch:complete` (listen; unlisten on unmount). Debounce search input updates 300 ms **in the component** (hook receives settled values).
@@ -1509,7 +1551,7 @@ Expected: FAIL — modules not found.
 
 - [ ] **Step 3: Implement**
 
-- `src/types.ts`: add the interfaces exactly as in Interfaces above (GPL header already present; append at the end).
+- `src/types.ts`: add the interfaces exactly as in Interfaces above, including `Settings.history` (GPL header already present; append at the end).
 - `src/hooks/useHistory.ts`: state `response/loading/error/filters/page`; effect keyed on `JSON.stringify({filters, page})` invoking `get_history` (cancelled-flag guard like `useSettings.ts:37-58`); one effect for listeners (`batch:complete` → refetch, `history:error` → toast) with the disposed/unlisten pattern from `useCompression.ts:79-185`; `refresh` bumps a numeric nonce included in the effect key.
 - `src/lib/historyFormat.ts`: pure helpers as specified; use `toLocaleDateString`/`Intl.DateTimeFormat` for labels. Add the GPL header to both new TS files (copy from `src/views/HistoryView.tsx:1-15`).
 
@@ -1704,7 +1746,7 @@ git commit -m "feat(history): build filterable session list UI with pagination"
 ### Task 10: Settings History card
 
 **Files:**
-- Modify: `src/views/SettingsView.tsx`, `src/views/SettingsView.test.tsx`, `src/hooks/useSettings.test.ts` (typed fixture — REQUIRED: add `history`), `src/types.ts` (`Settings.history` was added in Task 8's types update)
+- Modify: `src/views/SettingsView.tsx`, `src/views/SettingsView.test.tsx`, `src/hooks/useSettings.test.ts` (typed fixture — REQUIRED: add `history`)
 - Test: `src/views/SettingsView.test.tsx`
 
 **Interfaces:**
@@ -1789,7 +1831,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/views/SettingsView.tsx src/views/SettingsView.test.tsx src/types.ts src/hooks/useSettings.test.ts
+git add src/views/SettingsView.tsx src/views/SettingsView.test.tsx src/hooks/useSettings.test.ts
 git commit -m "feat(settings): add history retention control"
 ```
 

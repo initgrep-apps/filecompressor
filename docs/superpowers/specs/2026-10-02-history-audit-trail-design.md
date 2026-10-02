@@ -243,7 +243,8 @@ serialized by the mutex. Registered in
 ```
 
 Rust: `history: HistorySettings` with `#[serde(default)]`; `HistorySettings { retention_days: u32 }`
-defaulting to 90; clamp at use site (`1..=3650`). Settings UI: new **History** card after
+defaulting to 90; clamp at use site (`1..=3650`). Missing/empty `history` keeps other settings;
+corrupt `history` follows the existing whole-Settings fallback convention. Settings UI: new **History** card after
 Quality Floors — `NumberStepper` (min 1, max 3650, labelled "History retention (days)") +
 description "Sessions older than this are removed automatically. Files on disk are never
 deleted." Reset-to-defaults restores 90.
@@ -369,7 +370,7 @@ Every filter change is a query to `get_history` — search and filters always ru
 | Trim failure | non-fatal; retried next startup/batch; original file intact (atomic rewrite) |
 | Clear failure | error toast; data left in place |
 | Moved/missing files | copy path always works; reveal uses existing error toast; open-folder disabled when no outputs |
-| Bad retention value | clamps `1..=3650`, fallback 90 |
+| Bad retention value | out-of-range numeric: clamp `1..=3650` (0 ⇒ 90 fallback), other settings kept; corrupt/wrong-type: whole-Settings fallback (see §4.3) |
 
 ---
 
