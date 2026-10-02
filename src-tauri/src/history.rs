@@ -86,7 +86,7 @@ pub(crate) enum HistoryRecordRef<'a> {
     SessionEnd(&'a SessionEndRecord),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryFile {
     pub name: String,
@@ -104,7 +104,7 @@ pub struct HistoryFile {
     pub completed_at: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistorySession {
     pub session_id: String,
@@ -145,13 +145,11 @@ fn history_file_from(record: &FileResultRecord) -> HistoryFile {
 }
 
 fn saved_for(file: &HistoryFile) -> u64 {
-    match file.compressed_size {
-        Some(compressed) => file.original_size.saturating_sub(compressed),
-        None => 0,
-    }
+    file.compressed_size
+        .map_or(0, |compressed| file.original_size.saturating_sub(compressed))
 }
 
-fn outcome_from_files(files: &[HistoryFile]) -> Counts {
+fn outcome_from_files(session_id: &str, files: &[HistoryFile]) -> Counts {
     let mut counts = Counts::default();
     for file in files {
         match file.status.as_str() {
@@ -161,17 +159,23 @@ fn outcome_from_files(files: &[HistoryFile]) -> Counts {
             "cancelled" => counts.cancelled += 1,
             "unsupported" => counts.unsupported += 1,
             "already_under_target" => counts.already_under_target += 1,
-            other => eprintln!("warn: history file has unknown status: {other}"),
+            other => eprintln!(
+                "warn: history fold session {session_id} has file with unknown status: {other}"
+            ),
         }
     }
     counts
 }
 
-fn parse_or_skip<T: serde::de::DeserializeOwned>(line: &str, kind: &str) -> Option<T> {
+fn parse_or_skip<T: serde::de::DeserializeOwned>(
+    line: &str,
+    kind: &str,
+    line_no: usize,
+) -> Option<T> {
     match serde_json::from_str(line) {
         Ok(parsed) => Some(parsed),
         Err(e) => {
-            eprintln!("warn: history fold skipped invalid {kind} record: {e}");
+            eprintln!("warn: history fold skipped invalid {kind} record on line {line_no}: {e}");
             None
         }
     }
@@ -183,23 +187,27 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
     let mut file_indexes: Vec<HashMap<String, usize>> = Vec::new();
     let mut skipped_lines = 0usize;
 
-    for line in lines {
+    for (line_no, line) in lines.iter().enumerate() {
         let value: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
             Err(e) => {
-                eprintln!("warn: history fold skipped malformed line: {e}");
+                eprintln!("warn: history fold skipped malformed line {line_no}: {e}");
                 skipped_lines += 1;
                 continue;
             }
         };
-        let Some(kind) = value.get("type").and_then(|t| t.as_str()) else {
-            eprintln!("warn: history fold skipped line without a string \"type\"");
-            skipped_lines += 1;
-            continue;
+        let kind = match value.get("type").and_then(|t| t.as_str()) {
+            Some(kind) => kind,
+            None => {
+                eprintln!("warn: history fold skipped line {line_no} without a string \"type\"");
+                skipped_lines += 1;
+                continue;
+            }
         };
         match kind {
             "session_start" => {
-                let Some(record) = parse_or_skip::<SessionStartRecord>(line, "session_start")
+                let Some(record) =
+                    parse_or_skip::<SessionStartRecord>(line, "session_start", line_no)
                 else {
                     skipped_lines += 1;
                     continue;
@@ -231,18 +239,22 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
                 }
             }
             "file" => {
-                let Some(record) = parse_or_skip::<FileResultRecord>(line, "file") else {
+                let Some(record) = parse_or_skip::<FileResultRecord>(line, "file", line_no) else {
                     skipped_lines += 1;
                     continue;
                 };
                 let Some(index) = session_index.get(&record.session_id).copied() else {
+                    eprintln!(
+                        "warn: history fold skipped file record on line {line_no} for unknown session: {}",
+                        record.session_id
+                    );
                     skipped_lines += 1;
                     continue;
                 };
                 if sessions[index].ended_at.is_some() {
                     eprintln!(
-                        "warn: history fold skipped file record after session_end: {}",
-                        record.file_id
+                        "warn: history fold skipped file record on line {line_no} after session_end: session {} file {}",
+                        record.session_id, record.file_id
                     );
                     skipped_lines += 1;
                     continue;
@@ -258,15 +270,28 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
                 }
             }
             "session_end" => {
-                let Some(record) = parse_or_skip::<SessionEndRecord>(line, "session_end") else {
+                let Some(record) = parse_or_skip::<SessionEndRecord>(line, "session_end", line_no)
+                else {
                     skipped_lines += 1;
                     continue;
                 };
                 let Some(index) = session_index.get(&record.session_id).copied() else {
+                    eprintln!(
+                        "warn: history fold skipped session_end on line {line_no} for unknown session: {}",
+                        record.session_id
+                    );
                     skipped_lines += 1;
                     continue;
                 };
                 let session = &mut sessions[index];
+                if session.ended_at.is_some() {
+                    eprintln!(
+                        "warn: history fold skipped duplicate session_end on line {line_no}: {}",
+                        record.session_id
+                    );
+                    skipped_lines += 1;
+                    continue;
+                }
                 session.ended_at = Some(record.ended_at);
                 session.total_saved_bytes = record.total_saved_bytes;
                 session.cancelled = record.cancelled;
@@ -279,7 +304,7 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
     for session in &mut sessions {
         if session.ended_at.is_none() {
             session.interrupted = true;
-            session.outcome = outcome_from_files(&session.files);
+            session.outcome = outcome_from_files(&session.session_id, &session.files);
             session.total_saved_bytes = session
                 .files
                 .iter()
@@ -1000,7 +1025,34 @@ mod tests {
         assert_eq!(s.matched_files, None);
         assert_eq!(s.files.len(), 1);
         assert_eq!(s.files[0].quality_used, Some(70));
+        assert_eq!(s.files[0].path, "/in/a.jpg");
+        assert_eq!(s.files[0].target_bytes, 1024);
         assert_eq!(s.files[0].output_path, Some(PathBuf::from("/out/a.jpg")));
+    }
+
+    #[test]
+    fn fold_file_category_passthrough() {
+        let mut file_record = file("s1", "f1", 110, "done", (500, Some(100)));
+        file_record["category"] = serde_json::json!("video");
+        let lines = vec![
+            line(start("s1", 100)),
+            line(file_record),
+            line(end("s1", 120)),
+        ];
+        let out = fold_records(&lines);
+        assert_eq!(out.sessions[0].files[0].category, "video");
+    }
+
+    #[test]
+    fn fold_file_error_text_passthrough() {
+        let mut file_record = file("s1", "f1", 110, "failed", (500, None));
+        file_record["error"] = serde_json::json!("boom");
+        let lines = vec![line(start("s1", 100)), line(file_record)];
+        let out = fold_records(&lines);
+        assert_eq!(
+            out.sessions[0].files[0].error,
+            Some("boom".to_string())
+        );
     }
 
     #[test]
@@ -1036,6 +1088,7 @@ mod tests {
         ];
         let out = fold_records(&lines);
         assert!(out.sessions[0].interrupted);
+        assert!(!out.sessions[0].cancelled);
         assert_eq!(out.sessions[0].ended_at, None);
         assert_eq!(out.sessions[0].total_saved_bytes, 4);
     }
@@ -1123,11 +1176,13 @@ mod tests {
             "not json".to_string(),
             line(serde_json::json!({ "type": "future_record", "sessionId": "x" })),
             line(serde_json::json!({ "type": "file", "sessionId": "s1" })),
+            line(serde_json::json!({ "type": "session_start" })),
+            line(serde_json::json!({ "type": "session_end", "sessionId": "nobody" })),
             line(start("s1", 10)),
         ];
         let out = fold_records(&lines);
         assert_eq!(
-            out.skipped_lines, 2,
+            out.skipped_lines, 4,
             "malformed and typed-invalid counted; unknown type ignored silently"
         );
         assert_eq!(out.sessions.len(), 1);
@@ -1199,6 +1254,56 @@ mod tests {
     }
 
     #[test]
+    fn fold_file_ids_are_scoped_per_session() {
+        let lines = vec![
+            line(start("s1", 10)),
+            line(file("s1", "f1", 11, "done", (5, Some(1)))),
+            line(start("s2", 20)),
+            line(file("s2", "f1", 21, "failed", (5, None))),
+        ];
+        let out = fold_records(&lines);
+        assert_eq!(out.sessions.len(), 2);
+        let s2 = out
+            .sessions
+            .iter()
+            .find(|s| s.session_id == "s2")
+            .unwrap();
+        let s1 = out
+            .sessions
+            .iter()
+            .find(|s| s.session_id == "s1")
+            .unwrap();
+        assert_eq!(s1.files.len(), 1);
+        assert_eq!(s2.files.len(), 1);
+        assert_eq!(s1.files[0].status, "done");
+        assert_eq!(s2.files[0].status, "failed");
+    }
+
+    #[test]
+    fn fold_duplicate_session_end_is_skipped_and_counted() {
+        let mut second_end = end("s1", 999);
+        second_end["totalSavedBytes"] = serde_json::json!(7777);
+        second_end["cancelled"] = serde_json::json!(true);
+        second_end["counts"] = serde_json::json!({
+            "done": 0, "bestEffort": 0, "failed": 9,
+            "cancelled": 0, "unsupported": 0, "alreadyUnderTarget": 0
+        });
+        let lines = vec![
+            line(start("s1", 10)),
+            line(end("s1", 100)),
+            line(second_end),
+        ];
+        let out = fold_records(&lines);
+        assert_eq!(out.skipped_lines, 1);
+        let s = &out.sessions[0];
+        assert_eq!(s.ended_at, Some(100), "first end wins");
+        assert_eq!(s.total_saved_bytes, 100, "first end values retained");
+        assert!(!s.cancelled, "first end values retained");
+        assert_eq!(s.outcome.done, 1, "first end counts retained");
+        assert_eq!(s.outcome.failed, 0, "second end counts ignored");
+    }
+
+    #[test]
     fn fold_saturates_when_compressed_exceeds_original() {
         let lines = vec![
             line(start("s1", 10)),
@@ -1228,12 +1333,30 @@ mod tests {
     fn fold_interrupted_flag_matches_ended_at_biconditional() {
         let complete = fold_records(&[line(start("s1", 10)), line(end("s1", 12))]);
         let s = &complete.sessions[0];
-        assert_eq!(s.interrupted, s.ended_at.is_none());
+        assert!(!s.interrupted);
+        assert_eq!(s.ended_at, Some(12));
 
         let interrupted = fold_records(&[line(start("s2", 10))]);
         let s = &interrupted.sessions[0];
-        assert_eq!(s.interrupted, s.ended_at.is_none());
         assert!(s.interrupted);
+        assert_eq!(s.ended_at, None);
+    }
+
+    #[test]
+    fn fold_interrupted_unknown_status_not_counted() {
+        let lines = vec![
+            line(start("s1", 10)),
+            line(file("s1", "f1", 11, "mystery", (5, Some(1)))),
+        ];
+        let out = fold_records(&lines);
+        let s = &out.sessions[0];
+        assert!(s.interrupted);
+        assert_eq!(s.outcome.done, 0);
+        assert_eq!(s.outcome.best_effort, 0);
+        assert_eq!(s.outcome.failed, 0);
+        assert_eq!(s.outcome.cancelled, 0);
+        assert_eq!(s.outcome.unsupported, 0);
+        assert_eq!(s.outcome.already_under_target, 0);
     }
 
     #[test]
@@ -1245,33 +1368,43 @@ mod tests {
         ];
         let out = fold_records(&lines);
         let value = serde_json::to_value(&out.sessions[0]).unwrap();
-        for key in [
-            "sessionId",
-            "startedAt",
-            "endedAt",
-            "outputFolder",
-            "fileCount",
-            "files",
-            "outcome",
-            "totalSavedBytes",
-            "cancelled",
-            "interrupted",
-            "matchedFiles",
-        ] {
-            assert!(value.get(key).is_some(), "missing top-level key {key}");
-        }
+        assert_eq!(
+            sorted_keys(&value),
+            vec![
+                "cancelled",
+                "endedAt",
+                "fileCount",
+                "files",
+                "interrupted",
+                "matchedFiles",
+                "outcome",
+                "outputFolder",
+                "sessionId",
+                "startedAt",
+                "totalSavedBytes",
+            ]
+        );
         assert_eq!(value["endedAt"], 120);
         assert!(value["matchedFiles"].is_null());
         let file = &value["files"][0];
-        for key in [
-            "outputPath",
-            "completedAt",
-            "qualityUsed",
-            "strategyUsed",
-            "durationMs",
-        ] {
-            assert!(file.get(key).is_some(), "missing file key {key}");
-        }
+        assert_eq!(
+            sorted_keys(file),
+            vec![
+                "category",
+                "completedAt",
+                "compressedSize",
+                "durationMs",
+                "error",
+                "name",
+                "originalSize",
+                "outputPath",
+                "path",
+                "qualityUsed",
+                "status",
+                "strategyUsed",
+                "targetBytes",
+            ]
+        );
         assert_eq!(file["outputPath"], "/out/a.jpg");
         assert!(file["outputPath"].is_string());
         assert_eq!(file["completedAt"], 110);
@@ -1306,6 +1439,7 @@ mod tests {
         assert_eq!(out.sessions.len(), 1);
         assert!(out.sessions[0].files.is_empty());
         assert!(out.sessions[0].interrupted);
+        assert!(!out.sessions[0].cancelled);
         assert_eq!(out.sessions[0].ended_at, None);
         assert_eq!(out.sessions[0].outcome, Counts::default());
     }
@@ -1345,6 +1479,26 @@ mod tests {
         assert_eq!(out.skipped_lines, 0);
         assert_eq!(out.sessions[0].session_id, "s1");
         assert_eq!(out.sessions[0].files[0].compressed_size, Some(1));
+    }
+
+    #[test]
+    fn load_counts_lossy_non_json_line_as_skipped() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(store.file_path())
+            .unwrap();
+        file.write_all(&[0xff, 0xfe, b'\n']).unwrap();
+        let start_line = line(start("s1", 10));
+        file.write_all(start_line.as_bytes()).unwrap();
+        file.write_all(b"\n").unwrap();
+
+        let out = store.load().unwrap();
+        assert_eq!(out.skipped_lines, 1, "lossy line is not valid JSON");
+        assert_eq!(out.sessions.len(), 1);
+        assert_eq!(out.sessions[0].session_id, "s1");
     }
 
     #[test]
