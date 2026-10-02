@@ -370,7 +370,7 @@ Every filter change is a query to `get_history` — search and filters always ru
 | Trim failure | non-fatal; retried next startup/batch; original file intact (atomic rewrite) |
 | Clear failure | error toast; data left in place |
 | Moved/missing files | copy path always works; reveal uses existing error toast; open-folder disabled when no outputs |
-| Bad retention value | clamps `1..=3650`, fallback 90 |
+| Bad retention value | out-of-range numeric: clamp `1..=3650` (0 ⇒ 90 fallback), other settings kept; corrupt/wrong-type: whole-Settings fallback (see §4.3) |
 
 ---
 

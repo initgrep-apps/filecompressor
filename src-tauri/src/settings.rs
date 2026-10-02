@@ -510,9 +510,7 @@ mod tests {
         assert_eq!(parsed.history.retention_days, 5000);
         assert_eq!(parsed.history.effective_retention_days(), 3650);
 
-        let zero = parse_settings_value(Some(
-            serde_json::json!({"history": {"retentionDays": 0}}),
-        ));
+        let zero = parse_settings_value(Some(serde_json::json!({"history": {"retentionDays": 0}})));
         assert_eq!(zero.history.retention_days, 0);
         assert_eq!(zero.history.effective_retention_days(), 90);
     }
