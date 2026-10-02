@@ -268,7 +268,13 @@ git commit -m "feat(settings): add history.retentionDays with clamp"
 - `append_propagates_write_error` — `history.jsonl` occupied by a directory → `Err` starting `history write failed:`, no panic
 - `append_creates_file_and_appends_in_order` — two appends → two ordered lines
 - `append_session_end_roundtrips` — append → read → deserialize `SessionEndRecord` equal
-- `concurrent_appends_keep_lines_intact` — 2 threads × 25 appends → 50 parseable lines
+- `concurrent_appends_keep_lines_intact` — 2 threads × 25 large appends → 50 parseable lines, every session id present exactly once
+- `append_repairs_missing_trailing_newline` — raw partial line without trailing `\n` → append → both lines readable, new record intact
+- `append_writes_single_terminated_line` — raw file bytes end with exactly one `\n` on every append
+- `read_lines_tolerates_invalid_utf8_bytes` — valid line + invalid UTF-8 bytes + valid line → `Ok` with 3 entries
+- `read_during_write_never_sees_torn_line` — reader loop during concurrent large appends → every returned line parses as JSON
+- `record_schema_keys_are_pinned` — golden sorted key lists for session_start/file/session_end + Counts
+- `append_and_read_roundtrip_unicode_paths` — café/漢字/😀 in names, paths and errors roundtrip
 
 - [ ] **Step 1: Write the failing tests**
 

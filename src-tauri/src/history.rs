@@ -242,6 +242,9 @@ mod tests {
         assert_eq!(v["type"], "file");
         assert!(v["outputPath"].is_null());
         assert!(v["compressedSize"].is_null());
+        assert!(v["qualityUsed"].is_null());
+        assert!(v["strategyUsed"].is_null());
+        assert!(v["error"].is_null());
         assert_eq!(v["status"], "cancelled");
     }
 
@@ -296,7 +299,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = HistoryStore::new_in(dir.path());
         std::fs::create_dir(store.file_path()).unwrap();
-        assert!(store.read_lines().is_err());
+        let err = store.read_lines().unwrap_err();
+        assert!(err.starts_with("history read failed:"), "{err}");
+        assert!(err.starts_with("history read failed: read "), "{err}");
+        assert!(
+            err.contains(&store.file_path().display().to_string()),
+            "{err}"
+        );
     }
 
     #[test]
@@ -305,6 +314,14 @@ mod tests {
         let store = HistoryStore::new_in(&dir.path().join("a").join("b"));
         store.append_session_end(&small_end("s1")).unwrap();
         assert!(store.file_path().exists());
+        assert_eq!(
+            store.file_path(),
+            dir.path()
+                .join("a")
+                .join("b")
+                .join("history.jsonl")
+                .as_path()
+        );
     }
 
     #[test]
@@ -314,6 +331,68 @@ mod tests {
         std::fs::create_dir(store.file_path()).unwrap();
         let err = store.append_session_end(&small_end("s1")).unwrap_err();
         assert!(err.starts_with("history write failed:"), "{err}");
+        assert!(
+            err.contains(&store.file_path().display().to_string()),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn append_repairs_missing_trailing_newline() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let partial = b"{\"type\":\"session_end\",\"sessionId\":\"torn";
+        std::fs::write(store.file_path(), partial).unwrap();
+
+        store.append_session_end(&small_end("s2")).unwrap();
+
+        let lines = store.read_lines().unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], String::from_utf8_lossy(partial));
+        let parsed: SessionEndRecord = serde_json::from_str(&lines[1]).unwrap();
+        assert_eq!(parsed.session_id, "s2");
+
+        let mut expected = partial.to_vec();
+        expected.push(b'\n');
+        expected.extend_from_slice(lines[1].as_bytes());
+        expected.push(b'\n');
+        assert_eq!(std::fs::read(store.file_path()).unwrap(), expected);
+    }
+
+    #[test]
+    fn append_writes_single_terminated_line() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+
+        store.append_session_end(&small_end("s1")).unwrap();
+        let raw = std::fs::read(store.file_path()).unwrap();
+        assert!(raw.ends_with(b"\n"));
+        assert_eq!(raw.iter().rev().take_while(|b| **b == b'\n').count(), 1);
+        assert_ne!(raw[0], b'\n');
+
+        store.append_session_end(&small_end("s2")).unwrap();
+        let raw = std::fs::read(store.file_path()).unwrap();
+        assert_eq!(raw.iter().filter(|b| **b == b'\n').count(), 2);
+        assert!(!raw.ends_with(b"\n\n"));
+        assert_eq!(store.read_lines().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn read_lines_tolerates_invalid_utf8_bytes() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"{\"a\":1}\n");
+        bytes.extend_from_slice(&[0xff, 0xfe, 0x80]);
+        bytes.extend_from_slice(b"\n");
+        bytes.extend_from_slice(b"{\"b\":2}\n");
+        std::fs::write(store.file_path(), bytes).unwrap();
+
+        let lines = store.read_lines().unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], "{\"a\":1}");
+        assert!(!lines[1].is_empty());
+        assert_eq!(lines[2], "{\"b\":2}");
     }
 
     #[test]
@@ -325,8 +404,10 @@ mod tests {
         store.append_session_end(&small_end("s2")).unwrap();
         let lines = store.read_lines().unwrap();
         assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains("\"s1\""));
-        assert!(lines[1].contains("\"s2\""));
+        let first: SessionEndRecord = serde_json::from_str(&lines[0]).unwrap();
+        let second: SessionEndRecord = serde_json::from_str(&lines[1]).unwrap();
+        assert_eq!(first.session_id, "s1");
+        assert_eq!(second.session_id, "s2");
     }
 
     #[test]
@@ -358,22 +439,184 @@ mod tests {
         let dir = tempdir().unwrap();
         let store = HistoryStore::new_in(dir.path());
         let store = &store;
+        let barrier = std::sync::Barrier::new(2);
         std::thread::scope(|scope| {
             for t in 0..2 {
+                let barrier = &barrier;
                 scope.spawn(move || {
+                    barrier.wait();
                     for i in 0..25 {
-                        store
-                            .append_session_end(&small_end(&format!("t{t}-{i}")))
-                            .unwrap();
+                        let mut record = small_end(&format!("t{t}-{i}"));
+                        record.session_id = format!("t{t}-{i}-{}", "x".repeat(8192));
+                        store.append_session_end(&record).unwrap();
                     }
                 });
             }
         });
         let lines = store.read_lines().unwrap();
         assert_eq!(lines.len(), 50);
+        let mut ids = std::collections::HashSet::new();
         for line in &lines {
-            let v: serde_json::Value = serde_json::from_str(line).unwrap();
-            assert_eq!(v["type"], "session_end");
+            let parsed: SessionEndRecord = serde_json::from_str(line).unwrap();
+            assert!(parsed.session_id.len() > 8192);
+            ids.insert(parsed.session_id);
         }
+        for t in 0..2 {
+            for i in 0..25 {
+                let expected = format!("t{t}-{i}-{}", "x".repeat(8192));
+                assert!(ids.contains(&expected), "missing {t}-{i}");
+            }
+        }
+        assert_eq!(ids.len(), 50);
+    }
+
+    #[test]
+    fn read_during_write_never_sees_torn_line() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for i in 0..100 {
+                    let mut record = small_end(&format!("w-{i}"));
+                    record.session_id = format!("w-{i}-{}", "y".repeat(8192));
+                    store.append_session_end(&record).unwrap();
+                }
+                stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                for line in store.read_lines().unwrap() {
+                    serde_json::from_str::<serde_json::Value>(&line).unwrap();
+                }
+            }
+        });
+        for line in store.read_lines().unwrap() {
+            serde_json::from_str::<serde_json::Value>(&line).unwrap();
+        }
+    }
+
+    #[test]
+    fn record_schema_keys_are_pinned() {
+        let start = serde_json::to_value(HistoryRecordRef::SessionStart(&SessionStartRecord {
+            session_id: "s1".into(),
+            started_at: 1,
+            file_count: 0,
+            output_folder: "/out".into(),
+        }))
+        .unwrap();
+        let mut start_keys: Vec<String> = start.as_object().unwrap().keys().cloned().collect();
+        start_keys.sort();
+        assert_eq!(
+            start_keys,
+            vec![
+                "fileCount",
+                "outputFolder",
+                "sessionId",
+                "startedAt",
+                "type",
+            ]
+        );
+
+        let file = serde_json::to_value(HistoryRecordRef::File(&FileResultRecord {
+            session_id: "s1".into(),
+            file_id: "f1".into(),
+            completed_at: 1,
+            name: "a.jpg".into(),
+            path: "/in/a.jpg".into(),
+            output_path: None,
+            category: "image".into(),
+            target_bytes: 1,
+            original_size: 1,
+            compressed_size: None,
+            status: "done".into(),
+            quality_used: None,
+            strategy_used: None,
+            error: None,
+            duration_ms: 0,
+        }))
+        .unwrap();
+        let mut file_keys: Vec<String> = file.as_object().unwrap().keys().cloned().collect();
+        file_keys.sort();
+        assert_eq!(
+            file_keys,
+            vec![
+                "category",
+                "completedAt",
+                "compressedSize",
+                "durationMs",
+                "error",
+                "fileId",
+                "name",
+                "originalSize",
+                "outputPath",
+                "path",
+                "qualityUsed",
+                "sessionId",
+                "status",
+                "strategyUsed",
+                "targetBytes",
+                "type",
+            ]
+        );
+
+        let end = serde_json::to_value(HistoryRecordRef::SessionEnd(&small_end("s1"))).unwrap();
+        let mut end_keys: Vec<String> = end.as_object().unwrap().keys().cloned().collect();
+        end_keys.sort();
+        assert_eq!(
+            end_keys,
+            vec![
+                "cancelled",
+                "counts",
+                "endedAt",
+                "sessionId",
+                "totalSavedBytes",
+                "type",
+            ]
+        );
+        let mut counts_keys: Vec<String> =
+            end["counts"].as_object().unwrap().keys().cloned().collect();
+        counts_keys.sort();
+        assert_eq!(
+            counts_keys,
+            vec![
+                "alreadyUnderTarget",
+                "bestEffort",
+                "cancelled",
+                "done",
+                "failed",
+                "unsupported",
+            ]
+        );
+    }
+
+    #[test]
+    fn append_and_read_roundtrip_unicode_paths() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let file = FileResultRecord {
+            session_id: "séance-漢字-😀".into(),
+            file_id: "f1".into(),
+            completed_at: 1,
+            name: "café-漢字-😀.jpg".into(),
+            path: "/in/café/漢字/😀.jpg".into(),
+            output_path: Some("/out/café/漢字/😀.jpg".into()),
+            category: "image".into(),
+            target_bytes: 1,
+            original_size: 1,
+            compressed_size: None,
+            status: "failed".into(),
+            quality_used: None,
+            strategy_used: None,
+            error: Some("échec: 漢字 😀".into()),
+            duration_ms: 0,
+        };
+        store.append_file(&file).unwrap();
+        let line = store.read_lines().unwrap().pop().unwrap();
+        let parsed: FileResultRecord = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed.path, file.path);
+        assert_eq!(parsed.output_path, file.output_path);
+        assert_eq!(parsed.error, file.error);
+        assert_eq!(parsed.name, file.name);
+        assert_eq!(parsed.session_id, file.session_id);
     }
 }
