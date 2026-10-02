@@ -30,9 +30,15 @@ import {
   RiPauseCircleLine,
   RiSkipRightLine,
 } from '@remixicon/react'
-import type { Category, FileStatus, HistoryFilters, HistoryFile, HistorySession } from '@/types'
+import type { Category, FileStatus, HistoryFile, HistoryFilters, HistorySession, SessionOutcome } from '@/types'
 import { useHistory } from '@/hooks/useHistory'
-import { dayKey, dayLabel, formatDuration, presetSinceMs } from '@/lib/historyFormat'
+import {
+  dayKey,
+  dayLabel,
+  formatDuration,
+  presetSinceMs,
+  type DatePreset,
+} from '@/lib/historyFormat'
 import { formatSize, RESULT_STATUSES } from '@/components/FileList'
 import { HistoryPagination } from '@/components/HistoryPagination'
 import { Badge } from '@/components/ui/badge'
@@ -113,7 +119,14 @@ const HISTORY_STATUSES: FileStatus[] = [
 
 const HISTORY_CATEGORIES: Category[] = ['image', 'video', 'pdf', 'document', 'other']
 
-type DatePreset = 'today' | 'last7' | 'last30' | 'all'
+const OUTCOME_COUNT_KEYS: Partial<Record<FileStatus, keyof SessionOutcome>> = {
+  done: 'done',
+  best_effort: 'bestEffort',
+  failed: 'failed',
+  cancelled: 'cancelled',
+  unsupported: 'unsupported',
+  already_under_target: 'alreadyUnderTarget',
+}
 
 const DATE_PRESETS: { value: DatePreset; label: string }[] = [
   { value: 'today', label: 'Today' },
@@ -139,6 +152,8 @@ async function copyToClipboard(text: string) {
     toast.error('Could not copy path')
   }
 }
+
+const searchToFilter = (text: string): string | undefined => text.trim() || undefined
 
 async function revealFile(filePath: string) {
   try {
@@ -174,15 +189,15 @@ function matchLabel(count: number): string {
   return count === 1 ? '1 match' : `${count} matches`
 }
 
+function savedPercent(original: number, compressed: number): number {
+  return original > 0
+    ? Math.max(0, Math.round(((original - compressed) / original) * 100))
+    : 0
+}
+
 function fileResult(file: HistoryFile): string {
   if (!RESULT_STATUSES.includes(file.status) || file.compressedSize === null) return '—'
-  const pct =
-    file.originalSize > 0
-      ? Math.max(
-          0,
-          Math.round(((file.originalSize - file.compressedSize) / file.originalSize) * 100)
-        )
-      : 0
+  const pct = savedPercent(file.originalSize, file.compressedSize)
   return `${formatSize(file.originalSize)} → ${formatSize(file.compressedSize)} · ${pct}%`
 }
 
@@ -193,6 +208,12 @@ function StatusMarker({ status }: { status: FileStatus }) {
       {STATUS_LABELS[status]}
     </span>
   )
+}
+
+function nextFilterList<T>(current: T[] | undefined, value: T): T[] {
+  return current?.includes(value)
+    ? current.filter((item) => item !== value)
+    : [...(current ?? []), value]
 }
 
 function Chip({
@@ -226,30 +247,34 @@ interface SessionRowProps {
   onToggle: () => void
 }
 
+function countOutcome(files: HistoryFile[]): SessionOutcome {
+  const counts: SessionOutcome = {
+    done: 0,
+    bestEffort: 0,
+    failed: 0,
+    cancelled: 0,
+    unsupported: 0,
+    alreadyUnderTarget: 0,
+  }
+  return files.reduce((acc, file) => {
+    const key = OUTCOME_COUNT_KEYS[file.status]
+    if (key !== undefined) acc[key] += 1
+    return acc
+  }, counts)
+}
+
 function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
   const panelId = `session-${session.sessionId}-files`
   const files = session.files
   const sumOriginal = files.reduce((acc, f) => acc + f.originalSize, 0)
   const sumCompressed = files.reduce((acc, f) => acc + (f.compressedSize ?? 0), 0)
-  const pct =
-    sumOriginal > 0
-      ? Math.max(0, Math.round(((sumOriginal - sumCompressed) / sumOriginal) * 100))
-      : 0
+  const pct = savedPercent(sumOriginal, sumCompressed)
   const duration = session.endedAt !== null ? formatDuration(session.endedAt - session.startedAt) : '—'
   const timeLabel = new Intl.DateTimeFormat(undefined, {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(session.startedAt))
-  const outcome = session.matchedFiles !== null
-    ? {
-        done: files.filter((f) => f.status === 'done').length,
-        bestEffort: files.filter((f) => f.status === 'best_effort').length,
-        failed: files.filter((f) => f.status === 'failed').length,
-        cancelled: files.filter((f) => f.status === 'cancelled').length,
-        unsupported: files.filter((f) => f.status === 'unsupported').length,
-        alreadyUnderTarget: files.filter((f) => f.status === 'already_under_target').length,
-      }
-    : session.outcome
+  const outcome = session.matchedFiles !== null ? countOutcome(files) : session.outcome
   const hasOutput = files.some((f) => f.outputPath !== null)
   const countLabel =
     session.matchedFiles !== null
@@ -431,12 +456,12 @@ export function HistoryView() {
     setExpandState({})
   }, [response])
 
-  const setFiltersRef = useRef<(partial: Partial<HistoryFilters>) => void>(() => {})
+  const setFiltersRef = useRef<(partial: Partial<HistoryFilters>) => void>(setFilters)
   setFiltersRef.current = setFilters
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      setFiltersRef.current({ search: searchText.trim() || undefined })
+      setFiltersRef.current({ search: searchToFilter(searchText) })
     }, 300)
     return () => window.clearTimeout(timer)
   }, [searchText])
@@ -462,7 +487,7 @@ export function HistoryView() {
 
   const applySearch = (text: string) => {
     setSearchText(text)
-    setFiltersRef.current({ search: text.trim() || undefined })
+    setFiltersRef.current({ search: searchToFilter(text) })
   }
 
   const applyDatePreset = (preset: DatePreset) => {
@@ -564,10 +589,7 @@ export function HistoryView() {
                 active={filters.statuses?.includes(status) === true}
                 dotColor={STATUS_DOT_COLORS[status]}
                 onClick={() => {
-                  const active = filters.statuses?.includes(status) === true
-                  const next = active
-                    ? filters.statuses!.filter((s) => s !== status)
-                    : [...(filters.statuses ?? []), status]
+                  const next = nextFilterList(filters.statuses, status)
                   setFilters({ statuses: next.length > 0 ? next : undefined })
                 }}
               >
@@ -580,10 +602,7 @@ export function HistoryView() {
                 active={filters.categories?.includes(category) === true}
                 dotColor="bg-transparent"
                 onClick={() => {
-                  const active = filters.categories?.includes(category) === true
-                  const next = active
-                    ? filters.categories!.filter((c) => c !== category)
-                    : [...(filters.categories ?? []), category]
+                  const next = nextFilterList(filters.categories, category)
                   setFilters({ categories: next.length > 0 ? next : undefined })
                 }}
               >
@@ -705,7 +724,7 @@ export function HistoryView() {
             )
           )}
         </CardContent>
-        {!initialLoading && error === null && response !== null && response.sessions.length > 0 && (
+        {response !== null && error === null && !emptySessions && (
           <div className="px-(--card-spacing)">
             <HistoryPagination
               page={page}
