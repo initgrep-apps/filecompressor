@@ -17,6 +17,7 @@
 mod commands;
 mod detection;
 mod engine;
+mod history;
 mod models;
 mod output;
 mod processors;

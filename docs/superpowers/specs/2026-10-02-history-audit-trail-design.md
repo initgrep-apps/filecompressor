@@ -105,6 +105,9 @@ Field notes:
 - Any future field must be optional or serde-defaulted — old files keep loading.
 - Malformed lines are **skipped and counted**; the count surfaces to the UI as a muted
   notice. Corrupt lines never crash the app and never block reading the rest.
+- Lines containing invalid UTF-8 are warned to stderr by `read_lines` and consumed in
+  lossy form (accepted v1 behavior); they are **not** counted in `skippedLines` — only
+  JSON-malformed lines are.
 - No migration needed: no history file exists before this feature.
 
 ### 3.4 Folding (read path)
