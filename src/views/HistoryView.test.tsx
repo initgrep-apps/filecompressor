@@ -274,7 +274,9 @@ describe('HistoryView', () => {
   it('shows Cancelled chip for cancelled sessions', async () => {
     invokeMock.mockResolvedValue(responseWith([session({ cancelled: true })]))
     renderView()
-    expect(await screen.findByText('Cancelled')).toBeInTheDocument()
+    expect(
+      await screen.findByText('Cancelled', { selector: 'span[data-slot="badge"]' })
+    ).toBeInTheDocument()
   })
 
   it('search input debounces into a filtered query', async () => {
@@ -293,7 +295,6 @@ describe('HistoryView', () => {
       'get_history',
       expect.objectContaining({ filters: { search: 'photo' }, page: 0 })
     )
-    vi.useRealTimers()
   })
 
   it('esc clears search', async () => {
@@ -320,18 +321,15 @@ describe('HistoryView', () => {
       'get_history',
       expect.objectContaining({ filters: {}, page: 0 })
     )
-    vi.useRealTimers()
   })
 
   it('status chips produce payload and aria-pressed', async () => {
     const user = userEvent.setup()
     invokeMock.mockResolvedValue(emptyResponse)
     renderView()
-    await user.click(await screen.findByRole('button', { name: 'Failed' }))
-    expect(screen.getByRole('button', { name: 'Failed' })).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    )
+    const chip = await screen.findByRole('button', { name: 'Failed' })
+    await user.click(chip)
+    expect(chip).toHaveAttribute('aria-pressed', 'true')
     expect(invokeMock).toHaveBeenLastCalledWith(
       'get_history',
       expect.objectContaining({
@@ -726,6 +724,24 @@ describe('HistoryView', () => {
     await user.click(await screen.findByRole('button', { name: 'Reveal output' }))
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith('Could not open folder: gone')
+    )
+  })
+
+  it('open folder failure toasts', async () => {
+    const user = userEvent.setup()
+    invokeMock.mockImplementation((cmd: unknown) =>
+      cmd === 'open_folder'
+        ? Promise.reject(new Error('explorer died'))
+        : Promise.resolve(
+            responseWith([
+              session({ sessionId: 's1', outputFolder: '/session-out', files: [doneFile()] }),
+            ])
+          )
+    )
+    renderView()
+    await user.click(await screen.findByRole('button', { name: 'Open output folder' }))
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Could not open folder: explorer died')
     )
   })
 
