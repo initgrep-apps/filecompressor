@@ -71,7 +71,7 @@ export function useHistory() {
         unlisteners.push(u)
       }
     }
-    const reportListenFailure = (event: string) => (err: unknown) => {
+    const reportListenFailure = (event: string, err: unknown) => {
       console.error(`event listener registration failed: ${event}`, err)
     }
 
@@ -79,14 +79,14 @@ export function useHistory() {
       setNonce((n) => n + 1)
     })
       .then(done)
-      .catch(reportListenFailure('batch:complete'))
+      .catch((err) => reportListenFailure('batch:complete', err))
 
     listen('history:error', () => {
       toast.error(HISTORY_ERROR_TOAST)
     })
       .then(done)
       .catch((err) => {
-        console.error('event listener registration failed: history:error', err)
+        reportListenFailure('history:error', err)
         toast.error('History error notifications are unavailable.')
       })
 

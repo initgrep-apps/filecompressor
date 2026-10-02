@@ -57,12 +57,16 @@ export interface PerformanceSettings {
   maxConcurrent: MaxConcurrent
 }
 
+export interface HistorySettings {
+  retentionDays: number
+}
+
 export interface Settings {
   outputFolder: string
   categoryTargets: Record<string, CategoryTarget>
   qualityFloors: QualityFloors
   performance: PerformanceSettings
-  history: { retentionDays: number }
+  history: HistorySettings
 }
 
 export interface HistoryFile {
