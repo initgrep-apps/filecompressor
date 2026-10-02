@@ -63,7 +63,7 @@
 - `effective_retention_days_clamps` — 0→90, 1→1, 90→90, 3649→3649, 3650→3650, 3651→3650, 5000→3650
 - `parse_history_effective_retention_integration_pins` — parse `{ "history": { "retentionDays": 5000 } }` → raw 5000 / effective 3650; parse `0` → effective 90
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `src-tauri/src/settings.rs` test module add:
 
@@ -164,12 +164,12 @@ In `src-tauri/src/settings.rs` test module add:
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd src-tauri && cargo test settings`
 Expected: FAIL — no field `history` on `Settings`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src-tauri/src/settings.rs`, add after `Performance` (line ~99):
 
@@ -214,12 +214,12 @@ Extend `Settings` with `#[serde(default)] pub history: HistorySettings,` (after 
 Also update `parse_settings_value` so the serde error is logged (it currently discards it):
 `eprintln!("warn: settings parse failed, using defaults: {e}");` inside the `unwrap_or_else` closure, then fall back to `Settings::default()`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd src-tauri && cargo test settings`
 Expected: PASS (all).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/settings.rs
