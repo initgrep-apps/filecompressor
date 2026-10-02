@@ -137,27 +137,53 @@ mod wiring_tests {
         let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
             .unwrap();
+        let request = |cmd: &str, body: serde_json::Value| tauri::webview::InvokeRequest {
+            cmd: cmd.into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: "tauri://localhost".parse().unwrap(),
+            body: tauri::ipc::InvokeBody::Json(body),
+            headers: Default::default(),
+            invoke_key: tauri::test::INVOKE_KEY.to_string(),
+        };
+
         let response = tauri::test::get_ipc_response(
             &webview,
-            tauri::webview::InvokeRequest {
-                cmd: "get_history".into(),
-                callback: tauri::ipc::CallbackFn(0),
-                error: tauri::ipc::CallbackFn(1),
-                url: "tauri://localhost".parse().unwrap(),
-                body: tauri::ipc::InvokeBody::Json(serde_json::json!({
+            request(
+                "get_history",
+                serde_json::json!({
                     "filters": {},
                     "page": 0,
                     "pageSize": 50
-                })),
-                headers: Default::default(),
-                invoke_key: tauri::test::INVOKE_KEY.to_string(),
-            },
+                }),
+            ),
         );
         let payload = response.expect("registered get_history must answer the ipc dispatch");
         let value = payload.deserialize::<serde_json::Value>().unwrap();
         assert_eq!(value["page"], 0);
         assert_eq!(value["pageSize"], 50);
         assert_eq!(value["totalSessions"], 0);
+
+        let response = tauri::test::get_ipc_response(
+            &webview,
+            request("clear_history", serde_json::json!({})),
+        );
+        response.expect("registered clear_history must answer the ipc dispatch with Ok");
+
+        let missing = root.path().join("definitely-missing-folder");
+        let missing_str = missing.to_str().unwrap().to_string();
+        let err = tauri::test::get_ipc_response(
+            &webview,
+            request("open_folder", serde_json::json!({ "path": missing_str })),
+        )
+        .expect_err("registered open_folder must answer the ipc dispatch");
+        let err = err
+            .as_str()
+            .expect("open_folder error must cross the ipc boundary as a string");
+        assert!(
+            err.starts_with("Could not open folder "),
+            "pinned open_folder error copy must survive the ipc boundary: {err}"
+        );
     }
 
     #[test]

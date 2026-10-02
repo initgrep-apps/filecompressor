@@ -766,6 +766,7 @@ mod tests {
         let seeded = HistoryStore::new_in(root.path());
         let now = crate::queue::now_ms();
         seed_session(&seeded, "old", now - 30 * 86_400_000);
+        seed_session(&seeded, "mid", now - 300 * 86_400_000);
         seed_session(&seeded, "ancient", now - 4000 * 86_400_000);
         fs::write(
             root.path().join("settings.json"),
@@ -790,8 +791,8 @@ mod tests {
             .collect();
         assert_eq!(
             ids,
-            vec!["old".to_string()],
-            "raw retention 5000 clamps to 3650, so the 4000-day session is trimmed while the 30-day session survives; a mutant using raw 5000 keeps both and the 90-day default trims both"
+            vec!["old".to_string(), "mid".to_string()],
+            "effective retention 3650 trims the 4000-day session and keeps the 30- and 300-day sessions; a raw-5000 mutant keeps all three and a 90-day-default mutant keeps only the 30-day session"
         );
     }
 
@@ -837,5 +838,7 @@ mod tests {
             resp.page_size, 200,
             "missing-store echo must be the requested clamp, not a hardcoded default"
         );
+
+        clear_history(app.handle().clone()).unwrap();
     }
 }
