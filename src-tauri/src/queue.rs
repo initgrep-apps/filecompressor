@@ -207,6 +207,42 @@ impl<R: Runtime> QueueState<R> {
         poison_recover(self.batch_tokens.lock()).contains_key(batch_id)
     }
 
+    #[cfg(test)]
+    fn history_records_present(&self, batch_id: &str) -> bool {
+        poison_recover(self.history_records.lock()).contains_key(batch_id)
+    }
+
+    #[cfg(test)]
+    fn history_error_pending(&self, batch_id: &str) -> bool {
+        poison_recover(self.history_error_sent.lock()).contains(batch_id)
+    }
+
+    #[cfg(test)]
+    fn seed_history_state(&self, batch_id: &str) {
+        let record = FileResultRecord {
+            session_id: batch_id.to_string(),
+            file_id: "seeded".to_string(),
+            completed_at: 0,
+            name: "seeded".to_string(),
+            path: "/seeded".to_string(),
+            output_path: None,
+            category: "image".to_string(),
+            target_bytes: 1,
+            original_size: 1,
+            compressed_size: None,
+            status: "cancelled".to_string(),
+            quality_used: None,
+            strategy_used: None,
+            error: None,
+            duration_ms: 0,
+        };
+        poison_recover(self.history_records.lock())
+            .entry(batch_id.to_string())
+            .or_default()
+            .push(record);
+        poison_recover(self.history_error_sent.lock()).insert(batch_id.to_string());
+    }
+
     fn record_file(
         &self,
         app: &AppHandle<R>,
@@ -1907,6 +1943,13 @@ mod tests {
             ("report.docx", crate::models::Category::Document, docx.to_str().unwrap()),
             ("b.jpg", crate::models::Category::Image, "/tmp/b.jpg"),
         ]);
+        // The entry records a 4096-byte original; the processor copies the
+        // smaller on-disk file as-is, so the worker accumulates a real,
+        // exact saved amount (4096 - actual bytes) instead of 0.
+        update_entry(&app, &ids[0], |entry| entry.original_size = 4096);
+        let on_disk = std::fs::metadata(&docx).unwrap().len();
+        let expected_saved = 4096u64.saturating_sub(on_disk);
+
         let rx = events_of(&app.handle(), &["file:complete", "file:error", "batch:complete"]);
         let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
         QueueState::start_batch(queue.inner(), &app.handle(), "hist-totals".into(), ids);
@@ -1923,13 +1966,17 @@ mod tests {
         assert_eq!(s.outcome.best_effort, 0);
         assert_eq!(s.outcome.cancelled, 0);
         assert_eq!(s.outcome.unsupported, 0);
-        let derived: u64 = s
-            .files
-            .iter()
-            .map(|f| f.compressed_size.map_or(0, |c| f.original_size.saturating_sub(c)))
-            .sum();
-        assert_eq!(s.total_saved_bytes, derived, "session_end total must match recorded file lines");
+        assert_eq!(
+            s.total_saved_bytes, expected_saved,
+            "session_end total must equal the worker-accumulated saved bytes ({expected_saved})"
+        );
+        assert!(
+            s.total_saved_bytes > 0,
+            "fixture must accumulate a non-zero saved amount so a zero total cannot pass"
+        );
         let processed = s.files.iter().find(|f| f.status == "already_under_target").unwrap();
+        assert_eq!(processed.original_size, 4096);
+        assert_eq!(processed.compressed_size, Some(on_disk));
         assert!(processed.output_path.is_some());
         assert!(processed.quality_used.is_some());
         assert!(processed.strategy_used.is_some());
@@ -1951,11 +1998,94 @@ mod tests {
         let entry = crate::models::FileEntry::new("x.jpg", 1024);
         app.state::<FileListState>().0.lock().unwrap().push(entry.clone());
         let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        // Per-batch bookkeeping seeded ahead of the batch must be cleared by
+        // the preflight early return, not left behind for a later session.
+        queue.seed_history_state("preflight");
         QueueState::start_batch(queue.inner(), &app.handle(), "preflight".into(), vec![entry.id.clone()]);
         wait_idle(&queue, "preflight");
 
+        assert!(
+            !queue.history_records_present("preflight"),
+            "no per-batch records may survive a preflight failure"
+        );
+        assert!(
+            !queue.history_error_pending("preflight"),
+            "no per-batch error flag may survive a preflight failure"
+        );
+
         let store = app.state::<crate::history::HistoryStore>();
         assert!(store.load().unwrap().sessions.is_empty(), "no phantom session");
+    }
+
+    #[test]
+    fn cancel_skip_entry_ignores_non_pending() {
+        use crate::models::FileStatus;
+        let entry = |id: &str, status: FileStatus| {
+            let mut e = FileEntry::new(&format!("/tmp/{id}"), 1024);
+            e.id = id.to_string();
+            e.status = status;
+            e
+        };
+        let mut list = vec![
+            entry("done", FileStatus::Done),
+            entry("failed", FileStatus::Failed),
+            entry("cancelled", FileStatus::Cancelled),
+            entry("pending", FileStatus::Pending),
+        ];
+        assert!(cancel_skip_entry(&mut list, "done").is_none(), "Done must not be swept");
+        assert!(cancel_skip_entry(&mut list, "failed").is_none(), "Failed must not be swept");
+        assert!(cancel_skip_entry(&mut list, "missing").is_none(), "unknown ids are no-ops");
+
+        let already = cancel_skip_entry(&mut list, "cancelled").expect("Cancelled is returned");
+        assert_eq!(already.status, FileStatus::Cancelled);
+        let pending = cancel_skip_entry(&mut list, "pending").expect("Pending flips to Cancelled");
+        assert_eq!(pending.status, FileStatus::Cancelled);
+
+        assert_eq!(
+            list.iter().find(|e| e.id == "done").unwrap().status,
+            FileStatus::Done,
+            "non-pending rows are never clobbered"
+        );
+        assert_eq!(
+            list.iter().find(|e| e.id == "failed").unwrap().status,
+            FileStatus::Failed
+        );
+    }
+
+    #[tokio::test]
+    async fn done_entry_not_recorded_on_skip_path() {
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("3");
+        let ids = add_entries(&app, &[
+            ("stale.jpg", crate::models::Category::Image, "/tmp/stale.jpg"),
+            ("fresh.jpg", crate::models::Category::Image, "/tmp/fresh.jpg"),
+        ]);
+        // A stale Done row never enters a lane; the sweep must skip it (only
+        // Cancelled entries are swept) and must not clobber its status.
+        set_status(&app, &ids[0], crate::models::FileStatus::Done);
+
+        let rx = events_of(&app.handle(), &["file:error", "file:cancelled", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-stale".into(), ids.clone());
+        wait_idle(&queue, "hist-stale");
+        drain_until_complete(&rx);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let recorded: Vec<String> = raw_file_records(&store).iter().map(|r| r.file_id.clone()).collect();
+        assert_eq!(
+            recorded,
+            vec![ids[1].clone()],
+            "the Done row is skipped by the lane sweep and only the live file is recorded"
+        );
+
+        let state = app.state::<FileListState>();
+        let list = state.0.lock().unwrap();
+        let stale = list.iter().find(|e| e.id == ids[0]).unwrap();
+        assert_eq!(
+            stale.status,
+            crate::models::FileStatus::Done,
+            "the sweep must not clobber a Done row"
+        );
     }
 
     #[tokio::test]
@@ -1980,6 +2110,14 @@ mod tests {
         drain_until_complete(&rx);
 
         let store = app.state::<crate::history::HistoryStore>();
+        let recorded: Vec<String> = raw_file_records(&store).iter().map(|r| r.file_id.clone()).collect();
+        assert_eq!(
+            recorded.iter().cloned().collect::<std::collections::HashSet<_>>(),
+            ids.iter().cloned().collect::<std::collections::HashSet<_>>(),
+            "recorded file ids must equal the batch ids exactly, got {recorded:?}"
+        );
+        assert_eq!(recorded.len(), ids.len(), "no duplicate file records");
+
         let fold = store.load().unwrap();
         let s = &fold.sessions[0];
         assert_eq!(s.session_id, "hist-cancel");
@@ -1988,7 +2126,8 @@ mod tests {
         assert!(s.files.iter().any(|f| f.status == "cancelled"));
         assert_eq!(
             s.outcome.failed + s.outcome.cancelled,
-            u32::try_from(ids.len()).unwrap()
+            u32::try_from(ids.len()).unwrap(),
+            "counts must cover every recorded file"
         );
         assert!(s.cancelled, "batch ended via cancel-all");
     }
@@ -2015,6 +2154,14 @@ mod tests {
         drain_until_complete(&rx);
 
         let store = app.state::<crate::history::HistoryStore>();
+        let recorded: Vec<String> = raw_file_records(&store).iter().map(|r| r.file_id.clone()).collect();
+        assert_eq!(
+            recorded.iter().cloned().collect::<std::collections::HashSet<_>>(),
+            ids.iter().cloned().collect::<std::collections::HashSet<_>>(),
+            "recorded file ids must equal the batch ids exactly, got {recorded:?}"
+        );
+        assert_eq!(recorded.len(), ids.len(), "no duplicate file records");
+
         let fold = store.load().unwrap();
         let s = &fold.sessions[0];
         assert_eq!(s.files.len(), ids.len(), "every file terminal outcome recorded once");
@@ -2127,6 +2274,7 @@ mod tests {
         assert!(f.quality_used.is_none());
         assert!(f.strategy_used.is_none());
         assert!(f.error.is_none());
+        assert!(f.duration_ms > 0, "unsupported is detected after a worker slot: {}ms", f.duration_ms);
         assert_eq!(s.outcome.unsupported, 1);
         assert_eq!(f.original_size, 512);
     }
@@ -2155,16 +2303,21 @@ mod tests {
         wait_idle(&queue, "hist-fail");
 
         let mut file_errors = 0usize;
+        let mut history_errors = 0usize;
         loop {
             let (topic, payload) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
             match topic.as_str() {
                 "file:error" => file_errors += 1,
-                "history:error" => assert!(payload["message"].is_string()),
+                "history:error" => {
+                    history_errors += 1;
+                    assert!(payload["message"].is_string());
+                }
                 "batch:complete" => break,
                 other => panic!("unexpected event: {other}"),
             }
         }
         assert_eq!(file_errors, 2, "compression outcomes unchanged by history failure");
+        assert_eq!(history_errors, 1, "persistent failure emits exactly one history:error");
 
         let state = app.state::<FileListState>();
         let list = state.0.lock().unwrap();
@@ -2210,6 +2363,141 @@ mod tests {
             }
         }
         assert_eq!(history_errors, 1, "at most one history:error per batch");
+    }
+
+    #[tokio::test]
+    async fn history_error_flag_cleared_between_batches() {
+        let _temp_guard = temp_guard();
+        let root = tempfile::TempDir::new().unwrap();
+        let out = root.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::create_dir_all(root.path().join("history.jsonl")).unwrap();
+        let app = make_app(
+            root.path(),
+            serde_json::json!({
+                "outputFolder": out.to_str().unwrap(),
+                "performance": { "maxConcurrent": "1" }
+            }),
+        );
+        let rx = events_of(&app.handle(), &["file:error", "history:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+
+        let first = add_entries(&app, &[
+            ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
+        ]);
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-two-1".into(), first);
+        wait_idle(&queue, "hist-two-1");
+        let second = add_entries(&app, &[
+            ("b.jpg", crate::models::Category::Image, "/tmp/b.jpg"),
+        ]);
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-two-2".into(), second);
+        wait_idle(&queue, "hist-two-2");
+
+        let mut history_errors = 0usize;
+        let mut completes = 0usize;
+        while completes < 2 {
+            let (topic, payload) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            match topic.as_str() {
+                "history:error" => {
+                    history_errors += 1;
+                    assert!(payload["message"].is_string());
+                }
+                "batch:complete" => completes += 1,
+                _ => {}
+            }
+        }
+        assert_eq!(
+            history_errors, 2,
+            "once-per-batch flag must reset so each failing batch reports its own history:error"
+        );
+        assert!(!queue.history_error_pending("hist-two-1"));
+        assert!(!queue.history_error_pending("hist-two-2"));
+    }
+
+    #[tokio::test]
+    async fn history_records_accumulator_cleared_after_batch() {
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("1");
+        let first = add_entries(&app, &[
+            ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-acc-1".into(), first);
+        wait_idle(&queue, "hist-acc-1");
+        drain_until_complete(&rx);
+
+        assert!(
+            !queue.history_records_present("hist-acc-1"),
+            "finish_batch must drain the per-batch accumulator"
+        );
+
+        let second = add_entries(&app, &[
+            ("b.jpg", crate::models::Category::Image, "/tmp/b.jpg"),
+        ]);
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-acc-2".into(), second);
+        wait_idle(&queue, "hist-acc-2");
+        drain_until_complete(&rx);
+
+        let store = app.state::<crate::history::HistoryStore>();
+        let fold = store.load().unwrap();
+        let second_session = fold
+            .sessions
+            .iter()
+            .find(|s| s.session_id == "hist-acc-2")
+            .expect("second session recorded");
+        assert_eq!(
+            second_session.files.len(),
+            1,
+            "first batch's drained records must not leak into the second session"
+        );
+        assert_eq!(second_session.outcome.failed, 1);
+    }
+
+    #[tokio::test]
+    async fn trim_failure_does_not_fail_batch() {
+        let _temp_guard = temp_guard();
+        let root = tempfile::TempDir::new().unwrap();
+        let out = root.path().join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let app = make_app(
+            root.path(),
+            serde_json::json!({
+                "outputFolder": out.to_str().unwrap(),
+                "performance": { "maxConcurrent": "1" },
+                "history": { "retentionDays": 10 }
+            }),
+        );
+        let store = app.state::<crate::history::HistoryStore>();
+        seed_session_start(&store, "trim-old", wall_now_ms() - 30 * 86_400_000, "/old");
+        // Occupy the atomic-rewrite temp path with a directory so trim's
+        // remove_if_exists fails after the seeded old session is read.
+        std::fs::create_dir_all(root.path().join("history.jsonl.tmp")).unwrap();
+
+        let ids = add_entries(&app, &[
+            ("a.jpg", crate::models::Category::Image, "/tmp/a.jpg"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "batch:complete"]);
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+        QueueState::start_batch(queue.inner(), &app.handle(), "hist-trim-fail".into(), ids);
+        wait_idle(&queue, "hist-trim-fail");
+        drain_until_complete(&rx);
+
+        let state = app.state::<FileListState>();
+        let list = state.0.lock().unwrap();
+        assert!(
+            list.iter().all(|e| e.status == crate::models::FileStatus::Failed),
+            "trim failure must not change file outcomes"
+        );
+        drop(list);
+
+        let fold = store.load().unwrap();
+        let ids: Vec<&str> = fold.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert!(
+            ids.contains(&"trim-old"),
+            "failed trim must leave the original history intact, got {ids:?}"
+        );
+        assert!(ids.contains(&"hist-trim-fail"), "session_end written before trim");
     }
 
     #[tokio::test]
