@@ -912,12 +912,12 @@ git commit -m "feat(history): core-side query with filters, summary and paginati
 - `trim_keeps_unknown_type_lines_verbatim` — future record kinds survive
 - `trim_wide_retention_does_not_overflow` — wide retention keeps a 200-day-old record (a wrapped cutoff would drop it)
 - `trim_extreme_now_ms_does_not_panic` — `now_ms = i64::MIN` saturates the cutoff; nothing drops
-- `trim_rewrites_only_when_something_drops_and_is_atomic` — dropped count, no tmp leftover, second trim no-op (file bytes identical)
-- `trim_zero_retention_days_behaves_like_ninety` — retention 0 keeps a 89-day record and drops a 91-day one
+- `trim_rewrites_only_when_something_drops_and_is_atomic` — dropped count, no tmp leftover, second trim no-op (file bytes identical; unix: inode unchanged)
+- `trim_zero_retention_days_behaves_like_ninety` — retention 0 keeps an 89-day record and drops a 91-day one
 - `trim_blocks_until_lock_released` — held mutex blocks `trim` until released (mirrors the append lock test)
 - `clear_blocks_until_lock_released` — held mutex blocks `clear` until released
 - `trim_failure_leaves_original_intact` — tmp path as directory → Err at the stale-remove stage + original bytes unchanged
-- `trim_direct_write_and_rename_paths_are_used` — successful trim leaves no tmp and writes each kept line followed by `\n` (`kept.join("\n") + "\n"`) exactly
+- `trim_direct_write_and_rename_paths_are_used` — successful trim leaves no tmp, writes each kept line followed by `\n`; an empty kept set writes a 0-byte file
 - `trim_rewrite_replaces_inode` — `#[cfg(unix)]`; successful rewrite changes the file's inode (rename replaces; in-place truncate-write would keep it)
 - `trim_orphan_end_before_start_does_not_anchor_session` — orphan `session_end` before any start for that id must not seed `newest_by_session`; start+file at now-30d decide the drop, orphan line kept verbatim
 - `trim_missing_file_is_noop` — fresh store → Ok(0), no tmp created
@@ -926,6 +926,7 @@ git commit -m "feat(history): core-side query with filters, summary and paginati
 - `clear_removes_file_and_is_idempotent` — plus stray tmp removal
 - `clear_failure_returns_err` — history.jsonl as a non-empty directory → Err, data left in place
 - `clear_tmp_failure_leaves_main_intact` — tmp removal failure → Err, history.jsonl still present and readable
+- `trim_read_error_propagates` — history.jsonl as a directory → trim returns `history read failed: read …` and creates no tmp
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1035,7 +1036,7 @@ Expected: FAIL — `split_by_retention` not defined.
 
 - [ ] **Step 3: Implement**
 
-- `split_by_retention`: first pass parses lines into `(index, type, session_id, newest_ms)`; builds `drop: HashSet<String>` for sessions whose newest < cutoff; second pass keeps lines whose session is not in `drop`, plus all malformed/unknown/orphan lines; `dropped = drop.len()`. Treat `retention_days == 0` as 90 inside the pure function. Cutoff uses `now_ms.saturating_sub(i64::from(retention_days) * 86_400_000)`.
+- `split_by_retention`: first pass parses each line via `parse_line_ref` → `(session_id, timestamp, is_start)`; non-start lines arriving before that session's start stay unbound (orphans kept, and they do not seed the newest tracker); the newest timestamp is folded per session via the entry API + `max`. Builds `drop: HashSet<String>` for sessions whose newest < cutoff; second pass keeps lines whose session is not in `drop`, plus all malformed/unknown/orphan lines; `dropped = drop.len()`. Treat `retention_days == 0` as 90 inside the pure function. Cutoff uses `now_ms.saturating_sub(i64::from(retention_days) * 86_400_000)`.
 - `HistoryStore::trim`: `lines = read_lines()`; `(kept, dropped) = split_by_retention(...)`; compute `tmp_path`; remove a stale regular `history.jsonl.tmp` (ignore `NotFound`; do NOT remove a directory — that failure surfaces as Err) **before** the `dropped == 0` early return so a stale tmp never survives a no-op trim; if `dropped == 0` → `Ok(0)`; else join the kept lines (`line + '\n'` per line), write them via `File::create` + the shared `write_terminated` helper + `sync_all` (fsync before rename), drop the handle, `fs::rename(tmp, path)`, errors leave the original untouched; return `u32::try_from(dropped).unwrap_or(u32::MAX)`; guard with the mutex.
 - `HistoryStore::clear`: remove any stale `history.jsonl.tmp` first (ignore `NotFound`; a tmp directory errors out so the failure is visible), then remove `history.jsonl` (ignore `NotFound`; a directory → Err) — tmp removal before main means a failure leaves the history data in place (spec §5.8).
 
