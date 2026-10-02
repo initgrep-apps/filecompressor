@@ -928,7 +928,7 @@ git commit -m "feat(history): core-side query with filters, summary and paginati
 - `clear_tmp_failure_leaves_main_intact` — tmp removal failure → Err, history.jsonl still present and readable
 - `trim_read_error_propagates` — history.jsonl as a directory → trim returns `history read failed: read …` and creates no tmp
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the `history.rs` test module:
 
@@ -1029,23 +1029,23 @@ Add to the `history.rs` test module:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd src-tauri && cargo test history`
 Expected: FAIL — `split_by_retention` not defined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `split_by_retention`: first pass parses each line via `parse_line_ref` → `(session_id, timestamp, is_start)`; non-start lines arriving before that session's start stay unbound (orphans kept, and they do not seed the newest tracker); the newest timestamp is folded per session via the entry API + `max`. Builds `drop: HashSet<String>` for sessions whose newest < cutoff; second pass keeps lines whose session is not in `drop`, plus all malformed/unknown/orphan lines; `dropped = drop.len()`. Treat `retention_days == 0` as 90 inside the pure function. Cutoff uses `now_ms.saturating_sub(i64::from(retention_days) * 86_400_000)`.
 - `HistoryStore::trim`: `lines = read_lines()`; `(kept, dropped) = split_by_retention(...)`; compute `tmp_path`; remove a stale regular `history.jsonl.tmp` (ignore `NotFound`; do NOT remove a directory — that failure surfaces as Err) **before** the `dropped == 0` early return so a stale tmp never survives a no-op trim; if `dropped == 0` → `Ok(0)`; else join the kept lines (`line + '\n'` per line), write them via `File::create` + the shared `write_terminated` helper + `sync_all` (fsync before rename), drop the handle, `fs::rename(tmp, path)`, errors leave the original untouched; return `u32::try_from(dropped).unwrap_or(u32::MAX)`; guard with the mutex.
 - `HistoryStore::clear`: remove any stale `history.jsonl.tmp` first (ignore `NotFound`; a tmp directory errors out so the failure is visible), then remove `history.jsonl` (ignore `NotFound`; a directory → Err) — tmp removal before main means a failure leaves the history data in place (spec §5.8).
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cd src-tauri && cargo test history`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/history.rs
