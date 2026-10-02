@@ -1754,7 +1754,8 @@ git commit -m "feat(history): add frontend types, query hook and format helpers"
 - `renders pagination and requests next page` — `Page 1 of 3`, Next → page 1
 - `pagination prev next bounds` — Prev disabled page 0; Next disabled last page
 - `summary bar renders response summary` — page-independent numbers from `response.summary`
-- `auto-expands filtered sessions with match count` — `1 match`, table visible
+- `auto-expands filtered sessions with match count` — `2 matches`, table visible; outcome chips recomputed from the displayed files (`Done 2`, stored outcome contradicted, no `Failed 1`) — mutation-pinned against plain `session.outcome` (round 3)
+- `clamps saved percent at zero when file grew` — matched session with a grew-file renders result `1 KB → 2 KB · 0%`, no negative percent (round 3)
 - `session level matches stay collapsed and show all files when opened` — `matchedFiles: null` → no auto-expand
 - `user toggle overrides auto expand` — click collapse on auto-expanded session stays collapsed
 - `clear history confirms before invoking` — confirm button → `clear_history`
@@ -1764,7 +1765,7 @@ git commit -m "feat(history): add frontend types, query hook and format helpers"
 - `actions disabled without output path` — reveal/copy output disabled; still enabled for source
 - `copy failure toasts` — clipboard rejection → error toast
 - `shows a notice when lines were skipped` — muted notice
-- `reveal failure toasts` — rejected `reveal_in_folder` → `Could not open folder: <reason>` toast (spec §5.8)
+- `reveal failure toasts` — rejected `reveal_in_folder` → `Could not open folder: <reason>` toast (spec §5.8); second click rejecting the raw string `locked` → `Could not open folder: locked` (`String` fallback branch, round 3)
 - `multi chip un-toggle keeps per-group payloads` — Failed+Done on → `statuses: ['failed','done']`; Failed off → `statuses: ['done']`; PDF+Image on → `categories: ['pdf','image']`; PDF off → `categories: ['image']` (regression pin for chip clearing)
 - `category chip produces payload and pressed state` — PDF chip → `filters: { categories: ['pdf'] }`, `aria-pressed=true`
 - `open output folder invokes with session folder` — click → `open_folder` with `{ path: session.outputFolder }`
@@ -1773,11 +1774,12 @@ git commit -m "feat(history): add frontend types, query hook and format helpers"
 - `copy source path writes clipboard and toasts` — `writeText` with source path + `Path copied` toast
 - `shows plural match count` — `matchedFiles: 3` → `3 matches`
 - `summary shows 0 B when no bytes saved` — `savedBytes: 0` renders `0 B saved`, not `—`
-- hook `page syncs when backend clamps response` — returned `page` differs from requested → hook page syncs with one bounded corrective refetch (spec §5.4 review round 1)
+- hook `page syncs when backend clamps response` — returned `page` differs from requested → hook page syncs with one bounded corrective refetch (spec §5.4 review round 1); exactly one corrective refetch — invoke count advances by precisely 2 after `setPage` settles (round 3)
+- hook `malformed response page leaves page untouched` — response with a non-number `page` skips the corrective sync: page stays 0, single load invoke, error null (round 3)
 
 **Round-1 review deviations (accepted, no code change):**
 - `clearHistory` failure toast copy stays exactly `Could not clear history` (plan-pinned, Task 8 asserts exact copy; failure cause already logged via `console.error`).
-- `batch:complete` listener registration failure stays log-only (plan-sanctioned; manual refresh remains the fallback).
+- `batch:complete` listener registration failure stays log-only (plan-sanctioned; manual refresh arrives with the Task 11 follow-up; until then, view remount re-fetches).
 - Expand-state reset when `response` identity changes is plan-prescribed (auto-expanded default origin); accepted UX tradeoff: a background refetch collapses user-expanded rows.
 - Disclosure `aria-label` stays `Toggle session details` (plan-pinned; tests query by it).
 - Manual refresh icon button (spec §5.6) intentionally omitted from this task's composition — refresh coverage is mount + `batch:complete`; follow-up owned by Task 11 (add the button or amend the spec).
@@ -1789,7 +1791,7 @@ git commit -m "feat(history): add frontend types, query hook and format helpers"
 - `useHistory` page sync guarded against malformed `res.page` (number/integer/non-negative before `setPage`); existing clamp-sync hook test unaffected.
 - `console.error` logs added in the three view catch blocks (`copy to clipboard failed`, `reveal_in_folder failed`, `open_folder failed`); toast copies unchanged.
 - `setFiltersRef.current = setFilters` moved into a `useEffect` (no render-phase ref write); debounce timing unchanged.
-- `toggleSession` reuses `isSessionExpanded` (single default-rule source); `SessionRow` uses `matched`/`matchedFiles` aliases with aliased-condition narrowing; `STATUS_CHIP_STYLES`/`STATUS_LABELS`/`STATUS_DOT_COLORS` merged into `STATUS_META`; `activeCount` reduced to the 5-term optional-chained form; two redundant in-test `vi.useRealTimers()` removed (afterEach already restores); status-chip test reuses the bound chip element for click + `aria-pressed`.
+- `toggleSession` reuses `isSessionExpanded` (single default-rule source); `SessionRow` uses `matched`/`matchedFiles` aliases with aliased-condition narrowing; `STATUS_CHIP_STYLES`/`STATUS_LABELS`/`STATUS_DOT_COLORS` merged into `STATUS_META`; `activeCount` reduced to the 5-term optional-chained form; two redundant in-test `vi.useRealTimers()` removed (afterEach already restores); first click and pressed-state assert reuse the bound chip element.
 
 - [ ] **Step 1: Write the failing tests**
 
