@@ -1861,6 +1861,7 @@ mod tests {
         let store = store.inner();
         let settings = crate::commands::load_settings(app.handle());
         let reserved = crate::output::ReservedNames::new();
+        let rx = events_of(&app.handle(), &["file:cancelled"]);
         let saved = QueueState::process_single_job(
             app.handle().clone(),
             "hist-queued-cancel".into(),
@@ -1872,6 +1873,10 @@ mod tests {
         .await;
 
         assert_eq!(saved, 0, "a cancelled entry must contribute no saved bytes");
+        assert!(
+            rx.try_recv().is_err(),
+            "dispatch of an already-cancelled entry must not re-emit file:cancelled"
+        );
         let recorded = raw_file_records(store);
         assert_eq!(recorded.len(), 1, "dispatch of a cancelled entry records once");
         let f = &recorded[0];
@@ -1896,7 +1901,22 @@ mod tests {
         let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
         QueueState::start_batch(queue.inner(), &app.handle(), "hist-1".into(), ids.clone());
         wait_idle(&queue, "hist-1");
-        drain_until_complete(&rx);
+
+        let mut emitted_errors: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        loop {
+            let (topic, payload) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            if topic == "file:error" {
+                let file_id = payload["fileId"].as_str().unwrap().to_string();
+                let message = payload["errorMessage"].as_str().unwrap().to_string();
+                assert!(!message.is_empty(), "file:error must carry a message");
+                emitted_errors.insert(file_id, message);
+            }
+            if topic == "batch:complete" {
+                break;
+            }
+        }
+        assert_eq!(emitted_errors.len(), 2, "one file:error per failed file");
 
         let store = app.state::<crate::history::HistoryStore>();
         let fold = store.load().unwrap();
@@ -1908,6 +1928,21 @@ mod tests {
         assert!(!s.cancelled, "a batch that ran to completion is not cancelled");
         assert_eq!(s.outcome.failed, 2, "sidecar-less jobs fail");
         assert_eq!(s.files.len(), 2);
+        let raw = raw_file_records(store.inner());
+        assert_eq!(raw.len(), 2, "one raw file record per failed file");
+        for f in &raw {
+            let error = f
+                .error
+                .as_ref()
+                .unwrap_or_else(|| panic!("failed record {} must carry an error", f.file_id));
+            assert!(!error.is_empty(), "failed record error must be non-empty");
+            assert_eq!(
+                Some(error),
+                emitted_errors.get(&f.file_id),
+                "recorded error for {} must match the emitted file:error errorMessage",
+                f.file_id
+            );
+        }
         assert_eq!(
             s.files.iter().map(|f| f.name.as_str()).collect::<std::collections::HashSet<_>>(),
             std::collections::HashSet::from(["a.jpg", "b.jpg"])
@@ -1946,6 +1981,7 @@ mod tests {
             ("b.jpg", crate::models::Category::Image, "/tmp/b.jpg"),
         ]);
         update_entry(&app, &ids[0], |entry| entry.original_size = 4096);
+        let docx_id = ids[0].clone();
         let on_disk = std::fs::metadata(&docx).unwrap().len();
         let expected_saved = 4096u64.saturating_sub(on_disk);
 
@@ -1954,15 +1990,41 @@ mod tests {
         QueueState::start_batch(queue.inner(), &app.handle(), "hist-totals".into(), ids);
         wait_idle(&queue, "hist-totals");
 
-        let mut batch_complete: Option<serde_json::Value> = None;
-        loop {
+        let mut completes: Vec<(String, serde_json::Value)> = Vec::new();
+        let mut errors: Vec<(String, serde_json::Value)> = Vec::new();
+        let batch_complete = loop {
             let (topic, payload) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-            if topic == "batch:complete" {
-                batch_complete = Some(payload);
-                break;
+            match topic.as_str() {
+                "file:complete" => {
+                    let file_id = payload["fileId"].as_str().unwrap().to_string();
+                    completes.push((file_id, payload));
+                }
+                "file:error" => {
+                    let file_id = payload["fileId"].as_str().unwrap().to_string();
+                    errors.push((file_id, payload));
+                }
+                "batch:complete" => break payload,
+                _ => {}
             }
-        }
-        let batch_complete = batch_complete.expect("batch:complete fires");
+        };
+        assert_eq!(completes.len(), 1, "the under-target docx emits file:complete");
+        assert_eq!(errors.len(), 1, "the missing jpg emits file:error");
+        let docx_complete = completes
+            .iter()
+            .find(|(file_id, _)| file_id == &docx_id)
+            .expect("file:complete for the docx");
+        assert_eq!(
+            docx_complete.1["qualityUsed"].as_u64(),
+            Some(100),
+            "file:complete must carry the worker's exact quality: {}",
+            docx_complete.1
+        );
+        assert_eq!(
+            docx_complete.1["strategyUsed"].as_str(),
+            Some(crate::engine::result::STRATEGY_ALREADY_UNDER_TARGET),
+            "file:complete must carry the worker's exact strategy: {}",
+            docx_complete.1
+        );
 
         let store = app.state::<crate::history::HistoryStore>();
         let fold = store.load().unwrap();
@@ -2551,7 +2613,9 @@ mod tests {
             let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
             match topic.as_str() {
                 "file:error" => file_errors += 1,
-                "history:error" => panic!("missing store must silently no-op"),
+                "history:error" => {
+                    panic!("missing store must warn to stderr and no-op, not emit history:error")
+                }
                 "batch:complete" => break,
                 other => panic!("unexpected event: {other}"),
             }
