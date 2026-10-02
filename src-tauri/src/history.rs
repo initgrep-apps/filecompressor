@@ -382,17 +382,22 @@ fn file_hit(file: &HistoryFile, needle: &str) -> bool {
             .is_some_and(|error| matches_search(error, needle))
 }
 
+fn normalize_text(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
 fn normalize_list(values: Option<&[String]>) -> Option<Vec<String>> {
-    values
-        .map(|values| {
-            values
-                .iter()
-                .map(|value| value.trim())
-                .filter(|value| !value.is_empty())
-                .map(str::to_string)
-                .collect()
-        })
-        .filter(|values: &Vec<String>| !values.is_empty())
+    let values: Vec<String> = values?
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect();
+    if values.is_empty() {
+        None
+    } else {
+        Some(values)
+    }
 }
 
 fn file_matches(
@@ -401,10 +406,8 @@ fn file_matches(
     categories: Option<&[String]>,
     needle: Option<&str>,
 ) -> bool {
-    statuses.is_none_or(|statuses| statuses.iter().any(|status| status == &file.status))
-        && categories.is_none_or(|categories| {
-            categories.iter().any(|category| category == &file.category)
-        })
+    statuses.is_none_or(|statuses| statuses.contains(&file.status))
+        && categories.is_none_or(|categories| categories.contains(&file.category))
         && needle.is_none_or(|needle| file_hit(file, needle))
 }
 
@@ -458,7 +461,7 @@ pub fn query_history(
         }
 
         let file_constraints_active = statuses.is_some() || categories.is_some();
-        let needle_for_files = if file_search_hit { needle.as_deref() } else { None };
+        let needle_for_files = needle.as_deref().filter(|_| file_search_hit);
         if file_constraints_active || needle_for_files.is_some() {
             session.files.retain(|file| {
                 file_matches(
