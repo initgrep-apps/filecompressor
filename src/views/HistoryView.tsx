@@ -140,6 +140,22 @@ async function copyToClipboard(text: string) {
   }
 }
 
+async function revealFile(filePath: string) {
+  try {
+    await invoke('reveal_in_folder', { filePath })
+  } catch (err) {
+    toast.error(`Could not open folder: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
+async function openSessionFolder(path: string) {
+  try {
+    await invoke('open_folder', { path })
+  } catch (err) {
+    toast.error(`Could not open folder: ${err instanceof Error ? err.message : String(err)}`)
+  }
+}
+
 function parentDir(path: string): string {
   const idx = path.lastIndexOf('/')
   return idx > 0 ? path.slice(0, idx) : path
@@ -283,7 +299,7 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
           size="icon"
           aria-label="Open output folder"
           disabled={!hasOutput}
-          onClick={() => invoke('open_folder', { path: session.outputFolder })}
+          onClick={() => void openSessionFolder(session.outputFolder)}
         >
           <RiFolderOpenLine />
         </Button>
@@ -336,10 +352,9 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
                         size="icon-xs"
                         aria-label="Reveal output"
                         disabled={file.outputPath === null}
-                        onClick={() =>
-                          file.outputPath &&
-                          invoke('reveal_in_folder', { filePath: file.outputPath })
-                        }
+                        onClick={() => {
+                          if (file.outputPath) void revealFile(file.outputPath)
+                        }}
                       >
                         <RiFolderOpenLine />
                       </Button>
@@ -358,7 +373,7 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
                         variant="ghost"
                         size="icon-xs"
                         aria-label="Reveal source"
-                        onClick={() => invoke('reveal_in_folder', { filePath: file.path })}
+                        onClick={() => void revealFile(file.path)}
                       >
                         <RiFolder3Line />
                       </Button>

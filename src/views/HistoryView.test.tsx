@@ -587,6 +587,21 @@ describe('HistoryView', () => {
     })
   })
 
+  it('reveal failure toasts', async () => {
+    const user = userEvent.setup()
+    invokeMock
+      .mockResolvedValueOnce(
+        responseWith([session({ sessionId: 's1', matchedFiles: 1, files: [doneFile()] })])
+      )
+      .mockRejectedValueOnce(new Error('gone'))
+      .mockResolvedValue(emptyResponse)
+    renderView()
+    await user.click(await screen.findByRole('button', { name: 'Reveal output' }))
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Could not open folder: gone')
+    )
+  })
+
   it('actions disabled without output path', async () => {
     const user = userEvent.setup()
     invokeMock.mockResolvedValue(
