@@ -420,26 +420,16 @@ pub fn query_history(
     let output_folders: Vec<String> = fold
         .sessions
         .iter()
-        .map(|session| session.output_folder.as_str())
-        .filter(|folder| !folder.is_empty())
+        .filter_map(|session| normalize_text(Some(session.output_folder.as_str())))
         .collect::<BTreeSet<&str>>()
         .into_iter()
         .map(str::to_string)
         .collect();
 
-    let needle = filters
-        .search
-        .as_deref()
-        .map(str::trim)
-        .filter(|search| !search.is_empty())
-        .map(str::to_lowercase);
+    let needle = normalize_text(filters.search.as_deref()).map(str::to_lowercase);
     let statuses = normalize_list(filters.statuses.as_deref());
     let categories = normalize_list(filters.categories.as_deref());
-    let output_folder = filters
-        .output_folder
-        .as_deref()
-        .map(str::trim)
-        .filter(|folder| !folder.is_empty());
+    let output_folder = normalize_text(filters.output_folder.as_deref());
     let since_ms = filters.since_ms;
 
     let mut visible: Vec<HistorySession> = Vec::new();
@@ -447,7 +437,8 @@ pub fn query_history(
         if since_ms.is_some_and(|since_ms| session.started_at < since_ms) {
             continue;
         }
-        if output_folder.is_some_and(|folder| session.output_folder.as_str() != folder) {
+        let session_folder = normalize_text(Some(session.output_folder.as_str()));
+        if output_folder.is_some_and(|folder| session_folder != Some(folder)) {
             continue;
         }
 
@@ -506,18 +497,22 @@ pub fn query_history(
         .take(page_size as usize)
         .collect();
 
+    let summary = HistorySummary {
+        sessions: total_sessions,
+        files: total_files,
+        saved_bytes,
+        failed_files,
+    };
+    debug_assert_eq!(total_sessions, summary.sessions);
+    debug_assert_eq!(total_files, summary.files);
+
     HistoryResponse {
         sessions,
         page,
         page_size,
         total_sessions,
         total_files,
-        summary: HistorySummary {
-            sessions: total_sessions,
-            files: total_files,
-            saved_bytes,
-            failed_files,
-        },
+        summary,
         output_folders,
         skipped_lines: fold.skipped_lines,
     }
@@ -2351,6 +2346,38 @@ mod tests {
         let resp = query_history(two_sessions(), &padded_folder, 0, 50);
         assert_eq!(resp.sessions.len(), 1);
         assert_eq!(resp.sessions[0].session_id, "s2");
+    }
+
+    #[test]
+    fn query_stored_folder_trimmed_for_match_and_listing() {
+        let lines = vec![
+            start_in("plain", 300, "/outB"),
+            start_in("padded", 200, " /outB "),
+            start_in("blank", 100, "   "),
+        ];
+        let fold = fold_records(&lines);
+
+        let unfiltered = query_history(fold, &no_filters(), 0, 50);
+        assert_eq!(unfiltered.sessions.len(), 3, "whitespace-only folder still visible");
+        assert_eq!(
+            unfiltered.output_folders,
+            vec!["/outB".to_string()],
+            "folders are listed trimmed; whitespace-only is not an option"
+        );
+
+        let filtered = query_history(
+            fold_records(&lines),
+            &HistoryFilters { output_folder: Some("/outB".into()), ..no_filters() },
+            0,
+            50,
+        );
+        let ids: Vec<&str> = filtered.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["plain", "padded"],
+            "trimmed filter matches trimmed stored folder on both sides"
+        );
+        assert_eq!(filtered.total_sessions, 2);
     }
 
     #[test]
