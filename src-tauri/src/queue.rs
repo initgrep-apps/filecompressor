@@ -733,7 +733,13 @@ impl<R: Runtime> QueueState<R> {
                 }
             }
             None => {
-                eprintln!("warn: history store not managed, skipping history trim");
+                let first =
+                    poison_recover(queue.history_error_sent.lock()).insert(batch_id.to_string());
+                if first {
+                    eprintln!(
+                        "warn: history store not managed, skipping history trim for batch {batch_id}"
+                    );
+                }
             }
         }
 
@@ -791,7 +797,15 @@ fn append_history<R: tauri::Runtime>(
     record: HistoryRecordRef<'_>,
 ) -> Result<(), String> {
     let Some(store) = app.try_state::<HistoryStore>() else {
-        eprintln!("warn: history store not managed, skipping history record");
+        let batch_id = batch_id_of(&record).to_string();
+        let queue = app.state::<QueueState<R>>();
+        let first = poison_recover(queue.history_error_sent.lock()).insert(batch_id.clone());
+        if first {
+            eprintln!(
+                "warn: history store not managed, skipping {} record for batch {batch_id}",
+                record_kind(&record)
+            );
+        }
         return Ok(());
     };
     let result = match record {
@@ -817,6 +831,14 @@ fn batch_id_of<'a>(record: &'a HistoryRecordRef<'_>) -> &'a str {
         HistoryRecordRef::SessionStart(rec) => &rec.session_id,
         HistoryRecordRef::File(rec) => &rec.session_id,
         HistoryRecordRef::SessionEnd(rec) => &rec.session_id,
+    }
+}
+
+fn record_kind(record: &HistoryRecordRef<'_>) -> &'static str {
+    match record {
+        HistoryRecordRef::SessionStart(_) => "session-start",
+        HistoryRecordRef::File(_) => "file",
+        HistoryRecordRef::SessionEnd(_) => "session-end",
     }
 }
 
