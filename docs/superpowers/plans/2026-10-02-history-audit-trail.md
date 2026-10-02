@@ -1764,6 +1764,23 @@ git commit -m "feat(history): add frontend types, query hook and format helpers"
 - `actions disabled without output path` — reveal/copy output disabled; still enabled for source
 - `copy failure toasts` — clipboard rejection → error toast
 - `shows a notice when lines were skipped` — muted notice
+- `reveal failure toasts` — rejected `reveal_in_folder` → `Could not open folder: <reason>` toast (spec §5.8)
+- `multi chip un-toggle keeps per-group payloads` — Failed+Done on → `statuses: ['failed','done']`; Failed off → `statuses: ['done']`; PDF+Image on → `categories: ['pdf','image']`; PDF off → `categories: ['image']` (regression pin for chip clearing)
+- `category chip produces payload and pressed state` — PDF chip → `filters: { categories: ['pdf'] }`, `aria-pressed=true`
+- `open output folder invokes with session folder` — click → `open_folder` with `{ path: session.outputFolder }`
+- `open output folder disabled when session lacks outputs` — all files without `outputPath` → button disabled
+- `copy source path writes clipboard and toasts` — `writeText` with source path + `Path copied` toast
+- `shows plural match count` — `matchedFiles: 3` → `3 matches`
+- `summary shows 0 B when no bytes saved` — `savedBytes: 0` renders `0 B saved`, not `—`
+- hook `page syncs when backend clamps response` — returned `page` differs from requested → hook page syncs with one bounded corrective refetch (spec §5.4 review round 1)
+
+**Round-1 review deviations (accepted, no code change):**
+- `clearHistory` failure toast copy stays exactly `Could not clear history` (plan-pinned, Task 8 asserts exact copy; failure cause already logged via `console.error`).
+- `batch:complete` listener registration failure stays log-only (plan-sanctioned; manual refresh remains the fallback).
+- Expand-state reset when `response` identity changes is plan-prescribed (auto-expanded default origin); accepted UX tradeoff: a background refetch collapses user-expanded rows.
+- Disclosure `aria-label` stays `Toggle session details` (plan-pinned; tests query by it).
+- Manual refresh icon button (spec §5.6) intentionally omitted from this task's composition — refresh coverage is mount + `batch:complete`; follow-up owned by Task 11 (add the button or amend the spec).
+- Existing view-level pagination test fixtures switched to page-echoing backend responses (return `page` matching the request) — required for consistency with the new clamp-sync; assertions unchanged.
 
 - [ ] **Step 1: Write the failing tests**
 
