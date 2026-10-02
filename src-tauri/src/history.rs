@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -123,6 +123,45 @@ pub struct HistorySession {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FoldResult {
     pub sessions: Vec<HistorySession>,
+    pub skipped_lines: usize,
+}
+
+pub const DEFAULT_PAGE_SIZE: u32 = 50;
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryFilters {
+    #[serde(default)]
+    pub search: Option<String>,
+    #[serde(default)]
+    pub statuses: Option<Vec<String>>,
+    #[serde(default)]
+    pub categories: Option<Vec<String>>,
+    #[serde(default)]
+    pub since_ms: Option<i64>,
+    #[serde(default)]
+    pub output_folder: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistorySummary {
+    pub sessions: usize,
+    pub files: usize,
+    pub saved_bytes: u64,
+    pub failed_files: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryResponse {
+    pub sessions: Vec<HistorySession>,
+    pub page: u32,
+    pub page_size: u32,
+    pub total_sessions: usize,
+    pub total_files: usize,
+    pub summary: HistorySummary,
+    pub output_folders: Vec<String>,
     pub skipped_lines: usize,
 }
 
@@ -321,6 +360,155 @@ pub fn fold_records(lines: &[String]) -> FoldResult {
     FoldResult {
         sessions,
         skipped_lines,
+    }
+}
+
+fn matches_search(text: &str, needle: &str) -> bool {
+    text.to_lowercase().contains(needle)
+}
+
+fn file_hit(file: &HistoryFile, needle: &str) -> bool {
+    matches_search(&file.name, needle)
+        || matches_search(&file.path, needle)
+        || file
+            .output_path
+            .as_ref()
+            .is_some_and(|path| matches_search(&path.to_string_lossy(), needle))
+        || file
+            .error
+            .as_deref()
+            .is_some_and(|error| matches_search(error, needle))
+}
+
+fn file_matches(file: &HistoryFile, filters: &HistoryFilters, needle: Option<&str>) -> bool {
+    if let Some(statuses) = filters.statuses.as_ref().filter(|v| !v.is_empty()) {
+        if !statuses.iter().any(|status| status == &file.status) {
+            return false;
+        }
+    }
+    if let Some(categories) = filters.categories.as_ref().filter(|v| !v.is_empty()) {
+        if !categories.iter().any(|category| category == &file.category) {
+            return false;
+        }
+    }
+    if let Some(needle) = needle {
+        if !file_hit(file, needle) {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn query_history(
+    fold: FoldResult,
+    filters: &HistoryFilters,
+    page: u32,
+    page_size: u32,
+) -> HistoryResponse {
+    let output_folders: Vec<String> = fold
+        .sessions
+        .iter()
+        .map(|session| session.output_folder.as_str())
+        .filter(|folder| !folder.is_empty())
+        .collect::<BTreeSet<&str>>()
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+
+    let needle = filters
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|search| !search.is_empty())
+        .map(str::to_lowercase);
+    let statuses_active = filters.statuses.as_ref().is_some_and(|v| !v.is_empty());
+    let categories_active = filters.categories.as_ref().is_some_and(|v| !v.is_empty());
+    let file_constraints_active = statuses_active || categories_active;
+
+    let mut visible: Vec<HistorySession> = Vec::new();
+    for mut session in fold.sessions {
+        if let Some(since_ms) = filters.since_ms {
+            if session.started_at < since_ms {
+                continue;
+            }
+        }
+        if let Some(folder) = &filters.output_folder {
+            if &session.output_folder != folder {
+                continue;
+            }
+        }
+
+        let folder_hit = needle
+            .as_deref()
+            .is_some_and(|needle| matches_search(&session.output_folder, needle));
+        let search_file_hit = needle
+            .as_deref()
+            .is_some_and(|needle| session.files.iter().any(|file| file_hit(file, needle)));
+        if needle.is_some() && !search_file_hit && !folder_hit {
+            continue;
+        }
+        let needle_for_files = if search_file_hit { needle.as_deref() } else { None };
+        let matches: Vec<HistoryFile> = session
+            .files
+            .iter()
+            .filter(|file| file_matches(file, filters, needle_for_files))
+            .cloned()
+            .collect();
+        let file_level_active = file_constraints_active || search_file_hit;
+        if file_level_active {
+            if matches.is_empty() {
+                continue;
+            }
+            session.files = matches;
+            session.matched_files = Some(session.files.len());
+        }
+        visible.push(session);
+    }
+
+    let total_sessions = visible.len();
+    let mut total_files = 0usize;
+    let mut saved_bytes = 0u64;
+    let mut failed_files = 0usize;
+    for session in &visible {
+        for file in &session.files {
+            total_files += 1;
+            saved_bytes = saved_bytes.saturating_add(saved_for(file));
+            if file.status == "failed" {
+                failed_files += 1;
+            }
+        }
+    }
+
+    let page_size = page_size.max(1);
+    let last_page = if total_sessions == 0 {
+        0
+    } else {
+        total_sessions
+            .div_ceil(page_size as usize)
+            .saturating_sub(1)
+    };
+    let page = page.min(last_page.min(u32::MAX as usize) as u32);
+    let start = (page as usize).saturating_mul(page_size as usize);
+    let sessions = visible
+        .into_iter()
+        .skip(start)
+        .take(page_size as usize)
+        .collect();
+
+    HistoryResponse {
+        sessions,
+        page,
+        page_size,
+        total_sessions,
+        total_files,
+        summary: HistorySummary {
+            sessions: total_sessions,
+            files: total_files,
+            saved_bytes,
+            failed_files,
+        },
+        output_folders,
+        skipped_lines: fold.skipped_lines,
     }
 }
 
@@ -1532,5 +1720,453 @@ mod tests {
         std::fs::create_dir(store.file_path()).unwrap();
         let err = store.load().unwrap_err();
         assert!(err.starts_with("history read failed: read "), "{err}");
+    }
+
+    fn start_in(sid: &str, at: i64, folder: &str) -> String {
+        line(serde_json::json!({
+            "type": "session_start", "sessionId": sid, "startedAt": at,
+            "fileCount": 1, "outputFolder": folder
+        }))
+    }
+
+    fn qfile(
+        sid: &str,
+        fid: &str,
+        at: i64,
+        name: &str,
+        path: &str,
+        output_path: Option<&str>,
+        category: &str,
+        status: &str,
+        sizes: (u64, Option<u64>),
+        error: Option<&str>,
+    ) -> String {
+        line(serde_json::json!({
+            "type": "file", "sessionId": sid, "fileId": fid, "completedAt": at,
+            "name": name, "path": path, "outputPath": output_path,
+            "category": category, "targetBytes": 1024,
+            "originalSize": sizes.0, "compressedSize": sizes.1,
+            "status": status, "qualityUsed": 70, "strategyUsed": "quality=70",
+            "error": error, "durationMs": 12
+        }))
+    }
+
+    fn two_sessions() -> FoldResult {
+        let lines = vec![
+            line(serde_json::json!({
+                "type": "session_start", "sessionId": "s2", "startedAt": 200,
+                "fileCount": 1, "outputFolder": "/outB"
+            })),
+            line(file("s2", "f2", 201, "failed", (100, None))),
+            line(start("s1", 100)),
+            line(file("s1", "f1", 101, "done", (500, Some(100)))),
+            line(end("s1", 102)),
+        ];
+        fold_records(&lines)
+    }
+
+    fn five_sessions() -> FoldResult {
+        let lines = vec![
+            start_in("s5", 500, "/out"),
+            start_in("s4", 400, "/out"),
+            start_in("s3", 300, "/out"),
+            start_in("s2", 200, "/out"),
+            start_in("s1", 100, "/out"),
+        ];
+        fold_records(&lines)
+    }
+
+    fn search_fixture() -> FoldResult {
+        let lines = vec![
+            start_in("alpha", 100, "/out/alpha"),
+            qfile(
+                "alpha",
+                "f1",
+                101,
+                "sunset.jpg",
+                "/photos/sunset.jpg",
+                Some("/out/alpha/sunset.jpg"),
+                "image",
+                "done",
+                (500, Some(100)),
+                None,
+            ),
+            start_in("beta", 200, "/out/beta"),
+            qfile(
+                "beta",
+                "f2",
+                201,
+                "report.pdf",
+                "/docs/report.pdf",
+                None,
+                "pdf",
+                "failed",
+                (100, None),
+                Some("cannot read locked file"),
+            ),
+        ];
+        fold_records(&lines)
+    }
+
+    fn folder_and_file_hit_fixture() -> FoldResult {
+        let lines = vec![
+            start_in("s1", 10, "/projects/alpha"),
+            qfile(
+                "s1",
+                "f1",
+                11,
+                "alpha.txt",
+                "/in/alpha.txt",
+                Some("/projects/alpha/alpha.txt"),
+                "document",
+                "done",
+                (100, Some(50)),
+                None,
+            ),
+            qfile(
+                "s1",
+                "f2",
+                12,
+                "beta.txt",
+                "/in/beta.txt",
+                None,
+                "document",
+                "failed",
+                (100, None),
+                Some("nope"),
+            ),
+        ];
+        fold_records(&lines)
+    }
+
+    fn old_start_new_file_fixture() -> FoldResult {
+        let lines = vec![
+            start_in("old", 100, "/out"),
+            qfile(
+                "old",
+                "f1",
+                500,
+                "a.jpg",
+                "/in/a.jpg",
+                Some("/out/a.jpg"),
+                "image",
+                "done",
+                (10, Some(5)),
+                None,
+            ),
+            start_in("new", 300, "/out"),
+            qfile(
+                "new",
+                "f1",
+                301,
+                "a.jpg",
+                "/in/a.jpg",
+                Some("/out/a.jpg"),
+                "image",
+                "done",
+                (10, Some(5)),
+                None,
+            ),
+        ];
+        fold_records(&lines)
+    }
+
+    fn two_sessions_two_files_each() -> FoldResult {
+        let lines = vec![
+            start_in("s2", 200, "/out"),
+            qfile("s2", "a", 201, "a.jpg", "/in/a.jpg", Some("/out/a.jpg"), "image", "done", (10, Some(5)), None),
+            qfile("s2", "b", 202, "b.jpg", "/in/b.jpg", Some("/out/b.jpg"), "image", "done", (10, Some(5)), None),
+            start_in("s1", 100, "/out"),
+            qfile("s1", "a", 101, "a.jpg", "/in/a.jpg", Some("/out/a.jpg"), "image", "done", (10, Some(5)), None),
+            qfile("s1", "b", 102, "b.jpg", "/in/b.jpg", Some("/out/b.jpg"), "image", "done", (10, Some(5)), None),
+        ];
+        fold_records(&lines)
+    }
+
+    fn mixed_folders() -> FoldResult {
+        let lines = vec![
+            start_in("a", 400, "/b"),
+            start_in("b", 300, "/a"),
+            start_in("c", 200, "/b"),
+            start_in("d", 100, ""),
+        ];
+        fold_records(&lines)
+    }
+
+    fn no_filters() -> HistoryFilters {
+        HistoryFilters::default()
+    }
+
+    #[test]
+    fn query_returns_first_page_and_totals() {
+        let resp = query_history(two_sessions(), &no_filters(), 0, 1);
+        assert_eq!(resp.page, 0);
+        assert_eq!(resp.page_size, 1);
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].session_id, "s2");
+        assert_eq!(resp.total_sessions, 2);
+        assert_eq!(resp.total_files, 2);
+        assert_eq!(resp.summary.sessions, 2);
+        assert_eq!(resp.summary.failed_files, 1);
+        assert_eq!(resp.summary.saved_bytes, 400);
+    }
+
+    #[test]
+    fn query_page_middle_and_last_partial_page() {
+        let expected: [(u32, usize, &[&str]); 3] = [
+            (0, 2, &["s5", "s4"]),
+            (1, 2, &["s3", "s2"]),
+            (2, 1, &["s1"]),
+        ];
+        for (page, want_len, want_ids) in expected {
+            let resp = query_history(five_sessions(), &no_filters(), page, 2);
+            assert_eq!(resp.page, page);
+            assert_eq!(resp.page_size, 2);
+            assert_eq!(resp.sessions.len(), want_len, "page {page}");
+            let ids: Vec<&str> = resp.sessions.iter().map(|s| s.session_id.as_str()).collect();
+            assert_eq!(ids, want_ids, "page {page}");
+        }
+    }
+
+    #[test]
+    fn query_page_beyond_end_clamps_to_last_page() {
+        let resp = query_history(two_sessions(), &no_filters(), 9, 1);
+        assert_eq!(resp.page, 1);
+        assert_eq!(resp.sessions[0].session_id, "s1");
+    }
+
+    #[test]
+    fn query_empty_result_is_page_zero() {
+        let filters = HistoryFilters { search: Some("definitely-absent".into()), ..no_filters() };
+        let resp = query_history(two_sessions(), &filters, 9, 50);
+        assert_eq!(resp.page, 0);
+        assert!(resp.sessions.is_empty());
+        assert_eq!(resp.total_sessions, 0);
+        assert_eq!(resp.total_files, 0);
+        assert_eq!(
+            resp.summary,
+            HistorySummary { sessions: 0, files: 0, saved_bytes: 0, failed_files: 0 }
+        );
+        assert_eq!(
+            resp.output_folders,
+            vec!["/out".to_string(), "/outB".to_string()]
+        );
+    }
+
+    #[test]
+    fn query_page_size_zero_is_safe() {
+        let resp = query_history(two_sessions(), &no_filters(), 0, 0);
+        assert_eq!(resp.page_size, 1);
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].session_id, "s2");
+        let clamped = query_history(two_sessions(), &no_filters(), 9, 0);
+        assert_eq!(clamped.page, 1);
+        assert_eq!(clamped.sessions[0].session_id, "s1");
+    }
+
+    #[test]
+    fn query_status_filter_reduces_files_and_counts_them() {
+        let filters = HistoryFilters {
+            statuses: Some(vec!["failed".into()]),
+            ..no_filters()
+        };
+        let resp = query_history(two_sessions(), &filters, 0, 50);
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].files.len(), 1);
+        assert_eq!(resp.sessions[0].matched_files, Some(1));
+        assert_eq!(resp.summary.files, 1);
+        assert_eq!(resp.total_files, 1);
+    }
+
+    #[test]
+    fn query_category_filter() {
+        let filters = HistoryFilters {
+            categories: Some(vec!["video".into()]),
+            ..no_filters()
+        };
+        let resp = query_history(two_sessions(), &filters, 0, 50);
+        assert_eq!(resp.sessions.len(), 0);
+        let filters = HistoryFilters {
+            categories: Some(vec!["image".into()]),
+            ..no_filters()
+        };
+        let resp = query_history(two_sessions(), &filters, 0, 50);
+        assert_eq!(resp.sessions.len(), 2);
+        assert_eq!(resp.sessions[0].matched_files, Some(1));
+    }
+
+    #[test]
+    fn query_search_hits_name_source_path_output_path_error_and_folder() {
+        for (query, want_ids) in [
+            ("SUNSET", vec!["alpha"]),
+            ("photos/sunset", vec!["alpha"]),
+            ("alpha/sunset", vec!["alpha"]),
+            ("LOCKED", vec!["beta"]),
+            ("/out/beta", vec!["beta"]),
+            ("no-such-text", Vec::new()),
+        ] {
+            let filters = HistoryFilters { search: Some(query.into()), ..no_filters() };
+            let resp = query_history(search_fixture(), &filters, 0, 50);
+            let ids: Vec<&str> = resp.sessions.iter().map(|s| s.session_id.as_str()).collect();
+            assert_eq!(ids, want_ids, "query {query:?}");
+        }
+        let folder_only = HistoryFilters { search: Some("/out/beta".into()), ..no_filters() };
+        let resp = query_history(search_fixture(), &folder_only, 0, 50);
+        assert_eq!(resp.sessions[0].matched_files, None, "folder-only hit keeps all files");
+        assert_eq!(resp.sessions[0].files.len(), 1);
+        let file_hit = HistoryFilters { search: Some("locked".into()), ..no_filters() };
+        let resp = query_history(search_fixture(), &file_hit, 0, 50);
+        assert_eq!(resp.sessions[0].matched_files, Some(1));
+    }
+
+    #[test]
+    fn query_search_file_and_folder_hit_file_set_wins() {
+        let filters = HistoryFilters { search: Some("alpha".into()), ..no_filters() };
+        let resp = query_history(folder_and_file_hit_fixture(), &filters, 0, 50);
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].matched_files, Some(1));
+        let names: Vec<&str> = resp.sessions[0].files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha.txt"]);
+        assert_eq!(resp.summary.files, 1);
+    }
+
+    #[test]
+    fn query_folder_search_with_status_filter_combines_semantics() {
+        let filters = HistoryFilters {
+            search: Some("outb".into()),
+            statuses: Some(vec!["failed".into()]),
+            ..no_filters()
+        };
+        let resp = query_history(two_sessions(), &filters, 0, 50);
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].session_id, "s2");
+        assert_eq!(resp.sessions[0].matched_files, Some(1));
+
+        let filters = HistoryFilters {
+            search: Some("outb".into()),
+            statuses: Some(vec!["done".into()]),
+            ..no_filters()
+        };
+        assert_eq!(query_history(two_sessions(), &filters, 0, 50).sessions.len(), 0);
+    }
+
+    #[test]
+    fn query_empty_and_whitespace_search_are_inactive() {
+        for value in ["", "  ", "\t"] {
+            let filters = HistoryFilters { search: Some(value.into()), ..no_filters() };
+            let resp = query_history(two_sessions(), &filters, 0, 50);
+            assert_eq!(resp.sessions.len(), 2, "search {value:?} is inactive");
+            assert_eq!(resp.sessions[0].matched_files, None);
+        }
+    }
+
+    #[test]
+    fn query_empty_status_and_category_vecs_are_inactive() {
+        let filters = HistoryFilters {
+            statuses: Some(Vec::new()),
+            categories: Some(Vec::new()),
+            ..no_filters()
+        };
+        let resp = query_history(two_sessions(), &filters, 0, 50);
+        assert_eq!(resp.sessions.len(), 2, "toggling the last chip off shows everything");
+        assert_eq!(resp.sessions[0].matched_files, None);
+    }
+
+    #[test]
+    fn query_since_ms_inclusive_boundary() {
+        let exact = HistoryFilters { since_ms: Some(100), ..no_filters() };
+        assert_eq!(query_history(two_sessions(), &exact, 0, 50).sessions.len(), 2);
+        let later = HistoryFilters { since_ms: Some(101), ..no_filters() };
+        assert_eq!(query_history(two_sessions(), &later, 0, 50).sessions.len(), 1);
+    }
+
+    #[test]
+    fn query_since_ms_uses_session_start_not_file_times() {
+        let filters = HistoryFilters { since_ms: Some(200), ..no_filters() };
+        let resp = query_history(old_start_new_file_fixture(), &filters, 0, 50);
+        assert_eq!(
+            resp.sessions.len(),
+            1,
+            "old session with a fresh file is still excluded"
+        );
+        assert_eq!(resp.sessions[0].session_id, "new");
+    }
+
+    #[test]
+    fn query_combined_filters() {
+        let filters = HistoryFilters {
+            since_ms: Some(100),
+            statuses: Some(vec!["done".into()]),
+            output_folder: Some("/out".into()),
+            ..no_filters()
+        };
+        let resp = query_history(two_sessions(), &filters, 0, 50);
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].session_id, "s1");
+        assert_eq!(resp.sessions[0].matched_files, Some(1));
+        assert_eq!(resp.summary.files, 1);
+
+        let no_match = HistoryFilters {
+            statuses: Some(vec!["failed".into()]),
+            output_folder: Some("/out".into()),
+            ..no_filters()
+        };
+        assert_eq!(query_history(two_sessions(), &no_match, 0, 50).sessions.len(), 0);
+    }
+
+    #[test]
+    fn query_summary_is_page_independent() {
+        let first = query_history(two_sessions(), &no_filters(), 0, 1);
+        let second = query_history(two_sessions(), &no_filters(), 1, 1);
+        assert_eq!(second.page, 1);
+        assert_eq!(second.sessions.len(), 1);
+        assert_eq!(second.sessions[0].session_id, "s1");
+        assert_eq!(first.total_sessions, second.total_sessions);
+        assert_eq!(first.total_files, second.total_files);
+        assert_eq!(first.summary, second.summary);
+        assert_eq!(second.total_files, 2);
+        assert_eq!(second.summary.saved_bytes, 400);
+    }
+
+    #[test]
+    fn query_never_splits_session_across_pages() {
+        let resp = query_history(two_sessions_two_files_each(), &no_filters(), 0, 1);
+        assert_eq!(resp.page_size, 1);
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].session_id, "s2");
+        assert_eq!(resp.sessions[0].files.len(), 2, "both files travel with the session row");
+        let resp = query_history(two_sessions_two_files_each(), &no_filters(), 1, 1);
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].session_id, "s1");
+        assert_eq!(resp.sessions[0].files.len(), 2);
+    }
+
+    #[test]
+    fn query_output_folders_list_is_unfiltered_deduped_sorted() {
+        let filters = HistoryFilters { output_folder: Some("/b".into()), ..no_filters() };
+        let resp = query_history(mixed_folders(), &filters, 0, 50);
+        assert_eq!(resp.sessions.len(), 2);
+        let ids: Vec<&str> = resp.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "c"]);
+        assert_eq!(
+            resp.output_folders,
+            vec!["/a".to_string(), "/b".to_string()],
+            "unfiltered, deduped, sorted, non-empty"
+        );
+    }
+
+    #[test]
+    fn query_output_folder_filter_excludes_empty_folder_sessions() {
+        let unfiltered = query_history(mixed_folders(), &no_filters(), 0, 50);
+        assert_eq!(
+            unfiltered.sessions.len(),
+            4,
+            "empty-folder session visible without a folder filter"
+        );
+        let filters = HistoryFilters { output_folder: Some("/b".into()), ..no_filters() };
+        let resp = query_history(mixed_folders(), &filters, 0, 50);
+        assert_eq!(resp.sessions.len(), 2);
+        assert!(resp.sessions.iter().all(|s| s.output_folder == "/b"));
+        assert!(!resp.sessions.iter().any(|s| s.session_id == "d"));
     }
 }
