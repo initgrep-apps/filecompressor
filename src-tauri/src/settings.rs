@@ -464,6 +464,7 @@ mod tests {
     fn parse_settings_value_missing_history_fills_default() {
         let parsed = parse_settings_value(Some(serde_json::json!({ "outputFolder": "/tmp/out" })));
         assert_eq!(parsed.history.retention_days, 90);
+        assert_eq!(parsed.output_folder, "/tmp/out", "other settings preserved");
     }
 
     #[test]
@@ -493,12 +494,27 @@ mod tests {
     }
 
     #[test]
-    fn parse_settings_value_null_history_falls_back_to_defaults() {
+    fn parse_settings_value_null_history_whole_settings_defaults() {
         let with_null = serde_json::json!({
             "outputFolder": "/tmp/out",
             "history": null
         });
         assert_eq!(parse_settings_value(Some(with_null)), Settings::default());
+    }
+
+    #[test]
+    fn parse_history_effective_retention_integration_pins() {
+        let parsed = parse_settings_value(Some(
+            serde_json::json!({"history": {"retentionDays": 5000}}),
+        ));
+        assert_eq!(parsed.history.retention_days, 5000);
+        assert_eq!(parsed.history.effective_retention_days(), 3650);
+
+        let zero = parse_settings_value(Some(
+            serde_json::json!({"history": {"retentionDays": 0}}),
+        ));
+        assert_eq!(zero.history.retention_days, 0);
+        assert_eq!(zero.history.effective_retention_days(), 90);
     }
 
     #[test]
