@@ -277,13 +277,14 @@ describe('SettingsView', () => {
     expect(scrollRegion.contains(footer)).toBe(false)
   })
 
-  it('renders four cards with card composition', async () => {
+  it('renders five cards with card composition', async () => {
     await loadView()
-    expect(document.querySelectorAll('[data-slot="card"]')).toHaveLength(4)
+    expect(document.querySelectorAll('[data-slot="card"]')).toHaveLength(5)
     expect(screen.getByText('Output Folder')).toBeInTheDocument()
     expect(screen.getByText('Category Targets')).toBeInTheDocument()
     expect(screen.getByText('Performance')).toBeInTheDocument()
     expect(screen.getByText('Quality Floors')).toBeInTheDocument()
+    expect(screen.getByText('History')).toBeInTheDocument()
   })
 
   it('stepper buttons step ±1 and mark the draft dirty', async () => {
@@ -362,5 +363,95 @@ describe('SettingsView', () => {
     const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === 'save_settings')
     const saved = (call?.[1] as { settings: Settings }).settings
     expect(saved.performance.maxConcurrent).toBe('2')
+  })
+
+  it('renders history card after quality floors', async () => {
+    await loadView()
+    const cards = Array.from(document.querySelectorAll('[data-slot="card"]'))
+    const titles = cards.map(
+      (card) => card.querySelector('[data-slot="card-title"]')?.textContent,
+    )
+    expect(titles).toEqual([
+      'Output Folder',
+      'Category Targets',
+      'Performance',
+      'Quality Floors',
+      'History',
+    ])
+    expect(
+      screen.getByText(
+        'Sessions older than this are removed automatically. Files on disk are never deleted.',
+      ),
+    ).toBeInTheDocument()
+    expect(screen.getByLabelText('History retention (days)')).toHaveDisplayValue('90')
+  })
+
+  it('saves a changed history retention value', async () => {
+    const user = userEvent.setup()
+    await loadView()
+    const input = screen.getByLabelText('History retention (days)')
+    expect(input).toHaveDisplayValue('90')
+    await user.clear(input)
+    await user.type(input, '30')
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('save_settings', expect.anything())
+    })
+    expect(invoke).toHaveBeenCalledWith('save_settings', expect.objectContaining({
+      settings: expect.objectContaining({ history: { retentionDays: 30 } }),
+    }))
+  })
+
+  it('clamps history retention through the stepper bounds', async () => {
+    const user = userEvent.setup()
+    await loadView()
+    const input = screen.getByLabelText('History retention (days)')
+    await user.click(screen.getByRole('button', { name: /increase history retention/i }))
+    expect(input).toHaveDisplayValue('91')
+    await user.clear(input)
+    await user.type(input, '1')
+    await user.click(screen.getByRole('button', { name: /decrease history retention/i }))
+    expect(input).toHaveDisplayValue('1')
+    expect(screen.getByRole('button', { name: /decrease history retention/i })).toBeDisabled()
+    await user.clear(input)
+    await user.type(input, '3650')
+    await user.click(screen.getByRole('button', { name: /increase history retention/i }))
+    expect(input).toHaveDisplayValue(/^3,?650$/)
+    expect(screen.getByRole('button', { name: /increase history retention/i })).toBeDisabled()
+  })
+
+  it('reset to defaults restores history retention 90', async () => {
+    const user = userEvent.setup()
+    vi.mocked(invoke).mockImplementation((command: string) =>
+      command === 'reset_settings'
+        ? Promise.resolve(structuredClone(resetDefaults))
+        : Promise.resolve(structuredClone(baseSettings)),
+    )
+    await loadView()
+    const input = screen.getByLabelText('History retention (days)')
+    await user.clear(input)
+    await user.type(input, '30')
+    await user.click(screen.getByRole('button', { name: /reset to defaults/i }))
+    expect(input).toHaveDisplayValue('90')
+    await user.click(screen.getByRole('button', { name: 'Increase Images target size' }))
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('save_settings', expect.anything())
+    })
+    expect(invoke).toHaveBeenCalledWith('save_settings', expect.objectContaining({
+      settings: expect.objectContaining({ history: { retentionDays: 90 } }),
+    }))
+  })
+
+  it('cancel discards history retention draft', async () => {
+    const user = userEvent.setup()
+    await loadView()
+    const input = screen.getByLabelText('History retention (days)')
+    await user.clear(input)
+    await user.type(input, '30')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(input).toHaveDisplayValue('90')
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
   })
 })

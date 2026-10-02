@@ -106,6 +106,13 @@ export function SettingsView() {
     })
   }
 
+  const updateHistoryRetention = (value: number) => {
+    setDraft((prev) => {
+      if (!prev) return prev
+      return { ...prev, history: { ...prev.history, retentionDays: value } }
+    })
+  }
+
   const handleBrowse = async () => {
     const folder = await browseFolder()
     if (folder) {
@@ -397,6 +404,33 @@ export function SettingsView() {
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">History</CardTitle>
+            <CardDescription>
+              Sessions older than this are removed automatically. Files on disk are never deleted.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Field>
+              <div className="flex items-center justify-between gap-3">
+                <FieldLabel htmlFor="history-retention-days" className="text-sm">
+                  Retention period
+                </FieldLabel>
+                <NumberStepper
+                  id="history-retention-days"
+                  value={draft.history.retentionDays}
+                  onValueChange={updateHistoryRetention}
+                  min={1}
+                  max={3650}
+                  ariaLabel="History retention (days)"
+                  className="w-32"
+                />
+              </div>
+            </Field>
           </CardContent>
         </Card>
       </div>
