@@ -1,0 +1,23 @@
+{
+  "generated": "2026-10-03T11:18:14.527Z",
+  "targets": {
+    "aarch64-apple-darwin": {
+      "ffmpeg": {
+        "source": "url",
+        "version": "9.0.2",
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+        "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+        "stagedSha256": "2e11c6f90993cdb79fff84d3f90044d28316b310e75b3e030cfc9a54f2c9d384",
+        "date": "2026-10-03T11:18:13.264Z"
+      },
+      "ffprobe": {
+        "source": "url",
+        "version": "9.0.2",
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip",
+        "sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6",
+        "stagedSha256": "2738aa46a7f9acbc8ab09a6715554c90f7de603171ac403726765685df6a0059",
+        "date": "2026-10-03T11:18:14.527Z"
+      }
+    }
+  }
+}

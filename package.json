@@ -10,7 +10,14 @@
     "test": "vitest run",
     "tauri": "tauri",
     "verify:dev": "bash scripts/verify-dev.sh",
-    "verify:theme": "bash scripts/verify-theme-tokens.sh"
+    "verify:theme": "bash scripts/verify-theme-tokens.sh",
+    "binaries:fetch": "node scripts/binaries/fetch.mjs",
+    "binaries:prep": "node scripts/binaries/prep.mjs",
+    "binaries:verify": "node scripts/binaries/verify.mjs",
+    "binaries:audit": "bash scripts/audit-sidecars.sh",
+    "binaries:all": "node scripts/binaries/all.mjs",
+    "binaries:refresh": "node scripts/binaries/refresh.mjs",
+    "app:build": "node scripts/binaries/app-build.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.8.0",
