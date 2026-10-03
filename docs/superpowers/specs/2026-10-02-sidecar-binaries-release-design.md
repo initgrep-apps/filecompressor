@@ -161,7 +161,7 @@ Entry styles: `url` (exact artifact), `release_tag` + `asset` (pinned GitHub rel
 
 ### 6.3 Lockfile semantics
 
-- `binaries.lock.json` records, per (binary, target): resolved version, source URL, sha256, fetch date.
+- `binaries.lock.json` records, per (binary, target): resolved version, source URL, sha256, fetch date. The entry also carries `stagedSha256` — the sha256 of the staged binary file itself — which enables fetch idempotency and detects a tampered/stale staged file. `version` records the manifest `expectVersion` at fetch time; the audit's verify gate runs the binary's `--version` and fails on drift from it.
 - `binaries:fetch` verifies every download against the lock when the lock has an entry; mismatches abort.
 - `binaries:refresh` re-resolves the latest matching version, updates the manifest pin + lock, and re-runs audit. This is the only path that changes versions. Refresh is a deliberate act; the resulting diff is reviewable.
 - If a vendor pruned a pinned artifact: fetch fails loudly → run refresh → re-test → commit.

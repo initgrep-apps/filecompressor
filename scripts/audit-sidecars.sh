@@ -8,6 +8,9 @@
 # no dylib load commands, loads an absolute non-system or relative path, loads
 # @rpath/<name> without <name> present in frameworks/, has @rpath loads but
 # no LC_RPATH of its own, or has an invalid/missing code signature.
+# Architecture and version gates are delegated to scripts/binaries/verify.mjs
+# (manifest presence, arch content vs filename triple, version vs manifest);
+# any verify failure fails the whole audit.
 # @loader_path/* and @executable_path/* load commands pass: @loader_path
 # resolves relative to the loading image itself, while @executable_path
 # resolves relative to the process's main executable (NOT each loading
@@ -16,9 +19,11 @@
 # Tool absence is fail-closed: otool/codesign are required whenever a Mach-O
 # is audited, ldd whenever an ELF is audited.
 # Exit 0 = self-contained. Exit 1 = findings printed.
+# Env overrides (for tests): ROOT=<repo root>, AUDIT_TARGET=<triple>.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT="${ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 BIN_DIR="$ROOT/src-tauri/binaries"
 FRAMEWORKS_DIR="$ROOT/src-tauri/frameworks"
 CONF="$ROOT/src-tauri/tauri.conf.json"
@@ -96,15 +101,16 @@ audit_elf() {
 }
 
 if [ ! -d "$BIN_DIR" ]; then
-  printf 'FAIL binaries dir missing: %s — run '"'"'yarn binaries:all'"'"' first\n' "$BIN_DIR"
+  printf "FAIL binaries dir missing: %s — run 'yarn binaries:all' first\n" "$BIN_DIR"
   exit 1
 fi
 
 require_tool file
 
 if command -v node >/dev/null 2>&1; then
+  require_tool rustc
   HOST_TRIPLE="$(rustc -Vv | grep '^host:' | sed 's/host: //')"
-  if ! node "$ROOT/scripts/binaries/verify.mjs" --target "$HOST_TRIPLE" --root "$ROOT"; then
+  if ! node "$SCRIPT_DIR/binaries/verify.mjs" --target "${AUDIT_TARGET:-$HOST_TRIPLE}" --root "$ROOT"; then
     failures+=("<verify>")
   fi
 else

@@ -1,48 +1,20 @@
 #!/usr/bin/env node
-import { access, constants } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { basename, join } from "node:path";
 import {
   archForTriple,
+  binaryDir,
   expectedDest,
+  exists,
+  hostTriple,
+  isMain,
   isWindowsTriple,
   manifestPath,
+  parseArgs,
   readJson,
   run,
-  binaryDir,
+  validateManifest,
 } from "./lib.mjs";
-
-function parseArgs(argv) {
-  const args = { target: null, root: null };
-  for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === "--target") {
-      i += 1;
-      args.target = argv[i];
-    } else if (argv[i] === "--root") {
-      i += 1;
-      args.root = argv[i];
-    }
-  }
-  return args;
-}
-
-async function exists(path) {
-  try {
-    await access(path, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function hostTriple() {
-  try {
-    const { stdout } = await run("rustc", ["-Vv"]);
-    const match = /host:\s*(\S+)/.exec(stdout);
-    if (match) return match[1];
-  } catch {}
-  return null;
-}
 
 async function contentArchMac(path) {
   try {
@@ -118,7 +90,19 @@ export async function verifyTarget(target, root) {
     console.error(`FAIL manifest missing: ${manifestFile}`);
     return false;
   }
-  const manifest = readJson(manifestFile);
+  let manifest;
+  try {
+    manifest = readJson(manifestFile);
+  } catch (error) {
+    console.error(`FAIL manifest unreadable at ${manifestFile}: ${error.message ?? error}`);
+    return false;
+  }
+  try {
+    validateManifest(manifest);
+  } catch (error) {
+    console.error(`FAIL ${error.message ?? error} (scripts/binaries.manifest.json)`);
+    return false;
+  }
   const entries = manifest.targets?.[triple];
   if (!entries) {
     console.error(
@@ -176,9 +160,13 @@ export async function verifyTarget(target, root) {
   return true;
 }
 
-const invokedDirectly = process.argv[1] && import.meta.url.endsWith(basename(process.argv[1]));
-if (invokedDirectly) {
+if (isMain(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2));
-  const ok = await verifyTarget(args.target, args.root ?? process.cwd());
-  process.exit(ok ? 0 : 1);
+  try {
+    const ok = await verifyTarget(args.target, args.root ?? process.cwd());
+    process.exit(ok ? 0 : 1);
+  } catch (error) {
+    console.error(`FAIL ${error.message ?? error}`);
+    process.exit(1);
+  }
 }

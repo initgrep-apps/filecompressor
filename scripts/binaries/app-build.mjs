@@ -1,32 +1,15 @@
 #!/usr/bin/env node
-import { basename, join } from "node:path";
-import { run } from "./lib.mjs";
+import { spawn } from "node:child_process";
+import { hostTriple, isMain, parseArgs, run } from "./lib.mjs";
 
-function parseArgs(argv) {
-  const args = { target: null, root: null };
-  for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === "--target") {
-      i += 1;
-      args.target = argv[i];
-    } else if (argv[i] === "--root") {
-      i += 1;
-      args.root = argv[i];
-    }
-  }
-  return args;
+function failWithOutput(error) {
+  console.error(`FAIL ${error.message ?? error}`);
+  if (error.stdout) process.stderr.write(error.stdout);
+  if (error.stderr) process.stderr.write(error.stderr);
+  process.exit(1);
 }
 
-async function hostTriple() {
-  try {
-    const { stdout } = await run("rustc", ["-Vv"]);
-    const match = /host:\s*(\S+)/.exec(stdout);
-    if (match) return match[1];
-  } catch {}
-  return null;
-}
-
-const invokedDirectly = process.argv[1] && import.meta.url.endsWith(basename(process.argv[1]));
-if (invokedDirectly) {
+if (isMain(import.meta.url)) {
   const args = parseArgs(process.argv.slice(2));
   const root = args.root ?? process.cwd();
   const target = args.target ?? (await hostTriple());
@@ -38,8 +21,20 @@ if (invokedDirectly) {
   try {
     await allTarget(target, root);
   } catch (error) {
-    console.error(`FAIL ${error.message ?? error}`);
-    process.exit(1);
+    failWithOutput(error);
   }
-  await run("yarn", ["tauri", "build", "--target", target], { cwd: root });
+  console.log(`app:build — binaries verified for ${target}, starting tauri build (output below)`);
+  const child = spawn("yarn", ["tauri", "build", "--target", target], {
+    cwd: root,
+    stdio: "inherit",
+  });
+  child.on("error", (error) => failWithOutput(error));
+  child.on("close", (code) => {
+    if (code === 0) {
+      console.log(`app:build — ${target} complete`);
+    } else {
+      console.error(`FAIL tauri build exited with code ${code}`);
+      process.exit(code ?? 1);
+    }
+  });
 }

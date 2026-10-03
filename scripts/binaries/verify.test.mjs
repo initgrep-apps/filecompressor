@@ -11,13 +11,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const VERIFY = join(HERE, "verify.mjs");
 
 function compileFixture(arch, outPath, versionOutput) {
-  const source = join(`${outPath}.c`);
+  const source = join(tmpdir(), `verify-fixture-${arch}-${process.pid}-${Math.random().toString(36).slice(2)}.c`);
   execFileSync("sh", ["-c", `cat > '${source}' <<'EOF'
 #include <stdio.h>
 int main(void) { printf("${versionOutput}\\n"); return 0; }
 EOF`]);
   execFileSync("clang", ["-arch", arch, source, "-o", outPath]);
-  return source;
 }
 
 function runVerify(args, env = process.env) {
@@ -44,7 +43,13 @@ async function makeRoot(manifest) {
 const FFMPEG_MANIFEST = {
   targets: {
     "aarch64-apple-darwin": {
-      ffmpeg: { source: "url", url: "https://x/ffmpeg.zip", expectVersion: "9.0.2", dest: "ffmpeg" },
+      ffmpeg: {
+        source: "url",
+        url: "https://x/ffmpeg.zip",
+        sha256: "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+        expectVersion: "9.0.2",
+        dest: "ffmpeg",
+      },
     },
   },
 };
