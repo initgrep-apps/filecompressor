@@ -384,6 +384,7 @@ describe('SettingsView', () => {
       ),
     ).toBeInTheDocument()
     expect(screen.getByLabelText('History retention (days)')).toHaveDisplayValue('90')
+    expect(screen.getByText('History retention (days)')).toHaveAttribute('for', 'history-retention-days')
   })
 
   it('saves a changed history retention value', async () => {
@@ -416,6 +417,36 @@ describe('SettingsView', () => {
     const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === 'save_settings')
     const saved = (call?.[1] as { settings: Settings }).settings
     expect(saved.history.retentionDays).toBe(3650)
+  })
+
+  it('out of range typed retention clamps to min', async () => {
+    const user = userEvent.setup()
+    await loadView()
+    const input = screen.getByLabelText('History retention (days)')
+    await user.clear(input)
+    await user.type(input, '0')
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('save_settings', expect.anything())
+    })
+    const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === 'save_settings')
+    const saved = (call?.[1] as { settings: Settings }).settings
+    expect(saved.history.retentionDays).toBe(1)
+  })
+
+  it('decimal typed retention rounds to 31', async () => {
+    const user = userEvent.setup()
+    await loadView()
+    const input = screen.getByLabelText('History retention (days)')
+    await user.clear(input)
+    await user.type(input, '30.5')
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('save_settings', expect.anything())
+    })
+    const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === 'save_settings')
+    const saved = (call?.[1] as { settings: Settings }).settings
+    expect(saved.history.retentionDays).toBe(31)
   })
 
   it('clamps history retention through the stepper bounds', async () => {
@@ -457,9 +488,9 @@ describe('SettingsView', () => {
     await waitFor(() => {
       expect(vi.mocked(invoke)).toHaveBeenCalledWith('save_settings', expect.anything())
     })
-    expect(invoke).toHaveBeenCalledWith('save_settings', expect.objectContaining({
-      settings: expect.objectContaining({ history: { retentionDays: 90 } }),
-    }))
+    const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === 'save_settings')
+    const saved = (call?.[1] as { settings: Settings }).settings
+    expect(saved.history).toEqual({ retentionDays: 90 })
   })
 
   it('cancel discards history retention draft', async () => {
