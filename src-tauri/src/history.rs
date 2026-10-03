@@ -3358,24 +3358,32 @@ mod tests {
 
     #[test]
     fn ac3_search_finds_file_beyond_first_page() {
-        let mut lines: Vec<String> = Vec::new();
+        let mut lines = Vec::new();
         for i in 0..60u32 {
             let sid = format!("s{i:02}");
             let name = format!("file{i:02}.jpg");
             let started = 100 + i64::from(i);
-            lines.push(line(start(&sid, started)));
-            lines.push(line(serde_json::json!({
-                "type": "file", "sessionId": sid, "fileId": "f", "completedAt": started + 1,
-                "name": name, "path": format!("/in/{name}"), "outputPath": format!("/out/{name}"),
-                "category": "image", "targetBytes": 1024,
-                "originalSize": 10, "compressedSize": 1,
-                "status": "done", "qualityUsed": 70, "strategyUsed": "quality=70",
-                "error": null, "durationMs": 1
-            })));
+            lines.push(start_in(&sid, started, "/out"));
+            lines.push(qfile(
+                &sid,
+                "f",
+                started + 1,
+                &name,
+                &format!("/in/{name}"),
+                Some(&format!("/out/{name}")),
+                "image",
+                "done",
+                (10, Some(1)),
+                None,
+            ));
             lines.push(line(end(&sid, started + 2)));
         }
         let fold = fold_records(&lines);
-        assert_eq!(fold.sessions.len(), 60, "60 sessions seeded via in-memory lines");
+        assert_eq!(
+            fold.sessions.len(),
+            60,
+            "60 sessions seeded via in-memory lines"
+        );
 
         let filters = HistoryFilters { search: Some("file00.jpg".into()), ..no_filters() };
         let resp = query_history(fold, &filters, 0, 50);
@@ -3390,13 +3398,31 @@ mod tests {
         assert_eq!(resp.sessions[0].matched_files, Some(1));
         assert_eq!(resp.total_files, 1);
         assert_eq!(resp.summary.files, 1, "summary reflects the full filtered set");
+
+        let filters = HistoryFilters { search: Some("file".into()), ..no_filters() };
+        let page0 = query_history(fold_records(&lines), &filters, 0, 50);
+        assert_eq!(page0.page, 0);
+        assert_eq!(
+            page0.total_sessions, 60,
+            "search covers the entire log, not the loaded page"
+        );
+        assert_eq!(page0.sessions.len(), 50, "page 0 is a full slice of 50");
+        assert_eq!(page0.total_files, 60);
+
+        let page1 = query_history(fold_records(&lines), &filters, 1, 50);
+        assert_eq!(page1.page, 1);
+        assert_eq!(page1.total_sessions, 60, "totals are page-independent");
+        assert_eq!(page1.sessions.len(), 10, "page 1 holds the remaining 10");
+        assert_eq!(page1.total_files, 60);
+        assert_eq!(page1.summary, page0.summary, "summary is page-independent");
     }
 
     #[test]
     fn ac5_trim_uses_effective_retention_from_settings() {
         let mut settings = crate::settings::Settings::default();
         settings.history.retention_days = 10;
-        assert_eq!(settings.history.effective_retention_days(), 10);
+        let retention = settings.history.effective_retention_days();
+        assert_eq!(retention, 10);
 
         let dir = tempdir().unwrap();
         let store = HistoryStore::new_in(dir.path());
@@ -3418,9 +3444,7 @@ mod tests {
             })
             .unwrap();
 
-        let dropped = store
-            .trim(settings.history.effective_retention_days(), now)
-            .unwrap();
+        let dropped = store.trim(retention, now).unwrap();
 
         assert_eq!(dropped, 1, "retention of 10 days drops only the old session");
         let out = store.load().unwrap();
@@ -3471,27 +3495,33 @@ mod tests {
                 cancelled: false,
             })
             .unwrap();
-        let mut raw = OpenOptions::new()
+        let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(store.file_path())
             .unwrap();
-        raw.write_all(b"garbage\n").unwrap();
-        raw.write_all(b"{}\n").unwrap();
-        raw.write_all(b"[]\n").unwrap();
-        raw.write_all(
+        file.write_all(b"garbage\n").unwrap();
+        file.write_all(b"{}\n").unwrap();
+        file.write_all(b"[]\n").unwrap();
+        file.write_all(
             line(serde_json::json!({ "type": "future_record", "payload": {} })).as_bytes(),
+        )
+        .unwrap();
+        file.write_all(b"\n").unwrap();
+        file.write_all(
+            b"{\"type\":\"session_end\",\"sessionId\":\"s1\",\"endedAt\":12,\"tota",
         )
         .unwrap();
 
         let out = store.load().unwrap();
         assert_eq!(
-            out.skipped_lines, 3,
-            "malformed and non-string-type lines counted; unknown type ignored silently"
+            out.skipped_lines, 4,
+            "3 malformed/typeless lines plus the torn tail are skipped; \
+             the unknown-type record is still ignored silently"
         );
         assert_eq!(out.sessions.len(), 1, "valid sessions intact");
         assert_eq!(out.sessions[0].session_id, "s1");
-        assert_eq!(out.sessions[0].files.len(), 1);
+        assert_eq!(out.sessions[0].files.len(), 1, "original file record intact");
         assert_eq!(out.sessions[0].outcome.done, 1);
     }
 }
