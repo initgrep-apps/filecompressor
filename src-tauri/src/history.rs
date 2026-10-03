@@ -3293,4 +3293,235 @@ mod tests {
         assert_eq!(dropped, 0, "cutoff saturates at i64::MIN; nothing is older");
         assert_eq!(kept, lines, "every line survives, in order");
     }
+
+    #[test]
+    fn ac2_partial_write_restart_folds_interrupted() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store
+            .append_session_start(&SessionStartRecord {
+                session_id: "s1".into(),
+                started_at: 100,
+                file_count: 3,
+                output_folder: "/out".into(),
+            })
+            .unwrap();
+        store
+            .append_file(&FileResultRecord {
+                session_id: "s1".into(),
+                file_id: "f1".into(),
+                completed_at: 110,
+                name: "a.jpg".into(),
+                path: "/in/a.jpg".into(),
+                output_path: Some("/out/a.jpg".into()),
+                category: "image".into(),
+                target_bytes: 1024,
+                original_size: 500,
+                compressed_size: Some(100),
+                status: "done".into(),
+                quality_used: Some(70),
+                strategy_used: Some("quality=70".into()),
+                error: None,
+                duration_ms: 12,
+            })
+            .unwrap();
+        store
+            .append_file(&FileResultRecord {
+                session_id: "s1".into(),
+                file_id: "f2".into(),
+                completed_at: 120,
+                name: "b.jpg".into(),
+                path: "/in/b.jpg".into(),
+                output_path: None,
+                category: "image".into(),
+                target_bytes: 2048,
+                original_size: 300,
+                compressed_size: None,
+                status: "cancelled".into(),
+                quality_used: None,
+                strategy_used: None,
+                error: None,
+                duration_ms: 0,
+            })
+            .unwrap();
+
+        let out = store.load().unwrap().sessions;
+        assert_eq!(out.len(), 1, "partial session is not dropped on restart");
+        assert!(out[0].interrupted, "missing session_end folds as Interrupted");
+        assert_eq!(out[0].ended_at, None);
+        assert_eq!(out[0].files.len(), 2, "only the files that finished recorded");
+        assert_eq!(out[0].total_saved_bytes, 400);
+        assert_eq!(out[0].outcome.done, 1);
+        assert_eq!(out[0].outcome.cancelled, 1);
+        assert_eq!(out[0].outcome.failed, 0);
+    }
+
+    #[test]
+    fn ac3_search_finds_file_beyond_first_page() {
+        let mut lines = Vec::new();
+        for i in 0..60u32 {
+            let sid = format!("s{i:02}");
+            let name = format!("file{i:02}.jpg");
+            let started = 100 + i64::from(i);
+            lines.push(start_in(&sid, started, "/out"));
+            lines.push(qfile(
+                &sid,
+                "f",
+                started + 1,
+                &name,
+                &format!("/in/{name}"),
+                Some(&format!("/out/{name}")),
+                "image",
+                "done",
+                (10, Some(1)),
+                None,
+            ));
+            lines.push(line(end(&sid, started + 2)));
+        }
+        let fold = fold_records(&lines);
+        assert_eq!(
+            fold.sessions.len(),
+            60,
+            "60 sessions seeded via in-memory lines"
+        );
+
+        let filters = HistoryFilters { search: Some("file00.jpg".into()), ..no_filters() };
+        let resp = query_history(fold, &filters, 0, 50);
+
+        assert_eq!(resp.page, 0);
+        assert_eq!(
+            resp.total_sessions, 1,
+            "search covers the entire log, not the loaded page"
+        );
+        assert_eq!(resp.sessions[0].session_id, "s00");
+        assert_eq!(resp.sessions[0].files[0].name, "file00.jpg");
+        assert_eq!(resp.sessions[0].matched_files, Some(1));
+        assert_eq!(resp.total_files, 1);
+        assert_eq!(resp.summary.files, 1, "summary reflects the full filtered set");
+
+        let filters = HistoryFilters { search: Some("file".into()), ..no_filters() };
+        let page0 = query_history(fold_records(&lines), &filters, 0, 50);
+        assert_eq!(page0.page, 0);
+        assert_eq!(
+            page0.total_sessions, 60,
+            "search covers the entire log, not the loaded page"
+        );
+        assert_eq!(page0.sessions.len(), 50, "page 0 is a full slice of 50");
+        assert_eq!(page0.total_files, 60);
+
+        let page1 = query_history(fold_records(&lines), &filters, 1, 50);
+        assert_eq!(page1.page, 1);
+        assert_eq!(page1.total_sessions, 60, "totals are page-independent");
+        assert_eq!(page1.sessions.len(), 10, "page 1 holds the remaining 10");
+        assert_eq!(page1.total_files, 60);
+        assert_eq!(page1.summary, page0.summary, "summary is page-independent");
+    }
+
+    #[test]
+    fn ac5_trim_uses_effective_retention_from_settings() {
+        let mut settings = crate::settings::Settings::default();
+        settings.history.retention_days = 10;
+        let retention = settings.history.effective_retention_days();
+        assert_eq!(retention, 10);
+
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        let now = 100 * DAY_MS;
+        store
+            .append_session_start(&SessionStartRecord {
+                session_id: "old".into(),
+                started_at: now - 11 * DAY_MS,
+                file_count: 1,
+                output_folder: "/o".into(),
+            })
+            .unwrap();
+        store
+            .append_session_start(&SessionStartRecord {
+                session_id: "fresh".into(),
+                started_at: now - 9 * DAY_MS,
+                file_count: 1,
+                output_folder: "/o".into(),
+            })
+            .unwrap();
+
+        let dropped = store.trim(retention, now).unwrap();
+
+        assert_eq!(dropped, 1, "retention of 10 days drops only the old session");
+        let out = store.load().unwrap();
+        let ids: Vec<&str> = out.sessions.iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["fresh"]);
+    }
+
+    #[test]
+    fn ac6_mixed_corrupt_file_loads_with_count() {
+        let dir = tempdir().unwrap();
+        let store = HistoryStore::new_in(dir.path());
+        store
+            .append_session_start(&SessionStartRecord {
+                session_id: "s1".into(),
+                started_at: 10,
+                file_count: 1,
+                output_folder: "/out".into(),
+            })
+            .unwrap();
+        store
+            .append_file(&FileResultRecord {
+                session_id: "s1".into(),
+                file_id: "f1".into(),
+                completed_at: 11,
+                name: "a.jpg".into(),
+                path: "/in/a.jpg".into(),
+                output_path: Some("/out/a.jpg".into()),
+                category: "image".into(),
+                target_bytes: 1024,
+                original_size: 5,
+                compressed_size: Some(1),
+                status: "done".into(),
+                quality_used: Some(70),
+                strategy_used: Some("quality=70".into()),
+                error: None,
+                duration_ms: 12,
+            })
+            .unwrap();
+        store
+            .append_session_end(&SessionEndRecord {
+                session_id: "s1".into(),
+                ended_at: 12,
+                total_saved_bytes: 4,
+                counts: Counts {
+                    done: 1,
+                    ..Counts::default()
+                },
+                cancelled: false,
+            })
+            .unwrap();
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(store.file_path())
+            .unwrap();
+        file.write_all(b"garbage\n").unwrap();
+        file.write_all(b"{}\n").unwrap();
+        file.write_all(b"[]\n").unwrap();
+        file.write_all(
+            line(serde_json::json!({ "type": "future_record", "payload": {} })).as_bytes(),
+        )
+        .unwrap();
+        file.write_all(b"\n").unwrap();
+        file.write_all(
+            b"{\"type\":\"session_end\",\"sessionId\":\"s1\",\"endedAt\":12,\"tota",
+        )
+        .unwrap();
+
+        let out = store.load().unwrap();
+        assert_eq!(
+            out.skipped_lines, 4,
+            "3 malformed/typeless lines plus the torn tail are skipped; \
+             the unknown-type record is still ignored silently"
+        );
+        assert_eq!(out.sessions.len(), 1, "valid sessions intact");
+        assert_eq!(out.sessions[0].session_id, "s1");
+        assert_eq!(out.sessions[0].files.len(), 1, "original file record intact");
+        assert_eq!(out.sessions[0].outcome.done, 1);
+    }
 }

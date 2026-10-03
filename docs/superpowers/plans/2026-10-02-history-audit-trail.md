@@ -2024,12 +2024,12 @@ This task is **verification only** for production code — no production behavio
 
 **Verification debt note:** the mid-flight cancel path (`Err(Cancelled)` → `record_cancelled` with measured duration) and the `!flipped` race branch in `process_single_job` are not deterministically simulatable in the sidecar-less test environment (no real compression to interrupt mid-flight, no way to interleave `cancel_file` between the status clone and the flip). They must be covered by the manual acceptance pass (row 2 `kill -9` and a cancel-during-compression run) or recorded as accepted verification debt in the acceptance table.
 
-- [ ] **Step 1: Gate**
+- [x] **Step 1: Gate**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: all green.
 
-- [ ] **Step 2: Add the automated AC proxies**
+- [x] **Step 2: Add the automated AC proxies**
 
 Add the five `ac*` tests from Required Tests to `src-tauri/src/history.rs`; run `cd src-tauri && cargo test history` and expect PASS.
 
@@ -2046,9 +2046,9 @@ Add the five `ac*` tests from Required Tests to `src-tauri/src/history.rs`; run 
 | 7 | Keyboard-only flow | Tab through filter bar → toggle chips → expand session → paginate → activate action | |
 | 8 | Compression unchanged | Full gate green; compress a mixed batch and compare events/toasts to pre-change behavior | |
 
-- [ ] **Step 4: Write the acceptance table file with evidence + deviations**
+- [x] **Step 4: Write the acceptance table file with evidence + deviations**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/superpowers/plans/2026-10-02-history-audit-trail-acceptance-table.md src-tauri/src/history.rs
