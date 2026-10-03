@@ -19,9 +19,15 @@
 # abort with a fingerprint mismatch instead of silently unifying.
 # qpdf comes from the official vendor archive, whose lib/ dir fetch staged into
 # src-tauri/.staging/qpdf-<triple>/lib; that lib wins over a brew-era
-# frameworks/libqpdf.* copy and is resolved before any brew fallback. Ghostscript
-# comes from brew, and its Resource/lib/iccprofiles/fonts tree is staged into
+# frameworks/libqpdf.* copy and is resolved before any brew fallback. Its
+# per-member sha256 is pinned in the lock as libStagedSha256 and verified HERE,
+# before anything is rewritten, because prep legitimately rewrites install ids and
+# re-signs the collected copy afterwards (a later digest could never match).
+# Ghostscript comes from brew, and its resource tree is staged into
 # src-tauri/gs-resources/ so the sidecar never needs a Homebrew prefix at runtime.
+# The staged dirs are the ones the manifest declares (prep passes them in
+# FSO_GS_RESOURCE_DIRS); the three acceptance sentinels are always staged because
+# the audit's clean-room smoke resolves them through the -I search paths.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -33,8 +39,10 @@ FRAMEWORKS="$ROOT/src-tauri/frameworks"
 TRIPLE="$(rustc -Vv | grep '^host:' | sed 's/host: //')"
 STAGING_QPDF_LIB="$ROOT/src-tauri/.staging/qpdf-$TRIPLE/lib"
 GS_RESOURCES="$ROOT/src-tauri/gs-resources"
-GS_RESOURCE_DIRS=(Resource lib iccprofiles fonts)
+read -r -a GS_RESOURCE_DIRS <<<"${FSO_GS_RESOURCE_DIRS:-Resource lib iccprofiles fonts}"
 GS_ACCEPTANCE_SENTINEL="fso-sidecar-acceptance-sentinel.ps"
+GS_FONT_SENTINEL="fso-sidecar-acceptance-fonts-sentinel.ps"
+GS_RESOURCE_FONT_SENTINEL="fso-sidecar-acceptance-resource-font-sentinel.ps"
 ENGINES=("$ROOT/src-tauri/binaries/qpdf-$TRIPLE" "$ROOT/src-tauri/binaries/gs-$TRIPLE")
 
 for sidecar in "${ENGINES[@]}"; do
@@ -62,6 +70,74 @@ require_staged_qpdf_lib() {
     printf 'FAIL no libqpdf*.dylib in %s\n' "$STAGING_QPDF_LIB" >&2
     printf "  same silent-substitution hazard as a missing staging dir: brew's libqpdf would\n" >&2
     printf "  be staged under the official name. Check the qpdf manifest row has a \"lib\" key.\n" >&2
+    printf '  Run: yarn binaries:fetch --target %s\n' "$TRIPLE" >&2
+    exit 1
+  fi
+}
+
+staged_qpdf_lib_digests() {
+  command -v node >/dev/null 2>&1 || {
+    printf 'FAIL required tool missing: node (reads libStagedSha256 from the lock)\n' >&2
+    exit 1
+  }
+  node -e '
+    const fs = require("fs");
+    const lock = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const entry = ((lock.targets ?? {})[process.argv[2]] ?? {}).qpdf ?? {};
+    const digests = entry.libStagedSha256 ?? {};
+    for (const name of Object.keys(digests).sort()) {
+      console.log(`${digests[name]}  ${name}`);
+    }
+    process.exit(0);
+  ' "$ROOT/scripts/binaries.lock.json" "$TRIPLE"
+}
+
+assert_staged_qpdf_lib_digests() {
+  local listing expected base file digest staged
+  if [ ! -f "$ROOT/scripts/binaries.lock.json" ]; then
+    printf 'FAIL lock missing: %s — nothing pins the extracted qpdf lib\n' "$ROOT/scripts/binaries.lock.json" >&2
+    printf '  Run: yarn binaries:fetch --target %s\n' "$TRIPLE" >&2
+    exit 1
+  fi
+  if ! listing="$(staged_qpdf_lib_digests)"; then
+    printf 'FAIL cannot read libStagedSha256 for qpdf (%s) from the lock\n' "$TRIPLE" >&2
+    printf '  Run: yarn binaries:fetch --target %s\n' "$TRIPLE" >&2
+    exit 1
+  fi
+  if [ -z "$listing" ]; then
+    printf 'FAIL the lock records no libStagedSha256 for qpdf (%s)\n' "$TRIPLE" >&2
+    printf "  the staged lib would ship unpinned: anything that rewrites the extracted\n" >&2
+    printf '  dylib before this gate would ship silently. Run: yarn binaries:fetch --target %s\n' "$TRIPLE" >&2
+    exit 1
+  fi
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    expected="${line%%  *}"
+    base="${line#*  }"
+    file="$STAGING_QPDF_LIB/$base"
+    if [ ! -f "$file" ] && [ ! -L "$file" ]; then
+      printf 'FAIL staged qpdf lib member missing: %s (the lock pins it)\n' "$file" >&2
+      printf '  Run: yarn binaries:fetch --target %s\n' "$TRIPLE" >&2
+      exit 1
+    fi
+    if [ -L "$file" ]; then
+      digest="$(printf '%s' "$(readlink "$file")" | shasum -a 256 | awk '{print $1}')"
+    else
+      digest="$(shasum -a 256 "$file" | awk '{print $1}')"
+    fi
+    if [ "$digest" != "$expected" ]; then
+      printf 'FAIL staged qpdf lib %s: sha256 mismatch — the lock records %s, the staged file is %s\n' "$base" "$expected" "$digest" >&2
+      printf "  this check runs before any rewriting on purpose: prep rewrites install ids and\n" >&2
+      printf '  re-signs the collected copy, so a later digest could never match. Run: yarn binaries:fetch --target %s\n' "$TRIPLE" >&2
+      exit 1
+    fi
+  done <<<"$listing"
+  staged="$(cd "$STAGING_QPDF_LIB" && find . \( -type f -o -type l \) | sed 's|^\./||' | LC_ALL=C sort | tr '\n' ' ')"
+  pinned="$(printf '%s\n' "$listing" | awk '{print $2}' | LC_ALL=C sort | tr '\n' ' ')"
+  if [ "$(printf '%s' "$staged" | tr -s ' ')" != "$(printf '%s' "$pinned" | tr -s ' ')" ]; then
+    printf 'FAIL staged qpdf lib dir holds files the lock does not pin\n' >&2
+    printf '  staged: %s\n' "$staged" >&2
+    printf '  pinned: %s\n' "$pinned" >&2
     printf '  Run: yarn binaries:fetch --target %s\n' "$TRIPLE" >&2
     exit 1
   fi
@@ -126,15 +202,19 @@ copy_tree_sorted() {
 }
 
 stage_gs_acceptance_sentinel() {
-  local sentinel_dir="$GS_RESOURCES/Resource/Init"
-  mkdir -p "$sentinel_dir"
-  printf '%%!\n%% Staged-only sentinel: gs resolves it through the -I search paths, so the\n%% audit clean-room smoke fails if gs falls back to its compiled-in Homebrew prefix.\n' \
-    >"$sentinel_dir/$GS_ACCEPTANCE_SENTINEL"
-  if [ ! -f "$sentinel_dir/$GS_ACCEPTANCE_SENTINEL" ]; then
-    printf 'FAIL could not stage the gs acceptance sentinel at %s\n' "$sentinel_dir/$GS_ACCEPTANCE_SENTINEL" >&2
-    exit 1
-  fi
-  printf 'staged: gs acceptance sentinel -> %s/%s\n' "$sentinel_dir" "$GS_ACCEPTANCE_SENTINEL"
+  local pair dir name
+  for pair in "Resource/Init:$GS_ACCEPTANCE_SENTINEL" "fonts:$GS_FONT_SENTINEL" "Resource/Font:$GS_RESOURCE_FONT_SENTINEL"; do
+    dir="$GS_RESOURCES/${pair%%:*}"
+    name="${pair##*:}"
+    mkdir -p "$dir"
+    printf '%%!\n%% Staged-only sentinel: gs resolves it through the -I search paths, so the\n%% audit clean-room smoke fails if gs falls back to its compiled-in Homebrew prefix.\n' \
+      >"$dir/$name"
+    if [ ! -f "$dir/$name" ]; then
+      printf 'FAIL could not stage the gs acceptance sentinel at %s\n' "$dir/$name" >&2
+      exit 1
+    fi
+    printf 'staged: gs acceptance sentinel -> %s/%s\n' "$dir" "$name"
+  done
 }
 
 stage_gs_resources() {
@@ -288,6 +368,7 @@ collect_deps_of() {
 }
 
 require_staged_qpdf_lib
+assert_staged_qpdf_lib_digests
 replace_frameworks_with_staged_qpdf_lib
 
 needs_bundle=0

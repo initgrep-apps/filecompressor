@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { sha256File } from "./lib.mjs";
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
@@ -53,6 +53,25 @@ EOF`]);
 const GS_FIXTURE_C = `
 #include <stdio.h>
 #include <string.h>
+static const char *const kSentinelDirs[] = {
+  "Resource/Init",
+  "Resource/Font",
+  "fonts",
+};
+static const char *const kSentinelNames[] = {
+  "fso-sidecar-acceptance-sentinel.ps",
+  "fso-sidecar-acceptance-resource-font-sentinel.ps",
+  "fso-sidecar-acceptance-fonts-sentinel.ps",
+};
+static const size_t kSentinelCount = sizeof(kSentinelDirs) / sizeof(kSentinelDirs[0]);
+
+static int ends_with(const char *text, const char *suffix) {
+  size_t tl = strlen(text);
+  size_t sl = strlen(suffix);
+  if (sl > tl) return 0;
+  return strcmp(text + tl - sl, suffix) == 0;
+}
+
 int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "--version") == 0) { printf("10.08.0\\n"); return 0; }
   const char *out = NULL;
@@ -67,27 +86,39 @@ int main(int argc, char **argv) {
     FILE *src = fopen(fixture, "rb");
     if (src == NULL) { fprintf(stderr, "cannot read fixture %s\\n", fixture); return 4; }
     char line[1024];
-    int saw_sentinel = 0;
+    int saw[16];
+    memset(saw, 0, sizeof(saw));
     while (fgets(line, sizeof(line), src) != NULL) {
-      if (strstr(line, "fso-sidecar-acceptance-sentinel") != NULL &&
-          strstr(line, "runlibfile") != NULL) saw_sentinel = 1;
+      if (strstr(line, "runlibfile") == NULL) continue;
+      for (size_t s = 0; s < kSentinelCount; s++) {
+        if (strstr(line, kSentinelNames[s]) != NULL) saw[s] = 1;
+      }
     }
     fclose(src);
-    if (!saw_sentinel) {
-      fprintf(stderr, "fixture does not runlibfile the staged acceptance sentinel\\n");
-      return 5;
+    for (size_t s = 0; s < kSentinelCount; s++) {
+      if (!saw[s]) {
+        fprintf(stderr, "fixture does not runlibfile %s\\n", kSentinelNames[s]);
+        return 5;
+      }
     }
   }
-  for (int i = 1; i < argc; i++) {
-    if (strncmp(argv[i], "-I", 2) != 0) continue;
-    char path[4096];
-    snprintf(path, sizeof(path), "%s/fso-sidecar-acceptance-sentinel.ps", argv[i] + 2);
-    FILE *s = fopen(path, "rb");
-    if (s != NULL) { fclose(s); goto resolved; }
+  for (size_t s = 0; s < kSentinelCount; s++) {
+    int resolved = 0;
+    for (int i = 1; i < argc; i++) {
+      if (strncmp(argv[i], "-I", 2) != 0) continue;
+      const char *dir = argv[i] + 2;
+      if (!ends_with(dir, kSentinelDirs[s])) continue;
+      char path[4096];
+      snprintf(path, sizeof(path), "%s/%s", dir, kSentinelNames[s]);
+      FILE *f = fopen(path, "rb");
+      if (f != NULL) { fclose(f); resolved = 1; break; }
+    }
+    if (!resolved) {
+      fprintf(stderr, "no -I dir for %s carries %s: gs would resolve it elsewhere\\n",
+              kSentinelDirs[s], kSentinelNames[s]);
+      return 6;
+    }
   }
-  fprintf(stderr, "no -I resource dir carries the staged acceptance sentinel: gs would use its compiled-in prefix\\n");
-  return 6;
-resolved:
 #if GS_EXIT_CODE != 0
   fprintf(stderr, "gs fixture refusing to render\\n");
   return GS_EXIT_CODE;
@@ -113,6 +144,8 @@ function compileGsFixture(arch, outPath, exitCode = 0) {
 }
 
 const SENTINEL = "fso-sidecar-acceptance-sentinel.ps";
+const FONT_SENTINEL = "fso-sidecar-acceptance-fonts-sentinel.ps";
+const RESOURCE_FONT_SENTINEL = "fso-sidecar-acceptance-resource-font-sentinel.ps";
 
 const GS_MANIFEST_ENTRY = {
   source: "brew",
@@ -123,7 +156,16 @@ const GS_MANIFEST_ENTRY = {
   resources: ["Resource", "lib", "iccprofiles", "fonts"],
 };
 
-async function makeGsRoot({ resources = true, icc = true, fonts = true, sentinel = true } = {}) {
+async function makeGsRoot({
+  resources = true,
+  icc = true,
+  fonts = true,
+  sentinel = true,
+  fontSentinel = true,
+  resourceFontSentinel = true,
+  manifestEntry = GS_MANIFEST_ENTRY,
+  stageGs = true,
+} = {}) {
   await mkdir(`${tmpdir()}/audit-test-roots`, { recursive: true });
   const root = await mkdtemp(`${tmpdir()}/audit-test-roots/r`);
   cleanupRoots.push(root);
@@ -132,7 +174,7 @@ async function makeGsRoot({ resources = true, icc = true, fonts = true, sentinel
   await writeFile(
     `${root}/scripts/binaries.manifest.json`,
     JSON.stringify({
-      targets: { "aarch64-apple-darwin": { gs: GS_MANIFEST_ENTRY } },
+      targets: { "aarch64-apple-darwin": { gs: manifestEntry } },
     }),
   );
   await writeFile(
@@ -151,7 +193,9 @@ async function makeGsRoot({ resources = true, icc = true, fonts = true, sentinel
       },
     }),
   );
-  compileGsFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`);
+  if (stageGs) {
+    compileGsFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`);
+  }
   if (resources) {
     const base = `${root}/src-tauri/gs-resources`;
     for (const [dir, files] of [
@@ -168,6 +212,12 @@ async function makeGsRoot({ resources = true, icc = true, fonts = true, sentinel
     }
     if (sentinel) {
       await writeFile(`${base}/Resource/Init/${SENTINEL}`, "%!\n");
+    }
+    if (fontSentinel && fonts) {
+      await writeFile(`${base}/fonts/${FONT_SENTINEL}`, "%!\n");
+    }
+    if (resourceFontSentinel) {
+      await writeFile(`${base}/Resource/Font/${RESOURCE_FONT_SENTINEL}`, "%!\n");
     }
   }
   return root;
@@ -302,14 +352,14 @@ describe("audit-sidecars.sh", () => {
   });
 
   it("does not need rustc when --target is supplied", async () => {
-    const root = await makeRoot();
-    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`);
+    const root = await makeGsRoot();
     const stubDir = await mkdtemp(`${tmpdir()}/audit-stub-rustc-`);
     cleanupRoots.push(stubDir);
     await writeFile(`${stubDir}/rustc`, "#!/bin/sh\necho 'rustc 1.90.0 (no host line)'\n", { mode: 0o755 });
+    const stubBrew = await makeStubBrew();
 
     const result = await runAuditArgs(root, ["--target", "aarch64-apple-darwin"], {
-      PATH: `${stubDir}:${process.env.PATH}`,
+      PATH: `${stubDir}:${stubBrew}:${process.env.PATH}`,
     });
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("sidecar audit: PASS");
@@ -399,7 +449,7 @@ describe("audit-sidecars.sh", () => {
     expect(result.stdout).not.toContain("gs clean-room smoke: PASS");
   });
 
-  it("audit_fails_when_iccprofiles_or_fonts_empty", async () => {
+  it("audit_fails_when_iccprofiles_or_fonts_dir_has_no_files_at_all", async () => {
     const noFonts = await makeGsRoot({ fonts: false });
     const fontResult = await runAudit(noFonts, "aarch64-apple-darwin", {
       PATH: `${await makeStubBrew()}:${process.env.PATH}`,
@@ -413,6 +463,154 @@ describe("audit-sidecars.sh", () => {
     });
     expect(iccResult.code).toBe(1);
     expect(iccResult.stderr).toMatch(/has no files anywhere under it: .*\/iccprofiles/);
+  });
+
+  it("fails when the fonts/ dir keeps junk files but loses the font sentinel", async () => {
+    const root = await makeGsRoot({ fontSentinel: false });
+    for (const entry of readdirSync(`${root}/src-tauri/gs-resources/fonts`)) {
+      rmSync(`${root}/src-tauri/gs-resources/fonts/${entry}`, { recursive: true, force: true });
+    }
+    mkdirSync(`${root}/src-tauri/gs-resources/fonts`, { recursive: true });
+    for (const name of ["only.txt", "also-only.txt"]) {
+      writeFileSync(`${root}/src-tauri/gs-resources/fonts/${name}`, "junk");
+    }
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stdout + result.stderr).toMatch(/fonts/);
+    expect(result.stdout).not.toContain("sentinel resolved");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+
+  it.each([
+    ["fonts", "fontSentinel"],
+    ["Resource/Font", "resourceFontSentinel"],
+  ])("fails when %s is gutted down to the sentinel only", async (dir, option) => {
+    const root = await makeGsRoot({ [option]: false });
+    const fontDir = `${root}/src-tauri/gs-resources/${dir}`;
+    for (const entry of readdirSync(fontDir)) {
+      rmSync(`${fontDir}/${entry}`, { recursive: true, force: true });
+    }
+    mkdirSync(fontDir, { recursive: true });
+    writeFileSync(`${fontDir}/only.txt`, "junk");
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code, `${dir} gutted to junk must not pass`).toBe(1);
+    expect(result.stdout + result.stderr).toMatch(
+      new RegExp(`acceptance sentinel missing: .*${dir.replace("/", "\\/")}`),
+    );
+    expect(result.stdout).not.toContain("sentinel resolved");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+  }, 30000);
+
+  it("names the real remedy when the Resource/Init sentinel is missing", async () => {
+    const root = await makeGsRoot({ sentinel: false });
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    const output = result.stdout + result.stderr;
+    expect(result.code).toBe(1);
+    expect(output).toContain(`acceptance sentinel missing: `);
+    expect(output).toContain("yarn binaries:prep");
+    expect(output).toMatch(/staged before the sentinel existed/);
+    expect(output).not.toMatch(/compiled-in Homebrew prefix/);
+    expect(result.stdout).not.toContain("sentinel resolved");
+  });
+
+  it("passes for a complete staged tree with all three sentinels", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("sentinel resolved");
+    expect(result.stdout).toContain("sidecar audit: PASS (1 binaries, 0 framework dylibs)");
+  });
+
+  it("says the smoke was SKIPPED instead of silently dropping it", async () => {
+    const root = await makeGsRoot({ stageGs: false });
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stdout + result.stderr).toMatch(
+      /gs clean-room smoke SKIPPED — .*gs-aarch64-apple-darwin not staged/,
+    );
+  });
+
+  it("fails when an explicit --target has no staged gs, instead of skipping the smoke", async () => {
+    const root = await makeGsRoot({ stageGs: false });
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAuditArgs(
+      root,
+      ["--target", "aarch64-apple-darwin"],
+      { PATH: `${stubBrew}:${process.env.PATH}` },
+    );
+    expect(result.code).toBe(1);
+    expect(result.stdout + result.stderr).toContain(
+      "gs clean-room smoke: gs sidecar not staged for the explicitly requested target",
+    );
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+
+  it("derives the smoke's dirs from the manifest, so a renamed dir cannot pass", async () => {
+    const root = await makeGsRoot({
+      manifestEntry: {
+        ...GS_MANIFEST_ENTRY,
+        resources: ["Resource", "lib", "iccprofiles", "fonts", "extra-stuff"],
+      },
+    });
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toMatch(/extra-stuff/);
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+
+  it("does not demand a dir the manifest no longer declares", async () => {
+    const root = await makeGsRoot({
+      icc: false,
+      manifestEntry: { ...GS_MANIFEST_ENTRY, resources: ["Resource", "lib", "fonts"] },
+    });
+    rmSync(`${root}/src-tauri/gs-resources/iccprofiles`, { recursive: true, force: true });
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.stdout + result.stderr).not.toMatch(/iccprofiles/);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("gs clean-room smoke: PASS");
+  });
+
+  it("fails when the manifest declares no resources at all", async () => {
+    const { resources: _ignored, ...withoutResources } = GS_MANIFEST_ENTRY;
+    const root = await makeGsRoot({ manifestEntry: withoutResources });
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stdout + result.stderr).toMatch(
+      /no manifest entry for aarch64-apple-darwin declares a "resources" array/,
+    );
   });
 
   it("fails when a resource dir holds only empty subdirectories", async () => {

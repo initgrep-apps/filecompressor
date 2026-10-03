@@ -1,16 +1,18 @@
 // @vitest-environment node
 import { describe, it, expect, afterAll, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, chmod, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256File } from "./lib.mjs";
 import {
   assertAllEnginesStaged,
+  assertBrewVersionsPinned,
   assertFetchedEntriesUntouched,
   assertGsResourcesStaged,
   assertStagedArch,
   brewVersion,
+  GS_ACCEPTANCE_SENTINELS,
   parseBrewVersion,
   PipelinesError,
   prepTarget,
@@ -21,6 +23,35 @@ import {
 
 const cleanupRoots = [];
 const originalPath = process.env.PATH;
+
+function withPath(value, body) {
+  const previous = process.env.PATH;
+  process.env.PATH = value;
+  const restore = () => {
+    process.env.PATH = previous;
+  };
+  let result;
+  try {
+    result = body();
+  } catch (error) {
+    restore();
+    throw error;
+  }
+  if (result && typeof result.then === "function") {
+    return result.then(
+      (value_) => {
+        restore();
+        return value_;
+      },
+      (error) => {
+        restore();
+        throw error;
+      },
+    );
+  }
+  restore();
+  return result;
+}
 
 async function makeRoot(manifest) {
   const root = await mkdtemp(`${tmpdir()}/prep-test-`);
@@ -40,8 +71,20 @@ async function makeStubBrew(script) {
   return dir;
 }
 
+async function makeEmptyBinDir() {
+  const dir = await mkdtemp(`${tmpdir()}/prep-empty-bin-`);
+  cleanupRoots.push(dir);
+  return dir;
+}
+
 function useStubBrew(dir) {
   process.env.PATH = `${dir}:${originalPath}`;
+}
+
+async function stubBundleScripts(root, script) {
+  for (const name of ["bundle-vips-macos.sh", "bundle-pdf-macos.sh"]) {
+    await writeFile(join(root, "scripts", name), script, { mode: 0o755 });
+  }
 }
 
 function compileFixture(arch, outPath) {
@@ -113,9 +156,12 @@ afterAll(async () => {
 });
 
 describe("parseBrewVersion", () => {
-  it("takes the version token from brew list --versions output", () => {
+  it("takes the ACTIVE version token from brew list --versions output", () => {
     expect(parseBrewVersion("ghostscript 10.08.0\n", "ghostscript")).toBe("10.08.0");
-    expect(parseBrewVersion("vips 8.18.7 8.17.2", "vips")).toBe("8.18.7");
+    expect(
+      parseBrewVersion("vips 8.18.7 8.17.2", "vips"),
+      "brew lists every installed keg and the linked/active one is LAST — taking field 1",
+    ).toBe("8.17.2");
   });
 
   it("fails loudly on output without a version", () => {
@@ -154,9 +200,32 @@ describe("brewVersion", () => {
   });
 
   it("names the Homebrew install when brew itself is missing", async () => {
-    process.env.PATH = await makeStubBrew("#!/bin/sh\nexit 0\n");
-    process.env.PATH = "/nonexistent-bin";
-    await expect(brewVersion("ghostscript")).rejects.toThrow(/brew not found/);
+    const emptyBin = await makeEmptyBinDir();
+    await withPath(emptyBin, () => brewVersion("ghostscript")).then(
+      () => {
+        throw new Error("expected brewVersion to reject with no brew on PATH");
+      },
+      (error) => {
+        expect(error).toBeInstanceOf(PipelinesError);
+        expect(error.message).toMatch(/brew not found/);
+        expect(process.env.PATH, "withPath must restore the process PATH").toBe(originalPath);
+      },
+    );
+  });
+});
+
+describe("assertBrewVersionsPinned", () => {
+  it("passes when every formula matches its pin", async () => {
+    useStubBrew(await makeStubBrew(stubBrewScript("/opt/homebrew/opt/vips", "8.18.7")));
+    await expect(assertBrewVersionsPinned([["vips", VIPS_ENTRY]])).resolves.toBeUndefined();
+  });
+
+  it("names every drifted formula and pins the remedy", async () => {
+    useStubBrew(await makeStubBrew(stubBrewScript("/opt/homebrew/opt/vips", "8.19.0")));
+    const error = await assertBrewVersionsPinned([["vips", VIPS_ENTRY]]).catch((thrown) => thrown);
+    expect(error.message).toMatch(/brew version drift/);
+    expect(error.message).toMatch(/vips: brew vips is 8\.19\.0, the manifest pins 8\.18\.7/);
+    expect(error.remedy).toMatch(/expectVersion/);
   });
 });
 
@@ -362,7 +431,7 @@ describe("fetched vs bundled staged shas", () => {
 describe("assertGsResourcesStaged", () => {
   const entry = { ...GS_ENTRY };
 
-  async function stageResources(root, { icc = true, fonts = true } = {}) {
+  async function stageResources(root, { icc = true, fonts = true, sentinels = true } = {}) {
     const base = join(root, "src-tauri", "gs-resources");
     await mkdir(join(base, "Resource", "Init"), { recursive: true });
     await writeFile(join(base, "Resource", "Init", "gs_init.ps"), "%!PS\n");
@@ -375,6 +444,14 @@ describe("assertGsResourcesStaged", () => {
     await mkdir(join(base, "fonts"), { recursive: true });
     if (fonts) {
       await writeFile(join(base, "fonts", "Helvetica"), "font");
+    }
+    if (sentinels) {
+      for (const relative of GS_ACCEPTANCE_SENTINELS) {
+        if (relative.startsWith("fonts") && !fonts) continue;
+        const sentinel = join(base, relative);
+        await mkdir(join(sentinel, ".."), { recursive: true });
+        await writeFile(sentinel, "%!\n");
+      }
     }
     return base;
   }
@@ -427,6 +504,20 @@ describe("assertGsResourcesStaged", () => {
     await expect(assertGsResourcesStaged(root, entry)).rejects.toThrow(
       /has no files anywhere under it: .*\/fonts/,
     );
+  });
+
+  it("fails when an acceptance sentinel is missing, naming prep as the remedy", async () => {
+    for (const relative of GS_ACCEPTANCE_SENTINELS) {
+      const root = await makeRoot(WITH_BREW);
+      const base = await stageResources(root);
+      await rm(join(base, relative));
+      const error = await assertGsResourcesStaged(root, GS_ENTRY, "gs").catch((thrown) => thrown);
+      expect(error, relative).toBeInstanceOf(PipelinesError);
+      expect(error.message).toMatch(/gs acceptance sentinel missing/);
+      expect(error.message).toContain(join("gs-resources", relative));
+      expect(error.remedy).toMatch(/yarn binaries:prep/);
+      expect(error.remedy).toMatch(/before the acceptance sentinel existed/);
+    }
   });
 
   it("validates a url-sourced gs entry too, not only brew rows", async () => {
@@ -497,11 +588,187 @@ describe("prepTarget", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("rejects a staged engine that lost its executable bit", async () => {
+    const root = await makeRoot(WITH_BREW);
+    const prefix = await makeFormulaPrefix("vips");
+    useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
+    const staged = await stageBrewBinary(root, "aarch64-apple-darwin", "vips", VIPS_ENTRY);
+    await chmod(staged.destPath, 0o644);
+
+    const error = await assertAllEnginesStaged(root, "aarch64-apple-darwin", { vips: VIPS_ENTRY })
+      .then(() => null)
+      .catch((thrown) => thrown);
+    expect(error, "a 0644 engine must be refused").toBeInstanceOf(PipelinesError);
+    expect(error.message).toMatch(/vips-aarch64-apple-darwin \(not executable\)/);
+
+    await chmod(staged.destPath, 0o000);
+    await expect(
+      assertAllEnginesStaged(root, "aarch64-apple-darwin", { vips: VIPS_ENTRY }),
+    ).rejects.toThrow(/not executable/);
+
+    await chmod(staged.destPath, 0o755);
+    await expect(
+      assertAllEnginesStaged(root, "aarch64-apple-darwin", { vips: VIPS_ENTRY }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("accepts any mode with at least one execute bit", async () => {
+    const root = await makeRoot(WITH_BREW);
+    const prefix = await makeFormulaPrefix("vips");
+    useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
+    const staged = await stageBrewBinary(root, "aarch64-apple-darwin", "vips", VIPS_ENTRY);
+    for (const mode of [0o744, 0o711, 0o111]) {
+      await chmod(staged.destPath, mode);
+      await expect(
+        assertAllEnginesStaged(root, "aarch64-apple-darwin", { vips: VIPS_ENTRY }),
+        `mode ${mode.toString(8)} is executable`,
+      ).resolves.toBeUndefined();
+    }
+  });
+
   it("names the Homebrew install when brew is absent, before touching staged files", async () => {
     const root = await makeRoot(WITH_BREW);
-    process.env.PATH = "/nonexistent-bin";
-    await expect(prepTarget("aarch64-apple-darwin", root)).rejects.toThrow(/brew not found/);
+    const emptyBin = await makeEmptyBinDir();
+    await withPath(emptyBin, () => prepTarget("aarch64-apple-darwin", root)).then(
+      () => {
+        throw new Error("expected prepTarget to reject with no brew on PATH");
+      },
+      (error) => {
+        expect(error.message).toMatch(/brew not found/);
+      },
+    );
     await expect(readdir(join(root, "src-tauri"))).rejects.toThrow();
+    expect(process.env.PATH, "withPath must restore the process PATH").toBe(originalPath);
+  });
+});
+
+describe("prepTarget guard wiring", () => {
+  const URL_GS = {
+    source: "url",
+    url: "https://x/gs.zip",
+    sha256: "c".repeat(64),
+    member: "bin/gs",
+    dest: "gs",
+    expectVersion: "10.08.0",
+    resources: ["Resource", "lib", "iccprofiles", "fonts"],
+  };
+
+  it("aborts when a url-sourced entry declares resources that were never staged", async () => {
+    const root = await makeRoot({ targets: { "aarch64-apple-darwin": { gs: URL_GS } } });
+    await stubBundleScripts(root, "#!/bin/sh\nexit 0\n");
+
+    const error = await prepTarget("aarch64-apple-darwin", root).catch((thrown) => thrown);
+    expect(error).toBeInstanceOf(PipelinesError);
+    expect(error.message).toMatch(/^gs: gs resources dir missing/);
+  });
+
+  it("aborts when the bundle step leaves a staged engine non-executable", async () => {
+    const root = await makeRoot(WITH_BREW);
+    const prefix = await makeFormulaPrefix("vips");
+    useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
+    await mkdir(join(root, "src-tauri", "binaries"), { recursive: true });
+    await writeFile(join(root, "src-tauri", "binaries", "ffmpeg-aarch64-apple-darwin"), "fake", {
+      mode: 0o755,
+    });
+    await stubBundleScripts(
+      root,
+      `#!/bin/sh
+chmod 644 "$PWD/src-tauri/binaries/vips-aarch64-apple-darwin"
+exit 0
+`,
+    );
+
+    const error = await prepTarget("aarch64-apple-darwin", root).catch((thrown) => thrown);
+    expect(error).toBeInstanceOf(PipelinesError);
+    expect(error.message).toMatch(/vips-aarch64-apple-darwin \(not executable\)/);
+    expect((await stat(join(root, "src-tauri", "binaries", "vips-aarch64-apple-darwin"))).mode & 0o111).toBe(0);
+  });
+
+  it("aborts on a tampered staged lib before any bundle script wipes frameworks", async () => {
+    const qpdfEntry = {
+      source: "url",
+      url: "https://x/qpdf.zip",
+      sha256: "a".repeat(64),
+      member: "bin/qpdf",
+      lib: "lib",
+      dest: "qpdf",
+      expectVersion: "12.4.2",
+    };
+    const root = await makeRoot({
+      targets: { "aarch64-apple-darwin": { qpdf: qpdfEntry } },
+    });
+    const libDir = join(
+      root,
+      "src-tauri",
+      ".staging",
+      "qpdf-aarch64-apple-darwin",
+      "lib",
+    );
+    await mkdir(libDir, { recursive: true });
+    await writeFile(join(libDir, "libqpdf.30.dylib"), "official");
+    await writeFile(
+      join(root, "scripts", "binaries.lock.json"),
+      JSON.stringify({
+        generated: "2026-01-01T00:00:00.000Z",
+        targets: {
+          "aarch64-apple-darwin": {
+            qpdf: {
+              source: "url",
+              version: "12.4.2",
+              url: qpdfEntry.url,
+              sha256: qpdfEntry.sha256,
+              libStagedSha256: { "libqpdf.30.dylib": await sha256File(join(libDir, "libqpdf.30.dylib")) },
+              date: "2026-01-01T00:00:00.000Z",
+            },
+          },
+        },
+      }),
+    );
+    await writeFile(join(libDir, "libqpdf.30.dylib"), "tampered");
+    const marker = join(root, "bundle-ran");
+    await stubBundleScripts(root, `#!/bin/sh\ntouch "${marker}"\nexit 0\n`);
+
+    const error = await prepTarget("aarch64-apple-darwin", root).catch((thrown) => thrown);
+    expect(error).toBeInstanceOf(PipelinesError);
+    expect(error.message).toMatch(/staged lib libqpdf\.30\.dylib sha256 mismatch/);
+    expect(error.remedy).toMatch(/yarn binaries:fetch/);
+    await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("aborts when the lock predates libStagedSha256, before any bundle script runs", async () => {
+    const qpdfEntry = {
+      source: "url",
+      url: "https://x/qpdf.zip",
+      sha256: "a".repeat(64),
+      member: "bin/qpdf",
+      lib: "lib",
+      dest: "qpdf",
+      expectVersion: "12.4.2",
+    };
+    const root = await makeRoot({
+      targets: { "aarch64-apple-darwin": { qpdf: qpdfEntry } },
+    });
+    const marker = join(root, "bundle-ran");
+    await stubBundleScripts(root, `#!/bin/sh\ntouch "${marker}"\nexit 0\n`);
+
+    const error = await prepTarget("aarch64-apple-darwin", root).catch((thrown) => thrown);
+    expect(error).toBeInstanceOf(PipelinesError);
+    expect(error.message).toMatch(/records no libStagedSha256/);
+    expect(error.remedy).toMatch(/yarn binaries:fetch/);
+    await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("reports brew drift before any bundle script mutates frameworks", async () => {
+    const root = await makeRoot(WITH_BREW);
+    const prefix = await makeFormulaPrefix("vips");
+    useStubBrew(await makeStubBrew(stubBrewScript(prefix, "8.19.0")));
+    const marker = join(root, "bundle-ran");
+    await stubBundleScripts(root, `#!/bin/sh\ntouch "${marker}"\nexit 0\n`);
+
+    const error = await prepTarget("aarch64-apple-darwin", root).catch((thrown) => thrown);
+    expect(error).toBeInstanceOf(PipelinesError);
+    expect(error.message).toMatch(/brew version drift/);
+    await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });
 

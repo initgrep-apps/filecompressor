@@ -12,6 +12,7 @@ import {
   download,
   extract,
   parseArgs,
+  validateLock,
   writeJson,
 } from "./lib.mjs";
 
@@ -199,6 +200,47 @@ describe("parseArgs", () => {
   it("rejects a flag with no value", () => {
     expect(() => parseArgs(["--target"])).toThrow("flag '--target' requires a value");
     expect(() => parseArgs(["--target", "--root"])).toThrow("flag '--target' requires a value");
+  });
+});
+
+describe("validateLock libStagedSha256", () => {
+  const urlEntry = (extra) => ({
+    source: "url",
+    version: "12.4.2",
+    url: "https://x/qpdf.zip",
+    sha256: "a".repeat(64),
+    date: "2026-01-01T00:00:00.000Z",
+    ...extra,
+  });
+
+  it("accepts a path -> sha256 map and its absence", () => {
+    expect(() =>
+      validateLock({
+        targets: {
+          "aarch64-apple-darwin": {
+            qpdf: urlEntry({
+              libStagedSha256: { "lib/libqpdf.30.dylib": "b".repeat(64) },
+            }),
+          },
+        },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateLock({ targets: { "aarch64-apple-darwin": { qpdf: urlEntry() } } }),
+    ).not.toThrow();
+  });
+
+  it("rejects an empty, non-object, escaping-key or non-hex libStagedSha256", () => {
+    const wrap = (libStagedSha256) =>
+      validateLock({
+        targets: { "aarch64-apple-darwin": { qpdf: urlEntry({ libStagedSha256 }) } },
+      });
+    expect(() => wrap({})).toThrow(/non-empty object/);
+    expect(() => wrap([])).toThrow(/non-empty object/);
+    expect(() => wrap(null)).toThrow(/non-empty object/);
+    expect(() => wrap({ "/abs/libqpdf.dylib": "b".repeat(64) })).toThrow(/relative path/);
+    expect(() => wrap({ "../escape.dylib": "b".repeat(64) })).toThrow(/relative path/);
+    expect(() => wrap({ "lib/libqpdf.dylib": "nothex" })).toThrow(/64-hex sha256/);
   });
 });
 

@@ -22,7 +22,8 @@ use tokio_util::sync::CancellationToken;
 use crate::engine::result::STRATEGY_ALREADY_UNDER_TARGET;
 use crate::engine::{
     BestAttempt, CompressionError, CompressionProcessor, CompressionResult, ProgressSender,
-    SidecarName, SidecarPaths, ToleratedExit, deliver_output, run_sidecar, strict_exit,
+    SidecarName, SidecarPaths, ToleratedExit, deliver_output, gs_failure_with_resources_hint,
+    run_sidecar, strict_exit,
 };
 use crate::models::Category;
 use crate::settings::QualityFloors;
@@ -344,7 +345,11 @@ impl CompressionProcessor for PdfProcessor {
                 // failed and move on (issue 13).
                 Err(e) => {
                     eprintln!("warn: {} pass failed, trying next: {e}", spec.label);
-                    last_error = Some(e);
+                    last_error = Some(if spec.label == "gs" && gs_resources.is_none() {
+                        gs_failure_with_resources_hint(e)
+                    } else {
+                        e
+                    });
                     Self::remove_all(std::slice::from_ref(&temp_file));
                 }
             }
@@ -1416,6 +1421,82 @@ exit 3
                 );
             }
             other => panic!("expected SidecarFailed, got {:?}", other.map(|r| r.strategy_used)),
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn gs_pass_failure_surfaces_the_missing_resource_tree_only_when_unresolved() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = oversized_input(&dir.path());
+        let tmp = temp_dir_under(&dir.path());
+
+        let without = PdfProcessor.compress_to_target(
+            &input,
+            &dir.path().join("out.pdf"),
+            2000,
+            &QualityFloors::default(),
+            CancellationToken::new(),
+            ProgressSender::test_stub(),
+            &test_sidecar_paths(
+                Some(fake_qpdf_failing(&dir.path(), "qpdf: cannot process")),
+                Some(fake_gs_stderr_chatter_failer(&dir.path())),
+            ),
+            &tmp,
+        );
+        match without {
+            Err(CompressionError::SidecarFailed(msg)) => {
+                assert!(
+                    msg.contains("exited with code Some(1)"),
+                    "the original cause must survive: {}",
+                    msg
+                );
+                assert!(
+                    msg.contains("gs-resources/ tree is not available"),
+                    "a gs pass with no -I flags must name the missing tree in the user-visible \
+                     error, not only in eprintln: {}",
+                    msg
+                );
+            }
+            other => panic!(
+                "expected SidecarFailed, got {:?}",
+                other.map(|r| r.strategy_used)
+            ),
+        }
+
+        let staged_gs = fake_gs_stderr_chatter_failer(&dir.path());
+        let mut paths = test_sidecar_paths(
+            Some(fake_qpdf_failing(&dir.path(), "qpdf: cannot process")),
+            Some(staged_gs.clone()),
+        );
+        paths.gs_resources = Some(gs_resources_fixture());
+        let with = PdfProcessor.compress_to_target(
+            &input,
+            &dir.path().join("out2.pdf"),
+            2000,
+            &QualityFloors::default(),
+            CancellationToken::new(),
+            ProgressSender::test_stub(),
+            &paths,
+            &tmp,
+        );
+        match with {
+            Err(CompressionError::SidecarFailed(msg)) => {
+                assert!(
+                    msg.contains("exited with code Some(1)"),
+                    "msg: {}",
+                    msg
+                );
+                assert!(
+                    !msg.contains("gs-resources/ tree is not available"),
+                    "with the tree staged the hint is noise and must not be emitted: {}",
+                    msg
+                );
+            }
+            other => panic!(
+                "expected SidecarFailed, got {:?}",
+                other.map(|r| r.strategy_used)
+            ),
         }
     }
 

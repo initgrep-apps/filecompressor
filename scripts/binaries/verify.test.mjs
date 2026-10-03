@@ -1,15 +1,60 @@
 // @vitest-environment node
 import { describe, it, expect } from "vitest";
 import { spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
 import { sha256File } from "./lib.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VERIFY = join(HERE, "verify.mjs");
+const GS_SENTINELS = [
+  "Resource/Init/fso-sidecar-acceptance-sentinel.ps",
+  "Resource/Font/fso-sidecar-acceptance-resource-font-sentinel.ps",
+  "fonts/fso-sidecar-acceptance-fonts-sentinel.ps",
+];
+
+async function stageGsResources(root, { sentinels = true } = {}) {
+  const base = join(root, "src-tauri", "gs-resources");
+  for (const [dir, files] of [
+    ["Resource/Init", ["gs_init.ps"]],
+    ["lib", ["gs_init.ps"]],
+    ["Resource/Font", ["Fontmap"]],
+    ["iccprofiles", ["default_rgb.icc"]],
+    ["fonts", ["Helvetica"]],
+  ]) {
+    await mkdir(join(base, dir), { recursive: true });
+    for (const file of files) {
+      await writeFile(join(base, dir, file), "content");
+    }
+  }
+  if (sentinels) {
+    for (const relative of GS_SENTINELS) {
+      await writeFile(join(base, relative), "%!\n");
+    }
+  }
+  return base;
+}
+
+async function makeStubBrewDir(listLine) {
+  const dir = await mkdtemp(`${tmpdir()}/verify-stub-brew-`);
+  await writeFile(
+    join(dir, "brew"),
+    `#!/bin/sh
+case "$1" in
+  --version) echo ok ;;
+  list) printf '%s\\n' '${listLine}' ;;
+  *) exit 1 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  return dir;
+}
+
+const TOOL_PATH = "/usr/bin:/bin";
 
 function compileFixture(arch, outPath, versionOutput) {
   const source = join(tmpdir(), `verify-fixture-${arch}-${process.pid}-${Math.random().toString(36).slice(2)}.c`);
@@ -138,17 +183,7 @@ describe("verify.mjs", () => {
       },
     });
     compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.1");
-    await mkdir(`${root}/src-tauri/gs-resources/Resource/Init`, { recursive: true });
-    await writeFile(
-      `${root}/src-tauri/gs-resources/Resource/Init/gs_init.ps`,
-      "%!\n",
-    );
-    await mkdir(`${root}/src-tauri/gs-resources/lib`, { recursive: true });
-    await writeFile(`${root}/src-tauri/gs-resources/lib/gs_init.ps`, "%!\n");
-    for (const dir of ["iccprofiles", "fonts"]) {
-      await mkdir(`${root}/src-tauri/gs-resources/${dir}`, { recursive: true });
-      await writeFile(`${root}/src-tauri/gs-resources/${dir}/file`, "x");
-    }
+    await stageGsResources(root);
     const stagedSha256 = await sha256File(
       `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`,
     );
@@ -169,12 +204,7 @@ describe("verify.mjs", () => {
         },
       }),
     );
-    const stubDir = await mkdtemp(`${tmpdir()}/verify-stub-brew-`);
-    await writeFile(
-      `${stubDir}/brew`,
-      "#!/bin/sh\ncase \"$1\" in\n  --version) echo ok ;;\n  list) printf '%s 10.08.1\\n' \"$2\" ;;\n  *) exit 1 ;;\nesac\n",
-      { mode: 0o755 },
-    );
+    const stubDir = await makeStubBrewDir("ghostscript 10.08.1");
 
     const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
       ...process.env,
@@ -186,6 +216,73 @@ describe("verify.mjs", () => {
     expect(result.stderr).toContain("binaries.manifest.json pins 10.08.0");
     await rm(root, { recursive: true, force: true });
     await rm(stubDir, { recursive: true, force: true });
+  });
+
+  it("compares against the ACTIVE keg, which brew lists last", async () => {
+    const makeCase = async (pin) => {
+      const root = await makeRoot({
+        targets: {
+          "aarch64-apple-darwin": {
+            gs: {
+              source: "brew",
+              formula: "ghostscript",
+              binary: "gs",
+              dest: "gs",
+              expectVersion: pin,
+            },
+          },
+        },
+      });
+      compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, pin);
+      await stageGsResources(root);
+      const stagedSha256 = await sha256File(
+        `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`,
+      );
+      await writeFile(
+        `${root}/scripts/binaries.lock.json`,
+        JSON.stringify({
+          generated: new Date().toISOString(),
+          targets: {
+            "aarch64-apple-darwin": {
+              gs: {
+                source: "brew",
+                formula: "ghostscript",
+                version: pin,
+                stagedSha256,
+                date: new Date().toISOString(),
+              },
+            },
+          },
+        }),
+      );
+      return root;
+    };
+
+    const activeLast = await makeCase("10.08.1");
+    const activeLastStub = await makeStubBrewDir("ghostscript 10.08.0 10.08.1");
+    const passing = await runVerify(["--target", "aarch64-apple-darwin", "--root", activeLast], {
+      ...process.env,
+      PATH: `${activeLastStub}:${process.env.PATH}`,
+    });
+    expect(
+      passing.stderr,
+      "the stale first keg must not be compared against the pin",
+    ).not.toContain("brew version drift");
+    expect(passing.code).toBe(0);
+
+    const activeFirst = await makeCase("10.08.0");
+    const activeFirstStub = await makeStubBrewDir("ghostscript 10.08.0 10.08.1");
+    const failing = await runVerify(["--target", "aarch64-apple-darwin", "--root", activeFirst], {
+      ...process.env,
+      PATH: `${activeFirstStub}:${process.env.PATH}`,
+    });
+    expect(failing.code).toBe(1);
+    expect(failing.stderr).toContain("brew version drift");
+    expect(failing.stderr).toContain("ghostscript is 10.08.1");
+
+    for (const dir of [activeLast, activeFirst, activeLastStub, activeFirstStub]) {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("fails loudly when the brew drift gate is inactive because brew is off PATH", async () => {
@@ -203,17 +300,83 @@ describe("verify.mjs", () => {
       },
     });
     compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    await stageGsResources(root);
     const emptyBin = await mkdtemp(`${tmpdir()}/verify-no-brew-`);
 
     const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
       ...process.env,
-      PATH: `${dirname(execFileSync("which", ["lipo"], { encoding: "utf8" }).trim())}:${emptyBin}`,
+      PATH: `${TOOL_PATH}:${emptyBin}`,
     });
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("brew is not on PATH");
     expect(result.stderr).toContain("INACTIVE");
+    expect(result.stderr).toContain("BINARIES_ALLOW_INACTIVE_BREW=1");
     await rm(root, { recursive: true, force: true });
     await rm(emptyBin, { recursive: true, force: true });
+  });
+
+  it("proceeds with a stated INACTIVE gate when the allowance is set", async () => {
+    const root = await makeRoot({
+      targets: {
+        "aarch64-apple-darwin": {
+          gs: {
+            source: "brew",
+            formula: "ghostscript",
+            binary: "gs",
+            dest: "gs",
+            expectVersion: "10.08.0",
+          },
+        },
+      },
+    });
+    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    await stageGsResources(root);
+    const emptyBin = await mkdtemp(`${tmpdir()}/verify-no-brew-`);
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${TOOL_PATH}:${emptyBin}`,
+      BINARIES_ALLOW_INACTIVE_BREW: "1",
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("INACTIVE");
+    expect(result.stdout).toContain("BINARIES_ALLOW_INACTIVE_BREW=1");
+    expect(result.stdout).toContain("verify: PASS");
+    await rm(root, { recursive: true, force: true });
+    await rm(emptyBin, { recursive: true, force: true });
+  });
+
+  it("fails when a staged gs acceptance sentinel is missing", async () => {
+    const root = await makeRoot({
+      targets: {
+        "aarch64-apple-darwin": {
+          gs: {
+            source: "brew",
+            formula: "ghostscript",
+            binary: "gs",
+            dest: "gs",
+            expectVersion: "10.08.0",
+            resources: ["Resource", "lib", "iccprofiles", "fonts"],
+          },
+        },
+      },
+    });
+    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    const base = await stageGsResources(root, { sentinels: false });
+    const stubDir = await makeStubBrewDir("ghostscript 10.08.0");
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubDir}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    for (const relative of GS_SENTINELS) {
+      expect(result.stderr).toContain(join("gs-resources", relative));
+    }
+    expect(result.stderr).toContain("yarn binaries:prep");
+    expect(base).toContain("gs-resources");
+    await rm(root, { recursive: true, force: true });
+    await rm(stubDir, { recursive: true, force: true });
   });
 
   it("presents usage error when target missing or unknown", async () => {

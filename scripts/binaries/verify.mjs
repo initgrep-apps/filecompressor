@@ -81,6 +81,11 @@ export function gsResourcesDir(root) {
 }
 
 const GS_INIT_MARKER = join("Resource", "Init", "gs_init.ps");
+export const GS_ACCEPTANCE_SENTINELS = [
+  join("Resource", "Init", "fso-sidecar-acceptance-sentinel.ps"),
+  join("Resource", "Font", "fso-sidecar-acceptance-resource-font-sentinel.ps"),
+  join("fonts", "fso-sidecar-acceptance-fonts-sentinel.ps"),
+];
 
 export async function treeHasFile(dir) {
   const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => []);
@@ -111,6 +116,14 @@ export async function checkGsResources(root, name, entry, problems) {
       `${name}: gs resource marker missing: ${join(base, GS_INIT_MARKER)} — run 'yarn binaries:prep' to restage them`,
     );
   }
+  for (const relative of GS_ACCEPTANCE_SENTINELS) {
+    const sentinel = join(base, relative);
+    if (!(await exists(sentinel))) {
+      problems.push(
+        `${name}: gs acceptance sentinel missing: ${sentinel} — run 'yarn binaries:prep': gs-resources was staged before the acceptance sentinel existed, so the audit's clean-room smoke cannot prove the -I flags are load-bearing`,
+      );
+    }
+  }
   for (const dirName of resources) {
     const dir = join(base, dirName);
     if (!(await exists(dir))) {
@@ -124,13 +137,21 @@ export async function checkGsResources(root, name, entry, problems) {
   }
 }
 
+export const ALLOW_INACTIVE_BREW = "BINARIES_ALLOW_INACTIVE_BREW";
+
 export async function checkBrewVersion(name, entry, problems) {
   if (entry.source !== "brew") {
     return;
   }
   if (!(await toolOnPath("brew"))) {
+    if (process.env[ALLOW_INACTIVE_BREW] === "1") {
+      console.log(
+        `note: brew version-drift gate INACTIVE for ${name} (formula ${entry.formula}) — ${ALLOW_INACTIVE_BREW}=1 allows the audit to proceed without Homebrew, so a drifted build would pass this run`,
+      );
+      return;
+    }
     problems.push(
-      `${name}: brew is not on PATH, so the version-drift gate for formula ${entry.formula} is INACTIVE — a drifted Homebrew build would pass this audit. Install Homebrew (https://brew.sh) or pass an explicit allowance, then re-run the audit`,
+      `${name}: brew is not on PATH, so the version-drift gate for formula ${entry.formula} is INACTIVE — a drifted Homebrew build would pass this audit. Install Homebrew (https://brew.sh), or set ${ALLOW_INACTIVE_BREW}=1 to acknowledge the gap on a brew-less host (e.g. CI), then re-run the audit`,
     );
     return;
   }
@@ -138,7 +159,7 @@ export async function checkBrewVersion(name, entry, problems) {
   try {
     const { stdout } = await run("brew", ["list", "--versions", entry.formula]);
     const fields = stdout.trim().split(/\s+/).filter(Boolean);
-    installed = fields[1];
+    installed = fields[fields.length - 1];
     if (!installed) {
       problems.push(
         `${name}: 'brew list --versions ${entry.formula}' printed '${stdout.trim()}' — the formula is not installed; run 'brew install ${entry.formula}' then re-run 'yarn binaries:prep'`,

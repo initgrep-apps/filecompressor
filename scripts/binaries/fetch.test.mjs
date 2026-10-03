@@ -4,6 +4,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
+import { createHash } from "node:crypto";
 import https from "node:https";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -33,6 +34,21 @@ function makeTreeZip(zipPath, files) {
     execFileSync("sh", ["-c", `printf '%s' '${content}' > '${staging}/${memberName}'`]);
   }
   execFileSync("sh", ["-c", `cd '${staging}' && zip -q -r '${zipPath}' .`]);
+  execFileSync("rm", ["-rf", staging]);
+}
+
+function makeSymlinkTreeZip(zipPath, files, links) {
+  const staging = `${zipPath}.zsrc`;
+  execFileSync("rm", ["-rf", staging]);
+  for (const [memberName, content] of Object.entries(files)) {
+    execFileSync("mkdir", ["-p", `${staging}/${dirname(memberName)}`]);
+    execFileSync("sh", ["-c", `printf '%s' '${content}' > '${staging}/${memberName}'`]);
+  }
+  for (const [memberName, target] of Object.entries(links)) {
+    execFileSync("mkdir", ["-p", `${staging}/${dirname(memberName)}`]);
+    execFileSync("ln", ["-s", target, `${staging}/${memberName}`]);
+  }
+  execFileSync("sh", ["-c", `cd '${staging}' && zip -q -r -y '${zipPath}' .`]);
   execFileSync("rm", ["-rf", staging]);
 }
 
@@ -301,6 +317,164 @@ describe("fetch.mjs", () => {
     expect(entry.version).toBe("12.4.2");
     expect(entry.sha256).toBe(sha);
     expect(entry.stagedSha256).toBe(await sha256File(staged));
+    expect(Object.keys(entry.libStagedSha256).sort()).toEqual([
+      "libqpdf.30.4.2.dylib",
+      "libqpdf.30.dylib",
+    ]);
+  });
+
+  it("pins every staged lib member in the lock, symlinks included", async () => {
+    const root = await makeRoot();
+    servedPath = `${ZIPS}/qpdf-pin.zip`;
+    makeSymlinkTreeZip(
+      servedPath,
+      {
+        "bin/qpdf": "fake-qpdf-macho-arm64",
+        "lib/libqpdf.30.4.2.dylib": "fake-libqpdf-real-arm64",
+      },
+      { "lib/libqpdf.30.dylib": "libqpdf.30.4.2.dylib" },
+    );
+    const sha = await sha256File(servedPath);
+    await writeManifest(root, {
+      targets: {
+        "aarch64-apple-darwin": {
+          qpdf: {
+            source: "url",
+            url: `${base}/qpdf-pin.zip`,
+            sha256: sha,
+            member: "bin/qpdf",
+            lib: "lib",
+            dest: "qpdf",
+            expectVersion: "12.4.2",
+          },
+        },
+      },
+    });
+
+    const result = await runFetch(["--target", "aarch64-apple-darwin", "--root", root]);
+    expect(result.code).toBe(0);
+
+    const libDir = `${root}/src-tauri/.staging/qpdf-aarch64-apple-darwin/lib`;
+    const entry = JSON.parse(
+      await readFile(`${root}/scripts/binaries.lock.json`, "utf8"),
+    ).targets["aarch64-apple-darwin"].qpdf;
+    expect(Object.keys(entry.libStagedSha256).sort()).toEqual([
+      "libqpdf.30.4.2.dylib",
+      "libqpdf.30.dylib",
+    ]);
+    expect(entry.libStagedSha256["libqpdf.30.4.2.dylib"]).toBe(
+      await sha256File(join(libDir, "libqpdf.30.4.2.dylib")),
+    );
+    expect(entry.libStagedSha256["libqpdf.30.dylib"]).toBe(
+      createHash("sha256").update("libqpdf.30.4.2.dylib").digest("hex"),
+      "a symlink is pinned by its target, not the bytes it resolves to",
+    );
+  });
+
+  it("re-materialises a deleted staged lib dir instead of reporting unchanged", async () => {
+    const root = await makeRoot();
+    servedPath = `${ZIPS}/qpdf-relib.zip`;
+    makeTreeZip(servedPath, {
+      "bin/qpdf": "fake-qpdf-macho-arm64",
+      "lib/libqpdf.30.dylib": "fake-libqpdf-arm64",
+    });
+    const sha = await sha256File(servedPath);
+    await writeManifest(root, {
+      targets: {
+        "aarch64-apple-darwin": {
+          qpdf: {
+            source: "url",
+            url: `${base}/qpdf-relib.zip`,
+            sha256: sha,
+            member: "bin/qpdf",
+            lib: "lib",
+            dest: "qpdf",
+            expectVersion: "12.4.2",
+          },
+        },
+      },
+    });
+    const staged = `${root}/src-tauri/binaries/qpdf-aarch64-apple-darwin`;
+    const libMember = `${root}/src-tauri/.staging/qpdf-aarch64-apple-darwin/lib/libqpdf.30.dylib`;
+    expect((await runFetch(["--target", "aarch64-apple-darwin", "--root", root])).code).toBe(0);
+    expect(await readFile(libMember, "utf8")).toBe("fake-libqpdf-arm64");
+    const stagedSha = await sha256File(staged);
+    const lockBefore = await readFile(`${root}/scripts/binaries.lock.json`, "utf8");
+
+    await rm(`${root}/src-tauri/.staging`, { recursive: true, force: true });
+
+    const second = await runFetch(["--target", "aarch64-apple-darwin", "--root", root]);
+    expect(
+      second.stdout,
+      "the unchanged fast path must not swallow a missing staged lib dir: following the \
+       require_staged_qpdf_lib remedy would otherwise loop forever",
+    ).not.toContain("unchanged (lock + staged sha256 match)");
+    expect(second.code).toBe(0);
+    expect(
+      second.stdout,
+      "the re-stage must be visible, or a user cannot tell whether the remedy worked",
+    ).toContain("fetch: qpdf-aarch64-apple-darwin staged from");
+    expect(await readFile(libMember, "utf8"), "the lib dir must come back").toBe(
+      "fake-libqpdf-arm64",
+    );
+    expect(await sha256File(staged)).toBe(stagedSha);
+
+    const lockAfter = JSON.parse(await readFile(`${root}/scripts/binaries.lock.json`, "utf8"));
+    expect(lockAfter.targets["aarch64-apple-darwin"].qpdf.libStagedSha256).toEqual({
+      "libqpdf.30.dylib": await sha256File(libMember),
+    });
+    expect(lockAfter.targets["aarch64-apple-darwin"].qpdf.stagedSha256).toBe(stagedSha);
+    expect(lockBefore).not.toBe(undefined);
+  });
+
+  it("re-downloads when the lock predates libStagedSha256, so the lib is pinned", async () => {
+    const root = await makeRoot();
+    servedPath = `${ZIPS}/qpdf-nopin.zip`;
+    makeTreeZip(servedPath, {
+      "bin/qpdf": "fake-qpdf-macho-arm64",
+      "lib/libqpdf.30.dylib": "fake-libqpdf-arm64",
+    });
+    const sha = await sha256File(servedPath);
+    const entry = {
+      source: "url",
+      url: `${base}/qpdf-nopin.zip`,
+      sha256: sha,
+      member: "bin/qpdf",
+      lib: "lib",
+      dest: "qpdf",
+      expectVersion: "12.4.2",
+    };
+    await writeManifest(root, { targets: { "aarch64-apple-darwin": { qpdf: entry } } });
+    const staged = `${root}/src-tauri/binaries/qpdf-aarch64-apple-darwin`;
+    const libMember = `${root}/src-tauri/.staging/qpdf-aarch64-apple-darwin/lib/libqpdf.30.dylib`;
+    expect((await runFetch(["--target", "aarch64-apple-darwin", "--root", root])).code).toBe(0);
+
+    await writeFile(
+      `${root}/scripts/binaries.lock.json`,
+      JSON.stringify({
+        generated: "2026-01-01T00:00:00.000Z",
+        targets: {
+          "aarch64-apple-darwin": {
+            qpdf: {
+              source: "url",
+              version: "12.4.2",
+              url: entry.url,
+              sha256: sha,
+              stagedSha256: await sha256File(staged),
+              date: "2026-01-01T00:00:00.000Z",
+            },
+          },
+        },
+      }),
+    );
+
+    const second = await runFetch(["--target", "aarch64-apple-darwin", "--root", root]);
+    expect(second.stdout).not.toContain("unchanged (lock + staged sha256 match)");
+    expect(second.code).toBe(0);
+    const updated = JSON.parse(await readFile(`${root}/scripts/binaries.lock.json`, "utf8"));
+    expect(updated.targets["aarch64-apple-darwin"].qpdf.libStagedSha256).toEqual({
+      "libqpdf.30.dylib": await sha256File(libMember),
+    });
   });
 
   it("stages the lib dir when the archive root is already the lib parent", async () => {

@@ -22,7 +22,9 @@
 # Env overrides (for tests): ROOT=<repo root>, AUDIT_TARGET=<triple>.
 # Usage: audit-sidecars.sh [--target <triple>] — an explicit --target wins over
 # AUDIT_TARGET and over host detection, so cross-target audits are possible from
-# any host. Unknown arguments fail rather than being ignored.
+# any host. Unknown arguments fail rather than being ignored. An explicit
+# --target whose gs sidecar is not staged fails: the clean-room smoke must not
+# silently disappear while the audit still reports PASS.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -31,9 +33,13 @@ BIN_DIR="$ROOT/src-tauri/binaries"
 FRAMEWORKS_DIR="$ROOT/src-tauri/frameworks"
 GS_RESOURCES_DIR="$ROOT/src-tauri/gs-resources"
 CONF="$ROOT/src-tauri/tauri.conf.json"
+MANIFEST="$ROOT/scripts/binaries.manifest.json"
 GS_ACCEPTANCE_SENTINEL="fso-sidecar-acceptance-sentinel.ps"
+GS_ACCEPTANCE_FONT_SENTINEL="fso-sidecar-acceptance-fonts-sentinel.ps"
+GS_ACCEPTANCE_RESOURCE_FONT_SENTINEL="fso-sidecar-acceptance-resource-font-sentinel.ps"
 
 TARGET=""
+TARGET_EXPLICIT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --target)
@@ -42,6 +48,7 @@ while [ $# -gt 0 ]; do
         exit 1
       fi
       TARGET="$2"
+      TARGET_EXPLICIT=1
       shift 2
       ;;
     --help|-h)
@@ -201,12 +208,81 @@ if [ -f "$CONF" ]; then
   done
 fi
 
+gs_manifest_resource_dirs() {
+  node -e '
+    const fs = require("fs");
+    const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const entries = (manifest.targets ?? {})[process.argv[2]] ?? {};
+    for (const entry of Object.values(entries)) {
+      if (Array.isArray(entry.resources) && entry.resources.length > 0) {
+        console.log(entry.resources.join(" "));
+        process.exit(0);
+      }
+    }
+    process.exit(3);
+  ' "$MANIFEST" "$TARGET"
+}
+
 gs_smoke_required_dirs() {
-  printf '%s\n' Resource/Init lib Resource/Font fonts iccprofiles
+  local declared
+  if ! declared="$(gs_manifest_resource_dirs)"; then
+    printf 'FAIL gs clean-room smoke: no manifest entry for %s declares a "resources" array\n' "$TARGET" >&2
+    printf "  add the dirs gs needs (Resource, lib, iccprofiles, fonts) to the gs row in\n" >&2
+    printf '  scripts/binaries.manifest.json; without them there is nothing to smoke.\n' >&2
+    return 1
+  fi
+  printf '%s\n' $declared Resource/Font
+}
+
+gs_smoke_search_dirs() {
+  local declared dir
+  local -a ordered=()
+  if ! declared="$(gs_manifest_resource_dirs)"; then
+    return 1
+  fi
+  for dir in $declared; do
+    case "$dir" in
+      Resource) ordered+=("Resource/Init" "Resource/Font") ;;
+      iccprofiles) ;;
+      *) ordered+=("$dir") ;;
+    esac
+  done
+  if [ "${#ordered[@]}" -eq 0 ]; then
+    printf 'FAIL gs clean-room smoke: the manifest resources for %s yield no gs search path\n' "$TARGET" >&2
+    return 1
+  fi
+  printf '%s\n' "${ordered[@]}"
+}
+
+gs_smoke_sentinels() {
+  printf '%s\n' \
+    "Resource/Init:$GS_ACCEPTANCE_SENTINEL" \
+    "fonts:$GS_ACCEPTANCE_FONT_SENTINEL" \
+    "Resource/Font:$GS_ACCEPTANCE_RESOURCE_FONT_SENTINEL"
 }
 
 dir_has_file_recursive() {
   find "$1" -type f -print -quit 2>/dev/null | grep -q .
+}
+
+assert_gs_sentinels() {
+  local gs_resources="$1"
+  local pair dir name
+  while IFS= read -r pair; do
+    [ -n "$pair" ] || continue
+    dir="${pair%%:*}"
+    name="${pair##*:}"
+    if [ ! -f "$gs_resources/$dir/$name" ]; then
+      printf 'FAIL gs clean-room smoke: staged acceptance sentinel missing: %s\n' "$gs_resources/$dir/$name" >&2
+      printf "  this tree was staged before the sentinel existed, so the -I flags would\n" >&2
+      printf "  load unproven resources (and a real missing sentinel would be misreported as\n" >&2
+      printf "  a compiled-in Homebrew fallback). This is NOT a font/prefix problem:\n" >&2
+      printf "  Run 'yarn binaries:prep' to restage gs-resources, then re-run the audit.\n" >&2
+      return 1
+    fi
+  done <<EOF
+$(gs_smoke_sentinels)
+EOF
 }
 
 gs_clean_room_smoke() {
@@ -215,14 +291,36 @@ gs_clean_room_smoke() {
   local work="$3"
   local dir
   local -a gs_includes=()
-  for dir in $(gs_smoke_required_dirs); do
+  local -a required_dirs=()
+  local declared_list
+  if ! declared_list="$(gs_smoke_required_dirs)"; then
+    return 1
+  fi
+  while IFS= read -r dir; do
+    [ -n "$dir" ] || continue
+    required_dirs+=("$dir")
+  done <<EOF
+$declared_list
+EOF
+  local -a search_dirs=()
+  local search_list
+  if ! search_list="$(gs_smoke_search_dirs)"; then
+    return 1
+  fi
+  while IFS= read -r dir; do
+    [ -n "$dir" ] || continue
+    search_dirs+=("$dir")
+  done <<EOF
+$search_list
+EOF
+  for dir in "${required_dirs[@]}"; do
     if [ ! -d "$gs_resources/$dir" ]; then
       printf 'FAIL gs clean-room smoke: required staged resource dir missing: %s\n' "$gs_resources/$dir" >&2
       printf "  every dir here is load-bearing: run 'yarn binaries:prep' to restage them\n" >&2
       return 1
     fi
   done
-  for dir in Resource/Init lib Resource/Font fonts iccprofiles; do
+  for dir in "${required_dirs[@]}"; do
     if ! dir_has_file_recursive "$gs_resources/$dir"; then
       printf 'FAIL gs clean-room smoke: no files anywhere under %s\n' "$gs_resources/$dir" >&2
       printf "  an empty tree here means the app would fall back to whatever the host has.\n" >&2
@@ -230,16 +328,24 @@ gs_clean_room_smoke() {
       return 1
     fi
   done
-  for dir in Resource/Init lib Resource/Font fonts; do
+  if ! assert_gs_sentinels "$gs_resources"; then
+    return 1
+  fi
+  for dir in "${search_dirs[@]}"; do
     gs_includes+=("-I$gs_resources/$dir")
   done
-  gs_includes+=("-uICCProfilesDir=$gs_resources/iccprofiles")
+  if [ -d "$gs_resources/iccprofiles" ]; then
+    gs_includes+=("-uICCProfilesDir=$gs_resources/iccprofiles")
+  fi
 
   local fixture="$work/font-fixture.ps"
   local out="$work/font-fixture.pdf"
   {
     printf '%s\n' '%!PS'
-    printf '(%s) runlibfile\n' "$GS_ACCEPTANCE_SENTINEL"
+    while IFS= read -r pair; do
+      [ -n "$pair" ] || continue
+      printf '(%s) runlibfile\n' "${pair##*:}"
+    done < <(gs_smoke_sentinels)
     printf '%s\n' \
       '/Helvetica-Bold findfont 24 scalefont setfont' \
       '72 700 moveto (gs clean-room smoke) show' \
@@ -256,7 +362,8 @@ gs_clean_room_smoke() {
     -sOutputFile="$out" "$fixture" >"$work/gs.stderr" 2>&1 || status=$?
   if [ "$status" -ne 0 ]; then
     printf 'FAIL gs clean-room smoke: gs exited %s with only the staged resources\n' "$status" >&2
-    printf '  (missing sentinel %s means gs fell back to its compiled-in Homebrew prefix, so the -I flags are not load-bearing)\n' "$GS_ACCEPTANCE_SENTINEL" >&2
+    printf "  the acceptance sentinels were present and resolved, so this is a real gs\n" >&2
+    printf '  failure, not a compiled-in Homebrew fallback.\n' >&2
     sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2
     return 1
   fi
@@ -279,6 +386,16 @@ gs_smoke_workdir=""
 gs_smoke_required=0
 if [ -n "$TARGET" ] && [ -f "$BIN_DIR/gs-$TARGET" ]; then
   gs_smoke_required=1
+elif [ -n "$TARGET" ]; then
+  if [ "$TARGET_EXPLICIT" -eq 1 ]; then
+    printf 'FAIL gs clean-room smoke: gs sidecar not staged for the explicitly requested target: %s\n' "$BIN_DIR/gs-$TARGET" >&2
+    printf "  an explicit --target asks for a real cross-target audit; a missing gs makes\n" >&2
+    printf "  the smoke silently vanish while the audit still reports PASS.\n" >&2
+    printf "  Run 'yarn binaries:all --target %s' to stage it, then re-run the audit.\n" "$TARGET" >&2
+    failures+=("<gs-clean-room-smoke>")
+  else
+    printf 'note: gs clean-room smoke SKIPPED — %s not staged\n' "$BIN_DIR/gs-$TARGET"
+  fi
 fi
 if [ "$gs_smoke_required" -eq 1 ]; then
   require_tool env

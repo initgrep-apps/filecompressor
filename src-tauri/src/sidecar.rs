@@ -145,7 +145,16 @@ fn dir_has_file(dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
     };
-    entries.flatten().any(|entry| entry.path().is_file())
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        if path.is_file() {
+            true
+        } else if path.is_dir() {
+            dir_has_file(&path)
+        } else {
+            false
+        }
+    })
 }
 
 /// Returns the resolved tree, or `None` when the candidate exists but cannot
@@ -598,6 +607,35 @@ mod tests {
         assert!(
             resolve_gs_resources(&exe_dir).is_none(),
             "a tree with no font files must not resolve: gs would silently use its compiled-in prefix"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_accepts_font_files_nested_in_subdirectories() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        write_gs_resources(&resources, &["lib"]);
+        empty_dir(&resources, &["Resource/Font", "fonts"]);
+        for dir_name in ["Resource/Font", "fonts"] {
+            let nested = resources.join(dir_name).join("type1");
+            std::fs::create_dir_all(&nested).unwrap();
+            std::fs::write(nested.join("NimbusRoman-Regular"), b"font").unwrap();
+        }
+
+        let resolved = resolve_gs_resources(&exe_dir)
+            .expect("fonts staged only in subdirectories still resolve, like the JS gates");
+        assert_eq!(
+            resolved.search_paths,
+            vec![
+                resources.join("Resource/Init").to_str().unwrap().to_string(),
+                resources.join("lib").to_str().unwrap().to_string(),
+                resources.join("Resource/Font").to_str().unwrap().to_string(),
+                resources.join("fonts").to_str().unwrap().to_string(),
+            ],
+            "the recursive check must not drop a font dir whose files live one level down"
         );
     }
 

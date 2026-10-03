@@ -16,6 +16,8 @@ import {
   readJson,
   run,
   sha256File,
+  sha256Tree,
+  stagingDir,
   validateLock,
   validateManifest,
   writeJson,
@@ -26,6 +28,11 @@ const GS_INIT_MARKER = join("Resource", "Init", "gs_init.ps");
 const REWRITTEN_BY_BUNDLE = ["vips", "qpdf", "gs"];
 
 export const GS_ACCEPTANCE_SENTINEL = "fso-sidecar-acceptance-sentinel.ps";
+export const GS_ACCEPTANCE_SENTINELS = [
+  join("Resource", "Init", GS_ACCEPTANCE_SENTINEL),
+  join("Resource", "Font", "fso-sidecar-acceptance-resource-font-sentinel.ps"),
+  join("fonts", "fso-sidecar-acceptance-fonts-sentinel.ps"),
+];
 
 export class PipelinesError extends Error {
   constructor(message, { remedy = null } = {}) {
@@ -114,7 +121,7 @@ export function parseBrewVersion(output, formula) {
       "expected '<formula> <version>' — run 'brew install <formula>'",
     );
   }
-  return fields[1];
+  return fields[fields.length - 1];
 }
 
 export async function brewVersion(formula) {
@@ -181,10 +188,14 @@ export async function assertStagedArch(staged, expectedArch) {
   return archs;
 }
 
-function runScript(root, script) {
+function runScript(root, script, env) {
   const path = join(root, "scripts", script);
   return new Promise((resolvePromise, reject) => {
-    const child = spawn("bash", [path], { cwd: root, stdio: "inherit" });
+    const child = spawn("bash", [path], {
+      cwd: root,
+      stdio: "inherit",
+      env: { ...process.env, ...env },
+    });
     child.on("error", (error) =>
       reject(new Error(`cannot run ${script}: ${error.message ?? error}`)),
     );
@@ -204,12 +215,23 @@ function runScript(root, script) {
   });
 }
 
-export async function runBundleScripts(root) {
+export function gsResourceDirs(targetEntries) {
+  for (const entry of Object.values(targetEntries)) {
+    if (Array.isArray(entry.resources) && entry.resources.length > 0) {
+      return entry.resources;
+    }
+  }
+  return [];
+}
+
+export async function runBundleScripts(root, targetEntries = {}) {
+  const dirs = gsResourceDirs(targetEntries);
+  const env = dirs.length > 0 ? { FSO_GS_RESOURCE_DIRS: dirs.join(" ") } : {};
   for (const script of BUNDLE_SCRIPTS) {
     if (!(await exists(join(root, "scripts", script)))) {
       fail(`${script} missing from scripts/ — restore it before prepping`);
     }
-    await runScript(root, script);
+    await runScript(root, script, env);
   }
 }
 
@@ -258,13 +280,80 @@ export async function assertGsResourcesStaged(root, entry, label = entry.formula
       );
     }
   }
+  for (const relative of GS_ACCEPTANCE_SENTINELS) {
+    const sentinel = join(base, relative);
+    if (await exists(sentinel)) {
+      continue;
+    }
+    fail(
+      `${label}: gs acceptance sentinel missing: ${sentinel} — a clean-room audit cannot prove the -I flags are load-bearing without it`,
+      "run 'yarn binaries:prep' — gs-resources was staged before the acceptance sentinel existed, so the audit's gs smoke would misdiagnose the failure as a compiled-in Homebrew fallback",
+    );
+  }
   return true;
 }
 
-export async function writeBrewLockEntries(lock, target, root, entries) {
+export async function assertStagedLibsPinned(lock, target, root, entries) {
+  for (const [name, entry] of entries) {
+    if (entry.source !== "url" || !entry.lib) {
+      continue;
+    }
+    const libDir = join(stagingDir(root, name, target), "lib");
+    const remedy = `run 'yarn binaries:fetch --target ${target}'`;
+    const pinned = lock.targets[target]?.[name]?.libStagedSha256;
+    if (!pinned) {
+      fail(
+        `${name}: the lock records no libStagedSha256 for ${target}, so the staged lib would ship unpinned`,
+        remedy,
+      );
+    }
+    const staged = await sha256Tree(libDir).catch(() => null);
+    if (!staged) {
+      fail(
+        `${name}: staged lib dir missing: ${libDir} — nothing left to pin`,
+        `${remedy} to re-stage it from the vendor archive`,
+      );
+    }
+    const stagedNames = Object.keys(staged).sort();
+    const pinnedNames = Object.keys(pinned).sort();
+    if (stagedNames.join(",") !== pinnedNames.join(",")) {
+      fail(
+        `${name}: staged lib dir does not match the lock — staged [${stagedNames.join(", ")}] vs pinned [${pinnedNames.join(", ")}]`,
+        remedy,
+      );
+    }
+    for (const file of stagedNames) {
+      if (staged[file] !== pinned[file]) {
+        fail(
+          `${name}: staged lib ${file} sha256 mismatch — the lock records ${pinned[file]}, the staged file is ${staged[file]}; it was modified outside this pipeline`,
+          remedy,
+        );
+      }
+    }
+  }
+}
+
+export async function assertBrewVersionsPinned(entries) {
   const drifted = [];
   for (const [name, entry] of entries) {
     const version = await brewVersion(entry.formula);
+    if (version !== entry.expectVersion) {
+      drifted.push(
+        `  ${name}: brew ${entry.formula} is ${version}, the manifest pins ${entry.expectVersion}`,
+      );
+    }
+  }
+  if (drifted.length > 0) {
+    fail(
+      `brew version drift — the staged engines no longer match the manifest pins:\n${drifted.join("\n")}`,
+      "bump the expectVersion values in scripts/binaries.manifest.json to the versions above (or reinstall the pinned formula), then re-run 'yarn binaries:prep'",
+    );
+  }
+}
+
+export async function writeBrewLockEntries(lock, target, root, entries) {
+  await assertBrewVersionsPinned(entries);
+  for (const [name, entry] of entries) {
     const destPath = join(binaryDir(root), expectedDest(entry.dest ?? name, target));
     if (!(await exists(destPath))) {
       fail(
@@ -272,25 +361,13 @@ export async function writeBrewLockEntries(lock, target, root, entries) {
         "re-run 'yarn binaries:prep'",
       );
     }
-    if (version !== entry.expectVersion) {
-      drifted.push(
-        `  ${name}: brew ${entry.formula} is ${version}, the manifest pins ${entry.expectVersion}`,
-      );
-      continue;
-    }
     lock.targets[target][name] = {
       source: entry.source,
       formula: entry.formula,
-      version,
+      version: await brewVersion(entry.formula),
       stagedSha256: await sha256File(destPath),
       date: new Date().toISOString(),
     };
-  }
-  if (drifted.length > 0) {
-    fail(
-      `brew version drift — the staged engines no longer match the manifest pins:\n${drifted.join("\n")}`,
-      "bump the expectVersion values in scripts/binaries.manifest.json to the versions above (or reinstall the pinned formula), then re-run 'yarn binaries:prep'",
-    );
   }
   return lock;
 }
@@ -346,7 +423,7 @@ export async function assertAllEnginesStaged(root, target, targetEntries) {
       missing.push(dest);
       continue;
     }
-    if (!info.mode & 0o111) {
+    if ((info.mode & 0o111) === 0) {
       missing.push(`${dest} (not executable)`);
     }
   }
@@ -388,8 +465,10 @@ export async function prepTarget(target, root) {
   const lock = await loadLock(root);
   lock.targets[target] = lock.targets[target] ?? {};
   await assertFetchedEntriesUntouched(lock, target, root, Object.entries(targetEntries));
+  await assertStagedLibsPinned(lock, target, root, Object.entries(targetEntries));
+  await assertBrewVersionsPinned(brewEntries);
 
-  await runBundleScripts(root);
+  await runBundleScripts(root, targetEntries);
 
   const resourceEntries = Object.entries(targetEntries).filter(
     ([, entry]) => Array.isArray(entry.resources) && entry.resources.length > 0,
