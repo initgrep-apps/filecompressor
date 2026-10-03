@@ -385,6 +385,10 @@ describe('SettingsView', () => {
     ).toBeInTheDocument()
     expect(screen.getByLabelText('History retention (days)')).toHaveDisplayValue('90')
     expect(screen.getByText('History retention (days)')).toHaveAttribute('for', 'history-retention-days')
+    expect(screen.getByLabelText('History retention (days)')).toHaveAttribute(
+      'id',
+      'history-retention-days',
+    )
   })
 
   it('saves a changed history retention value', async () => {

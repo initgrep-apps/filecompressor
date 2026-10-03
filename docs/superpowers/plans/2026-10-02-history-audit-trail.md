@@ -1930,7 +1930,7 @@ git commit -m "feat(history): build filterable session list UI with pagination"
 - `renders history card after quality floors` — card order + description copy + visible FieldLabel "History retention (days)" (matches accessible name, WCAG 2.5.3)
 - `cancel discards history retention draft` — cancel → re-render shows 90
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `SettingsView.test.tsx` (follow its existing `loadView()`/`pickOption` patterns; fixture settings include `history: { retentionDays: 90 }`):
 
@@ -1976,23 +1976,23 @@ Fixture updates (REQUIRED — the Settings type gained `history` in Task 8):
 - `src/views/SettingsView.test.tsx:281` "renders four cards" — update to five cards.
 - Update the reset defaults fixture to include `history: { retentionDays: 90 }` so the reset payload is complete.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `yarn test SettingsView`
 Expected: FAIL — no History retention control.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - Add the History card after the Quality Floors card; wire `NumberStepper` with `id="history-retention-days"`, `ariaLabel="History retention (days)"`, `min={1}`, `max={3650}`, `updateHistoryRetention` writes `draft.history.retentionDays`.
 - Update the typed fixtures listed above and the card-count assertion (both would otherwise fail `yarn build`/`yarn test`).
 - Note: the stepper input renders `type="text"` (base-ui) — repo convention asserts with `toHaveDisplayValue` (`NumberStepper.test.tsx:31-41`); `toHaveValue` also works but prefer the convention.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `yarn test SettingsView && yarn build`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/views/SettingsView.tsx src/views/SettingsView.test.tsx src/hooks/useSettings.test.ts
