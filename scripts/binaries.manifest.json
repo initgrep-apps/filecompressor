@@ -35,6 +35,7 @@
       "gs": {
         "source": "brew",
         "formula": "ghostscript",
+        "binary": "gs",
         "dest": "gs",
         "expectVersion": "10.08.0",
         "resources": ["Resource", "lib", "iccprofiles", "fonts"]

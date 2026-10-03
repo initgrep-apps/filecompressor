@@ -29,16 +29,19 @@
   "bundle": {
     "active": true,
     "targets": "all",
-      "externalBin": [
-        "binaries/vips",
-        "binaries/qpdf",
-        "binaries/gs",
-        "binaries/ffmpeg",
-        "binaries/ffprobe"
-      ],
-      "macOS": {
-        "frameworks": [
-          "frameworks/libIex-3_5.34.dylib",
+    "resources": {
+      "gs-resources/": "gs-resources/"
+    },
+    "externalBin": [
+      "binaries/vips",
+      "binaries/qpdf",
+      "binaries/gs",
+      "binaries/ffmpeg",
+      "binaries/ffprobe"
+    ],
+    "macOS": {
+      "frameworks": [
+        "frameworks/libIex-3_5.34.dylib",
           "frameworks/libIlmThread-3_5.34.dylib",
           "frameworks/libImath-3_2.30.dylib",
           "frameworks/libOpenEXR-3_5.34.dylib",
@@ -55,7 +58,6 @@
           "frameworks/libcairo.2.dylib",
           "frameworks/libcfitsio.10.dylib",
           "frameworks/libcgif.0.dylib",
-          "frameworks/libcrypto.3.dylib",
           "frameworks/libdatrie.1.dylib",
           "frameworks/libdeflate.0.dylib",
           "frameworks/libexif.12.dylib",

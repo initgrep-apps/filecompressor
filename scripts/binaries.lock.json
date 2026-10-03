@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-03T19:50:40.289Z",
+  "generated": "2026-10-03T20:01:02.927Z",
   "targets": {
     "aarch64-apple-darwin": {
       "ffmpeg": {
@@ -23,8 +23,22 @@
         "version": "12.4.2",
         "url": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-bin-macos-arm64.zip",
         "sha256": "62e46987a30ea167cbc530ccb22690aec3d8c812ed09979a941bcee92e504b79",
-        "stagedSha256": "46b699e2560a8c092a07a8a1e7107c59ac72f5cc51939d3f693f3d23e8027e83",
-        "date": "2026-10-03T19:50:40.289Z"
+        "stagedSha256": "3f59f3a82809421cd05da0dfe4bc1ec00eb3e0bc2a8605b44173c110551cd678",
+        "date": "2026-10-03T19:59:50.105Z"
+      },
+      "vips": {
+        "source": "brew",
+        "formula": "vips",
+        "version": "8.18.7",
+        "stagedSha256": "13abb3e776b7a956103f45d7f53af42caf7cbc592012d08673ee21d0650598ca",
+        "date": "2026-10-03T20:01:01.983Z"
+      },
+      "gs": {
+        "source": "brew",
+        "formula": "ghostscript",
+        "version": "10.08.0",
+        "stagedSha256": "5a0dc092adfe288ad5fb8be4334eed25b90e3a56fc8e286a63da33c92e75f7ab",
+        "date": "2026-10-03T20:01:02.915Z"
       }
     }
   }
