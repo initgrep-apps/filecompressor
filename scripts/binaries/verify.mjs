@@ -194,8 +194,15 @@ export async function verifyTarget(target, root) {
     return false;
   }
   if (checked === 0) {
+    const listed = Object.keys(entries);
+    if (listed.length === 0) {
+      console.error(
+        `FAIL no binaries verified for ${triple} — the manifest lists target '${triple}' with zero entries; add its binaries to scripts/binaries.manifest.json before auditing`,
+      );
+      return false;
+    }
     console.error(
-      `FAIL no binaries verified for ${triple} — the manifest lists entries but none passed the arch/version/lock gates (${Object.keys(entries).join(", ")})`,
+      `FAIL no binaries verified for ${triple} — none of ${listed.join(", ")} passed the arch, lock and version gates`,
     );
     return false;
   }

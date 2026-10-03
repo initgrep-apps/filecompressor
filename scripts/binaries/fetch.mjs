@@ -102,14 +102,14 @@ async function fetchOne(name, entry, triple, root, lockEntry) {
     await removeStaging(staging);
     await rm(archivePath, { force: true }).catch(() => {});
     fail(
-      `sha256 mismatch for ${name} (${triple}): manifest pins ${entry.sha256}, downloaded artifact is ${actualSha} — the download may be corrupt or the pin stale (run 'yarn binaries:refresh')`,
+      `sha256 mismatch for ${name} (${triple}): manifest pins ${entry.sha256}, downloaded artifact is ${actualSha} — the download may be corrupt or the pin stale; update url + sha256 in scripts/binaries.manifest.json for the current release, then re-run (version-bump automation arrives with 'yarn binaries:refresh' in task 6)`,
     );
   }
   if (lockEntry?.sha256 && lockEntry.sha256 !== actualSha) {
     await removeStaging(staging);
     await rm(archivePath, { force: true }).catch(() => {});
     fail(
-      `sha256 mismatch for ${name} (${triple}): lock records ${lockEntry.sha256}, new download is ${actualSha} — the vendor artifact changed; run 'yarn binaries:refresh'`,
+      `sha256 mismatch for ${name} (${triple}): lock records ${lockEntry.sha256}, new download is ${actualSha} — the vendor artifact changed; update url + sha256 in scripts/binaries.manifest.json to the new release, then re-run (version-bump automation arrives with 'yarn binaries:refresh' in task 6)`,
     );
   }
 

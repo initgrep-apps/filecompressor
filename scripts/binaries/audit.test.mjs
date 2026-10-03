@@ -140,6 +140,18 @@ describe("audit-sidecars.sh", () => {
     expect(result.stdout).not.toContain("sidecar audit: PASS");
   });
 
+  it("lets an explicit --target win over AUDIT_TARGET", async () => {
+    const root = await makeRoot();
+    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`);
+
+    const result = await runAuditArgs(root, ["--target", "aarch64-pc-windows-msvc"], {
+      AUDIT_TARGET: "aarch64-apple-darwin",
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("aarch64-pc-windows-msvc");
+    expect(result.stderr).not.toContain("arch arm64 does not match");
+  });
+
   it("rejects an unknown argument rather than silently ignoring it", async () => {
     const root = await makeRoot();
     compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`);

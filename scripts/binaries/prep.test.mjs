@@ -77,7 +77,7 @@ describe("prepTarget", () => {
     );
 
     await expect(prepTarget("aarch64-apple-darwin", root)).rejects.toThrow(
-      /references 1 dylibs under src-tauri\/frameworks\/ but that directory is absent/,
+      /references 1 dylib under src-tauri\/frameworks\/ but that directory is absent/,
     );
     await expect(prepTarget("aarch64-apple-darwin", root)).rejects.toThrow(
       /bundle-vips-macos\.sh && bash scripts\/bundle-pdf-macos\.sh/,
@@ -93,5 +93,26 @@ describe("prepTarget", () => {
     );
 
     await expect(prepTarget("aarch64-apple-darwin", root)).resolves.toBe(true);
+  });
+
+  it("fails loudly when grep itself breaks instead of skipping the frameworks gate", async () => {
+    const root = await makeRoot(URL_ONLY);
+    await mkdir(`${root}/src-tauri`, { recursive: true });
+    await writeFile(
+      `${root}/src-tauri/tauri.conf.json`,
+      JSON.stringify({ bundle: { resources: ["frameworks/libfoo.dylib"] } }),
+    );
+    const stubDir = await mkdtemp(`${tmpdir()}/prep-stub-bin-`);
+    cleanupRoots.push(stubDir);
+    await writeFile(`${stubDir}/grep`, "#!/bin/sh\nexit 2\n", { mode: 0o755 });
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${stubDir}:${originalPath}`;
+    try {
+      await expect(prepTarget("aarch64-apple-darwin", root)).rejects.toThrow(
+        /could not inspect .* for frameworks references/,
+      );
+    } finally {
+      process.env.PATH = originalPath;
+    }
   });
 });
