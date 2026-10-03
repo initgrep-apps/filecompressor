@@ -112,13 +112,21 @@ async function fetchOne(name, entry, triple, root, lockEntry) {
     );
   }
 
-  await rm(staging, { recursive: true, force: true });
+  try {
+    await rm(staging, { recursive: true, force: true });
+  } catch (error) {
+    fail(
+      `cannot clear stale staging for ${name} (${triple}) at ${staging}: ${error.message ?? error} — remove the directory manually and re-run`,
+    );
+  }
   await extract(archivePath, staging);
   await rm(archivePath, { force: true });
 
   const memberPath = entry.member ? join(staging, entry.member) : staging;
   if (!(await exists(memberPath))) {
-    const listing = await readdir(staging, { recursive: true }).catch(() => []);
+    const listing = await readdir(staging, { recursive: true }).catch((error) => [
+      `<listing unavailable: ${error.message ?? error}>`,
+    ]);
     await removeStaging(staging);
     fail(
       `archive member '${entry.member}' missing in ${name} artifact for ${triple} — extracted files: ${listing.slice(0, 20).join(", ") || "(empty)"}`,
@@ -180,16 +188,16 @@ export async function fetchTarget(target, root) {
 }
 
 if (isMain(import.meta.url)) {
-  const args = parseArgs(process.argv.slice(2));
-  const root = args.root ?? process.cwd();
-  const target = args.target ?? (await hostTriple());
-  if (!target) {
-    console.error(
-      "FAIL no --target given and rustc unavailable to detect host triple — pass --target <triple>",
-    );
-    process.exit(1);
-  }
   try {
+    const args = parseArgs(process.argv.slice(2));
+    const root = args.root ?? process.cwd();
+    const target = args.target ?? (await hostTriple());
+    if (!target) {
+      console.error(
+        "FAIL no --target given and host triple could not be detected (see warning above) — pass --target <triple>",
+      );
+      process.exit(1);
+    }
     await fetchTarget(target, root);
   } catch (error) {
     console.error(`FAIL ${error.message ?? error}`);

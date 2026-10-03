@@ -109,7 +109,11 @@ require_tool file
 
 if command -v node >/dev/null 2>&1; then
   require_tool rustc
-  HOST_TRIPLE="$(rustc -Vv | grep '^host:' | sed 's/host: //')"
+  HOST_TRIPLE="$(rustc -Vv | sed -n 's/^host: //p')"
+  if [ -z "$HOST_TRIPLE" ]; then
+    printf "FAIL could not parse host triple from \`rustc -Vv\` — pass AUDIT_TARGET=<triple> explicitly\n" >&2
+    exit 1
+  fi
   if ! node "$SCRIPT_DIR/binaries/verify.mjs" --target "${AUDIT_TARGET:-$HOST_TRIPLE}" --root "$ROOT"; then
     failures+=("<verify>")
   fi

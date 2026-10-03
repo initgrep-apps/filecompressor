@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
 import { join } from "node:path";
-import { hostTriple, isMain, parseArgs, run } from "./lib.mjs";
+import { hostTriple, isMain, parseArgs } from "./lib.mjs";
 
 export async function allTarget(target, root) {
   const { fetchTarget } = await import("./fetch.mjs");
@@ -25,14 +25,16 @@ export async function allTarget(target, root) {
 }
 
 if (isMain(import.meta.url)) {
-  const args = parseArgs(process.argv.slice(2));
-  const root = args.root ?? process.cwd();
-  const target = args.target ?? (await hostTriple());
-  if (!target) {
-    console.error("FAIL no --target given and host triple undetectable — pass --target <triple>");
-    process.exit(1);
-  }
   try {
+    const args = parseArgs(process.argv.slice(2));
+    const root = args.root ?? process.cwd();
+    const target = args.target ?? (await hostTriple());
+    if (!target) {
+      console.error(
+        "FAIL no --target given and host triple could not be detected (see warning above) — pass --target <triple>",
+      );
+      process.exit(1);
+    }
     await allTarget(target, root);
   } catch (error) {
     console.error(`FAIL ${error.message ?? error}`);

@@ -45,10 +45,10 @@ EOF`]);
   execFileSync("clang", ["-arch", arch, source, "-o", outPath]);
 }
 
-function runAudit(root, target) {
+function runAudit(root, target, extraEnv = {}) {
   return new Promise((resolvePromise) => {
     const child = spawn("bash", [AUDIT], {
-      env: { ...process.env, ROOT: root, AUDIT_TARGET: target },
+      env: { ...process.env, ROOT: root, AUDIT_TARGET: target, ...extraEnv },
       cwd: SCRIPTS,
     });
     let stdout = "";
@@ -91,5 +91,21 @@ describe("audit-sidecars.sh", () => {
     const result = await runAudit(root, "aarch64-apple-darwin");
     expect(result.code).toBe(1);
     expect(result.stdout + result.stderr).toContain("run 'yarn binaries:all'");
+  });
+
+  it("prints a FAIL line when the host triple cannot be parsed, never dying silently", async () => {
+    const root = await makeRoot();
+    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`);
+    const stubDir = await mkdtemp(`${tmpdir()}/audit-stub-rustc-`);
+    cleanupRoots.push(stubDir);
+    await writeFile(`${stubDir}/rustc`, "#!/bin/sh\necho 'rustc 1.90.0 (no host line)'\n", { mode: 0o755 });
+
+    const result = await runAudit(root, undefined, {
+      PATH: `${stubDir}:${process.env.PATH}`,
+      AUDIT_TARGET: "",
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("could not parse host triple");
+    expect(result.stdout + result.stderr).not.toBe("");
   });
 });

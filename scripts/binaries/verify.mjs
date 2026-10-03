@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import {
   archForTriple,
   binaryDir,
@@ -9,10 +9,13 @@ import {
   hostTriple,
   isMain,
   isWindowsTriple,
+  lockPath,
   manifestPath,
   parseArgs,
   readJson,
   run,
+  sha256File,
+  validateLock,
   validateManifest,
 } from "./lib.mjs";
 
@@ -48,6 +51,13 @@ async function checkVersion(binPath, expectVersion, triple, root) {
       { encoding: "utf8", timeout: 20000, env },
       (error, stdout, stderr) => {
         const combined = `${stdout ?? ""}${stderr ?? ""}`;
+        if (error && (error.killed || error.signal)) {
+          resolvePromise({
+            ok: false,
+            detail: `execution timed out or was killed before reporting a version (${error.signal ?? "timeout"})`,
+          });
+          return;
+        }
         if (error && !combined) {
           resolvePromise({ ok: false, detail: `failed to execute: ${error.message ?? error}` });
           return;
@@ -114,6 +124,20 @@ export async function verifyTarget(target, root) {
   const bins = binaryDir(root);
   let checked = 0;
 
+  const lockFile = lockPath(root);
+  let lockTarget = {};
+  if (await exists(lockFile)) {
+    let lock;
+    try {
+      lock = readJson(lockFile);
+      validateLock(lock);
+    } catch (error) {
+      console.error(`FAIL lock unreadable or invalid at ${lockFile}: ${error.message ?? error}`);
+      return false;
+    }
+    lockTarget = lock.targets?.[triple] ?? {};
+  }
+
   for (const [name, entry] of Object.entries(entries)) {
     const dest = expectedDest(entry.dest ?? name, triple);
     const binPath = join(bins, dest);
@@ -142,6 +166,17 @@ export async function verifyTarget(target, root) {
       continue;
     }
 
+    const lockEntry = lockTarget[name];
+    if (lockEntry?.stagedSha256) {
+      const stagedSha = await sha256File(binPath);
+      if (stagedSha !== lockEntry.stagedSha256) {
+        problems.push(
+          `${dest}: sha256 mismatch — lock records staged ${lockEntry.stagedSha256}, file is ${stagedSha} — the staged binary was swapped or corrupted; re-run 'yarn binaries:fetch'`,
+        );
+        continue;
+      }
+    }
+
     const version = await checkVersion(binPath, entry.expectVersion, triple, root);
     if (!version.ok) {
       problems.push(`${dest}: version check failed — ${version.detail}`);
@@ -161,8 +196,8 @@ export async function verifyTarget(target, root) {
 }
 
 if (isMain(import.meta.url)) {
-  const args = parseArgs(process.argv.slice(2));
   try {
+    const args = parseArgs(process.argv.slice(2));
     const ok = await verifyTarget(args.target, args.root ?? process.cwd());
     process.exit(ok ? 0 : 1);
   } catch (error) {

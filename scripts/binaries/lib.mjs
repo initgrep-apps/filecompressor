@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, readFileSync, constants } from "node:fs";
 import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { basename, dirname, join } from "node:path";
+import { basename, join } from "node:path";
 import https from "node:https";
 
 const TRIPLE_ARCH = {
@@ -18,6 +18,7 @@ const MANIFEST_URL_KEYS = ["source", "url", "sha256", "member", "lib", "dest", "
 const MANIFEST_BREW_KEYS = ["source", "formula", "dest", "expectVersion", "resources"];
 const DOWNLOAD_TIMEOUT_MS = 120000;
 const MAX_REDIRECTS = 20;
+const KNOWN_FLAGS = ["--target", "--root"];
 
 export function archForTriple(triple) {
   const arch = TRIPLE_ARCH[triple];
@@ -109,6 +110,12 @@ export function validateManifest(manifest) {
           `manifest schema invalid: ${triple}/${name} has unknown key(s) ${unknownKeys.join(", ")} (allowed for source '${entry.source}': ${allowedKeys.join(", ")})`,
         );
       }
+      const destName = typeof entry.dest === "string" && entry.dest.length > 0 ? entry.dest : name;
+      const dest = expectedDest(destName, triple);
+      if (dests.has(dest)) {
+        throw new Error(`manifest schema invalid: ${triple} has duplicate dest '${dest}'`);
+      }
+      dests.add(dest);
       if (entry.source === "brew") {
         if (typeof entry.formula !== "string" || entry.formula.length === 0) {
           throw new Error(`manifest schema invalid: ${triple}/${name} source brew requires a formula`);
@@ -136,11 +143,6 @@ export function validateManifest(manifest) {
         if (entry.lib !== undefined && (typeof entry.lib !== "string" || entry.lib.length === 0)) {
           throw new Error(`manifest schema invalid: ${triple}/${name} lib must be a non-empty string when present`);
         }
-        const dest = expectedDest(entry.dest, triple);
-        if (dests.has(dest)) {
-          throw new Error(`manifest schema invalid: ${triple} has duplicate dest '${dest}'`);
-        }
-        dests.add(dest);
       }
     }
   }
@@ -164,6 +166,16 @@ export function validateLock(lock) {
       if (typeof entry.date !== "string" || entry.date.length === 0) {
         throw new Error(`lock schema invalid: ${triple}/${name} is missing date`);
       }
+      if (entry.source === "url") {
+        if (typeof entry.sha256 !== "string" || !SHA256_PATTERN.test(entry.sha256)) {
+          throw new Error(`lock schema invalid: ${triple}/${name} source url requires a 64-hex sha256 pin`);
+        }
+        if (entry.stagedSha256 !== undefined && !SHA256_PATTERN.test(String(entry.stagedSha256))) {
+          throw new Error(
+            `lock schema invalid: ${triple}/${name} stagedSha256 must be 64-hex when present (delete the lock and re-run fetch to regenerate)`,
+          );
+        }
+      }
     }
   }
 }
@@ -178,21 +190,31 @@ export function sha256File(path) {
   });
 }
 
-export function download(url, destPath) {
+export function download(url, destPath, options = {}) {
+  const timeoutMs = options.timeoutMs ?? DOWNLOAD_TIMEOUT_MS;
   return new Promise((resolvePromise, reject) => {
-    if (!url.startsWith("https://")) {
-      reject(new Error(`only https urls are supported, got '${url}' — vendor artifacts must be fetched over TLS`));
-      return;
-    }
     let settled = false;
+    let file = null;
     const settle = (error) => {
-      if (!settled) {
-        settled = true;
-        reject(error);
+      if (settled) {
+        return;
       }
+      settled = true;
+      if (file) {
+        file.destroy();
+      }
+      reject(error);
     };
     const get = (target, redirectsLeft) => {
-      const request = https.get(target, (response) => {
+      if (!target.startsWith("https://")) {
+        settle(
+          new Error(
+            `only https urls are supported, got '${target}' — vendor artifacts must be fetched over TLS (enforced on every redirect hop)`,
+          ),
+        );
+        return;
+      }
+      const request = https.get(target, { timeout: timeoutMs }, (response) => {
         response.on("aborted", () => settle(new Error(`download aborted before completion: ${target}`)));
         response.on("error", settle);
         const status = response.statusCode ?? 0;
@@ -211,7 +233,7 @@ export function download(url, destPath) {
           settle(new Error(`HTTP ${status} for ${target}`));
           return;
         }
-        const file = createWriteStream(destPath);
+        file = createWriteStream(destPath);
         let responseEnded = false;
         response.on("end", () => {
           responseEnded = true;
@@ -235,7 +257,7 @@ export function download(url, destPath) {
       request.on("error", settle);
       request.on("timeout", () => {
         request.destroy();
-        settle(new Error(`download timed out after ${DOWNLOAD_TIMEOUT_MS / 1000}s: ${target}`));
+        settle(new Error(`download stalled: no data received for ${timeoutMs}ms fetching ${target}`));
       });
     };
     get(url, MAX_REDIRECTS);
@@ -281,13 +303,16 @@ export function run(tool, args, options = {}) {
 export function parseArgs(argv) {
   const args = { target: null, root: null };
   for (let i = 0; i < argv.length; i += 1) {
-    if (argv[i] === "--target") {
-      i += 1;
-      args.target = argv[i];
-    } else if (argv[i] === "--root") {
-      i += 1;
-      args.root = argv[i];
+    const flag = argv[i];
+    if (!KNOWN_FLAGS.includes(flag)) {
+      throw new Error(`unknown flag '${flag}' — supported flags: ${KNOWN_FLAGS.join(", ")}`);
     }
+    const value = argv[i + 1];
+    if (value === undefined || value.startsWith("--")) {
+      throw new Error(`flag '${flag}' requires a value (got ${value ?? "end of arguments"})`);
+    }
+    args[flag === "--target" ? "target" : "root"] = value;
+    i += 1;
   }
   return args;
 }
@@ -297,7 +322,10 @@ export async function hostTriple() {
     const { stdout } = await run("rustc", ["-Vv"]);
     const match = /host:\s*(\S+)/.exec(stdout);
     if (match) return match[1];
-  } catch {}
+    console.error("WARN host triple detection: `rustc -Vv` printed no host: line");
+  } catch (error) {
+    console.error(`WARN host triple detection failed: ${error.message ?? error}`);
+  }
   return null;
 }
 

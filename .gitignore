@@ -63,3 +63,4 @@ pnpm-debug.log*
 .worktrees/
 
 graphify-out/
+scripts/*.tmp-*

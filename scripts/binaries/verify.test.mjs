@@ -93,6 +93,35 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  it("fails when the staged binary no longer matches the lock's stagedSha256", async () => {
+    const root = await makeRoot(FFMPEG_MANIFEST);
+    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2");
+    await writeFile(
+      `${root}/scripts/binaries.lock.json`,
+      JSON.stringify({
+        generated: new Date().toISOString(),
+        targets: {
+          "aarch64-apple-darwin": {
+            ffmpeg: {
+              source: "url",
+              version: "9.0.2",
+              url: "https://x/ffmpeg.zip",
+              sha256: "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+              stagedSha256: "0000000000000000000000000000000000000000000000000000000000000000",
+              date: new Date().toISOString(),
+            },
+          },
+        },
+      }),
+    );
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("sha256 mismatch");
+    expect(result.stderr).toContain("swapped or corrupted");
+    await rm(root, { recursive: true, force: true });
+  });
+
   it("presents usage error when target missing or unknown", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
     const unknown = await runVerify(["--target", "bogus-triple", "--root", root]);

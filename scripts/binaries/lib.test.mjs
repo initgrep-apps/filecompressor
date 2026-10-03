@@ -11,6 +11,7 @@ import {
   expectedDest,
   download,
   extract,
+  parseArgs,
   writeJson,
 } from "./lib.mjs";
 
@@ -91,6 +92,41 @@ describe("download", () => {
     );
   });
 
+  it("rejects a redirect that downgrades to http instead of crashing", async () => {
+    const server = httpsServer((req, res) => {
+      res.writeHead(302, { location: "http://127.0.0.1:9/plain.zip" });
+      res.end();
+    });
+    const base = await listen(server);
+    try {
+      const root = await tempRoot("lib-test-");
+      await expect(download(`${base}/redirect`, join(root, "out.bin"))).rejects.toThrow(
+        /only https urls are supported, got 'http:\/\/127\.0\.0\.1:9\/plain\.zip'/,
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  it("rejects a stalled transfer with the real idle budget", async () => {
+    const sockets = [];
+    const server = httpsServer((req, res) => {
+      res.writeHead(200, { "content-length": "100000" });
+      res.write("partial");
+      sockets.push(res.socket);
+    });
+    const base = await listen(server);
+    try {
+      const root = await tempRoot("lib-test-");
+      await expect(
+        download(`${base}/stall.zip`, join(root, "out.bin"), { timeoutMs: 300 }),
+      ).rejects.toThrow(/download stalled: no data received for 300ms/);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    }
+  });
+
   it("rejects when the connection closes before the body completes", async () => {
     const server = httpsServer((req, res) => {
       res.writeHead(200, { "content-length": "1000" });
@@ -143,6 +179,26 @@ describe("extract", () => {
     const fake = join(root, "not-an-archive.tar.zst");
     await writeFile(fake, "garbage");
     await expect(extract(fake, join(root, "out"))).rejects.toThrow(/'zstd' tool/);
+  });
+});
+
+describe("parseArgs", () => {
+  it("reads --target and --root", () => {
+    expect(parseArgs(["--target", "aarch64-apple-darwin", "--root", "/tmp/x"])).toEqual({
+      target: "aarch64-apple-darwin",
+      root: "/tmp/x",
+    });
+  });
+
+  it("rejects an unknown flag instead of silently falling back to host detection", () => {
+    expect(() => parseArgs(["--targt", "aarch64-apple-darwin"])).toThrow(
+      "unknown flag '--targt' — supported flags: --target, --root",
+    );
+  });
+
+  it("rejects a flag with no value", () => {
+    expect(() => parseArgs(["--target"])).toThrow("flag '--target' requires a value");
+    expect(() => parseArgs(["--target", "--root"])).toThrow("flag '--target' requires a value");
   });
 });
 
