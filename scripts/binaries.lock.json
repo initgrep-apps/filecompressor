@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-03T11:18:14.527Z",
+  "generated": "2026-10-03T19:50:40.289Z",
   "targets": {
     "aarch64-apple-darwin": {
       "ffmpeg": {
@@ -8,7 +8,7 @@
         "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
         "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
         "stagedSha256": "2e11c6f90993cdb79fff84d3f90044d28316b310e75b3e030cfc9a54f2c9d384",
-        "date": "2026-10-03T11:18:13.264Z"
+        "date": "2026-10-03T19:50:38.527Z"
       },
       "ffprobe": {
         "source": "url",
@@ -16,7 +16,15 @@
         "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip",
         "sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6",
         "stagedSha256": "2738aa46a7f9acbc8ab09a6715554c90f7de603171ac403726765685df6a0059",
-        "date": "2026-10-03T11:18:14.527Z"
+        "date": "2026-10-03T19:50:39.839Z"
+      },
+      "qpdf": {
+        "source": "url",
+        "version": "12.4.2",
+        "url": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-bin-macos-arm64.zip",
+        "sha256": "62e46987a30ea167cbc530ccb22690aec3d8c812ed09979a941bcee92e504b79",
+        "stagedSha256": "46b699e2560a8c092a07a8a1e7107c59ac72f5cc51939d3f693f3d23e8027e83",
+        "date": "2026-10-03T19:50:40.289Z"
       }
     }
   }

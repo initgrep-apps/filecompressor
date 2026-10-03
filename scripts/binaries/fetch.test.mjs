@@ -25,6 +25,17 @@ function makeZip(zipPath, memberName, content) {
   execFileSync("sh", ["-c", `cd '${staging}' && zip -q -r '${zipPath}' '${memberName}'`]);
 }
 
+function makeTreeZip(zipPath, files) {
+  const staging = `${zipPath}.zsrc`;
+  execFileSync("rm", ["-rf", staging]);
+  for (const [memberName, content] of Object.entries(files)) {
+    execFileSync("mkdir", ["-p", `${staging}/${dirname(memberName)}`]);
+    execFileSync("sh", ["-c", `printf '%s' '${content}' > '${staging}/${memberName}'`]);
+  }
+  execFileSync("sh", ["-c", `cd '${staging}' && zip -q -r '${zipPath}' .`]);
+  execFileSync("rm", ["-rf", staging]);
+}
+
 function runFetch(args) {
   return new Promise((resolvePromise) => {
     const child = spawn(process.execPath, ["--no-warnings", FETCH, ...args], {
@@ -243,6 +254,117 @@ describe("fetch.mjs", () => {
     expect(entry.url).toBe(`${base}/ffmpeg.zip`);
     expect(entry.sha256).toBe(sha);
     expect(entry.stagedSha256).toBe(await sha256File(staged));
+  });
+
+  it("stages qpdf full bin and lib dir", async () => {
+    const root = await makeRoot();
+    servedPath = `${ZIPS}/qpdf.zip`;
+    makeTreeZip(servedPath, {
+      "qpdf-12.4.2-bin-macos-arm64/bin/qpdf": "fake-qpdf-macho-arm64",
+      "qpdf-12.4.2-bin-macos-arm64/lib/libqpdf.30.dylib": "fake-libqpdf-arm64",
+      "qpdf-12.4.2-bin-macos-arm64/lib/libqpdf.30.4.2.dylib": "fake-libqpdf-real-arm64",
+    });
+    const sha = await sha256File(servedPath);
+    await writeManifest(root, {
+      targets: {
+        "aarch64-apple-darwin": {
+          qpdf: {
+            source: "url",
+            url: `${base}/qpdf.zip`,
+            sha256: sha,
+            member: "qpdf-12.4.2-bin-macos-arm64/bin/qpdf",
+            lib: "qpdf-12.4.2-bin-macos-arm64/lib",
+            dest: "qpdf",
+            expectVersion: "12.4.2",
+          },
+        },
+      },
+    });
+
+    const result = await runFetch(["--target", "aarch64-apple-darwin", "--root", root]);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+
+    const staged = `${root}/src-tauri/binaries/qpdf-aarch64-apple-darwin`;
+    expect(await readFile(staged, "utf8")).toBe("fake-qpdf-macho-arm64");
+    expect((await stat(staged)).mode & 0o777).toBe(0o755);
+
+    const stagedLib = `${root}/src-tauri/.staging/qpdf-aarch64-apple-darwin/lib`;
+    expect((await readdir(stagedLib)).sort()).toEqual([
+      "libqpdf.30.4.2.dylib",
+      "libqpdf.30.dylib",
+    ]);
+    expect(await readFile(`${stagedLib}/libqpdf.30.dylib`, "utf8")).toBe("fake-libqpdf-arm64");
+
+    const lock = JSON.parse(await readFile(`${root}/scripts/binaries.lock.json`, "utf8"));
+    const entry = lock.targets["aarch64-apple-darwin"].qpdf;
+    expect(entry.version).toBe("12.4.2");
+    expect(entry.sha256).toBe(sha);
+    expect(entry.stagedSha256).toBe(await sha256File(staged));
+  });
+
+  it("stages the lib dir when the archive root is already the lib parent", async () => {
+    const root = await makeRoot();
+    servedPath = `${ZIPS}/qpdf-flat.zip`;
+    makeTreeZip(servedPath, {
+      "bin/qpdf": "fake-qpdf-flat-macho-arm64",
+      "lib/libqpdf.30.dylib": "fake-libqpdf-arm64",
+    });
+    const sha = await sha256File(servedPath);
+    await writeManifest(root, {
+      targets: {
+        "aarch64-apple-darwin": {
+          qpdf: {
+            source: "url",
+            url: `${base}/qpdf-flat.zip`,
+            sha256: sha,
+            member: "bin/qpdf",
+            lib: "lib",
+            dest: "qpdf",
+            expectVersion: "12.4.2",
+          },
+        },
+      },
+    });
+
+    const result = await runFetch(["--target", "aarch64-apple-darwin", "--root", root]);
+    expect(result.stderr).toBe("");
+    expect(result.code).toBe(0);
+    expect(await readFile(`${root}/src-tauri/binaries/qpdf-aarch64-apple-darwin`, "utf8")).toBe(
+      "fake-qpdf-flat-macho-arm64",
+    );
+    expect(
+      await readFile(`${root}/src-tauri/.staging/qpdf-aarch64-apple-darwin/lib/libqpdf.30.dylib`, "utf8"),
+    ).toBe("fake-libqpdf-arm64");
+  });
+
+  it("fails loudly when a declared lib dir is missing from the archive", async () => {
+    const root = await makeRoot();
+    servedPath = `${ZIPS}/qpdf-nolib.zip`;
+    makeTreeZip(servedPath, { "bin/qpdf": "fake-qpdf-macho-arm64" });
+    const sha = await sha256File(servedPath);
+    await writeManifest(root, {
+      targets: {
+        "aarch64-apple-darwin": {
+          qpdf: {
+            source: "url",
+            url: `${base}/qpdf-nolib.zip`,
+            sha256: sha,
+            member: "bin/qpdf",
+            lib: "lib",
+            dest: "qpdf",
+            expectVersion: "12.4.2",
+          },
+        },
+      },
+    });
+
+    const result = await runFetch(["--target", "aarch64-apple-darwin", "--root", root]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("lib dir 'lib' missing in qpdf artifact");
+    expect(
+      await stat(`${root}/src-tauri/binaries/qpdf-aarch64-apple-darwin`).catch(() => null),
+    ).toBe(null);
   });
 
   it("aborts when staged file disagrees with lock (tamper guard)", async () => {

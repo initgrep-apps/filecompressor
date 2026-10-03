@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { copyFile, mkdir, readdir, rm, chmod } from "node:fs/promises";
+import { copyFile, cp, mkdir, readdir, rm, chmod } from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
 import {
   binaryDir,
@@ -58,6 +58,28 @@ function archiveArtifactPath(root, name, triple, url) {
 
 async function removeStaging(staging) {
   await rm(staging, { recursive: true, force: true }).catch(() => {});
+}
+
+async function stageLibDir(name, entry, triple, staging) {
+  if (!entry.lib) {
+    return;
+  }
+  const libSource = join(staging, entry.lib);
+  if (!(await exists(libSource))) {
+    const listing = await readdir(staging, { recursive: true }).catch((error) => [
+      `<listing unavailable: ${error.message ?? error}>`,
+    ]);
+    await removeStaging(staging);
+    fail(
+      `lib dir '${entry.lib}' missing in ${name} artifact for ${triple} — extracted files: ${listing.slice(0, 20).join(", ") || "(empty)"}`,
+    );
+  }
+  const libDest = join(staging, "lib");
+  if (libSource === libDest) {
+    return;
+  }
+  await rm(libDest, { recursive: true, force: true });
+  await cp(libSource, libDest, { recursive: true, verbatimSymlinks: true });
 }
 
 async function fetchOne(name, entry, triple, root, lockEntry) {
@@ -133,6 +155,8 @@ async function fetchOne(name, entry, triple, root, lockEntry) {
       `archive member '${entry.member}' missing in ${name} artifact for ${triple} — extracted files: ${listing.slice(0, 20).join(", ") || "(empty)"}`,
     );
   }
+
+  await stageLibDir(name, entry, triple, staging);
 
   await mkdir(dirname(destPath), { recursive: true });
   await copyFile(memberPath, destPath);
