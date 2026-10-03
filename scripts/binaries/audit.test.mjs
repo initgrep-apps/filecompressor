@@ -304,7 +304,7 @@ describe("audit-sidecars.sh", () => {
     expect(result.stdout).not.toContain("sidecar audit: PASS");
   });
 
-  it("fails when the gs resources dir is missing entirely", async () => {
+  it("audit_fails_when_gs_resources_missing_entirely", async () => {
     const root = await makeGsRoot({ resources: false });
     const stubBrew = await makeStubBrew();
 
@@ -318,7 +318,7 @@ describe("audit-sidecars.sh", () => {
     expect(result.stdout).not.toContain("gs clean-room smoke: PASS");
   });
 
-  it("fails when iccprofiles or fonts is empty", async () => {
+  it("audit_fails_when_iccprofiles_or_fonts_empty", async () => {
     const noFonts = await makeGsRoot({ fonts: false });
     const fontResult = await runAudit(noFonts, "aarch64-apple-darwin", {
       PATH: `${await makeStubBrew()}:${process.env.PATH}`,
@@ -334,7 +334,7 @@ describe("audit-sidecars.sh", () => {
     expect(iccResult.stderr).toMatch(/gs resources dir is empty: .*\/iccprofiles/);
   });
 
-  it("fails on brew version drift", async () => {
+  it("audit_fails_on_brew_version_drift", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew("10.08.1");
 

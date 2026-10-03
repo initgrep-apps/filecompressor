@@ -587,6 +587,55 @@ git commit -m "feat(binaries): refresh flow for vendor version bumps"
 ## Execution Notes (populated during execution)
 
 - Task 1 (manifest, lock, fetch, arch gate) — **done, PR #75 merged**. The ffmpeg incident is fixed: `ffmpeg`/`ffprobe` shipped as Intel x86_64 under `aarch64` names; they are now fetched from manifest-pinned Martin Riedl arm64 artifacts and gated by `verify.mjs`, which fails on content-vs-filename arch mismatch. Incident TDD ran live (audit failed on the inherited binaries → fetch → audit passed). Gate green: 297 vitest, 386 cargo. Note for later tasks: `src-tauri/frameworks/` and `src-tauri/binaries/` are now gitignored and regenerated only from Task 2 prep, so a fresh clone must run `yarn binaries:all` before `cargo test` (the audit and prep both print the remedy).
-- Task 2 Step 7 manual acceptance (brew gs renamed) result: _pending_
+- Task 2 Step 7 manual acceptance (brew gs renamed) result: **passed** — see the detail below.
 - Task 3 Windows end-to-end verification: _pending — Windows host or CI_
 - Task 4 Intel end-to-end verification: _pending — Intel host or CI_
+
+### Task 2 (macOS arm64 complete pipeline) — execution notes
+
+**Delivered.** `yarn binaries:all --target aarch64-apple-darwin` now runs fetch → prep → audit green end to end on this machine: manifest gains qpdf (official vendor archive), vips and gs (brew); prep stages the brew engines, runs `bundle-vips-macos.sh` then `bundle-pdf-macos.sh`, stages `gs-resources/` and records resolved brew versions in the lock; verify gates arch/version/lock/gs-resources/brew drift; audit adds the clean-room gs smoke. Re-running `binaries:all` is idempotent (verified twice).
+
+**Manifest pins kept as pinned.** qpdf sha256 `62e46987…4b79` downloaded and verified unchanged. Two corrections to the plan's Task 2 manifest snippet, both recorded here rather than silently absorbed:
+1. The plan's `member`/`lib` (`qpdf-12.4.2-bin-macos-arm64/bin/qpdf`, `…/lib`) do not match the archive: the real zip has no top-level directory (`bin/qpdf`, `lib/libqpdf.30.dylib` symlink → `lib/libqpdf.30.4.2.dylib`). The manifest uses `member: "bin/qpdf"`, `lib: "lib"`.
+2. `ghostscript`'s binary is `gs`, not `ghostscript`, so the brew schema gained an optional `binary` key (`"binary": "gs"`) — same data-driven shape as `dest`, and validated by `validateManifest`.
+
+**Deviation from the plan — `-sICCProfilesDir` is not a pdfwrite parameter (blocker found and fixed).** The plan pins `-sICCProfilesDir=<icc>` in `gs_args`. Measured on this machine with the staged gs 10.08.0: passing it aborts device init — `**** Unable to open the initial device, quitting.`, exit 1 — from the brew icc dir, from a nonexistent dir, and in every argument position; `-uICCProfilesDir=<dir>` works (exit 0, 2915-byte PDF). `gs-resources/Resource/Init/gs_lev2.ps` confirms the mechanism (`//systemdict /ICCProfilesDir .knownget { % Set the directory specified by the command line option`), i.e. `ICCProfilesDir` is a *user parameter*, and `-u` is gs's user-parameter switch. Implemented as `-uICCProfilesDir=`, with `gs_args_prepend_resource_flags_in_order` updated and an extra assertion that `-sICCProfilesDir` is never emitted.
+
+**Framework set shrank by one dylib.** `frameworks/libcrypto.3.dylib` was only a dependency of the *brew* qpdf build; the official qpdf needs libz/libc++/libSystem only. It was removed from `tauri.conf.json` (the audit's conf↔frameworks consistency gate requires the lists to match exactly). 71 framework dylibs now.
+
+**Framework/staged-sha ordering.** prep re-signs `vips`/`qpdf`/`gs`, which invalidates the `stagedSha256` fetch recorded for qpdf. prep therefore refreshes `stagedSha256` for exactly those three engines after bundling, and refuses to run when any *other* fetched binary no longer matches the lock (`assertFetchedEntriesUntouched`) — a swapped ffmpeg can never be laundered by prep.
+
+**Step 7 verification — `tauri build`.** `yarn tauri build --no-bundle` produces no `.app` (it skips bundling), so the bundle check was run as `yarn tauri build --bundles app`: `file-compressor.app/Contents/Resources/gs-resources/Resource/Init/gs_init.ps` is present and `diff -rq` against `src-tauri/gs-resources` reports **identical** (Resource 293 / lib 157 / iccprofiles 14 / fonts 95 files). All 5 sidecars land in `Contents/MacOS`, 71 dylibs in `Contents/Frameworks`.
+
+**Step 7 manual acceptance — JPEG + MP4 + PDF with Homebrew Ghostscript renamed.** The interactive `yarn tauri dev` path was not automated; the equivalent was run through the real Rust processor layer against the **built `.app` bundle** (a temporary in-crate `#[ignore]` test driving `ImageProcessor`, `VideoProcessor` and `PdfProcessor` with `SidecarPaths::resolve_for(<app>/Contents/MacOS)`, then deleted — not committed). Exactly what was run:
+
+```
+mv /opt/homebrew/opt/ghostscript /opt/homebrew/opt/ghostscript.bak
+ACCEPTANCE_DIR=<tmp> ACCEPTANCE_MACOS_DIR=<app>/Contents/MacOS \
+  cargo test --lib manual_acceptance -- --ignored --nocapture
+mv /opt/homebrew/opt/ghostscript.bak /opt/homebrew/opt/ghostscript
+```
+
+Observed (with `HOME`-brew Ghostscript renamed; restored afterwards — verified `brew list --versions ghostscript` → `ghostscript 10.08.0`, `/opt/homebrew/opt/ghostscript` symlink present, no `.bak` left):
+
+| Fixture | In | Out | Strategy that won |
+|---|---|---|---|
+| `sample.jpg` (ffmpeg testsrc frame) | 11 255 B | 5 076 B | `quality=30,best-effort` (vips) |
+| `sample.mp4` (2 s 640×480 testsrc) | 16 155 B | 6 590 B | `two-pass h264 b=15k scale=1920,best-effort` (ffmpeg) |
+| `sample.pdf` (cupsfilter, font-bearing) | 12 666 B | 10 713 B | **`gs dpi=72,jpegq=60,best-effort`** |
+
+`best-effort` is expected: the 4 000-byte target sits below the default PDF/image/video quality floors, so no pass may go that low and the smallest legal output is delivered. The PDF row is the load-bearing one — a Ghostscript ladder rung won, i.e. the staged gs actually ran. The resolved search paths were printed from the run: `Contents/Resources/gs-resources/{Resource/Init,lib,Resource/Font,fonts}` + `iccprofiles`, i.e. the bundle candidate.
+
+**Stronger control (also run).** Renaming only the brew *opt* prefix is weaker than it looks, because gs's compiled-in path points at the *Cellar* keg. With both `/opt/homebrew/opt/ghostscript` and `/opt/homebrew/Cellar/ghostscript/10.08.0` renamed (restored afterwards, state verified):
+- with the app's flags → `exit=0`, 3 102-byte PDF;
+- without the `-I` flags (what the pre-fix build sent) → `GPL Ghostscript 10.08.0: Can't find initialization file gs_init.ps`, `exit=1`.
+
+So the staged resources are load-bearing, not decorative.
+
+**Gate.** `yarn build && yarn test && cd src-tauri && cargo test` → green: 323 vitest (was 297; +26), 397 cargo (was 386; +11).
+
+**Notes for later tasks.**
+- `prep.mjs` dispatches only macOS targets and fails with an explicit "Task 3" message for `-pc-windows-msvc` targets.
+- Homebrew's ghostscript puts its resource dirs directly in `share/ghostscript/` (no version subdirectory); the stager handles both that layout and a version-subdir layout.
+- `prep` needs `cpio` for the deterministic sorted resource copy.
+- Task 3 needs the same `stagedSha256` treatment for its engine folders, and `sidecar_candidates_prefer_triple_then_plain_name` (`sidecar.rs`) still pins `len()==2`.

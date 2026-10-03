@@ -256,7 +256,7 @@ describe("fetch.mjs", () => {
     expect(entry.stagedSha256).toBe(await sha256File(staged));
   });
 
-  it("stages qpdf full bin and lib dir", async () => {
+  it("fetch_stages_qpdf_full_bin_and_lib_dir", async () => {
     const root = await makeRoot();
     servedPath = `${ZIPS}/qpdf.zip`;
     makeTreeZip(servedPath, {
