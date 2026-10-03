@@ -418,7 +418,7 @@ export function SettingsView() {
             <Field>
               <div className="flex items-center justify-between gap-3">
                 <FieldLabel htmlFor="history-retention-days" className="text-sm">
-                  Retention period
+                  History retention (days)
                 </FieldLabel>
                 <NumberStepper
                   id="history-retention-days"
