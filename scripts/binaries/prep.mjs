@@ -25,15 +25,26 @@ const BUNDLE_SCRIPTS = ["bundle-vips-macos.sh", "bundle-pdf-macos.sh"];
 const GS_INIT_MARKER = join("Resource", "Init", "gs_init.ps");
 const REWRITTEN_BY_BUNDLE = ["vips", "qpdf", "gs"];
 
-function fail(message) {
-  throw new Error(message);
+export const GS_ACCEPTANCE_SENTINEL = "fso-sidecar-acceptance-sentinel.ps";
+
+export class PipelinesError extends Error {
+  constructor(message, { remedy = null } = {}) {
+    super(message);
+    this.name = "PipelinesError";
+    this.remedy = remedy;
+  }
+}
+
+function fail(message, remedy = null) {
+  throw new PipelinesError(message, { remedy });
 }
 
 async function loadManifest(root) {
   const manifestFile = manifestPath(root);
   if (!(await exists(manifestFile))) {
     fail(
-      `manifest missing: ${manifestFile} — restore scripts/binaries.manifest.json before prepping`,
+      `manifest missing: ${manifestFile}`,
+      "restore scripts/binaries.manifest.json before prepping",
     );
   }
   let manifest;
@@ -57,7 +68,8 @@ async function loadLock(root) {
     return lock;
   } catch (error) {
     fail(
-      `lock unreadable or invalid at ${path}: ${error.message ?? error} — fix or delete it and re-run 'yarn binaries:prep'`,
+      `lock unreadable or invalid at ${path}: ${error.message ?? error}`,
+      "fix or delete it, then re-run 'yarn binaries:prep'",
     );
   }
 }
@@ -71,20 +83,25 @@ async function brewPrefix(formula) {
     const { stdout } = await run("brew", ["--prefix", formula]);
     const prefix = stdout.trim();
     if (!prefix) {
-      fail(`brew --prefix ${formula} printed no path — run 'brew reinstall ${formula}'`);
+      fail(
+        `brew --prefix ${formula} printed no path`,
+        `run 'brew reinstall ${formula}', then re-run 'yarn binaries:prep'`,
+      );
     }
     return prefix;
   } catch (error) {
-    if (error.message?.startsWith("brew --prefix")) {
+    if (error instanceof PipelinesError) {
       throw error;
     }
     if (brewMissing(error)) {
       fail(
-        `brew not found — vips and gs are brew-owned build ingredients: install Homebrew from https://brew.sh, then re-run 'yarn binaries:prep'`,
+        "brew not found — vips and gs are brew-owned build ingredients",
+        "install Homebrew from https://brew.sh, then re-run 'yarn binaries:prep'",
       );
     }
     fail(
-      `brew --prefix ${formula} failed: ${error.message ?? error} — install it with 'brew install ${formula}', then re-run 'yarn binaries:prep'`,
+      `brew --prefix ${formula} failed: ${error.message ?? error}`,
+      `install it with 'brew install ${formula}', then re-run 'yarn binaries:prep'`,
     );
   }
 }
@@ -92,7 +109,10 @@ async function brewPrefix(formula) {
 export function parseBrewVersion(output, formula) {
   const fields = output.trim().split(/\s+/).filter(Boolean);
   if (fields.length < 2) {
-    fail(`brew list --versions ${formula} printed '${output.trim()}' — expected '<formula> <version>'`);
+    fail(
+      `brew list --versions ${formula} printed '${output.trim()}'`,
+      "expected '<formula> <version>' — run 'brew install <formula>'",
+    );
   }
   return fields[1];
 }
@@ -102,13 +122,18 @@ export async function brewVersion(formula) {
     const { stdout } = await run("brew", ["list", "--versions", formula]);
     return parseBrewVersion(stdout, formula);
   } catch (error) {
+    if (error instanceof PipelinesError) {
+      throw error;
+    }
     if (brewMissing(error)) {
       fail(
-        `brew not found — install Homebrew from https://brew.sh, then re-run 'yarn binaries:prep'`,
+        "brew not found",
+        "install Homebrew from https://brew.sh, then re-run 'yarn binaries:prep'",
       );
     }
     fail(
-      `brew list --versions ${formula} failed: ${error.message ?? error} — install it with 'brew install ${formula}', then re-run 'yarn binaries:prep'`,
+      `brew list --versions ${formula} failed: ${error.message ?? error}`,
+      `install it with 'brew install ${formula}', then re-run 'yarn binaries:prep'`,
     );
   }
 }
@@ -120,7 +145,8 @@ export async function stageBrewBinary(root, triple, name, entry) {
   const source = join(prefix, "bin", binary);
   if (!(await exists(source))) {
     fail(
-      `brew formula ${formula} has no ${binary} at ${source} — run 'brew reinstall ${formula}', then re-run 'yarn binaries:prep'`,
+      `brew formula ${formula} has no ${binary} at ${source}`,
+      `run 'brew reinstall ${formula}', then re-run 'yarn binaries:prep'`,
     );
   }
   const dest = expectedDest(entry.dest ?? name, triple);
@@ -132,16 +158,24 @@ export async function stageBrewBinary(root, triple, name, entry) {
   return { name, dest, destPath, source, formula };
 }
 
-async function contentArchMac(path) {
-  const { stdout } = await run("lipo", ["-archs", path]);
-  return stdout.trim().split(/\s+/);
+async function contentArchMac(path, label) {
+  try {
+    const { stdout } = await run("lipo", ["-archs", path]);
+    return stdout.trim().split(/\s+/);
+  } catch (error) {
+    fail(
+      `${label}: cannot read the architecture of ${path} — lipo failed (${error.message ?? error}). The staged file is most likely truncated, empty or not a Mach-O image`,
+      `delete it and re-run 'yarn binaries:prep' (or 'yarn binaries:fetch' for url-sourced engines) to restage it`,
+    );
+  }
 }
 
 export async function assertStagedArch(staged, expectedArch) {
-  const archs = await contentArchMac(staged.destPath);
+  const archs = await contentArchMac(staged.destPath, staged.dest);
   if (!archs.includes(expectedArch)) {
     fail(
-      `${staged.dest}: staged from brew formula ${staged.formula} is ${archs.join(" ")}, expected ${expectedArch} — the host formula is built for another architecture; reinstall on this host, then re-run 'yarn binaries:prep'`,
+      `${staged.dest}: staged from brew formula ${staged.formula} is ${archs.join(" ")}, expected ${expectedArch} — the host formula is built for another architecture`,
+      "reinstall the formula on this host, then re-run 'yarn binaries:prep'",
     );
   }
   return archs;
@@ -179,7 +213,12 @@ export async function runBundleScripts(root) {
   }
 }
 
-export async function assertGsResourcesStaged(root, entry) {
+export async function treeHasFile(dir) {
+  const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => []);
+  return entries.some((entry) => entry.isFile());
+}
+
+export async function assertGsResourcesStaged(root, entry, label = entry.formula ?? "gs") {
   const resources = entry.resources ?? [];
   if (resources.length === 0) {
     return false;
@@ -187,38 +226,57 @@ export async function assertGsResourcesStaged(root, entry) {
   const base = join(root, "src-tauri", "gs-resources");
   if (!(await exists(base))) {
     fail(
-      `gs resources dir missing: ${base} — run 'yarn binaries:prep' to stage it (the gs sidecar cannot render fonts or ICC profiles without it)`,
-    );
-  }
-  if (resources.includes("Resource") && !(await exists(join(base, GS_INIT_MARKER)))) {
-    fail(
-      `gs resources marker missing: ${join(base, GS_INIT_MARKER)} — run 'yarn binaries:prep' to restage them`,
+      `${label}: gs resources dir missing: ${base}`,
+      "run 'yarn binaries:prep' to stage it — the gs sidecar cannot render fonts or ICC profiles without it",
     );
   }
   for (const name of resources) {
     const dir = join(base, name);
     const info = await stat(dir).catch(() => null);
     if (!info || !info.isDirectory()) {
-      fail(`gs resources dir missing: ${dir} — run 'yarn binaries:prep' to restage them`);
+      fail(
+        `${label}: gs resources dir missing: ${dir}`,
+        "run 'yarn binaries:prep' to restage them",
+      );
     }
-    if ((await readdir(dir)).length === 0) {
-      fail(`gs resources dir empty: ${dir} — the gs sidecar would fail on a real PDF; run 'yarn binaries:prep' to restage them`);
+  }
+  if (resources.includes("Resource")) {
+    const marker = join(base, GS_INIT_MARKER);
+    if (!(await exists(marker))) {
+      fail(
+        `${label}: gs resource marker missing: ${marker}`,
+        "run 'yarn binaries:prep' to restage them",
+      );
+    }
+  }
+  for (const name of resources) {
+    const dir = join(base, name);
+    if (!(await treeHasFile(dir))) {
+      fail(
+        `${label}: gs resources dir has no files anywhere under it: ${dir}`,
+        "the gs sidecar would fail on a real PDF; run 'yarn binaries:prep' to restage them",
+      );
     }
   }
   return true;
 }
 
 export async function writeBrewLockEntries(lock, target, root, entries) {
+  const drifted = [];
   for (const [name, entry] of entries) {
     const version = await brewVersion(entry.formula);
     const destPath = join(binaryDir(root), expectedDest(entry.dest ?? name, target));
     if (!(await exists(destPath))) {
-      fail(`${expectedDest(entry.dest ?? name, target)} was not staged — run 'yarn binaries:prep' again`);
+      fail(
+        `${expectedDest(entry.dest ?? name, target)} was not staged`,
+        "re-run 'yarn binaries:prep'",
+      );
     }
     if (version !== entry.expectVersion) {
-      console.warn(
-        `WARN ${name}: brew ${entry.formula} is ${version}, manifest pins ${entry.expectVersion} — 'yarn binaries:verify' will fail on this drift until the manifest pin is updated`,
+      drifted.push(
+        `  ${name}: brew ${entry.formula} is ${version}, the manifest pins ${entry.expectVersion}`,
       );
+      continue;
     }
     lock.targets[target][name] = {
       source: entry.source,
@@ -227,6 +285,12 @@ export async function writeBrewLockEntries(lock, target, root, entries) {
       stagedSha256: await sha256File(destPath),
       date: new Date().toISOString(),
     };
+  }
+  if (drifted.length > 0) {
+    fail(
+      `brew version drift — the staged engines no longer match the manifest pins:\n${drifted.join("\n")}`,
+      "bump the expectVersion values in scripts/binaries.manifest.json to the versions above (or reinstall the pinned formula), then re-run 'yarn binaries:prep'",
+    );
   }
   return lock;
 }
@@ -247,7 +311,8 @@ export async function assertFetchedEntriesUntouched(lock, target, root, entries)
     const staged = await sha256File(destPath);
     if (staged !== recorded) {
       fail(
-        `${expectedDest(entry.dest ?? name, target)}: sha256 mismatch — the lock records the file fetch staged (${recorded}) but the staged file is ${staged}; it was swapped or modified outside this pipeline — re-run 'yarn binaries:fetch'`,
+        `${expectedDest(entry.dest ?? name, target)}: sha256 mismatch — the lock records the file fetch staged (${recorded}) but the staged file is ${staged}; it was swapped or modified outside this pipeline`,
+        "re-run 'yarn binaries:fetch'",
       );
     }
   }
@@ -271,6 +336,28 @@ export async function refreshBundledStagedShas(lock, target, root, entries) {
   return lock;
 }
 
+export async function assertAllEnginesStaged(root, target, targetEntries) {
+  const missing = [];
+  for (const [name, entry] of Object.entries(targetEntries)) {
+    const dest = expectedDest(entry.dest ?? name, target);
+    const path = join(binaryDir(root), dest);
+    const info = await stat(path).catch(() => null);
+    if (!info || !info.isFile()) {
+      missing.push(dest);
+      continue;
+    }
+    if (!info.mode & 0o111) {
+      missing.push(`${dest} (not executable)`);
+    }
+  }
+  if (missing.length > 0) {
+    fail(
+      `these manifest rows are not staged and executable after prep: ${missing.join(", ")}`,
+      "run 'yarn binaries:all --target " + target + "' (fetch then prep)",
+    );
+  }
+}
+
 export async function prepTarget(target, root) {
   const manifest = await loadManifest(root);
   const targetEntries = manifest.targets?.[target];
@@ -281,7 +368,8 @@ export async function prepTarget(target, root) {
   }
   if (isWindowsTriple(target)) {
     fail(
-      `prep for ${target} is not implemented yet — the Windows engine-folder layout lands in Task 3 of docs/superpowers/plans/2026-10-02-sidecar-binaries-release.md`,
+      `prep for ${target} is not implemented yet`,
+      "the Windows engine-folder layout lands in Task 3 of docs/superpowers/plans/2026-10-02-sidecar-binaries-release.md",
     );
   }
   const expectedArch = archForTriple(target);
@@ -303,10 +391,14 @@ export async function prepTarget(target, root) {
 
   await runBundleScripts(root);
 
-  for (const [, entry] of brewEntries) {
-    await assertGsResourcesStaged(root, entry);
+  const resourceEntries = Object.entries(targetEntries).filter(
+    ([, entry]) => Array.isArray(entry.resources) && entry.resources.length > 0,
+  );
+  for (const [name, entry] of resourceEntries) {
+    await assertGsResourcesStaged(root, entry, name);
   }
 
+  await assertAllEnginesStaged(root, target, targetEntries);
   await writeBrewLockEntries(lock, target, root, brewEntries);
   await refreshBundledStagedShas(lock, target, root, Object.entries(targetEntries));
   lock.generated = new Date().toISOString();
@@ -334,6 +426,9 @@ if (isMain(import.meta.url)) {
     process.exit(ok ? 0 : 1);
   } catch (error) {
     console.error(`FAIL ${error.message ?? error}`);
+    if (error instanceof PipelinesError && error.remedy) {
+      console.error(`REMEDY ${error.remedy}`);
+    }
     process.exit(1);
   }
 }

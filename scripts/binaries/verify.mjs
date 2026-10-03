@@ -82,6 +82,11 @@ export function gsResourcesDir(root) {
 
 const GS_INIT_MARKER = join("Resource", "Init", "gs_init.ps");
 
+export async function treeHasFile(dir) {
+  const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => []);
+  return entries.some((entry) => entry.isFile());
+}
+
 export async function checkGsResources(root, name, entry, problems) {
   const resources = entry.resources;
   if (!Array.isArray(resources) || resources.length === 0) {
@@ -94,6 +99,13 @@ export async function checkGsResources(root, name, entry, problems) {
     );
     return;
   }
+  for (const dirName of resources) {
+    const dir = join(base, dirName);
+    const info = await stat(dir).catch(() => null);
+    if (!info || !info.isDirectory()) {
+      problems.push(`${name}: gs resources dir missing: ${dir} — run 'yarn binaries:prep' to stage it`);
+    }
+  }
   if (resources.includes("Resource") && !(await exists(join(base, GS_INIT_MARKER)))) {
     problems.push(
       `${name}: gs resource marker missing: ${join(base, GS_INIT_MARKER)} — run 'yarn binaries:prep' to restage them`,
@@ -101,26 +113,25 @@ export async function checkGsResources(root, name, entry, problems) {
   }
   for (const dirName of resources) {
     const dir = join(base, dirName);
-    const info = await stat(dir).catch(() => null);
-    if (!info || !info.isDirectory()) {
-      problems.push(`${name}: gs resources dir missing: ${dir} — run 'yarn binaries:prep' to stage it`);
+    if (!(await exists(dir))) {
       continue;
     }
-    const contents = await readdir(dir).catch(() => []);
-    if (contents.length === 0) {
+    if (!(await treeHasFile(dir))) {
       problems.push(
-        `${name}: gs resources dir is empty: ${dir} — a real PDF needs fonts and ICC profiles from it; run 'yarn binaries:prep' to restage them`,
+        `${name}: gs resources dir has no files anywhere under it: ${dir} — a real PDF needs fonts and ICC profiles from it; run 'yarn binaries:prep' to restage them`,
       );
     }
   }
 }
 
-export async function checkBrewVersion(name, entry, lockEntry, problems) {
+export async function checkBrewVersion(name, entry, problems) {
   if (entry.source !== "brew") {
     return;
   }
   if (!(await toolOnPath("brew"))) {
-    console.warn(`WARN ${name}: brew not on PATH — skipping the brew version check for ${entry.formula}`);
+    problems.push(
+      `${name}: brew is not on PATH, so the version-drift gate for formula ${entry.formula} is INACTIVE — a drifted Homebrew build would pass this audit. Install Homebrew (https://brew.sh) or pass an explicit allowance, then re-run the audit`,
+    );
     return;
   }
   let installed;
@@ -140,10 +151,9 @@ export async function checkBrewVersion(name, entry, lockEntry, problems) {
     );
     return;
   }
-  const expected = lockEntry?.version ?? entry.expectVersion;
-  if (installed !== expected) {
+  if (installed !== entry.expectVersion) {
     problems.push(
-      `${name}: brew version drift — formula ${entry.formula} is ${installed}, the lock pins ${expected} — re-pin the manifest expectVersion and re-run 'yarn binaries:all' (refresh automation lands with 'yarn binaries:refresh')`,
+      `${name}: brew version drift — formula ${entry.formula} is ${installed} but scripts/binaries.manifest.json pins ${entry.expectVersion}. Re-pin expectVersion to ${installed} in the manifest (or reinstall the pinned formula), then re-run 'yarn binaries:all'`,
     );
   }
 }
@@ -269,7 +279,7 @@ export async function verifyTarget(target, root) {
     }
 
     await checkGsResources(root, dest, entry, problems);
-    await checkBrewVersion(dest, entry, lockEntry, problems);
+    await checkBrewVersion(dest, entry, problems);
   }
 
   if (problems.length > 0) {

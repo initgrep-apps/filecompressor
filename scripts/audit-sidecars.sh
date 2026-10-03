@@ -29,7 +29,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 BIN_DIR="$ROOT/src-tauri/binaries"
 FRAMEWORKS_DIR="$ROOT/src-tauri/frameworks"
+GS_RESOURCES_DIR="$ROOT/src-tauri/gs-resources"
 CONF="$ROOT/src-tauri/tauri.conf.json"
+GS_ACCEPTANCE_SENTINEL="fso-sidecar-acceptance-sentinel.ps"
 
 TARGET=""
 while [ $# -gt 0 ]; do
@@ -199,60 +201,96 @@ if [ -f "$CONF" ]; then
   done
 fi
 
+gs_smoke_required_dirs() {
+  printf '%s\n' Resource/Init lib Resource/Font fonts iccprofiles
+}
+
+dir_has_file_recursive() {
+  find "$1" -type f -print -quit 2>/dev/null | grep -q .
+}
+
 gs_clean_room_smoke() {
   local gs="$1"
   local gs_resources="$2"
   local work="$3"
-  local -a gs_includes=()
   local dir
+  local -a gs_includes=()
+  for dir in $(gs_smoke_required_dirs); do
+    if [ ! -d "$gs_resources/$dir" ]; then
+      printf 'FAIL gs clean-room smoke: required staged resource dir missing: %s\n' "$gs_resources/$dir" >&2
+      printf "  every dir here is load-bearing: run 'yarn binaries:prep' to restage them\n" >&2
+      return 1
+    fi
+  done
+  for dir in Resource/Init lib Resource/Font fonts iccprofiles; do
+    if ! dir_has_file_recursive "$gs_resources/$dir"; then
+      printf 'FAIL gs clean-room smoke: no files anywhere under %s\n' "$gs_resources/$dir" >&2
+      printf "  an empty tree here means the app would fall back to whatever the host has.\n" >&2
+      printf "  Run 'yarn binaries:prep' to restage the gs resources.\n" >&2
+      return 1
+    fi
+  done
   for dir in Resource/Init lib Resource/Font fonts; do
-    [ -d "$gs_resources/$dir" ] || continue
     gs_includes+=("-I$gs_resources/$dir")
   done
-  if [ -d "$gs_resources/iccprofiles" ]; then
-    gs_includes+=("-uICCProfilesDir=$gs_resources/iccprofiles")
-  fi
-  if [ "${#gs_includes[@]}" -eq 0 ]; then
-    printf 'FAIL gs clean-room smoke: no staged resource dirs under %s\n' "$gs_resources"
-    return 1
-  fi
+  gs_includes+=("-uICCProfilesDir=$gs_resources/iccprofiles")
+
   local fixture="$work/font-fixture.ps"
   local out="$work/font-fixture.pdf"
-  printf '%s\n' \
-    '%!PS' \
-    '/Helvetica-Bold findfont 24 scalefont setfont' \
-    '72 700 moveto (gs clean-room smoke) show' \
-    '/Helvetica findfont 12 scalefont setfont' \
-    '72 660 moveto (font resolution must come from the staged resources) show' \
-    'showpage' >"$fixture"
-  if ! env -i HOME=/nonexistent PATH=/usr/bin:/bin \
+  {
+    printf '%s\n' '%!PS'
+    printf '(%s) runlibfile\n' "$GS_ACCEPTANCE_SENTINEL"
+    printf '%s\n' \
+      '/Helvetica-Bold findfont 24 scalefont setfont' \
+      '72 700 moveto (gs clean-room smoke) show' \
+      '/Helvetica findfont 12 scalefont setfont' \
+      '72 660 moveto (font resolution must come from the staged resources) show' \
+      'showpage'
+  } >"$fixture"
+
+  local status=0
+  env -i HOME=/nonexistent PATH=/usr/bin:/bin \
     DYLD_LIBRARY_PATH="$FRAMEWORKS_DIR" \
     "$gs" "${gs_includes[@]}" \
     -sDEVICE=pdfwrite -dNOPAUSE -dQUIET -dBATCH \
-    -sOutputFile="$out" "$fixture" 2>"$work/gs.stderr"; then
-    printf 'FAIL gs clean-room smoke: gs exited non-zero with only the staged resources\n'
-    sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2 || true
+    -sOutputFile="$out" "$fixture" >"$work/gs.stderr" 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'FAIL gs clean-room smoke: gs exited %s with only the staged resources\n' "$status" >&2
+    printf '  (missing sentinel %s means gs fell back to its compiled-in Homebrew prefix, so the -I flags are not load-bearing)\n' "$GS_ACCEPTANCE_SENTINEL" >&2
+    sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2
     return 1
   fi
   local size
   size="$(wc -c <"$out" | tr -d ' ')"
   if [ ! -s "$out" ] || [ "$size" -le 1024 ]; then
-    printf 'FAIL gs clean-room smoke: rendered %s bytes, expected more than 1024 from a font-using fixture\n' "$size"
+    printf 'FAIL gs clean-room smoke: rendered %s bytes, expected more than 1024 from a font-using fixture\n' "$size" >&2
+    sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2
     return 1
   fi
   if ! grep -q '%%EOF' "$out"; then
-    printf 'FAIL gs clean-room smoke: output is not a complete PDF\n'
+    printf 'FAIL gs clean-room smoke: output is not a complete PDF\n' >&2
+    sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2
     return 1
   fi
-  printf 'gs clean-room smoke: PASS (%s bytes, %s staged resource flags)\n' "$size" "${#gs_includes[@]}"
+  printf 'gs clean-room smoke: PASS (%s bytes, %s staged resource flags, sentinel resolved)\n' "$size" "${#gs_includes[@]}"
 }
 
 gs_smoke_workdir=""
-if [ -n "$TARGET" ] && [ -f "$BIN_DIR/gs-$TARGET" ] && [ -d "$ROOT/src-tauri/gs-resources" ]; then
+gs_smoke_required=0
+if [ -n "$TARGET" ] && [ -f "$BIN_DIR/gs-$TARGET" ]; then
+  gs_smoke_required=1
+fi
+if [ "$gs_smoke_required" -eq 1 ]; then
   require_tool env
-  gs_smoke_workdir="$(mktemp -d -t gs-clean-room)"
-  if ! gs_clean_room_smoke "$BIN_DIR/gs-$TARGET" "$ROOT/src-tauri/gs-resources" "$gs_smoke_workdir"; then
+  if [ ! -d "$GS_RESOURCES_DIR" ]; then
+    printf 'FAIL gs clean-room smoke: staged gs-resources tree missing: %s\n' "$GS_RESOURCES_DIR" >&2
+    printf "  run 'yarn binaries:prep' to stage it — PDF compression cannot work without it\n" >&2
     failures+=("<gs-clean-room-smoke>")
+  else
+    gs_smoke_workdir="$(mktemp -d -t gs-clean-room)"
+    if ! gs_clean_room_smoke "$BIN_DIR/gs-$TARGET" "$GS_RESOURCES_DIR" "$gs_smoke_workdir"; then
+      failures+=("<gs-clean-room-smoke>")
+    fi
   fi
 fi
 if [ -n "$gs_smoke_workdir" ]; then

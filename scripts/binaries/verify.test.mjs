@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { sha256File } from "./lib.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VERIFY = join(HERE, "verify.mjs");
@@ -120,6 +121,99 @@ describe("verify.mjs", () => {
     expect(result.stderr).toContain("sha256 mismatch");
     expect(result.stderr).toContain("swapped or corrupted");
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("fails on brew version drift against the manifest pin even when the lock agrees with brew", async () => {
+    const root = await makeRoot({
+      targets: {
+        "aarch64-apple-darwin": {
+          gs: {
+            source: "brew",
+            formula: "ghostscript",
+            binary: "gs",
+            dest: "gs",
+            expectVersion: "10.08.0",
+          },
+        },
+      },
+    });
+    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.1");
+    await mkdir(`${root}/src-tauri/gs-resources/Resource/Init`, { recursive: true });
+    await writeFile(
+      `${root}/src-tauri/gs-resources/Resource/Init/gs_init.ps`,
+      "%!\n",
+    );
+    await mkdir(`${root}/src-tauri/gs-resources/lib`, { recursive: true });
+    await writeFile(`${root}/src-tauri/gs-resources/lib/gs_init.ps`, "%!\n");
+    for (const dir of ["iccprofiles", "fonts"]) {
+      await mkdir(`${root}/src-tauri/gs-resources/${dir}`, { recursive: true });
+      await writeFile(`${root}/src-tauri/gs-resources/${dir}/file`, "x");
+    }
+    const stagedSha256 = await sha256File(
+      `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`,
+    );
+    await writeFile(
+      `${root}/scripts/binaries.lock.json`,
+      JSON.stringify({
+        generated: new Date().toISOString(),
+        targets: {
+          "aarch64-apple-darwin": {
+            gs: {
+              source: "brew",
+              formula: "ghostscript",
+              version: "10.08.1",
+              stagedSha256,
+              date: new Date().toISOString(),
+            },
+          },
+        },
+      }),
+    );
+    const stubDir = await mkdtemp(`${tmpdir()}/verify-stub-brew-`);
+    await writeFile(
+      `${stubDir}/brew`,
+      "#!/bin/sh\ncase \"$1\" in\n  --version) echo ok ;;\n  list) printf '%s 10.08.1\\n' \"$2\" ;;\n  *) exit 1 ;;\nesac\n",
+      { mode: 0o755 },
+    );
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubDir}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("brew version drift");
+    expect(result.stderr).toContain("ghostscript is 10.08.1");
+    expect(result.stderr).toContain("binaries.manifest.json pins 10.08.0");
+    await rm(root, { recursive: true, force: true });
+    await rm(stubDir, { recursive: true, force: true });
+  });
+
+  it("fails loudly when the brew drift gate is inactive because brew is off PATH", async () => {
+    const root = await makeRoot({
+      targets: {
+        "aarch64-apple-darwin": {
+          gs: {
+            source: "brew",
+            formula: "ghostscript",
+            binary: "gs",
+            dest: "gs",
+            expectVersion: "10.08.0",
+          },
+        },
+      },
+    });
+    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    const emptyBin = await mkdtemp(`${tmpdir()}/verify-no-brew-`);
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${dirname(execFileSync("which", ["lipo"], { encoding: "utf8" }).trim())}:${emptyBin}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("brew is not on PATH");
+    expect(result.stderr).toContain("INACTIVE");
+    await rm(root, { recursive: true, force: true });
+    await rm(emptyBin, { recursive: true, force: true });
   });
 
   it("presents usage error when target missing or unknown", async () => {

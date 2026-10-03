@@ -114,6 +114,7 @@ pub(crate) struct GsResources {
 
 const GS_RESOURCE_SEARCH_DIRS: [&str; 4] = ["Resource/Init", "lib", "Resource/Font", "fonts"];
 const GS_ICC_PROFILES_DIR: &str = "iccprofiles";
+const GS_INIT_MARKER: &str = "Resource/Init/gs_init.ps";
 
 fn normalize_path(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -140,8 +141,39 @@ fn gs_resources_candidates(exe_dir: &Path) -> Vec<PathBuf> {
     ]
 }
 
-fn build_gs_resources(base: &Path) -> GsResources {
+fn dir_has_file(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| entry.path().is_file())
+}
+
+/// Returns the resolved tree, or `None` when the candidate exists but cannot
+/// actually serve one. Requiring the Init marker plus a non-empty font source
+/// means a present-but-hollow `gs-resources/` never yields a `Some` with an
+/// empty `search_paths` (which would silently degrade to gs's compiled-in
+/// Homebrew prefix with no warning).
+fn build_gs_resources(base: &Path) -> Option<GsResources> {
     let base = normalize_path(base);
+    if !base.join(GS_INIT_MARKER).is_file() {
+        eprintln!(
+            "warn: ignoring gs resources at {} — {} is missing, so gs would fall back to its compiled-in Homebrew prefix",
+            base.display(),
+            GS_INIT_MARKER
+        );
+        return None;
+    }
+    let font_dirs: Vec<&str> = vec!["Resource/Font", "fonts"];
+    if !font_dirs
+        .iter()
+        .any(|relative| base.join(relative).is_dir() && dir_has_file(&base.join(relative)))
+    {
+        eprintln!(
+            "warn: ignoring gs resources at {} — no font files under Resource/Font or fonts, so gs could not render text",
+            base.display()
+        );
+        return None;
+    }
     let search_paths = GS_RESOURCE_SEARCH_DIRS
         .iter()
         .map(|relative| base.join(relative))
@@ -152,10 +184,10 @@ fn build_gs_resources(base: &Path) -> GsResources {
     let icc_profiles_dir = icc
         .is_dir()
         .then(|| icc.to_string_lossy().into_owned());
-    GsResources {
+    Some(GsResources {
         search_paths,
         icc_profiles_dir,
-    }
+    })
 }
 
 /// Resolves the staged Ghostscript resource tree, first existing candidate wins.
@@ -164,8 +196,8 @@ fn build_gs_resources(base: &Path) -> GsResources {
 pub(crate) fn resolve_gs_resources(exe_dir: &Path) -> Option<GsResources> {
     gs_resources_candidates(exe_dir)
         .into_iter()
-        .find(|candidate| candidate.is_dir())
-        .map(|candidate| build_gs_resources(&candidate))
+        .filter(|candidate| candidate.is_dir())
+        .find_map(|candidate| build_gs_resources(&candidate))
 }
 
 pub(crate) fn resolve_all_sidecar_paths() -> Result<crate::engine::SidecarPaths, String> {
@@ -415,6 +447,17 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn empty_dir(base: &std::path::Path, dirs: &[&str]) {
+        for dir in dirs {
+            let path = base.join(dir);
+            std::fs::create_dir_all(&path).unwrap();
+            for entry in std::fs::read_dir(&path).unwrap() {
+                std::fs::remove_file(entry.unwrap().path()).unwrap();
+            }
+        }
+    }
+
+    #[cfg(unix)]
     fn gs_resource_root(root: &std::path::Path, relative: &str) -> std::path::PathBuf {
         let base = root.join(relative);
         std::fs::create_dir_all(base.join("Resource/Init")).unwrap();
@@ -493,12 +536,12 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn resolve_gs_resources_pending_candidate_tiebreak() {
+    fn resolve_gs_resources_dev_layout_candidate_resolves_alone() {
         let dir = tempfile::TempDir::new().unwrap();
         let exe_dir = dir.path().join("target/debug");
         std::fs::create_dir_all(&exe_dir).unwrap();
         let dev_layout = gs_resource_root(dir.path(), "target/debug/gs-resources");
-        write_gs_resources(&dev_layout, &["lib"]);
+        write_gs_resources(&dev_layout, &["lib", "fonts"]);
 
         let resolved = resolve_gs_resources(&exe_dir).expect("dev layout resolves");
         assert_eq!(
@@ -510,12 +553,100 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn resolve_gs_resources_dev_target_layout_candidate_resolves() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("target/debug");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let layout = gs_resource_root(dir.path(), "gs-resources");
+        write_gs_resources(&layout, &["lib", "fonts"]);
+
+        let resolved = resolve_gs_resources(&exe_dir)
+            .expect("exe_dir/../../gs-resources (the tauri dev layout) resolves");
+        assert_eq!(
+            resolved.search_paths.first().map(String::as_str),
+            Some(layout.join("Resource/Init").to_str().unwrap())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_resources_subdir_candidate_resolves() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let layout = gs_resource_root(dir.path(), "Contents/MacOS/resources/gs-resources");
+        write_gs_resources(&layout, &["lib", "fonts"]);
+
+        let resolved = resolve_gs_resources(&exe_dir)
+            .expect("exe_dir/resources/gs-resources resolves");
+        assert_eq!(
+            resolved.search_paths.first().map(String::as_str),
+            Some(layout.join("Resource/Init").to_str().unwrap())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_returns_none_for_tree_without_font_files() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        write_gs_resources(&resources, &["lib", "Resource/Font", "fonts"]);
+        empty_dir(&resources, &["fonts", "Resource/Font"]);
+
+        assert!(
+            resolve_gs_resources(&exe_dir).is_none(),
+            "a tree with no font files must not resolve: gs would silently use its compiled-in prefix"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_returns_none_when_init_marker_missing() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        write_gs_resources(&resources, &["lib", "fonts"]);
+        std::fs::remove_file(resources.join(GS_INIT_MARKER)).unwrap();
+
+        assert!(
+            resolve_gs_resources(&exe_dir).is_none(),
+            "without gs_init.ps the tree cannot start gs"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_skips_unusable_candidate_for_a_usable_later_one() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let hollow = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        write_gs_resources(&hollow, &["Resource/Font", "fonts"]);
+        empty_dir(&hollow, &["Resource/Font", "fonts"]);
+        let usable = gs_resource_root(dir.path(), "Contents/MacOS/resources/gs-resources");
+        write_gs_resources(&usable, &["lib", "fonts"]);
+
+        let resolved = resolve_gs_resources(&exe_dir).expect("a later usable candidate wins");
+        assert_eq!(
+            resolved.search_paths.first().map(String::as_str),
+            Some(usable.join("Resource/Init").to_str().unwrap()),
+            "an unusable earlier candidate must not mask a usable later one"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn resolve_gs_resources_takes_the_first_existing_candidate() {
         let dir = tempfile::TempDir::new().unwrap();
         let exe_dir = dir.path().join("Contents/MacOS");
         std::fs::create_dir_all(&exe_dir).unwrap();
         let bundle = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        write_gs_resources(&bundle, &["lib", "fonts"]);
         let dev = gs_resource_root(dir.path(), "target/debug/gs-resources");
+        write_gs_resources(&dev, &["lib", "fonts"]);
 
         let resolved = resolve_gs_resources(&exe_dir).expect("bundle layout resolves");
         assert_eq!(
@@ -634,6 +765,15 @@ mod tests {
             String::from_utf8_lossy(&out.stderr),
         );
         let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stdout.contains("gs clean-room smoke: PASS"),
+            "the audit reported PASS without running the gs clean-room smoke; a \
+             silently skipped smoke hides a missing/hollow gs-resources tree. \
+             stdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
         let summary = stdout
             .lines()
             .find(|line| line.starts_with("sidecar audit: PASS"))
@@ -656,5 +796,25 @@ mod tests {
             .expect("framework dylibs count parses");
         assert!(binaries > 0, "audit covered 0 binaries");
         assert!(dylibs > 0, "audit covered 0 framework dylibs");
+    }
+
+    #[test]
+    fn tauri_conf_json_maps_gs_resources_into_the_bundle() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let conf = std::fs::read_to_string(format!("{}/tauri.conf.json", manifest))
+            .expect("tauri.conf.json readable from src-tauri");
+        let value: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
+        let resources = value["bundle"]["resources"]
+            .as_object()
+            .expect("bundle.resources must be an object (map notation)");
+        let mapped = resources
+            .get("gs-resources/")
+            .and_then(serde_json::Value::as_str);
+        assert_eq!(
+            mapped,
+            Some("gs-resources/"),
+            "gs-resources/ must map to gs-resources/ in the bundle, got: {:?}",
+            resources
+        );
     }
 }

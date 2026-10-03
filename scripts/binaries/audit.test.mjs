@@ -6,6 +6,8 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
+import { sha256File } from "./lib.mjs";
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const AUDIT = join(SCRIPTS, "..", "audit-sidecars.sh");
@@ -54,17 +56,46 @@ const GS_FIXTURE_C = `
 int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "--version") == 0) { printf("10.08.0\\n"); return 0; }
   const char *out = NULL;
+  const char *fixture = NULL;
   for (int i = 1; i < argc; i++) {
     if (strncmp(argv[i], "-sOutputFile=", 13) == 0) out = argv[i] + 13;
+    if (strstr(argv[i], ".ps") != NULL) fixture = argv[i];
   }
   if (out == NULL) { fprintf(stderr, "no -sOutputFile=\\n"); return 2; }
+  if (fixture == NULL) { fprintf(stderr, "no postscript fixture argument\\n"); return 3; }
+  {
+    FILE *src = fopen(fixture, "rb");
+    if (src == NULL) { fprintf(stderr, "cannot read fixture %s\\n", fixture); return 4; }
+    char line[1024];
+    int saw_sentinel = 0;
+    while (fgets(line, sizeof(line), src) != NULL) {
+      if (strstr(line, "fso-sidecar-acceptance-sentinel") != NULL &&
+          strstr(line, "runlibfile") != NULL) saw_sentinel = 1;
+    }
+    fclose(src);
+    if (!saw_sentinel) {
+      fprintf(stderr, "fixture does not runlibfile the staged acceptance sentinel\\n");
+      return 5;
+    }
+  }
+  for (int i = 1; i < argc; i++) {
+    if (strncmp(argv[i], "-I", 2) != 0) continue;
+    char path[4096];
+    snprintf(path, sizeof(path), "%s/fso-sidecar-acceptance-sentinel.ps", argv[i] + 2);
+    FILE *s = fopen(path, "rb");
+    if (s != NULL) { fclose(s); goto resolved; }
+  }
+  fprintf(stderr, "no -I resource dir carries the staged acceptance sentinel: gs would use its compiled-in prefix\\n");
+  return 6;
+resolved:
 #if GS_EXIT_CODE != 0
   fprintf(stderr, "gs fixture refusing to render\\n");
   return GS_EXIT_CODE;
 #endif
   FILE *f = fopen(out, "wb");
-  if (f == NULL) return 3;
+  if (f == NULL) return 7;
   fputs("%PDF-1.7\\n", f);
+  fputs("1 0 0 RG 3 w 20 20 100 100 re S\\n", f);
   for (int i = 0; i < 500; i++) fputs("0 0 0 rg 10 10 10 10 re f\\n", f);
   fputs("%%EOF\\n", f);
   fclose(f);
@@ -81,6 +112,8 @@ function compileGsFixture(arch, outPath, exitCode = 0) {
   execFileSync("clang", [`-DGS_EXIT_CODE=${exitCode}`, "-arch", arch, source, "-o", outPath]);
 }
 
+const SENTINEL = "fso-sidecar-acceptance-sentinel.ps";
+
 const GS_MANIFEST_ENTRY = {
   source: "brew",
   formula: "ghostscript",
@@ -90,7 +123,7 @@ const GS_MANIFEST_ENTRY = {
   resources: ["Resource", "lib", "iccprofiles", "fonts"],
 };
 
-async function makeGsRoot({ resources = true, icc = true, fonts = true } = {}) {
+async function makeGsRoot({ resources = true, icc = true, fonts = true, sentinel = true } = {}) {
   await mkdir(`${tmpdir()}/audit-test-roots`, { recursive: true });
   const root = await mkdtemp(`${tmpdir()}/audit-test-roots/r`);
   cleanupRoots.push(root);
@@ -132,6 +165,9 @@ async function makeGsRoot({ resources = true, icc = true, fonts = true } = {}) {
       for (const file of files) {
         await writeFile(`${base}/${dir}/${file}`, "content");
       }
+    }
+    if (sentinel) {
+      await writeFile(`${base}/Resource/Init/${SENTINEL}`, "%!\n");
     }
   }
   return root;
@@ -300,8 +336,53 @@ describe("audit-sidecars.sh", () => {
       PATH: `${stubBrew}:${process.env.PATH}`,
     });
     expect(result.code).toBe(1);
-    expect(result.stdout).toContain("FAIL gs clean-room smoke");
+    expect(result.stdout + result.stderr).toContain("FAIL gs clean-room smoke");
     expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+
+  it("fails the smoke when the staged sentinel is missing, so a brew-prefix fallback cannot pass", async () => {
+    const root = await makeGsRoot({ sentinel: false });
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stdout + result.stderr).toContain("FAIL gs clean-room smoke");
+    expect(result.stdout + result.stderr).toContain(SENTINEL);
+    expect(result.stdout).not.toContain("sentinel resolved");
+  });
+
+  it("fails the smoke when a staged resource dir is emptied", async () => {
+    const root = await makeGsRoot();
+    for (const entry of readdirSync(`${root}/src-tauri/gs-resources/Resource/Font`)) {
+      rmSync(`${root}/src-tauri/gs-resources/Resource/Font/${entry}`, { recursive: true, force: true });
+    }
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stdout + result.stderr).toMatch(
+      /no files anywhere under .*Resource\/Font/,
+    );
+    expect(result.stdout).not.toContain("sentinel resolved");
+  });
+
+  it("fails when a required staged resource dir is absent entirely", async () => {
+    const root = await makeGsRoot();
+    rmSync(`${root}/src-tauri/gs-resources/iccprofiles`, { recursive: true, force: true });
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stdout + result.stderr).toMatch(
+      /gs resources dir missing: .*iccprofiles/,
+    );
+    expect(result.stdout).not.toContain("sentinel resolved");
   });
 
   it("audit_fails_when_gs_resources_missing_entirely", async () => {
@@ -324,18 +405,58 @@ describe("audit-sidecars.sh", () => {
       PATH: `${await makeStubBrew()}:${process.env.PATH}`,
     });
     expect(fontResult.code).toBe(1);
-    expect(fontResult.stderr).toMatch(/gs resources dir is empty: .*\/fonts/);
+    expect(fontResult.stderr).toMatch(/has no files anywhere under it: .*\/fonts/);
 
     const noIcc = await makeGsRoot({ icc: false });
     const iccResult = await runAudit(noIcc, "aarch64-apple-darwin", {
       PATH: `${await makeStubBrew()}:${process.env.PATH}`,
     });
     expect(iccResult.code).toBe(1);
-    expect(iccResult.stderr).toMatch(/gs resources dir is empty: .*\/iccprofiles/);
+    expect(iccResult.stderr).toMatch(/has no files anywhere under it: .*\/iccprofiles/);
+  });
+
+  it("fails when a resource dir holds only empty subdirectories", async () => {
+    const root = await makeGsRoot();
+    const fontDir = `${root}/src-tauri/gs-resources/Resource/Font`;
+    for (const entry of readdirSync(fontDir)) {
+      rmSync(`${fontDir}/${entry}`, { recursive: true, force: true });
+    }
+    mkdirSync(`${fontDir}/Init`, { recursive: true });
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    const output = result.stdout + result.stderr;
+    expect(output).toMatch(
+      /no files anywhere under .*Resource\/Font|has no files anywhere under it: .*Resource\/Font/,
+    );
+    expect(result.stdout).not.toContain("sentinel resolved");
   });
 
   it("audit_fails_on_brew_version_drift", async () => {
     const root = await makeGsRoot();
+    const stagedSha256 = await sha256File(
+      `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`,
+    );
+    await writeFile(
+      `${root}/scripts/binaries.lock.json`,
+      JSON.stringify({
+        generated: new Date().toISOString(),
+        targets: {
+          "aarch64-apple-darwin": {
+            gs: {
+              source: "brew",
+              formula: "ghostscript",
+              version: "10.08.1",
+              stagedSha256,
+              date: new Date().toISOString(),
+            },
+          },
+        },
+      }),
+    );
     const stubBrew = await makeStubBrew("10.08.1");
 
     const result = await runAudit(root, "aarch64-apple-darwin", {
@@ -344,7 +465,7 @@ describe("audit-sidecars.sh", () => {
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("brew version drift");
     expect(result.stderr).toContain("formula ghostscript is 10.08.1");
-    expect(result.stderr).toContain("the lock pins 10.08.0");
+    expect(result.stderr).toContain("binaries.manifest.json pins 10.08.0");
     expect(result.stdout).not.toContain("sidecar audit: PASS");
   });
 

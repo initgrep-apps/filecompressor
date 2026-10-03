@@ -92,15 +92,15 @@ impl PdfProcessor {
     }
 
     /// Builds the gs argument vector. When the staged resource tree resolved, the
-/// `-I` search paths (and the ICC profile dir) are prepended ahead of every
-/// engine flag so Ghostscript never falls back to its compiled-in Homebrew
-/// prefix; with no staged tree the vector is exactly the pre-resources one.
-///
-/// The ICC dir goes in as `-uICCProfilesDir` (a user parameter, which is how
-/// `Resource/Init/gs_lev2.ps` reads it). `-sICCProfilesDir` is not accepted by
-/// pdfwrite: gs 10.08 aborts device init with "Unable to open the initial
-/// device" whenever it is passed.
-fn gs_args(
+    /// `-I` search paths (and the ICC profile dir) are prepended ahead of every
+    /// engine flag so Ghostscript never falls back to its compiled-in Homebrew
+    /// prefix; with no staged tree the vector is exactly the pre-resources one.
+    ///
+    /// The ICC dir goes in as `-uICCProfilesDir` (a user parameter, which is how
+    /// `Resource/Init/gs_lev2.ps` reads it). `-sICCProfilesDir` is not accepted by
+    /// pdfwrite: gs 10.08 aborts device init with "Unable to open the initial
+    /// device" whenever it is passed.
+    fn gs_args(
     dpi: Option<u32>,
     jpegq: Option<u32>,
     input: &Path,
@@ -446,6 +446,32 @@ mod tests {
             !args.iter().any(|a| a.starts_with("-uICCProfilesDir=")),
             "no iccprofiles dir means no ICC profile flag: {:?}",
             args
+        );
+    }
+
+    #[test]
+    fn gs_args_never_emit_empty_resource_flag_set() {
+        let empty = GsResources {
+            search_paths: Vec::new(),
+            icc_profiles_dir: None,
+        };
+        let without = PdfProcessor::gs_args(
+            None,
+            None,
+            Path::new("/tmp/in.pdf"),
+            Path::new("/tmp/out.pdf"),
+            None,
+        );
+        let from_empty = PdfProcessor::gs_args(
+            None,
+            None,
+            Path::new("/tmp/in.pdf"),
+            Path::new("/tmp/out.pdf"),
+            Some(&empty),
+        );
+        assert_eq!(
+            from_empty, without,
+            "an empty search path list must not prepend stray -I flags"
         );
     }
 

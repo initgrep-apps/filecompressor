@@ -6,11 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sha256File } from "./lib.mjs";
 import {
+  assertAllEnginesStaged,
   assertFetchedEntriesUntouched,
   assertGsResourcesStaged,
   assertStagedArch,
   brewVersion,
   parseBrewVersion,
+  PipelinesError,
   prepTarget,
   refreshBundledStagedShas,
   stageBrewBinary,
@@ -58,11 +60,11 @@ async function makeFormulaPrefix(binaryName, arch = "arm64") {
   return prefix;
 }
 
-function stubBrewScript(prefix) {
+function stubBrewScript(prefix, version = "8.18.7") {
   return `#!/bin/sh
 case "$1" in
   --prefix) printf '%s\\n' '${prefix}' ;;
-  list) printf '%s %s\\n' "$2" "10.08.0" ;;
+  list) printf '%s %s\\n' "$2" "${version}" ;;
   *) exit 1 ;;
 esac
 `;
@@ -126,13 +128,29 @@ describe("parseBrewVersion", () => {
 
 describe("brewVersion", () => {
   it("reads the installed version from brew", async () => {
-    useStubBrew(await makeStubBrew(stubBrewScript("/opt/homebrew/opt/ghostscript")));
+    useStubBrew(await makeStubBrew(stubBrewScript("/opt/homebrew/opt/ghostscript", "10.08.0")));
     await expect(brewVersion("ghostscript")).resolves.toBe("10.08.0");
   });
 
   it("names the install command when the formula is absent", async () => {
     useStubBrew(await makeStubBrew("#!/bin/sh\nexit 1\n"));
-    await expect(brewVersion("ghostscript")).rejects.toThrow(/brew install ghostscript/);
+    const error = await brewVersion("ghostscript").catch((thrown) => thrown);
+    expect(error.message).toMatch(/brew list --versions ghostscript failed/);
+    expect(error.remedy).toMatch(/brew install ghostscript/);
+  });
+
+  it("reads the installed version for a brew formula that matches its pin", async () => {
+    const prefix = await makeFormulaPrefix("vips");
+    useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
+    await expect(brewVersion("vips")).resolves.toBe("8.18.7");
+  });
+
+  it("exposes a structured remedy instead of embedding it in the message", async () => {
+    useStubBrew(await makeStubBrew("#!/bin/sh\nexit 1\n"));
+    await expect(brewVersion("ghostscript")).rejects.toMatchObject({
+      name: "PipelinesError",
+      remedy: expect.stringContaining("brew install ghostscript"),
+    });
   });
 
   it("names the Homebrew install when brew itself is missing", async () => {
@@ -172,9 +190,12 @@ describe("stageBrewBinary", () => {
     const prefix = await makeFormulaPrefix("something-else");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
 
-    await expect(stageBrewBinary(root, "aarch64-apple-darwin", "vips", VIPS_ENTRY)).rejects.toThrow(
-      /brew formula vips has no vips at .* — run 'brew reinstall vips'/,
+    const error = await stageBrewBinary(root, "aarch64-apple-darwin", "vips", VIPS_ENTRY).catch(
+      (thrown) => thrown,
     );
+    expect(error).toBeInstanceOf(PipelinesError);
+    expect(error.message).toMatch(/brew formula vips has no vips at /);
+    expect(error.remedy).toMatch(/brew reinstall vips/);
   });
 });
 
@@ -208,29 +229,30 @@ describe("writeBrewLockEntries", () => {
     const entry = lock.targets["aarch64-apple-darwin"].vips;
     expect(entry.source).toBe("brew");
     expect(entry.formula).toBe("vips");
-    expect(entry.version).toBe("10.08.0");
+    expect(entry.version).toBe("8.18.7");
     expect(entry.stagedSha256).toBe(await sha256File(staged.destPath));
     expect(Date.parse(entry.date)).not.toBeNaN();
   });
 
-  it("warns but records truth when brew drifted from the manifest pin", async () => {
+  it("fails on brew version drift instead of recording the drifted version", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
-    useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
+    useStubBrew(await makeStubBrew(stubBrewScript(prefix, "8.19.0")));
     await stageBrewBinary(root, "aarch64-apple-darwin", "vips", VIPS_ENTRY);
 
-    const warn = [];
-    const originalWarn = console.warn;
-    console.warn = (message) => warn.push(message);
-    try {
-      const lock = { generated: null, targets: { "aarch64-apple-darwin": {} } };
-      await writeBrewLockEntries(lock, "aarch64-apple-darwin", root, [["vips", VIPS_ENTRY]]);
-      expect(lock.targets["aarch64-apple-darwin"].vips.version).toBe("10.08.0");
-    } finally {
-      console.warn = originalWarn;
-    }
-    expect(warn.join("\n")).toContain("manifest pins 8.18.7");
-    expect(warn.join("\n")).toContain("yarn binaries:verify");
+    const lock = { generated: null, targets: { "aarch64-apple-darwin": {} } };
+    const error = await writeBrewLockEntries(lock, "aarch64-apple-darwin", root, [
+      ["vips", VIPS_ENTRY],
+    ]).catch((thrown) => thrown);
+
+    expect(error).toBeInstanceOf(PipelinesError);
+    expect(error.message).toMatch(/brew version drift/);
+    expect(error.message).toMatch(/vips: brew vips is 8\.19\.0, the manifest pins 8\.18\.7/);
+    expect(error.remedy).toMatch(/expectVersion/);
+    expect(
+      lock.targets["aarch64-apple-darwin"].vips,
+      "a drifted version must never be written to the lock",
+    ).toBeUndefined();
   });
 
   it("fails when the engine was never staged", async () => {
@@ -384,15 +406,47 @@ describe("assertGsResourcesStaged", () => {
     await expect(assertGsResourcesStaged(root, entry)).rejects.toThrow(/gs_init\.ps/);
   });
 
-  it("fails when iccprofiles or fonts is empty", async () => {
+  it("fails when iccprofiles or fonts has no files anywhere under it", async () => {
     const root = await makeRoot(WITH_BREW);
-    const base = await stageResources(root, { fonts: false });
+    await stageResources(root, { fonts: false });
     await expect(assertGsResourcesStaged(root, entry)).rejects.toThrow(
-      /gs resources dir empty: .*\/fonts/,
+      /has no files anywhere under it: .*\/fonts/,
     );
     const other = await makeRoot(WITH_BREW);
     await stageResources(other, { icc: false });
-    await expect(assertGsResourcesStaged(other, entry)).rejects.toThrow(/gs resources dir empty/);
+    await expect(assertGsResourcesStaged(other, entry)).rejects.toThrow(
+      /has no files anywhere under it: .*\/iccprofiles/,
+    );
+  });
+
+  it("fails when a resource dir holds only empty subdirectories", async () => {
+    const root = await makeRoot(WITH_BREW);
+    const base = await stageResources(root);
+    await rm(join(base, "fonts"), { recursive: true, force: true });
+    await mkdir(join(base, "fonts", "default"), { recursive: true });
+    await expect(assertGsResourcesStaged(root, entry)).rejects.toThrow(
+      /has no files anywhere under it: .*\/fonts/,
+    );
+  });
+
+  it("validates a url-sourced gs entry too, not only brew rows", async () => {
+    const urlGs = {
+      source: "url",
+      url: "https://x/gs.zip",
+      sha256: "c".repeat(64),
+      member: "gs.exe",
+      dest: "gs",
+      expectVersion: "10.08.0",
+      resources: ["Resource", "lib", "iccprofiles", "fonts"],
+    };
+    const root = await makeRoot({
+      targets: { "aarch64-apple-darwin": { gs: urlGs } },
+    });
+    await expect(assertGsResourcesStaged(root, urlGs, "gs")).rejects.toThrow(
+      /gs resources dir missing/,
+    );
+    await stageResources(root);
+    await expect(assertGsResourcesStaged(root, urlGs, "gs")).resolves.toBe(true);
   });
 });
 
@@ -416,9 +470,31 @@ describe("prepTarget", () => {
         "x86_64-pc-windows-msvc": URL_ONLY.targets["aarch64-apple-darwin"],
       },
     });
-    await expect(prepTarget("x86_64-pc-windows-msvc", root)).rejects.toThrow(
-      /not implemented yet .* Task 3/s,
-    );
+    const error = await prepTarget("x86_64-pc-windows-msvc", root).catch((thrown) => thrown);
+    expect(error).toBeInstanceOf(PipelinesError);
+    expect(error.message).toMatch(/not implemented yet/);
+    expect(error.remedy).toMatch(/Task 3/);
+  });
+
+  it("refuses to report PASS when a manifest row was never staged", async () => {
+    const root = await makeRoot(WITH_BREW);
+    await expect(assertAllEnginesStaged(root, "aarch64-apple-darwin", WITH_BREW.targets["aarch64-apple-darwin"]))
+      .rejects.toThrow(/ffmpeg-aarch64-apple-darwin/);
+    await expect(
+      assertAllEnginesStaged(root, "aarch64-apple-darwin", {
+        vips: VIPS_ENTRY,
+      }),
+    ).rejects.toThrow(/not staged and executable/);
+  });
+
+  it("accepts a fully staged and executable engine set", async () => {
+    const root = await makeRoot(WITH_BREW);
+    const prefix = await makeFormulaPrefix("vips");
+    useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
+    await stageBrewBinary(root, "aarch64-apple-darwin", "vips", VIPS_ENTRY);
+    await expect(
+      assertAllEnginesStaged(root, "aarch64-apple-darwin", { vips: VIPS_ENTRY }),
+    ).resolves.toBeUndefined();
   });
 
   it("names the Homebrew install when brew is absent, before touching staged files", async () => {

@@ -34,6 +34,7 @@ TRIPLE="$(rustc -Vv | grep '^host:' | sed 's/host: //')"
 STAGING_QPDF_LIB="$ROOT/src-tauri/.staging/qpdf-$TRIPLE/lib"
 GS_RESOURCES="$ROOT/src-tauri/gs-resources"
 GS_RESOURCE_DIRS=(Resource lib iccprofiles fonts)
+GS_ACCEPTANCE_SENTINEL="fso-sidecar-acceptance-sentinel.ps"
 ENGINES=("$ROOT/src-tauri/binaries/qpdf-$TRIPLE" "$ROOT/src-tauri/binaries/gs-$TRIPLE")
 
 for sidecar in "${ENGINES[@]}"; do
@@ -41,15 +42,67 @@ for sidecar in "${ENGINES[@]}"; do
 done
 [ "$(uname)" = "Darwin" ] || { printf 'FAIL macOS only\n'; exit 1; }
 
-replace_frameworks_with_staged_qpdf_lib() {
-  local staged found=0
+staged_qpdf_libs() {
+  local staged
   for staged in "$STAGING_QPDF_LIB"/libqpdf*.dylib; do
     [ -f "$staged" ] || continue
-    found=1
+    printf '%s\n' "$staged"
   done
-  if [ "$found" -eq 0 ]; then
-    return 0
+}
+
+require_staged_qpdf_lib() {
+  if [ ! -d "$STAGING_QPDF_LIB" ]; then
+    printf 'FAIL qpdf lib staging dir missing: %s\n' "$STAGING_QPDF_LIB" >&2
+    printf "  fetch must stage the official qpdf lib before prep bundles it; without it the\n" >&2
+    printf "  collect_deps_of fallback would silently pull brew's libqpdf under the same\n" >&2
+    printf '  basename and rpath. Run: yarn binaries:fetch --target %s\n' "$TRIPLE" >&2
+    exit 1
   fi
+  if [ -z "$(staged_qpdf_libs)" ]; then
+    printf 'FAIL no libqpdf*.dylib in %s\n' "$STAGING_QPDF_LIB" >&2
+    printf "  same silent-substitution hazard as a missing staging dir: brew's libqpdf would\n" >&2
+    printf "  be staged under the official name. Check the qpdf manifest row has a \"lib\" key.\n" >&2
+    printf '  Run: yarn binaries:fetch --target %s\n' "$TRIPLE" >&2
+    exit 1
+  fi
+}
+
+assert_frameworks_qpdf_matches_staged() {
+  local qpdf_bin="$ROOT/src-tauri/binaries/qpdf-$TRIPLE"
+  local depbase staged existing
+  [ -f "$qpdf_bin" ] || return 0
+  while IFS= read -r depbase; do
+    [ -n "$depbase" ] || continue
+    staged=""
+    local candidate
+    for candidate in "$STAGING_QPDF_LIB"/"$depbase"; do
+      if [ -e "$candidate" ]; then
+        staged="$candidate"
+        break
+      fi
+    done
+    if [ -z "$staged" ]; then
+      printf 'FAIL qpdf links @rpath/%s but the staged official lib dir has no such file\n' "$depbase" >&2
+      printf '  staged dir: %s\n' "$STAGING_QPDF_LIB" >&2
+      printf '  Run: yarn binaries:fetch --target %s\n' "$TRIPLE" >&2
+      exit 1
+    fi
+    existing="$FRAMEWORKS/$depbase"
+    if [ ! -f "$existing" ]; then
+      printf 'FAIL frameworks/%s is linked by qpdf but was not collected\n' "$depbase" >&2
+      exit 1
+    fi
+    if [ "$(fingerprint "$staged")" != "$(fingerprint "$existing")" ]; then
+      printf 'FAIL frameworks/%s does not match the staged official qpdf lib — a Homebrew or stale copy won the collection\n' "$depbase" >&2
+      printf '  staged:    %s\n' "$staged" >&2
+      printf '  collected: %s\n' "$existing" >&2
+      printf '  Remove src-tauri/frameworks and re-run, or fix the qpdf manifest row.\n' >&2
+      exit 1
+    fi
+  done < <(otool -L "$qpdf_bin" | tail -n +2 | awk '{print $1}' | sed -n 's|^@rpath/||p')
+}
+
+replace_frameworks_with_staged_qpdf_lib() {
   local existing
   for existing in "$FRAMEWORKS"/libqpdf*.dylib; do
     [ -e "$existing" ] || continue
@@ -66,7 +119,22 @@ copy_tree_sorted() {
     exit 1
   }
   mkdir -p "$dst"
-  (cd "$src" && find . -print | LC_ALL=C sort | cpio -pdm --quiet "$dst")
+  local src_physical dst_physical
+  src_physical="$(cd "$src" && pwd -P)"
+  dst_physical="$(cd "$dst" && pwd -P)"
+  (cd "$src_physical" && find . -print | LC_ALL=C sort | cpio -pdm --quiet "$dst_physical")
+}
+
+stage_gs_acceptance_sentinel() {
+  local sentinel_dir="$GS_RESOURCES/Resource/Init"
+  mkdir -p "$sentinel_dir"
+  printf '%%!\n%% Staged-only sentinel: gs resolves it through the -I search paths, so the\n%% audit clean-room smoke fails if gs falls back to its compiled-in Homebrew prefix.\n' \
+    >"$sentinel_dir/$GS_ACCEPTANCE_SENTINEL"
+  if [ ! -f "$sentinel_dir/$GS_ACCEPTANCE_SENTINEL" ]; then
+    printf 'FAIL could not stage the gs acceptance sentinel at %s\n' "$sentinel_dir/$GS_ACCEPTANCE_SENTINEL" >&2
+    exit 1
+  fi
+  printf 'staged: gs acceptance sentinel -> %s/%s\n' "$sentinel_dir" "$GS_ACCEPTANCE_SENTINEL"
 }
 
 stage_gs_resources() {
@@ -105,6 +173,7 @@ stage_gs_resources() {
     printf 'FAIL staged gs-resources lacks Resource/Init/gs_init.ps (source %s) — the gs sidecar cannot start without it\n' "$source_dir" >&2
     exit 1
   fi
+  stage_gs_acceptance_sentinel
   printf 'staged: gs resources -> %s (from %s)\n' "$GS_RESOURCES" "$source_dir"
 }
 
@@ -121,6 +190,41 @@ find_in_brew() {
   return 1
 }
 
+assert_not_brew_substitute() {
+  local src="$1"
+  local dest="$2"
+  local base="$(basename "$src")"
+  local brew_lib
+  for brew_lib in /opt/homebrew/opt/qpdf/lib/libqpdf*.dylib /usr/local/opt/qpdf/lib/libqpdf*.dylib; do
+    [ -f "$brew_lib" ] || continue
+    local src_physical brew_physical
+  src_physical="$(cd "$(dirname "$src")" && pwd -P)/$(basename "$src")"
+  brew_physical="$(cd "$(dirname "$brew_lib")" && pwd -P)/$(basename "$brew_lib")"
+  if [ "$src_physical" = "$brew_physical" ]; then
+      printf 'FAIL %s was collected from the Homebrew qpdf build (%s) instead of the staged official archive lib\n' "$dest" "$src" >&2
+      printf "  a brew lib under the official basename/soname would pass the version and rpath\n" >&2
+      printf "  gates while shipping different code. Fix the qpdf manifest row's \"lib\" key, then:\n" >&2
+      printf '  rm -rf src-tauri/frameworks && yarn binaries:fetch --target %s && yarn binaries:prep\n' "$TRIPLE" >&2
+      exit 1
+    fi
+  done
+  if [ "${base#libqpdf}" = "$base" ]; then
+    return 0
+  fi
+  local staging_physical src_physical
+  staging_physical="$(cd "$STAGING_QPDF_LIB" && pwd -P)"
+  src_physical="$(cd "$(dirname "$src")" && pwd -P)/$(basename "$src")"
+  case "$src_physical" in
+    "$staging_physical"/*) ;;
+    *)
+      printf 'FAIL %s was collected from %s, outside the staged official lib dir %s\n' "$dest" "$src_physical" "$staging_physical" >&2
+      printf "  only the official archive's lib may land in frameworks/ under a libqpdf name\n" >&2
+      printf '  Run: yarn binaries:fetch --target %s\n' "$TRIPLE" >&2
+      exit 1
+      ;;
+  esac
+}
+
 collect() {
   local src="$1"
   local base="$(basename "$src")"
@@ -130,11 +234,17 @@ collect() {
       printf 'FAIL duplicate dylib basename with different content: %s vs %s\n' "$src" "$dest"
       exit 1
     fi
+    assert_not_brew_substitute "$src" "$dest"
     return 0
   fi
   mkdir -p "$FRAMEWORKS"
   cp "$src" "$dest"
   chmod u+w "$dest"
+  if [ "$(shasum -a 256 "$src" | awk '{print $1}')" != "$(shasum -a 256 "$dest" | awk '{print $1}')" ]; then
+    printf 'FAIL copied dylib %s does not match its source %s byte for byte\n' "$dest" "$src"
+    exit 1
+  fi
+  assert_not_brew_substitute "$src" "$dest"
   collect_deps_of "$src"
 }
 
@@ -177,6 +287,7 @@ collect_deps_of() {
   done
 }
 
+require_staged_qpdf_lib
 replace_frameworks_with_staged_qpdf_lib
 
 needs_bundle=0
@@ -232,6 +343,8 @@ for lib in "$FRAMEWORKS"/*.dylib; do
   [ -e "$lib" ] || continue
   codesign --force --sign - "$lib"
 done
+
+assert_frameworks_qpdf_matches_staged
 
 stage_gs_resources
 
