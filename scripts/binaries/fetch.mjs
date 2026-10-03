@@ -79,7 +79,7 @@ async function fetchOne(name, entry, triple, root, lockEntry) {
       return null;
     }
     fail(
-      `sha256 mismatch for ${dest}: lock records staged ${lockEntry.stagedSha256}, staged file is ${stagedSha} — delete the staged file or update the lock via 'yarn binaries:refresh'`,
+      `sha256 mismatch for ${dest}: lock records staged ${lockEntry.stagedSha256}, staged file is ${stagedSha} — delete the staged file, or update the lock with 'yarn binaries:refresh' once it exists (task 6)`,
     );
   }
 
@@ -88,9 +88,10 @@ async function fetchOne(name, entry, triple, root, lockEntry) {
     await download(entry.url, archivePath);
   } catch (error) {
     await removeStaging(staging);
+    await rm(archivePath, { force: true }).catch(() => {});
     if (/\bHTTP 4(04|10)\b/.test(`${error.message ?? error}`)) {
       fail(
-        `artifact unavailable (vendor may have pruned it): ${entry.url} — run 'yarn binaries:refresh'`,
+        `artifact unavailable (vendor may have pruned it): ${entry.url} — download the archive manually, update url + sha256 in scripts/binaries.manifest.json, then re-run 'yarn binaries:fetch' (version-bump automation arrives with 'yarn binaries:refresh' in task 6)`,
       );
     }
     fail(`download failed for ${name} (${triple}): ${error.message ?? error}`);

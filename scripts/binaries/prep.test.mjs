@@ -54,4 +54,44 @@ describe("prepTarget", () => {
       /vips for aarch64-apple-darwin are brew-owned entries with no prep implementation/,
     );
   });
+
+  it("fails on a target that is not in the manifest", async () => {
+    const root = await makeRoot(URL_ONLY);
+    await expect(prepTarget("x86_64-apple-darwin", root)).rejects.toThrow(
+      /target 'x86_64-apple-darwin' not in manifest \(known: aarch64-apple-darwin\)/,
+    );
+  });
+
+  it("fails when the manifest is missing", async () => {
+    const root = await mkdtemp(`${tmpdir()}/prep-test-empty-`);
+    cleanupRoots.push(root);
+    await expect(prepTarget("aarch64-apple-darwin", root)).rejects.toThrow(/manifest missing/);
+  });
+
+  it("names the generation command when tauri.conf needs absent frameworks", async () => {
+    const root = await makeRoot(URL_ONLY);
+    await mkdir(`${root}/src-tauri`, { recursive: true });
+    await writeFile(
+      `${root}/src-tauri/tauri.conf.json`,
+      JSON.stringify({ bundle: { resources: ["frameworks/libfoo.dylib"] } }),
+    );
+
+    await expect(prepTarget("aarch64-apple-darwin", root)).rejects.toThrow(
+      /references 1 dylibs under src-tauri\/frameworks\/ but that directory is absent/,
+    );
+    await expect(prepTarget("aarch64-apple-darwin", root)).rejects.toThrow(
+      /bundle-vips-macos\.sh && bash scripts\/bundle-pdf-macos\.sh/,
+    );
+  });
+
+  it("does not complain about frameworks when the directory exists", async () => {
+    const root = await makeRoot(URL_ONLY);
+    await mkdir(`${root}/src-tauri/frameworks`, { recursive: true });
+    await writeFile(
+      `${root}/src-tauri/tauri.conf.json`,
+      JSON.stringify({ bundle: { resources: ["frameworks/libfoo.dylib"] } }),
+    );
+
+    await expect(prepTarget("aarch64-apple-darwin", root)).resolves.toBe(true);
+  });
 });

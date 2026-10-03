@@ -251,6 +251,7 @@ export function download(url, destPath, options = {}) {
             settle(new Error(`connection closed before download completed: ${target}`));
             return;
           }
+          settled = true;
           resolvePromise();
         });
       });

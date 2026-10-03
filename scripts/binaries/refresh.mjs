@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { basename } from "node:path";
 import { isMain } from "./lib.mjs";
 
 const invokedDirectly = isMain(import.meta.url);

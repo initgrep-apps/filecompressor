@@ -132,7 +132,9 @@ export async function verifyTarget(target, root) {
       lock = readJson(lockFile);
       validateLock(lock);
     } catch (error) {
-      console.error(`FAIL lock unreadable or invalid at ${lockFile}: ${error.message ?? error}`);
+      console.error(
+        `FAIL lock unreadable or invalid at ${lockFile}: ${error.message ?? error} — fix or delete scripts/binaries.lock.json and re-run 'yarn binaries:fetch'`,
+      );
       return false;
     }
     lockTarget = lock.targets?.[triple] ?? {};
@@ -189,6 +191,12 @@ export async function verifyTarget(target, root) {
     for (const problem of problems) {
       console.error(`FAIL ${problem}`);
     }
+    return false;
+  }
+  if (checked === 0) {
+    console.error(
+      `FAIL no binaries verified for ${triple} — the manifest lists entries but none passed the arch/version/lock gates (${Object.keys(entries).join(", ")})`,
+    );
     return false;
   }
   console.log(`verify: PASS (${checked} binaries checked for ${triple})`);
