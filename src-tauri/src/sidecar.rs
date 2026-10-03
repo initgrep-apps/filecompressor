@@ -1,3 +1,5 @@
+use std::path::{Component, Path, PathBuf};
+
 pub(crate) fn target_triple(os: &str, arch: &str) -> Result<&'static str, String> {
     match (os, arch) {
         ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
@@ -97,8 +99,6 @@ pub(crate) fn current_exe_dir() -> Result<std::path::PathBuf, String> {
         .ok_or_else(|| "Engine error: executable has no parent directory".to_string())
 }
 
-use std::path::{Component, Path, PathBuf};
-
 /// Ghostscript resource tree resolved next to the running binary. The staged
 /// `gs-resources/` dir is what makes PDF compression work on a machine with no
 /// Homebrew Ghostscript: without it `gs` resolves its resources from a
@@ -107,7 +107,8 @@ use std::path::{Component, Path, PathBuf};
 pub(crate) struct GsResources {
     /// `-I` search paths, in the order Ghostscript must be given them.
     pub search_paths: Vec<String>,
-    /// `-sICCProfilesDir`, present only when the tree carries `iccprofiles/`.
+    /// ICC profile dir, passed as `-uICCProfilesDir`; `None` when the tree
+    /// carries no `iccprofiles/`.
     pub icc_profiles_dir: Option<String>,
 }
 

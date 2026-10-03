@@ -8,6 +8,10 @@
 # 3. Adds rpaths for both layouts: bundled (Contents/MacOS → ../Frameworks)
 #    and dev (src-tauri/target/<profile> → ../../frameworks). rpaths are
 #    presence-checked via otool -l; a real install_name_tool failure aborts.
+#    Both the bundled capitalisation and the repo's lowercase src-tauri/
+#    frameworks/ are added: from src-tauri/binaries/ the lowercase sibling is
+#    what resolves, and relying on APFS case-insensitivity to make ../Frameworks
+#    match ../frameworks would break on a case-sensitive volume.
 # 4. Ad-hoc signs everything (install_name_tool invalidates signatures);
 #    signing failures abort.
 # Known limitation: gdk-pixbuf loader modules are dlopened at runtime from a
@@ -107,11 +111,13 @@ done
 rewrite "$SIDECAR"
 
 ensure_rpath "$SIDECAR" "@executable_path/../Frameworks"
+ensure_rpath "$SIDECAR" "@executable_path/../frameworks"
 ensure_rpath "$SIDECAR" "@executable_path/../../frameworks"
 
 for lib in "$FRAMEWORKS"/*.dylib; do
   [ -e "$lib" ] || continue
   ensure_rpath "$lib" "@executable_path/../Frameworks"
+  ensure_rpath "$lib" "@executable_path/../frameworks"
   ensure_rpath "$lib" "@executable_path/../../frameworks"
 done
 

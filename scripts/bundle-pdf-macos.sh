@@ -216,12 +216,14 @@ fi
 for sidecar in "${ENGINES[@]}"; do
   rewrite "$sidecar"
   ensure_rpath "$sidecar" "@executable_path/../Frameworks"
+  ensure_rpath "$sidecar" "@executable_path/../frameworks"
   ensure_rpath "$sidecar" "@executable_path/../../frameworks"
 done
 
 for lib in "$FRAMEWORKS"/*.dylib; do
   [ -e "$lib" ] || continue
   ensure_rpath "$lib" "@executable_path/../Frameworks"
+  ensure_rpath "$lib" "@executable_path/../frameworks"
   ensure_rpath "$lib" "@executable_path/../../frameworks"
 done
 

@@ -603,6 +603,8 @@ git commit -m "feat(binaries): refresh flow for vendor version bumps"
 
 **Framework set shrank by one dylib.** `frameworks/libcrypto.3.dylib` was only a dependency of the *brew* qpdf build; the official qpdf needs libz/libc++/libSystem only. It was removed from `tauri.conf.json` (the audit's conf↔frameworks consistency gate requires the lists to match exactly). 71 framework dylibs now.
 
+**Latent rpath defect found in self-review and fixed.** The bundle scripts only added `@executable_path/../Frameworks` (the bundled capitalisation). A sidecar run straight out of `src-tauri/binaries/` therefore resolved `src-tauri/frameworks` only because APFS is case-insensitive — on a case-sensitive volume every `@rpath` dylib would fail to load, which the audit's explicit `DYLD_LIBRARY_PATH` was masking. Both scripts now also add `@executable_path/../frameworks`, so the repo layout resolves on its own.
+
 **Framework/staged-sha ordering.** prep re-signs `vips`/`qpdf`/`gs`, which invalidates the `stagedSha256` fetch recorded for qpdf. prep therefore refreshes `stagedSha256` for exactly those three engines after bundling, and refuses to run when any *other* fetched binary no longer matches the lock (`assertFetchedEntriesUntouched`) — a swapped ffmpeg can never be laundered by prep.
 
 **Step 7 verification — `tauri build`.** `yarn tauri build --no-bundle` produces no `.app` (it skips bundling), so the bundle check was run as `yarn tauri build --bundles app`: `file-compressor.app/Contents/Resources/gs-resources/Resource/Init/gs_init.ps` is present and `diff -rq` against `src-tauri/gs-resources` reports **identical** (Resource 293 / lib 157 / iccprofiles 14 / fonts 95 files). All 5 sidecars land in `Contents/MacOS`, 71 dylibs in `Contents/Frameworks`.
