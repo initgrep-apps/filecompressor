@@ -1008,6 +1008,7 @@ mod tests {
             ffprobe,
             gs: None,
             qpdf: None,
+            gs_resources: None,
         }
     }
 

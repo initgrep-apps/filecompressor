@@ -91,11 +91,30 @@ impl PdfProcessor {
         ]
     }
 
-    fn gs_args(dpi: Option<u32>, jpegq: Option<u32>, input: &Path, output: &Path) -> Vec<String> {
-        let mut args = vec![
+    /// Builds the gs argument vector. When the staged resource tree resolved, the
+/// `-I` search paths (and `-sICCProfilesDir`) are prepended ahead of every
+/// engine flag so Ghostscript never falls back to its compiled-in Homebrew
+/// prefix; with no staged tree the vector is exactly the pre-resources one.
+fn gs_args(
+    dpi: Option<u32>,
+    jpegq: Option<u32>,
+    input: &Path,
+    output: &Path,
+    resources: Option<&crate::sidecar::GsResources>,
+) -> Vec<String> {
+        let mut args = Vec::new();
+        if let Some(resources) = resources {
+            for search_path in &resources.search_paths {
+                args.push(format!("-I{}", search_path));
+            }
+            if let Some(icc) = &resources.icc_profiles_dir {
+                args.push(format!("-sICCProfilesDir={}", icc));
+            }
+        }
+        args.extend([
             "-sDEVICE=pdfwrite".to_string(),
             "-dPDFSETTINGS=/screen".to_string(),
-        ];
+        ]);
         if let Some(dpi) = dpi {
             args.push(format!("-r{}", dpi));
         }
@@ -112,7 +131,12 @@ impl PdfProcessor {
         args
     }
 
-    fn pass_spec(pass: &PdfPass, input: &Path, output: &Path) -> PassSpec {
+    fn pass_spec(
+        pass: &PdfPass,
+        input: &Path,
+        output: &Path,
+        resources: Option<&crate::sidecar::GsResources>,
+    ) -> PassSpec {
         match pass {
             PdfPass::QpdfLossless => PassSpec {
                 label: "qpdf",
@@ -128,13 +152,13 @@ impl PdfProcessor {
             },
             PdfPass::GsScreen => PassSpec {
                 label: "gs",
-                args: Self::gs_args(None, None, input, output),
+                args: Self::gs_args(None, None, input, output, resources),
                 strategy: "gs-screen".to_string(),
                 quality: GS_SCREEN_QUALITY,
             },
             PdfPass::GsLadder { dpi, jpegq } => PassSpec {
                 label: "gs",
-                args: Self::gs_args(Some(*dpi), Some(*jpegq), input, output),
+                args: Self::gs_args(Some(*dpi), Some(*jpegq), input, output, resources),
                 strategy: format!("gs dpi={},jpegq={}", dpi, jpegq),
                 quality: *jpegq,
             },
@@ -259,7 +283,7 @@ impl CompressionProcessor for PdfProcessor {
 
             let temp_file = temp_dir.join(format!("attempt-{}.pdf", index));
             attempt_paths.push(temp_file.clone());
-            let spec = Self::pass_spec(pass, input, &temp_file);
+            let spec = Self::pass_spec(pass, input, &temp_file, sidecar_paths.gs_resources.as_ref());
             let sidecar_path = match pass {
                 PdfPass::QpdfLossless | PdfPass::QpdfImageOpt => qpdf_path,
                 PdfPass::GsScreen | PdfPass::GsLadder { .. } => gs_path,
@@ -341,8 +365,104 @@ impl CompressionProcessor for PdfProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sidecar::GsResources;
     use std::fs;
     use std::time::{Duration, Instant};
+
+    fn gs_resources_fixture() -> GsResources {
+        GsResources {
+            search_paths: vec![
+                "/app/Resources/gs-resources/Resource/Init".to_string(),
+                "/app/Resources/gs-resources/lib".to_string(),
+                "/app/Resources/gs-resources/Resource/Font".to_string(),
+                "/app/Resources/gs-resources/fonts".to_string(),
+            ],
+            icc_profiles_dir: Some("/app/Resources/gs-resources/iccprofiles".to_string()),
+        }
+    }
+
+    #[test]
+    fn gs_args_prepend_resource_flags_in_order() {
+        let args = PdfProcessor::gs_args(
+            Some(72),
+            Some(25),
+            Path::new("/tmp/in.pdf"),
+            Path::new("/tmp/out.pdf"),
+            Some(&gs_resources_fixture()),
+        );
+
+        let expected_prefix = vec![
+            "-I/app/Resources/gs-resources/Resource/Init".to_string(),
+            "-I/app/Resources/gs-resources/lib".to_string(),
+            "-I/app/Resources/gs-resources/Resource/Font".to_string(),
+            "-I/app/Resources/gs-resources/fonts".to_string(),
+            "-sICCProfilesDir=/app/Resources/gs-resources/iccprofiles".to_string(),
+            "-sDEVICE=pdfwrite".to_string(),
+        ];
+        assert_eq!(
+            args[..expected_prefix.len()],
+            expected_prefix[..],
+            "resource flags must precede -sDEVICE=pdfwrite so gs never reads its compiled-in prefix"
+        );
+        assert_eq!(
+            args[expected_prefix.len()],
+            "-dPDFSETTINGS=/screen".to_string(),
+            "the engine flags that follow are unchanged"
+        );
+    }
+
+    #[test]
+    fn gs_args_omit_icc_profiles_when_absent() {
+        let resources = GsResources {
+            search_paths: vec!["/app/Resources/gs-resources/Resource/Init".to_string()],
+            icc_profiles_dir: None,
+        };
+        let args = PdfProcessor::gs_args(
+            None,
+            None,
+            Path::new("/tmp/in.pdf"),
+            Path::new("/tmp/out.pdf"),
+            Some(&resources),
+        );
+
+        assert_eq!(
+            args[0],
+            "-I/app/Resources/gs-resources/Resource/Init".to_string()
+        );
+        assert_eq!(args[1], "-sDEVICE=pdfwrite".to_string());
+        assert!(
+            !args.iter().any(|a| a.starts_with("-sICCProfilesDir=")),
+            "no iccprofiles dir means no -sICCProfilesDir flag: {:?}",
+            args
+        );
+    }
+
+    #[test]
+    fn gs_args_without_resources_match_today() {
+        let args = PdfProcessor::gs_args(
+            Some(100),
+            Some(40),
+            Path::new("/tmp/in.pdf"),
+            Path::new("/tmp/out.pdf"),
+            None,
+        );
+
+        assert_eq!(
+            args,
+            vec![
+                "-sDEVICE=pdfwrite".to_string(),
+                "-dPDFSETTINGS=/screen".to_string(),
+                "-r100".to_string(),
+                "-dJPEGQ=40".to_string(),
+                "-dNOPAUSE".to_string(),
+                "-dQUIET".to_string(),
+                "-dBATCH".to_string(),
+                "-sOutputFile=/tmp/out.pdf".to_string(),
+                "/tmp/in.pdf".to_string(),
+            ],
+            "with no staged resources the argument vector is byte-identical to the pre-resources one"
+        );
+    }
 
     #[cfg(unix)]
     fn make_executable_script(dir: &Path, name: &str, script: &str) -> String {
@@ -361,6 +481,7 @@ mod tests {
             ffprobe: None,
             gs,
             qpdf,
+            gs_resources: None,
         }
     }
 
@@ -703,6 +824,49 @@ esac
             gs_lines[0].contains("-sDEVICE=pdfwrite") && gs_lines[0].contains("-dNOPAUSE"),
             "got: {}",
             gs_lines[0]
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn gs_passes_reach_the_spawn_with_staged_resources() {
+        let dir = tempfile::tempdir().unwrap();
+        let fake_qpdf = fake_qpdf(&dir.path(), 5000, 5000);
+        let fake_gs = fake_gs(&dir.path(), 1000, 1);
+        let input = oversized_input(&dir.path());
+        let tmp = temp_dir_under(&dir.path());
+        let mut paths = test_sidecar_paths(Some(fake_qpdf), Some(fake_gs));
+        paths.gs_resources = Some(GsResources {
+            search_paths: vec!["/staged/Resource/Init".to_string(), "/staged/fonts".to_string()],
+            icc_profiles_dir: Some("/staged/iccprofiles".to_string()),
+        });
+
+        let result = PdfProcessor
+            .compress_to_target(
+                &input,
+                &dir.path().join("out.pdf"),
+                2000,
+                &QualityFloors::default(),
+                CancellationToken::new(),
+                ProgressSender::test_stub(),
+                &paths,
+                &tmp,
+            )
+            .unwrap();
+
+        assert_eq!(result.strategy_used, "gs-screen");
+        let gs_log = fs::read_to_string(dir.path().join("gs.log")).unwrap();
+        let line = gs_log.lines().next().expect("the screen pass ran");
+        let flags: Vec<&str> = line.split_whitespace().skip(1).collect();
+        assert_eq!(
+            &flags[..4],
+            &[
+                "-I/staged/Resource/Init",
+                "-I/staged/fonts",
+                "-sICCProfilesDir=/staged/iccprofiles",
+                "-sDEVICE=pdfwrite",
+            ],
+            "the spawned gs must receive the resource flags first: {line}"
         );
     }
 

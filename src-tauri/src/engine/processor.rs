@@ -18,7 +18,7 @@ use crate::engine::progress::ProgressSender;
 use crate::engine::result::{CompressionError, CompressionResult};
 use crate::models::Category;
 use crate::settings::QualityFloors;
-use crate::sidecar::resolve_sidecar_candidate;
+use crate::sidecar::{GsResources, resolve_gs_resources, resolve_sidecar_candidate};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -69,6 +69,9 @@ pub struct SidecarPaths {
     pub ffprobe: Option<String>,
     pub gs: Option<String>,
     pub qpdf: Option<String>,
+    /// Staged Ghostscript resource tree. `None` means "not staged": the gs
+    /// spawn then carries no `-I` flags, exactly as before the tree existed.
+    pub gs_resources: Option<GsResources>,
 }
 
 impl SidecarPaths {
@@ -80,6 +83,7 @@ impl SidecarPaths {
             ffprobe: resolve("ffprobe"),
             gs: resolve("gs"),
             qpdf: resolve("qpdf"),
+            gs_resources: resolve_gs_resources(exe_dir),
         }
     }
 
@@ -320,6 +324,7 @@ mod tests {
             ffprobe: None,
             gs: None,
             qpdf: None,
+            gs_resources: None,
         }
     }
 
@@ -331,6 +336,7 @@ mod tests {
             ffprobe: Some("/bin/ffprobe".to_string()),
             gs: Some("/bin/gs".to_string()),
             qpdf: Some("/bin/qpdf".to_string()),
+            gs_resources: None,
         };
         for (name, expected) in [
             (SidecarName::Vips, "/bin/vips"),

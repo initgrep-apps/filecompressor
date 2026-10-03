@@ -97,6 +97,76 @@ pub(crate) fn current_exe_dir() -> Result<std::path::PathBuf, String> {
         .ok_or_else(|| "Engine error: executable has no parent directory".to_string())
 }
 
+use std::path::{Component, Path, PathBuf};
+
+/// Ghostscript resource tree resolved next to the running binary. The staged
+/// `gs-resources/` dir is what makes PDF compression work on a machine with no
+/// Homebrew Ghostscript: without it `gs` resolves its resources from a
+/// compiled-in brew prefix and fails on real PDFs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct GsResources {
+    /// `-I` search paths, in the order Ghostscript must be given them.
+    pub search_paths: Vec<String>,
+    /// `-sICCProfilesDir`, present only when the tree carries `iccprofiles/`.
+    pub icc_profiles_dir: Option<String>,
+}
+
+const GS_RESOURCE_SEARCH_DIRS: [&str; 4] = ["Resource/Init", "lib", "Resource/Font", "fonts"];
+const GS_ICC_PROFILES_DIR: &str = "iccprofiles";
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                }
+            }
+            Component::CurDir => {}
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+fn gs_resources_candidates(exe_dir: &Path) -> Vec<PathBuf> {
+    vec![
+        exe_dir.join("../Resources/gs-resources"),
+        exe_dir.join("../../gs-resources"),
+        exe_dir.join("resources/gs-resources"),
+        exe_dir.join("gs-resources"),
+    ]
+}
+
+fn build_gs_resources(base: &Path) -> GsResources {
+    let base = normalize_path(base);
+    let search_paths = GS_RESOURCE_SEARCH_DIRS
+        .iter()
+        .map(|relative| base.join(relative))
+        .filter(|candidate| candidate.is_dir())
+        .map(|candidate| candidate.to_string_lossy().into_owned())
+        .collect();
+    let icc = base.join(GS_ICC_PROFILES_DIR);
+    let icc_profiles_dir = icc
+        .is_dir()
+        .then(|| icc.to_string_lossy().into_owned());
+    GsResources {
+        search_paths,
+        icc_profiles_dir,
+    }
+}
+
+/// Resolves the staged Ghostscript resource tree, first existing candidate wins.
+/// Returns `None` when no tree is staged — callers fall back to the engine's
+/// own defaults instead of failing.
+pub(crate) fn resolve_gs_resources(exe_dir: &Path) -> Option<GsResources> {
+    gs_resources_candidates(exe_dir)
+        .into_iter()
+        .find(|candidate| candidate.is_dir())
+        .map(|candidate| build_gs_resources(&candidate))
+}
+
 pub(crate) fn resolve_all_sidecar_paths() -> Result<crate::engine::SidecarPaths, String> {
     let exe_dir = current_exe_dir()?;
     Ok(crate::engine::SidecarPaths::resolve_for(&exe_dir))
@@ -331,6 +401,165 @@ mod tests {
         assert!(
             paths.vips.is_none() && paths.ffmpeg.is_none() && paths.ffprobe.is_none(),
             "missing engines must resolve to None (collected), not abort resolution"
+        );
+    }
+
+    #[cfg(unix)]
+    fn write_gs_resources(base: &std::path::Path, dirs: &[&str]) {
+        for dir in dirs {
+            let path = base.join(dir);
+            std::fs::create_dir_all(&path).unwrap();
+            std::fs::write(path.join("gs_init.ps"), b"%!PS\n").unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    fn gs_resource_root(root: &std::path::Path, relative: &str) -> std::path::PathBuf {
+        let base = root.join(relative);
+        std::fs::create_dir_all(base.join("Resource/Init")).unwrap();
+        std::fs::write(base.join("Resource/Init/gs_init.ps"), b"%!PS\n").unwrap();
+        base
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_prefers_bundle_layout() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        write_gs_resources(
+            &resources,
+            &["lib", "Resource/Font", "fonts", "iccprofiles"],
+        );
+
+        let resolved = resolve_gs_resources(&exe_dir).expect("bundle layout resolves");
+        assert_eq!(
+            resolved.search_paths,
+            vec![
+                resources.join("Resource/Init").to_str().unwrap().to_string(),
+                resources.join("lib").to_str().unwrap().to_string(),
+                resources.join("Resource/Font").to_str().unwrap().to_string(),
+                resources.join("fonts").to_str().unwrap().to_string(),
+            ],
+            "search paths are ordered Init, lib, Resource/Font, fonts"
+        );
+        assert_eq!(
+            resolved.icc_profiles_dir.as_deref(),
+            Some(resources.join("iccprofiles").to_str().unwrap()),
+            "icc_profiles_dir is Some iff iccprofiles/ exists"
+        );
+        assert!(
+            resolved.search_paths.iter().all(|p| !p.contains("/../")),
+            "search paths must be normalized, got: {:?}",
+            resolved.search_paths
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_omits_absent_dirs_and_icc_profiles() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        write_gs_resources(&resources, &["fonts"]);
+
+        let resolved = resolve_gs_resources(&exe_dir).expect("bundle layout resolves");
+        assert_eq!(
+            resolved.search_paths,
+            vec![
+                resources.join("Resource/Init").to_str().unwrap().to_string(),
+                resources.join("fonts").to_str().unwrap().to_string(),
+            ],
+            "only dirs that exist are passed as -I flags, in the fixed order"
+        );
+        assert!(
+            resolved.icc_profiles_dir.is_none(),
+            "no iccprofiles dir means no -sICCProfilesDir"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_returns_none_when_absent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        assert!(
+            resolve_gs_resources(dir.path()).is_none(),
+            "a machine without staged gs resources must resolve to None, never abort"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_pending_candidate_tiebreak() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("target/debug");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let dev_layout = gs_resource_root(dir.path(), "target/debug/gs-resources");
+        write_gs_resources(&dev_layout, &["lib"]);
+
+        let resolved = resolve_gs_resources(&exe_dir).expect("dev layout resolves");
+        assert_eq!(
+            resolved.search_paths.first().map(String::as_str),
+            Some(dev_layout.join("Resource/Init").to_str().unwrap()),
+            "the dev layout candidate resolves on its own"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_takes_the_first_existing_candidate() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let bundle = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        let dev = gs_resource_root(dir.path(), "target/debug/gs-resources");
+
+        let resolved = resolve_gs_resources(&exe_dir).expect("bundle layout resolves");
+        assert_eq!(
+            resolved.search_paths.first().map(String::as_str),
+            Some(bundle.join("Resource/Init").to_str().unwrap()),
+            "the bundle candidate wins over every later one"
+        );
+        assert!(
+            !resolved.search_paths.iter().any(|p| p.starts_with(&dev.to_string_lossy().to_string())),
+            "later candidates must not leak into the resolved search paths"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_for_attaches_gs_resources() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::write(exe_dir.join(sidecar_filename("gs").unwrap()), b"stub").unwrap();
+        std::fs::write(exe_dir.join(sidecar_filename("qpdf").unwrap()), b"stub").unwrap();
+        let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        write_gs_resources(&resources, &["lib", "fonts"]);
+
+        let paths = crate::engine::SidecarPaths::resolve_for(&exe_dir);
+        let attached = paths
+            .gs_resources
+            .as_ref()
+            .expect("SidecarPaths carries the resolved gs resources");
+        assert_eq!(
+            attached.search_paths.first().map(String::as_str),
+            Some(resources.join("Resource/Init").to_str().unwrap())
+        );
+        assert!(paths.gs.is_some(), "the gs sidecar itself still resolves");
+        assert!(attached.icc_profiles_dir.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_for_leaves_gs_resources_none_when_absent() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let paths = crate::engine::SidecarPaths::resolve_for(dir.path());
+        assert!(
+            paths.gs_resources.is_none(),
+            "missing gs resources must stay None, never abort resolution"
         );
     }
 
