@@ -1921,10 +1921,11 @@ git commit -m "feat(history): build filterable session list UI with pagination"
 - Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
 
 **Required Tests:**
-- `saves a changed history retention value` — 30 → save_settings payload includes `history: { retentionDays: 30 }`
-- `clamps history retention through the stepper bounds` — increase from 90 → 91; decrease at 1 stays 1; increase at 3650 stays 3650
+- `saves a changed history retention value` — 30 → save payload; strict full-payload `toEqual({ settings: { ...baseSettings, history: { retentionDays: 30 } } })`
+- `out of range typed retention clamps to 3650` — type 9999 → save payload `history.retentionDays` 3650 (Base UI blur commit clamp; pins persisted 1..=3650 through the UI path)
+- `clamps history retention through the stepper bounds` — increase from 90 → 91 (Save enabled after); decrease at 1 stays 1; increase at 3650 stays 3650; exact button names `Increase/Decrease History retention (days)`
 - `reset to defaults restores history retention 90` — set 30, reset, save payload has 90
-- `renders history card after quality floors` — card order + description copy
+- `renders history card after quality floors` — card order + description copy + visible FieldLabel "History retention (days)" (matches accessible name, WCAG 2.5.3)
 - `cancel discards history retention draft` — cancel → re-render shows 90
 
 - [ ] **Step 1: Write the failing tests**
