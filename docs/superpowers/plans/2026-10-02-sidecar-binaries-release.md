@@ -120,7 +120,7 @@ docs/bugs.md                       # Modify — record ffmpeg mislabel + gs reso
 - Gate passes clean: `yarn build && yarn test && cd src-tauri && cargo test` (note: after `git rm --cached`, a fresh clone's `cargo test` fails until `yarn binaries:all` — the failing message must say so, never ENOENT)
 - Boundary rules enforced (per AGENTS.md: binary logic lives in `scripts/` + Rust core; frontend unchanged)
 
-- [ ] **Step 1: Write failing tests for `lib.mjs` pure functions**
+- [x] **Step 1: Write failing tests for `lib.mjs` pure functions**
 
 `scripts/binaries/lib.test.mjs` (start with `// @vitest-environment node`):
 ```js
@@ -149,21 +149,21 @@ describe("expectedDest", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `yarn vitest run scripts/binaries/lib.test.mjs`
 Expected: FAIL — cannot resolve `./lib.mjs`.
 
-- [ ] **Step 3: Implement `lib.mjs`**
+- [x] **Step 3: Implement `lib.mjs`**
 
 Implement the exported functions listed in Interfaces. `download` uses `node:https` following redirects to a file; `extract` shells `unzip -o -q` for `.zip` and `tar --zstd -xf` for `.tar.zst`; `sha256File` streams with `node:crypto`. No third-party deps.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `yarn vitest run scripts/binaries/lib.test.mjs`
 Expected: PASS.
 
-- [ ] **Step 5: Create the mac arm64 manifest (ffmpeg + ffprobe only)**
+- [x] **Step 5: Create the mac arm64 manifest (ffmpeg + ffprobe only)**
 
 `scripts/binaries.manifest.json`:
 ```json
@@ -191,7 +191,7 @@ Expected: PASS.
 }
 ```
 
-- [ ] **Step 6: Write failing tests for `fetch.mjs` with a local HTTP fixture**
+- [x] **Step 6: Write failing tests for `fetch.mjs` with a local HTTP fixture**
 
 `scripts/binaries/fetch.test.mjs` (`// @vitest-environment node`): spin up `node:http` serving a fixture zip (create it in the test with `zip` CLI or a committed 1-file fixture under `scripts/binaries/fixtures/`); assert:
 - successful fetch stages `<dest>-<triple>` (or `.exe`) under a temp `--root` and writes a lock entry with version/url/sha256
@@ -199,27 +199,27 @@ Expected: PASS.
 - `extract` handles the fixture and the `member` is copied to dest
 Tests must pass `--root <tmpdir>` (add `--root` option to fetch/verify for testability; default repo root).
 
-- [ ] **Step 7: Run tests to verify they fail**
+- [x] **Step 7: Run tests to verify they fail**
 
 Run: `yarn vitest run scripts/binaries/fetch.test.mjs`
 Expected: FAIL — `fetch.mjs` missing.
 
-- [ ] **Step 8: Implement `fetch.mjs`**
+- [x] **Step 8: Implement `fetch.mjs`**
 
 CLI: `node scripts/binaries/fetch.mjs --target <triple> [--root <dir>]`. Per binary in manifest for target with `source: "url"`: skip if lock entry exists and staged file sha256 matches (idempotent); else download to `<root>/src-tauri/.staging/<name>-<triple>/<file>`, verify sha256 against manifest, extract into staging, copy `member` to `<root>/src-tauri/binaries/<expectedDest>`, chmod +x, write lock entry. `source: "brew"` entries are skipped by fetch (prep owns them; Task 2). Error text for missing artifact: `artifact unavailable (vendor may have pruned it): <url> — run 'yarn binaries:refresh'`.
 
-- [ ] **Step 9: Run tests to verify they pass**
+- [x] **Step 9: Run tests to verify they pass**
 
 Run: `yarn vitest run scripts/binaries/fetch.test.mjs`
 Expected: PASS.
 
-- [ ] **Step 10: Implement `verify.mjs` (presence + arch + version) and wire the audit**
+- [x] **Step 10: Implement `verify.mjs` (presence + arch + version) and wire the audit**
 
 - `verify.mjs --target <triple>`:
 - for each manifest binary of the target: staged file exists (else fail: `missing <dest> — run 'yarn binaries:all'`); arch check: mac via `lipo -archs`, windows via `file` output parsing; compare with `archForTriple(triple)`; filename triple itself already encodes the expectation, so check = content arch vs `archForTriple` of the target; version check: run `<bin> --version` (mac: prepend `DYLD_LIBRARY_PATH=<root>/src-tauri/frameworks`), assert `expectVersion` is a substring of stdout+stderr; brew entries: `brew list --versions <formula>` version must equal `expectVersion`.
 - In `scripts/audit-sidecars.sh`, after the existing `require_tool file` block, add: `node "$ROOT/scripts/binaries/verify.mjs" --target "$(rustc -Vv | grep '^host:' | sed 's/host: //')" || failures+=("<verify>")`. Keep all existing linkage/signature checks unchanged.
 
-- [ ] **Step 11: TDD the incident itself — audit must FAIL on today's repo, then pass after fetch**
+- [x] **Step 11: TDD the incident itself — audit must FAIL on today's repo, then pass after fetch**
 
 Run: `yarn binaries:audit`
 Expected: FAIL naming `ffmpeg-aarch64-apple-darwin` with `arch x86_64 does not match arm64` (and ffprobe).
@@ -228,7 +228,7 @@ Then run: `yarn binaries:audit`
 Expected: PASS (`sidecar audit: PASS`).
 Also `file src-tauri/binaries/ffmpeg-aarch64-apple-darwin` → `Mach-O 64-bit executable arm64` and `./ffmpeg... -version` prints `9.0.2`.
 
-- [ ] **Step 12: Update package.json, .gitignore, bugs.md**
+- [x] **Step 12: Update package.json, .gitignore, bugs.md**
 
 package.json scripts:
 ```json
@@ -245,7 +245,7 @@ package.json scripts:
 `docs/bugs.md` append under a new `## Sidecar binaries` section: incident record — ffmpeg/ffprobe shipped as x86_64 renamed aarch64 (evermeet.cx x86_64-only, no arch gate existed); fixed by manifest fetch + arch gate; gs resources gap noted as Task 2.
 Create minimal `prep.mjs` (passthrough stub until Task 2), `all.mjs` (fetch → prep → audit) and `app-build.mjs` (`all.mjs` + `yarn tauri build --target <triple>`) now, so the script names exist and `yarn binaries:all` / `yarn app:build` are runnable after Task 1.
 
-- [ ] **Step 13: Full gate + commit**
+- [x] **Step 13: Full gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test` (from repo root)
 Expected: all green (audit test passes with fetched arm64 ffmpeg).
@@ -586,6 +586,7 @@ git commit -m "feat(binaries): refresh flow for vendor version bumps"
 
 ## Execution Notes (populated during execution)
 
+- Task 1 (manifest, lock, fetch, arch gate) — **done, PR #75 merged**. The ffmpeg incident is fixed: `ffmpeg`/`ffprobe` shipped as Intel x86_64 under `aarch64` names; they are now fetched from manifest-pinned Martin Riedl arm64 artifacts and gated by `verify.mjs`, which fails on content-vs-filename arch mismatch. Incident TDD ran live (audit failed on the inherited binaries → fetch → audit passed). Gate green: 297 vitest, 386 cargo. Note for later tasks: `src-tauri/frameworks/` and `src-tauri/binaries/` are now gitignored and regenerated only from Task 2 prep, so a fresh clone must run `yarn binaries:all` before `cargo test` (the audit and prep both print the remedy).
 - Task 2 Step 7 manual acceptance (brew gs renamed) result: _pending_
 - Task 3 Windows end-to-end verification: _pending — Windows host or CI_
 - Task 4 Intel end-to-end verification: _pending — Intel host or CI_
