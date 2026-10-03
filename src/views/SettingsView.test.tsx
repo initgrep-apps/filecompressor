@@ -393,31 +393,50 @@ describe('SettingsView', () => {
     expect(input).toHaveDisplayValue('90')
     await user.clear(input)
     await user.type(input, '30')
-    await user.click(screen.getByRole('button', { name: /save changes/i }))
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
     await waitFor(() => {
       expect(vi.mocked(invoke)).toHaveBeenCalledWith('save_settings', expect.anything())
     })
-    expect(invoke).toHaveBeenCalledWith('save_settings', expect.objectContaining({
-      settings: expect.objectContaining({ history: { retentionDays: 30 } }),
-    }))
+    const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === 'save_settings')
+    expect(call?.[1]).toEqual({
+      settings: { ...baseSettings, history: { retentionDays: 30 } },
+    })
+  })
+
+  it('out of range typed retention clamps to 3650', async () => {
+    const user = userEvent.setup()
+    await loadView()
+    const input = screen.getByLabelText('History retention (days)')
+    await user.clear(input)
+    await user.type(input, '9999')
+    await user.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => {
+      expect(vi.mocked(invoke)).toHaveBeenCalledWith('save_settings', expect.anything())
+    })
+    const call = vi.mocked(invoke).mock.calls.find(([cmd]) => cmd === 'save_settings')
+    const saved = (call?.[1] as { settings: Settings }).settings
+    expect(saved.history.retentionDays).toBe(3650)
   })
 
   it('clamps history retention through the stepper bounds', async () => {
     const user = userEvent.setup()
     await loadView()
     const input = screen.getByLabelText('History retention (days)')
-    await user.click(screen.getByRole('button', { name: /increase history retention/i }))
+    const increase = screen.getByRole('button', { name: 'Increase History retention (days)' })
+    const decrease = screen.getByRole('button', { name: 'Decrease History retention (days)' })
+    await user.click(increase)
     expect(input).toHaveDisplayValue('91')
+    expect(screen.getByRole('button', { name: 'Save Changes' })).toBeEnabled()
     await user.clear(input)
     await user.type(input, '1')
-    await user.click(screen.getByRole('button', { name: /decrease history retention/i }))
+    await user.click(decrease)
     expect(input).toHaveDisplayValue('1')
-    expect(screen.getByRole('button', { name: /decrease history retention/i })).toBeDisabled()
+    expect(decrease).toBeDisabled()
     await user.clear(input)
     await user.type(input, '3650')
-    await user.click(screen.getByRole('button', { name: /increase history retention/i }))
+    await user.click(increase)
     expect(input).toHaveDisplayValue(/^3,?650$/)
-    expect(screen.getByRole('button', { name: /increase history retention/i })).toBeDisabled()
+    expect(increase).toBeDisabled()
   })
 
   it('reset to defaults restores history retention 90', async () => {
