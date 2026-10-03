@@ -96,11 +96,21 @@ audit_elf() {
 }
 
 if [ ! -d "$BIN_DIR" ]; then
-  printf 'FAIL binaries dir missing: %s\n' "$BIN_DIR"
+  printf 'FAIL binaries dir missing: %s — run '"'"'yarn binaries:all'"'"' first\n' "$BIN_DIR"
   exit 1
 fi
 
 require_tool file
+
+if command -v node >/dev/null 2>&1; then
+  HOST_TRIPLE="$(rustc -Vv | grep '^host:' | sed 's/host: //')"
+  if ! node "$ROOT/scripts/binaries/verify.mjs" --target "$HOST_TRIPLE" --root "$ROOT"; then
+    failures+=("<verify>")
+  fi
+else
+  printf 'FAIL required tool missing: node (verify delegate unavailable)\n'
+  exit 1
+fi
 
 for f in "$BIN_DIR"/*; do
   [ -f "$f" ] || continue

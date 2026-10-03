@@ -111,3 +111,15 @@ Refine pass (pre-implementation). Drift found by code-explorer against repo fact
 10. Task 3: platform-config merge semantics (externalBin append vs replace for tauri.windows.conf.json) unresolved until Context7 verification in Task 3 Step 4 — could affect base-conf 5-entry list on Windows.
 11. Task 1: plan's "existing tests pin order" claim about gs args was overstated (see #5) — fixed by making the exact-vector test explicit.
 12. Spec §7 audited during refine: fetch row no longer claims brew installs; audit row gained explicit `--target` support; both match plan.
+
+---
+
+## Sidecar binaries
+
+### Incident — ffmpeg/ffprobe shipped as x86_64 under aarch64 names (found 2026-10-02)
+
+- **What:** `src-tauri/binaries/ffmpeg-aarch64-apple-darwin` and `ffprobe-aarch64-apple-darwin` were Intel x86_64 Mach-O binaries renamed with the arm64 triple. Verified via `file` before the fix (`Mach-O 64-bit executable x86_64` under both names).
+- **Root cause:** the binaries came from evermeet.cx, which distributes x86_64-only builds, and no gate checked architecture — `scripts/audit-sidecars.sh` validated linkage and signatures but never the CPU arch, so a renamed wrong-arch binary passed every check and shipped.
+- **Impact:** the built `.app`/`.dmg` carried Intel ffmpeg for Apple Silicon users, running under Rosetta 2.
+- **Fix:** manifest-driven fetch (`scripts/binaries.manifest.json` → Martin Riedl pinned arm64 artifacts, sha256-verified) plus an arch gate: `scripts/binaries/verify.mjs` compares `lipo -archs` content against the filename triple; wired into `audit-sidecars.sh` (and thus `cargo test` via `sidecars_are_self_contained`). Regression pinned by `verify_fails_on_arch_flip_fixture` in `scripts/binaries/verify.test.mjs`; binaries/frameworks are now gitignored build artifacts fetched via `yarn binaries:all`.
+- **Follow-up (Task 2):** Ghostscript resources are not bundled — gs resolves resources from the brew Cellar, so PDF compression only works on machines with Homebrew Ghostscript. Tracked in the sidecar-binaries-release plan Task 2.
