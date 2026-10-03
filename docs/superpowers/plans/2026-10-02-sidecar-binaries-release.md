@@ -634,7 +634,32 @@ Observed (with `HOME`-brew Ghostscript renamed; restored afterwards — verified
 
 So the staged resources are load-bearing, not decorative.
 
-**Gate.** `yarn build && yarn test && cd src-tauri && cargo test` → green: 323 vitest (was 297; +26), 397 cargo (was 386; +11).
+**Gate.** `yarn build && yarn test && cd src-tauri && cargo test` → green: 338 vitest (was 297; +41), 404 cargo (was 386; +18).
+
+### Task 2 — PR review round 1 fixes
+
+Four gates in the first review turned out to be structurally incapable of firing. Each was reproduced with a live command before fixing:
+
+1. **The gs clean-room smoke proved nothing on a brew-equipped host.** `env -i` does not neutralize gs's compiled-in `GS_LIBDEFAULT` (`/opt/homebrew/Cellar/ghostscript/10.08.0/share/ghostscript/...`), and prep sources resources from brew — so the prefix always exists on the build host. Repro: emptying `gs-resources/Resource/Font/*` still printed `gs clean-room smoke: PASS` and `sidecar audit: PASS`, and the same gs with **no** `-I` flags at all exited 0 writing a valid 2845-byte PDF. `findfont` on an unknown name silently substitutes, so a font-name sentinel cannot work either. What does work: `runlibfile` **hard-fails** with `/undefinedfilename` on a missing file. prep now stages a uniquely-named sentinel resource (`fso-sidecar-acceptance-sentinel.ps`) into `Resource/Init/`, and the smoke `runlibfile`s it — measured exit 0 with the staged `-I` set, exit 1 without. The smoke additionally requires all five staged dirs to exist and to hold files recursively. Verified: empty `Resource/Font`, empty `fonts/`, and a removed sentinel each fail the audit.
+2. **The brew version-drift gate compared the installed version against the lock entry prep had just written from that same version** — it could never fire. verify now compares against the manifest `expectVersion`; prep **fails** instead of warning and never writes a drifted version. Live repro after the fix: pinning `10.08.99` makes `verify` report `brew version drift — formula ghostscript is 10.08.0 but scripts/binaries.manifest.json pins 10.08.99`, and prep aborts with the same finding plus a REMEDY line. An absent brew is now reported as an INACTIVE gate, not a warning.
+3. **`bundle-pdf-macos.sh` silently substituted Homebrew's libqpdf.** With the fetch staging dir absent, `collect_deps_of` fell through to `find_in_brew` and staged brew's `libqpdf.30.dylib` under the official name — same basename, same soname, same version string, so the version and rpath gates both passed while shipping different code. It now refuses to bundle without the staged lib, and every collected `libqpdf*` must fingerprint-match the staged one. Two of my first attempts at this were wrong and the fixture tests caught them: a post-collection sha comparison can never match (prep legitimately rewrites the install id and re-signs), and a plain string-prefix "is it inside staging?" check misfires because macOS `/var` is a symlink to `/private/var` — the guard now compares physicalized paths and matches on load-command identity rather than filename.
+4. **`resolve_gs_resources` could return `Some` with an empty `search_paths`** (present-but-hollow tree), degrading to the compiled-in prefix with no warning. It now requires the `Resource/Init/gs_init.ps` marker plus a non-empty font source, logs a warning naming the reason, and skips an unusable candidate for a usable later one.
+
+Also fixed: prep validates **every** entry declaring `resources` (Task 3 makes gs a `url` row on both Windows targets, which the old brew-only loop would have silently skipped); prep asserts every manifest row is staged and executable before printing PASS; `cpio` now runs against physicalized paths so a worktree under a symlinked root cannot abort the copy (this was a real latent bug — the bundle fixture initially failed on exactly that); `lipo` failures name the binary and the likely cause; errors carry a structured `remedy` instead of being classified by message prefix; `sidecars_are_self_contained` asserts the smoke line actually appeared; and a Rust test now asserts the `tauri.conf.json` `bundle.resources["gs-resources/"]` mapping, which previously nothing covered — deleting that one line left both suites green while every PDF broke.
+
+**Test count delta.** 297 → 338 vitest (+41: 3 new `bundle-pdf.test.mjs` cases, 6 new audit cases, 4 new prep cases, 2 new verify cases, plus the rewritten stub fixture); 386 → 404 cargo (+18: sentinel/unusable-tree/candidate-2/candidate-3/conf-mapping/smoke-line coverage).
+
+**Manual acceptance re-run after the round-1 fixes** (temporary in-crate `#[ignore]` harness against the freshly built `.app`, deleted afterwards; `mv` guarded by a `trap` that restores on exit). With `/opt/homebrew/opt/ghostscript` **and** `/opt/homebrew/Cellar/ghostscript/10.08.0` both renamed, the resolved search paths printed from the run were the bundle's `Contents/Resources/gs-resources/{Resource/Init,lib,Resource/Font,fonts}` + `iccprofiles`, and:
+
+| Fixture | In | Out | Winning strategy |
+|---|---|---|---|
+| `sample.jpg` | 11 255 B | 5 076 B | `quality=30` (vips) |
+| `sample.mp4` | 16 155 B | 6 590 B | `two-pass h264` (ffmpeg) |
+| `sample.pdf` | 12 666 B | 10 714 B | **`gs dpi=72,jpegq=60`** |
+
+Unchanged from round 0 (the PDF differs by 1 byte, within gs's own output nondeterminism). Homebrew verified restored afterwards: opt symlink present, keg present, no `.bak` left, `gs --version` → `10.08.0`.
+
+**Round-1 note for Task 3:** `bundle-pdf-macos.sh` now **requires** the fetch-staged qpdf lib, so a Windows-side `prep-windows.mjs` must stage qpdf's own `lib/` dir before bundling (the msvc build ships VC-runtime DLLs, so the equivalent guard belongs there too). `prep.mjs` also now rejects Windows targets explicitly, so `all.mjs` cannot silently succeed.
 
 **Notes for later tasks.**
 - `prep.mjs` dispatches only macOS targets and fails with an explicit "Task 3" message for `-pc-windows-msvc` targets.
