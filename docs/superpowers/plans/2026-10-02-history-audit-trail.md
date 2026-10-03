@@ -1923,6 +1923,8 @@ git commit -m "feat(history): build filterable session list UI with pagination"
 **Required Tests:**
 - `saves a changed history retention value` — 30 → save payload; strict full-payload `toEqual({ settings: { ...baseSettings, history: { retentionDays: 30 } } })`
 - `out of range typed retention clamps to 3650` — type 9999 → save payload `history.retentionDays` 3650 (Base UI blur commit clamp; pins persisted 1..=3650 through the UI path)
+- `out of range typed retention clamps to min` — type 0 → save payload `history.retentionDays` 1 (Base UI blur commit min clamp)
+- `decimal typed retention rounds to 31` — type 30.5 → save payload `history.retentionDays` 31 (NumberStepper `Math.round`)
 - `clamps history retention through the stepper bounds` — increase from 90 → 91 (Save enabled after); decrease at 1 stays 1; increase at 3650 stays 3650; exact button names `Increase/Decrease History retention (days)`
 - `reset to defaults restores history retention 90` — set 30, reset, save payload has 90
 - `renders history card after quality floors` — card order + description copy + visible FieldLabel "History retention (days)" (matches accessible name, WCAG 2.5.3)
@@ -1931,6 +1933,8 @@ git commit -m "feat(history): build filterable session list UI with pagination"
 - [ ] **Step 1: Write the failing tests**
 
 Add to `SettingsView.test.tsx` (follow its existing `loadView()`/`pickOption` patterns; fixture settings include `history: { retentionDays: 90 }`):
+
+Illustrative sketch — the Required Tests list governs (strict full-payload `toEqual`, exact button names, `toHaveDisplayValue` convention; post-reset Save is disabled so the reset test re-dirties another field per the pinned behavior).
 
 ```tsx
   it('saves a changed history retention value', async () => {
