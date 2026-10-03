@@ -1921,15 +1921,20 @@ git commit -m "feat(history): build filterable session list UI with pagination"
 - Boundary rules enforced (per `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`).
 
 **Required Tests:**
-- `saves a changed history retention value` — 30 → save_settings payload includes `history: { retentionDays: 30 }`
-- `clamps history retention through the stepper bounds` — increase from 90 → 91; decrease at 1 stays 1; increase at 3650 stays 3650
+- `saves a changed history retention value` — 30 → save payload; strict full-payload `toEqual({ settings: { ...baseSettings, history: { retentionDays: 30 } } })`
+- `out of range typed retention clamps to 3650` — type 9999 → save payload `history.retentionDays` 3650 (Base UI blur commit clamp; pins persisted 1..=3650 through the UI path)
+- `out of range typed retention clamps to min` — type 0 → save payload `history.retentionDays` 1 (Base UI blur commit min clamp)
+- `decimal typed retention rounds to 31` — type 30.5 → save payload `history.retentionDays` 31 (NumberStepper `Math.round`)
+- `clamps history retention through the stepper bounds` — increase from 90 → 91 (Save enabled after); decrease at 1 stays 1; increase at 3650 stays 3650; exact button names `Increase/Decrease History retention (days)`
 - `reset to defaults restores history retention 90` — set 30, reset, save payload has 90
-- `renders history card after quality floors` — card order + description copy
+- `renders history card after quality floors` — card order + description copy + visible FieldLabel "History retention (days)" (matches accessible name, WCAG 2.5.3)
 - `cancel discards history retention draft` — cancel → re-render shows 90
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to `SettingsView.test.tsx` (follow its existing `loadView()`/`pickOption` patterns; fixture settings include `history: { retentionDays: 90 }`):
+
+Illustrative sketch — the Required Tests list governs (strict full-payload `toEqual`, exact button names, `toHaveDisplayValue` convention; post-reset Save is disabled so the reset test re-dirties another field per the pinned behavior).
 
 ```tsx
   it('saves a changed history retention value', async () => {
@@ -1971,23 +1976,23 @@ Fixture updates (REQUIRED — the Settings type gained `history` in Task 8):
 - `src/views/SettingsView.test.tsx:281` "renders four cards" — update to five cards.
 - Update the reset defaults fixture to include `history: { retentionDays: 90 }` so the reset payload is complete.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `yarn test SettingsView`
 Expected: FAIL — no History retention control.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - Add the History card after the Quality Floors card; wire `NumberStepper` with `id="history-retention-days"`, `ariaLabel="History retention (days)"`, `min={1}`, `max={3650}`, `updateHistoryRetention` writes `draft.history.retentionDays`.
 - Update the typed fixtures listed above and the card-count assertion (both would otherwise fail `yarn build`/`yarn test`).
 - Note: the stepper input renders `type="text"` (base-ui) — repo convention asserts with `toHaveDisplayValue` (`NumberStepper.test.tsx:31-41`); `toHaveValue` also works but prefer the convention.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `yarn test SettingsView && yarn build`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/views/SettingsView.tsx src/views/SettingsView.test.tsx src/hooks/useSettings.test.ts
