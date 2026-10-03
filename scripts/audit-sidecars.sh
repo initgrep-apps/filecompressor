@@ -199,6 +199,66 @@ if [ -f "$CONF" ]; then
   done
 fi
 
+gs_clean_room_smoke() {
+  local gs="$1"
+  local gs_resources="$2"
+  local work="$3"
+  local -a gs_includes=()
+  local dir
+  for dir in Resource/Init lib Resource/Font fonts; do
+    [ -d "$gs_resources/$dir" ] || continue
+    gs_includes+=("-I$gs_resources/$dir")
+  done
+  if [ -d "$gs_resources/iccprofiles" ]; then
+    gs_includes+=("-uICCProfilesDir=$gs_resources/iccprofiles")
+  fi
+  if [ "${#gs_includes[@]}" -eq 0 ]; then
+    printf 'FAIL gs clean-room smoke: no staged resource dirs under %s\n' "$gs_resources"
+    return 1
+  fi
+  local fixture="$work/font-fixture.ps"
+  local out="$work/font-fixture.pdf"
+  printf '%s\n' \
+    '%!PS' \
+    '/Helvetica-Bold findfont 24 scalefont setfont' \
+    '72 700 moveto (gs clean-room smoke) show' \
+    '/Helvetica findfont 12 scalefont setfont' \
+    '72 660 moveto (font resolution must come from the staged resources) show' \
+    'showpage' >"$fixture"
+  if ! env -i HOME=/nonexistent PATH=/usr/bin:/bin \
+    DYLD_LIBRARY_PATH="$FRAMEWORKS_DIR" \
+    "$gs" "${gs_includes[@]}" \
+    -sDEVICE=pdfwrite -dNOPAUSE -dQUIET -dBATCH \
+    -sOutputFile="$out" "$fixture" 2>"$work/gs.stderr"; then
+    printf 'FAIL gs clean-room smoke: gs exited non-zero with only the staged resources\n'
+    sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2 || true
+    return 1
+  fi
+  local size
+  size="$(wc -c <"$out" | tr -d ' ')"
+  if [ ! -s "$out" ] || [ "$size" -le 1024 ]; then
+    printf 'FAIL gs clean-room smoke: rendered %s bytes, expected more than 1024 from a font-using fixture\n' "$size"
+    return 1
+  fi
+  if ! grep -q '%%EOF' "$out"; then
+    printf 'FAIL gs clean-room smoke: output is not a complete PDF\n'
+    return 1
+  fi
+  printf 'gs clean-room smoke: PASS (%s bytes, %s staged resource flags)\n' "$size" "${#gs_includes[@]}"
+}
+
+gs_smoke_workdir=""
+if [ -n "$TARGET" ] && [ -f "$BIN_DIR/gs-$TARGET" ] && [ -d "$ROOT/src-tauri/gs-resources" ]; then
+  require_tool env
+  gs_smoke_workdir="$(mktemp -d -t gs-clean-room)"
+  if ! gs_clean_room_smoke "$BIN_DIR/gs-$TARGET" "$ROOT/src-tauri/gs-resources" "$gs_smoke_workdir"; then
+    failures+=("<gs-clean-room-smoke>")
+  fi
+fi
+if [ -n "$gs_smoke_workdir" ]; then
+  rm -rf "$gs_smoke_workdir"
+fi
+
 if [ ${#failures[@]} -gt 0 ]; then
   printf 'sidecar audit: %d file(s) not self-contained\n' "${#failures[@]}"
   exit 1

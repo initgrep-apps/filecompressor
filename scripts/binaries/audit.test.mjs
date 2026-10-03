@@ -48,6 +48,106 @@ EOF`]);
   execFileSync("clang", ["-arch", arch, source, "-o", outPath]);
 }
 
+const GS_FIXTURE_C = `
+#include <stdio.h>
+#include <string.h>
+int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "--version") == 0) { printf("10.08.0\\n"); return 0; }
+  const char *out = NULL;
+  for (int i = 1; i < argc; i++) {
+    if (strncmp(argv[i], "-sOutputFile=", 13) == 0) out = argv[i] + 13;
+  }
+  if (out == NULL) { fprintf(stderr, "no -sOutputFile=\\n"); return 2; }
+#if GS_EXIT_CODE != 0
+  fprintf(stderr, "gs fixture refusing to render\\n");
+  return GS_EXIT_CODE;
+#endif
+  FILE *f = fopen(out, "wb");
+  if (f == NULL) return 3;
+  fputs("%PDF-1.7\\n", f);
+  for (int i = 0; i < 500; i++) fputs("0 0 0 rg 10 10 10 10 re f\\n", f);
+  fputs("%%EOF\\n", f);
+  fclose(f);
+  return 0;
+}
+`;
+
+function compileGsFixture(arch, outPath, exitCode = 0) {
+  const source = join(
+    tmpdir(),
+    `gs-fixture-${exitCode}-${arch}-${process.pid}-${Math.random().toString(36).slice(2)}.c`,
+  );
+  execFileSync("sh", ["-c", `cat > '${source}' <<'EOF'\n${GS_FIXTURE_C}\nEOF`]);
+  execFileSync("clang", [`-DGS_EXIT_CODE=${exitCode}`, "-arch", arch, source, "-o", outPath]);
+}
+
+const GS_MANIFEST_ENTRY = {
+  source: "brew",
+  formula: "ghostscript",
+  binary: "gs",
+  dest: "gs",
+  expectVersion: "10.08.0",
+  resources: ["Resource", "lib", "iccprofiles", "fonts"],
+};
+
+async function makeGsRoot({ resources = true, icc = true, fonts = true } = {}) {
+  await mkdir(`${tmpdir()}/audit-test-roots`, { recursive: true });
+  const root = await mkdtemp(`${tmpdir()}/audit-test-roots/r`);
+  cleanupRoots.push(root);
+  await mkdir(`${root}/src-tauri/binaries`, { recursive: true });
+  await mkdir(`${root}/scripts`, { recursive: true });
+  await writeFile(
+    `${root}/scripts/binaries.manifest.json`,
+    JSON.stringify({
+      targets: { "aarch64-apple-darwin": { gs: GS_MANIFEST_ENTRY } },
+    }),
+  );
+  await writeFile(
+    `${root}/scripts/binaries.lock.json`,
+    JSON.stringify({
+      generated: new Date().toISOString(),
+      targets: {
+        "aarch64-apple-darwin": {
+          gs: {
+            source: "brew",
+            formula: "ghostscript",
+            version: "10.08.0",
+            date: new Date().toISOString(),
+          },
+        },
+      },
+    }),
+  );
+  compileGsFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`);
+  if (resources) {
+    const base = `${root}/src-tauri/gs-resources`;
+    for (const [dir, files] of [
+      ["Resource/Init", ["gs_init.ps"]],
+      ["lib", ["gs_init.ps"]],
+      ["Resource/Font", ["Fontmap"]],
+      ["iccprofiles", icc ? ["default_rgb.icc"] : []],
+      ["fonts", fonts ? ["Helvetica"] : []],
+    ]) {
+      await mkdir(`${base}/${dir}`, { recursive: true });
+      for (const file of files) {
+        await writeFile(`${base}/${dir}/${file}`, "content");
+      }
+    }
+  }
+  return root;
+}
+
+async function makeStubBrew(version = "10.08.0") {
+  const dir = await mkdtemp(`${tmpdir()}/audit-stub-brew-`);
+  cleanupRoots.push(dir);
+  await writeFile(
+    `${dir}/brew`,
+    `#!/bin/sh\ncase "$1" in\n  --version) echo 'Homebrew 4.6.0' ;;\n  list) printf '%s %s\\n' "$2" '${version}' ;;\n  *) exit 1 ;;\nesac\n`,
+    { mode: 0o755 },
+  );
+  return dir;
+}
+
 function runAudit(root, target, extraEnv = {}) {
   return runAuditArgs(root, [], { ROOT: root, AUDIT_TARGET: target ?? "", ...extraEnv });
 }
@@ -177,5 +277,86 @@ describe("audit-sidecars.sh", () => {
     });
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("sidecar audit: PASS");
+  });
+
+  it("passes the clean-room gs smoke with staged resources", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("gs clean-room smoke: PASS");
+    expect(result.stdout).toContain("sidecar audit: PASS (1 binaries, 0 framework dylibs)");
+  });
+
+  it("fails the clean-room gs smoke when gs exits non-zero", async () => {
+    const root = await makeGsRoot();
+    compileGsFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, 1);
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("FAIL gs clean-room smoke");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+
+  it("fails when the gs resources dir is missing entirely", async () => {
+    const root = await makeGsRoot({ resources: false });
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("gs resources dir missing");
+    expect(result.stderr).toContain("yarn binaries:prep");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+    expect(result.stdout).not.toContain("gs clean-room smoke: PASS");
+  });
+
+  it("fails when iccprofiles or fonts is empty", async () => {
+    const noFonts = await makeGsRoot({ fonts: false });
+    const fontResult = await runAudit(noFonts, "aarch64-apple-darwin", {
+      PATH: `${await makeStubBrew()}:${process.env.PATH}`,
+    });
+    expect(fontResult.code).toBe(1);
+    expect(fontResult.stderr).toMatch(/gs resources dir is empty: .*\/fonts/);
+
+    const noIcc = await makeGsRoot({ icc: false });
+    const iccResult = await runAudit(noIcc, "aarch64-apple-darwin", {
+      PATH: `${await makeStubBrew()}:${process.env.PATH}`,
+    });
+    expect(iccResult.code).toBe(1);
+    expect(iccResult.stderr).toMatch(/gs resources dir is empty: .*\/iccprofiles/);
+  });
+
+  it("fails on brew version drift", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew("10.08.1");
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("brew version drift");
+    expect(result.stderr).toContain("formula ghostscript is 10.08.1");
+    expect(result.stderr).toContain("the lock pins 10.08.0");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+
+  it("names the install command when the brew formula is absent", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    await writeFile(`${stubBrew}/brew`, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("brew install ghostscript");
   });
 });

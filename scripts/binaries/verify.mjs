@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   archForTriple,
@@ -73,6 +74,87 @@ async function checkVersion(binPath, expectVersion, triple, root) {
       },
     );
   });
+}
+
+export function gsResourcesDir(root) {
+  return join(root, "src-tauri", "gs-resources");
+}
+
+const GS_INIT_MARKER = join("Resource", "Init", "gs_init.ps");
+
+export async function checkGsResources(root, name, entry, problems) {
+  const resources = entry.resources;
+  if (!Array.isArray(resources) || resources.length === 0) {
+    return;
+  }
+  const base = gsResourcesDir(root);
+  if (!(await exists(base))) {
+    problems.push(
+      `${name}: gs resources dir missing: ${base} — run 'yarn binaries:prep' to stage it; without it the gs sidecar resolves fonts and ICC profiles from a Homebrew prefix and PDF compression fails on machines without brew Ghostscript`,
+    );
+    return;
+  }
+  if (resources.includes("Resource") && !(await exists(join(base, GS_INIT_MARKER)))) {
+    problems.push(
+      `${name}: gs resource marker missing: ${join(base, GS_INIT_MARKER)} — run 'yarn binaries:prep' to restage them`,
+    );
+  }
+  for (const dirName of resources) {
+    const dir = join(base, dirName);
+    const info = await stat(dir).catch(() => null);
+    if (!info || !info.isDirectory()) {
+      problems.push(`${name}: gs resources dir missing: ${dir} — run 'yarn binaries:prep' to stage it`);
+      continue;
+    }
+    const contents = await readdir(dir).catch(() => []);
+    if (contents.length === 0) {
+      problems.push(
+        `${name}: gs resources dir is empty: ${dir} — a real PDF needs fonts and ICC profiles from it; run 'yarn binaries:prep' to restage them`,
+      );
+    }
+  }
+}
+
+export async function checkBrewVersion(name, entry, lockEntry, problems) {
+  if (entry.source !== "brew") {
+    return;
+  }
+  if (!(await toolOnPath("brew"))) {
+    console.warn(`WARN ${name}: brew not on PATH — skipping the brew version check for ${entry.formula}`);
+    return;
+  }
+  let installed;
+  try {
+    const { stdout } = await run("brew", ["list", "--versions", entry.formula]);
+    const fields = stdout.trim().split(/\s+/).filter(Boolean);
+    installed = fields[1];
+    if (!installed) {
+      problems.push(
+        `${name}: 'brew list --versions ${entry.formula}' printed '${stdout.trim()}' — the formula is not installed; run 'brew install ${entry.formula}' then re-run 'yarn binaries:prep'`,
+      );
+      return;
+    }
+  } catch (error) {
+    problems.push(
+      `${name}: 'brew list --versions ${entry.formula}' failed: ${error.message ?? error} — run 'brew install ${entry.formula}' then re-run 'yarn binaries:prep'`,
+    );
+    return;
+  }
+  const expected = lockEntry?.version ?? entry.expectVersion;
+  if (installed !== expected) {
+    problems.push(
+      `${name}: brew version drift — formula ${entry.formula} is ${installed}, the lock pins ${expected} — re-pin the manifest expectVersion and re-run 'yarn binaries:all' (refresh automation lands with 'yarn binaries:refresh')`,
+    );
+  }
+}
+
+async function toolOnPath(tool) {
+  try {
+    await run("sh", ["-c", `command -v ${tool}`]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function verifyTarget(target, root) {
@@ -185,6 +267,9 @@ export async function verifyTarget(target, root) {
     } else {
       console.log(`verify: ${dest} ${entry.expectVersion} (${expectedArch}) OK`);
     }
+
+    await checkGsResources(root, dest, entry, problems);
+    await checkBrewVersion(dest, entry, lockEntry, problems);
   }
 
   if (problems.length > 0) {

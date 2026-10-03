@@ -92,9 +92,14 @@ impl PdfProcessor {
     }
 
     /// Builds the gs argument vector. When the staged resource tree resolved, the
-/// `-I` search paths (and `-sICCProfilesDir`) are prepended ahead of every
+/// `-I` search paths (and the ICC profile dir) are prepended ahead of every
 /// engine flag so Ghostscript never falls back to its compiled-in Homebrew
 /// prefix; with no staged tree the vector is exactly the pre-resources one.
+///
+/// The ICC dir goes in as `-uICCProfilesDir` (a user parameter, which is how
+/// `Resource/Init/gs_lev2.ps` reads it). `-sICCProfilesDir` is not accepted by
+/// pdfwrite: gs 10.08 aborts device init with "Unable to open the initial
+/// device" whenever it is passed.
 fn gs_args(
     dpi: Option<u32>,
     jpegq: Option<u32>,
@@ -108,7 +113,7 @@ fn gs_args(
                 args.push(format!("-I{}", search_path));
             }
             if let Some(icc) = &resources.icc_profiles_dir {
-                args.push(format!("-sICCProfilesDir={}", icc));
+                args.push(format!("-uICCProfilesDir={}", icc));
             }
         }
         args.extend([
@@ -283,7 +288,8 @@ impl CompressionProcessor for PdfProcessor {
 
             let temp_file = temp_dir.join(format!("attempt-{}.pdf", index));
             attempt_paths.push(temp_file.clone());
-            let spec = Self::pass_spec(pass, input, &temp_file, sidecar_paths.gs_resources.as_ref());
+            let gs_resources = sidecar_paths.gs_resources.as_ref();
+            let spec = Self::pass_spec(pass, input, &temp_file, gs_resources);
             let sidecar_path = match pass {
                 PdfPass::QpdfLossless | PdfPass::QpdfImageOpt => qpdf_path,
                 PdfPass::GsScreen | PdfPass::GsLadder { .. } => gs_path,
@@ -396,7 +402,7 @@ mod tests {
             "-I/app/Resources/gs-resources/lib".to_string(),
             "-I/app/Resources/gs-resources/Resource/Font".to_string(),
             "-I/app/Resources/gs-resources/fonts".to_string(),
-            "-sICCProfilesDir=/app/Resources/gs-resources/iccprofiles".to_string(),
+            "-uICCProfilesDir=/app/Resources/gs-resources/iccprofiles".to_string(),
             "-sDEVICE=pdfwrite".to_string(),
         ];
         assert_eq!(
@@ -408,6 +414,12 @@ mod tests {
             args[expected_prefix.len()],
             "-dPDFSETTINGS=/screen".to_string(),
             "the engine flags that follow are unchanged"
+        );
+        assert!(
+            !args.iter().any(|a| a.starts_with("-sICCProfilesDir=")),
+            "-sICCProfilesDir aborts pdfwrite device init in gs 10.08 — the user \
+             parameter -uICCProfilesDir is the switch gs_lev2.ps reads: {:?}",
+            args
         );
     }
 
@@ -431,8 +443,8 @@ mod tests {
         );
         assert_eq!(args[1], "-sDEVICE=pdfwrite".to_string());
         assert!(
-            !args.iter().any(|a| a.starts_with("-sICCProfilesDir=")),
-            "no iccprofiles dir means no -sICCProfilesDir flag: {:?}",
+            !args.iter().any(|a| a.starts_with("-uICCProfilesDir=")),
+            "no iccprofiles dir means no ICC profile flag: {:?}",
             args
         );
     }
@@ -863,7 +875,7 @@ esac
             &[
                 "-I/staged/Resource/Init",
                 "-I/staged/fonts",
-                "-sICCProfilesDir=/staged/iccprofiles",
+                "-uICCProfilesDir=/staged/iccprofiles",
                 "-sDEVICE=pdfwrite",
             ],
             "the spawned gs must receive the resource flags first: {line}"
