@@ -400,7 +400,7 @@ git commit -m "feat(binaries): macOS arm64 prep — official qpdf, brew vips/gs,
   - `prep-windows.mjs` output layout: `src-tauri/binaries/engines/{vips,gs,qpdf}/` each containing the exe + all required DLLs; `src-tauri/gs-resources/{Resource,lib,iccprofiles,fonts}`.
   - `tauri.windows.conf.json`: `bundle.externalBin` = `["binaries/ffmpeg","binaries/ffprobe"]`; `bundle.resources` adds `{ "binaries/engines/": "engines/", "gs-resources/": "gs-resources/" }`.
 
-- [ ] **Step 1: Add Windows manifest entries**
+- [x] **Step 1: Add Windows manifest entries**
 
 For both `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`:
 - ffmpeg/ffprobe: BtbN pinned tag `autobuild-2026-10-01-13-06`, assets `ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0.zip` (sha `74827e09…ffbe`) / `…-winarm64-gpl-9.0.zip` (sha `7263744…a1a6`), members `bin/ffmpeg.exe`, `bin/ffprobe.exe`, expectVersion `9.0.2`, source url.
@@ -409,7 +409,7 @@ For both `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc`:
 - gs: MSYS2 `mingw-w64-ucrt-x86_64-ghostscript-10.08.0-2-any.pkg.tar.zst` (sha `f2cf054…4367`) / `mingw-w64-clang-aarch64-ghostscript-10.08.0-2-any.pkg.tar.zst` (sha `ade0e91…316e`), member paths under `ucrt64/bin/gswin64c.exe` / `clangarm64/bin/gswin64c.exe`, dest `gs`, expectVersion `10.08.0`, `resources: ["share/ghostscript/10.08.0/Resource", "share/ghostscript/10.08.0/lib", "share/ghostscript/10.08.0/iccprofiles", "share/ghostscript/10.08.0/fonts"]`.
 Add tar.zst extraction to `lib.mjs` `extract` (already specced) + a fixture test.
 
-- [ ] **Step 2: TDD `prep-windows.mjs`**
+- [x] **Step 2: TDD `prep-windows.mjs`**
 
 `prep-windows.test.mjs` (node env, temp root fixtures):
 - `vips folder layout: exe + all sibling DLLs copied from staged bin/ into engines/vips/` (fixture: `bin/vips.exe`, `bin/foo.dll`, `bin/vips-modules-8.18/bar.dll` → asserts exe+dlls+modules present).
@@ -417,7 +417,7 @@ Add tar.zst extraction to `lib.mjs` `extract` (already specced) + a fixture test
 - `qpdf: qpdf.exe + VC runtime DLLs staged into engines/qpdf/` (fixture from msvc zip listing: msvcp140.dll etc).
 Run → FAIL → implement → PASS.
 
-- [ ] **Step 3: TDD Rust Windows triples + candidates + PATH prepend**
+- [x] **Step 3: TDD Rust Windows triples + candidates + PATH prepend**
 
 `sidecar.rs` tests:
 - extend `target_triple_returns_triple_per_platform` with `("windows","aarch64") -> "aarch64-pc-windows-msvc"`.
@@ -426,16 +426,16 @@ Run → FAIL → implement → PASS.
 - `resolve_for` on windows still resolves ffmpeg/qpdf from exe_dir direct candidates.
 Run: `cd src-tauri && cargo test` (targeted) → FAIL → implement → PASS. Wire `prepend_engine_dir_to_path` into `run_sidecar`'s spawn only for non-static engines (call it for every sidecar; harmless for static ones).
 
-- [ ] **Step 4: Create `tauri.windows.conf.json` + prep dispatch**
+- [x] **Step 4: Create `tauri.windows.conf.json` + prep dispatch**
 
 `prep.mjs`: target ends with `-pc-windows-msvc` → run `prep-windows.mjs` after fetch. Verify Tauri platform-config merge via Context7 (`/tauri-apps/tauri-docs`, query "platform specific configuration tauri.windows.conf.json merge") before finalizing the file.
 Verify JSON validity of both configs: `python3 -c "import json; [json.load(open(p)) for p in ['src-tauri/tauri.conf.json','src-tauri/tauri.windows.conf.json']]"`.
 
-- [ ] **Step 5: Cross-check what is verifiable on macOS**
+- [x] **Step 5: Cross-check what is verifiable on macOS**
 
 Run: `yarn vitest run scripts/binaries/` (all unit tests green), `yarn build && yarn test && cd src-tauri && cargo test` (Rust green). Windows end-to-end (fetch → prep → audit → build → manual compress) is verified later by cloning the repo on Windows per the spec's manual acceptance flow — note this explicitly in Execution Notes; do not fake a Windows verification on macOS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add -A
@@ -651,7 +651,15 @@ git commit -m "feat(binaries): refresh flow for vendor version bumps"
 
 - Task 1 (manifest, lock, fetch, arch gate) — **done, PR #75 merged**. The ffmpeg incident is fixed: `ffmpeg`/`ffprobe` shipped as Intel x86_64 under `aarch64` names; they are now fetched from manifest-pinned Martin Riedl arm64 artifacts and gated by `verify.mjs`, which fails on content-vs-filename arch mismatch. Incident TDD ran live (audit failed on the inherited binaries → fetch → audit passed). Gate green: 297 vitest, 386 cargo. Note for later tasks: `src-tauri/frameworks/` and `src-tauri/binaries/` are now gitignored and regenerated only from Task 2 prep, so a fresh clone must run `yarn binaries:all` before `cargo test` (the audit and prep both print the remedy).
 - Task 2 Step 7 manual acceptance (brew gs renamed) result: **passed** — see the detail below.
-- Task 3 Windows end-to-end verification: _pending — Windows host or CI_
+- Task 3 (Windows x64 + arm64 pipeline) — **done, PR #77 merged**. Added manifest rows for both Windows targets (x86_64-pc-windows-msvc + aarch64-pc-windows-msvc) with pinned BtbN/qpdf/MXE/MSYS2 artifacts. Created `prep-windows.mjs` staging `binaries/engines/{vips,gs,qpdf}/` (exe + sibling DLLs + payload subdirs) + `gs-resources/` tree with 4 acceptance sentinels. `prep.mjs` dispatches to `prep-windows.mjs` for Windows targets. `tauri.windows.conf.json` maps `binaries/engines/` and `gs-resources/` into `Resources/`. Rust `sidecar.rs`: win-arm64 triple (`aarch64-pc-windows-msvc`), engine-folder candidates (bundled + dev layout), `path_with_dir_front` PATH prepend helper, wired into `resolve_for` + `run_sidecar`. Gate: 447 vitest, 418 cargo.
+
+**Two corrections to the plan's Windows manifest, both recorded here:**
+1. **BtbN member paths** — the real archives wrap binaries in a top-level dir (`ffmpeg-n9.0.2-22-g46d8f462ee-<arch>-gpl-9.0/bin/ffmpeg.exe`, not `bin/ffmpeg.exe`). Manifest updated to the verified paths.
+2. **MSYS2 Ghostscript ships NO `Resource/`, `fonts/`, `iccprofiles/`** — the pinned MSYS2 package has 26 directories, zero `Resource/Init/gs_init.ps`. `prep-windows.mjs` fails loudly with the missing subdirs; this is a **Windows gs e2e blocker** (choosing a gs source that ships Resource/ is unresolved). Recorded in `docs/bugs.md`.
+
+**Tauri config merge verified.** Context7 confirms RFC 7396 merge patch: arrays replace (so Windows `externalBin` replaces the base list; vips/qpdf/gs from base don't leak into Windows builds), objects merge. `tauri.windows.conf.json` maps `binaries/engines/` + `gs-resources/` into `Resources/` — verified by inspection.
+
+**Windows end-to-end verification:** deferred — requires Windows x64 + arm64 host or CI runner (verified hashes, member paths, `validateManifest`, `prep-windows` against fixtures, Rust core as unit tests, macOS pipeline re-run green). Actual `tauri build` + manual compress on Windows x64 + arm64 not run here.
 - Task 4 Intel end-to-end verification: _pending — Intel host or CI_
 
 ### Task 2 (macOS arm64 complete pipeline) — execution notes
