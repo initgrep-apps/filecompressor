@@ -17,6 +17,7 @@
     "binaries:audit": "bash scripts/audit-sidecars.sh",
     "binaries:all": "node scripts/binaries/all.mjs",
     "binaries:refresh": "node scripts/binaries/refresh.mjs",
+    "sbom": "node scripts/binaries/sbom.mjs",
     "app:build": "node scripts/binaries/app-build.mjs"
   },
   "dependencies": {

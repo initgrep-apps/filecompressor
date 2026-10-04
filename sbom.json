@@ -1,0 +1,95 @@
+{
+  "generated": "2026-10-04T22:54:04.822Z",
+  "components": [
+    {
+      "name": "ffmpeg",
+      "version": "9.0.2",
+      "license": "GPL-2.0-or-later",
+      "source": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+      "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+      "targets": [
+        "aarch64-apple-darwin"
+      ],
+      "artifacts": [
+        {
+          "triple": "aarch64-apple-darwin",
+          "source": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+          "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924"
+        }
+      ],
+      "sha256Agrees": true
+    },
+    {
+      "name": "ffprobe",
+      "version": "9.0.2",
+      "license": "GPL-2.0-or-later",
+      "source": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip",
+      "sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6",
+      "targets": [
+        "aarch64-apple-darwin"
+      ],
+      "artifacts": [
+        {
+          "triple": "aarch64-apple-darwin",
+          "source": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip",
+          "sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6"
+        }
+      ],
+      "sha256Agrees": true
+    },
+    {
+      "name": "gs",
+      "version": "10.08.0",
+      "license": "AGPL-3.0",
+      "source": "brew (Homebrew formula: ghostscript)",
+      "sha256": null,
+      "targets": [
+        "aarch64-apple-darwin"
+      ],
+      "artifacts": [
+        {
+          "triple": "aarch64-apple-darwin",
+          "source": "brew (Homebrew formula: ghostscript)",
+          "sha256": null
+        }
+      ],
+      "sha256Agrees": true
+    },
+    {
+      "name": "qpdf",
+      "version": "12.4.2",
+      "license": "Apache-2.0",
+      "source": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-bin-macos-arm64.zip",
+      "sha256": "62e46987a30ea167cbc530ccb22690aec3d8c812ed09979a941bcee92e504b79",
+      "targets": [
+        "aarch64-apple-darwin"
+      ],
+      "artifacts": [
+        {
+          "triple": "aarch64-apple-darwin",
+          "source": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-bin-macos-arm64.zip",
+          "sha256": "62e46987a30ea167cbc530ccb22690aec3d8c812ed09979a941bcee92e504b79"
+        }
+      ],
+      "sha256Agrees": true
+    },
+    {
+      "name": "vips",
+      "version": "8.18.7",
+      "license": "LGPL-3.0",
+      "source": "brew (Homebrew formula: vips)",
+      "sha256": null,
+      "targets": [
+        "aarch64-apple-darwin"
+      ],
+      "artifacts": [
+        {
+          "triple": "aarch64-apple-darwin",
+          "source": "brew (Homebrew formula: vips)",
+          "sha256": null
+        }
+      ],
+      "sha256Agrees": true
+    }
+  ]
+}
