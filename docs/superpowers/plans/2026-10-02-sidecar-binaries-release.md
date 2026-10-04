@@ -505,23 +505,23 @@ Consequence, stated plainly rather than papered over: **a Windows `gs.exe` stage
 - Boundary rules enforced (per AGENTS.md)
 - Produces: manifest rows only — no new code paths expected. If prep scripts turn out to hardcode arm64 paths, fix them to use the host triple (same pattern they already use via `TRIPLE`).
 
-- [ ] **Step 1: Add Intel manifest entries**
+- [x] **Step 1: Add Intel manifest entries**
 
 `x86_64-apple-darwin`: ffmpeg `…/macos/amd64/1789931006_9.0.2/ffmpeg.zip` sha `7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4`; ffprobe sha `2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd`; qpdf `…-bin-macos-x86_64.zip` sha `dd3b01f4414d198529bb0f13bba59c2f016a328bb3506695087a96fb80fc1481`; vips/gs brew entries.
 Validate JSON: `python3 -c "import json; json.load(open('scripts/binaries.manifest.json'))"`.
 
-- [ ] **Step 2: Verify no arm64 assumptions exist + audit gains `--target` passthrough**
+- [x] **Step 2: Verify no arm64 assumptions exist + audit gains `--target` passthrough**
 
 Run: `grep -rn "aarch64" scripts/*.sh scripts/binaries/*.mjs | grep -v test | grep -v manifest`
 Expected: only `TRIPLE="$(rustc -Vv | grep '^host:'…)"`-style host resolution and manifest content — no hardcoded arm64 in logic. Fix any found.
 Then wire `audit-sidecars.sh` to accept an optional `--target <triple>` passthrough to `verify.mjs` (host triple default preserved): `yarn binaries:audit --target x86_64-apple-darwin` cross-audits fetched Intel artifacts from an arm64 host (`lipo` reads both arches; spec §7 audit row). Test (vitest, node env): `audit_target_passthrough_cross_audits_fetched_intel_binaries` — fetch Intel ffprobe into a `--root` fixture, audit with `--target x86_64-apple-darwin` passes; flip its filename to aarch64 → fails.
 
-- [ ] **Step 3: Document the verification path**
+- [x] **Step 3: Document the verification path**
 
 Execution Notes must state: Intel end-to-end verification requires an Intel Mac or the `macos-15-intel` CI runner (CI flow: `yarn binaries:all --target x86_64-apple-darwin && yarn app:build --target x86_64-apple-darwin`) — deferred to the CI/CD spec implementation; manual runbook: clone repo on Intel host, `yarn install && yarn binaries:all && yarn app:build`, compress image/video/PDF.
 Also note the shelf life (Homebrew Intel Tier 3, Riedl Intel EOL Jan 2027, runner EOL Fall 2027) with the MacPorts migration pointer from the spec.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
