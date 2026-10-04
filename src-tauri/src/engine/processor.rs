@@ -18,7 +18,10 @@ use crate::engine::progress::ProgressSender;
 use crate::engine::result::{CompressionError, CompressionResult};
 use crate::models::Category;
 use crate::settings::QualityFloors;
-use crate::sidecar::{GsResources, resolve_gs_resources, resolve_sidecar_candidate};
+use crate::sidecar::{
+    GsResources, prepend_engine_dir_to_path, resolve_engine_candidate, resolve_gs_resources,
+    resolve_sidecar_candidate,
+};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -92,12 +95,15 @@ pub struct SidecarPaths {
 impl SidecarPaths {
     pub fn resolve_for(exe_dir: &Path) -> SidecarPaths {
         let resolve = |name: &str| resolve_sidecar_candidate(exe_dir, name).ok();
+        // vips/gs/qpdf need their sibling DLLs, so on Windows they live in
+        // per-engine folders; ffmpeg/ffprobe stay flat beside the app binary.
+        let resolve_engine = |name: &str| resolve_engine_candidate(exe_dir, name).ok();
         SidecarPaths {
-            vips: resolve("vips"),
+            vips: resolve_engine("vips").or_else(|| resolve("vips")),
             ffmpeg: resolve("ffmpeg"),
             ffprobe: resolve("ffprobe"),
-            gs: resolve("gs"),
-            qpdf: resolve("qpdf"),
+            gs: resolve_engine("gs").or_else(|| resolve("gs")),
+            qpdf: resolve_engine("qpdf").or_else(|| resolve("qpdf")),
             gs_resources: resolve_gs_resources(exe_dir),
         }
     }
@@ -216,11 +222,13 @@ pub fn run_sidecar(
     cancel_token: &CancellationToken,
     tolerated_exit: ToleratedExit,
 ) -> Result<(), CompressionError> {
-    let mut child = std::process::Command::new(sidecar_path)
+    let mut command = std::process::Command::new(sidecar_path);
+    command
         .args(args)
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
+        .stderr(std::process::Stdio::piped());
+    prepend_engine_dir_to_path(&mut command, sidecar_path);
+    let mut child = command.spawn()
         .map_err(|e| {
             CompressionError::SidecarFailed(format!("Failed to start {}: {}", label, e))
         })?;
@@ -331,6 +339,84 @@ pub trait CompressionProcessor: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn run_sidecar_prepends_engine_dir_on_windows() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let engine = dir.path().join("engines").join("vips");
+        std::fs::create_dir_all(&engine).unwrap();
+        let exe = engine.join("vips.exe");
+        std::fs::write(&exe, b"stub").unwrap();
+
+        let mut command = std::process::Command::new("does-not-run");
+        let applied = prepend_engine_dir_to_path(&mut command, exe.to_str().unwrap());
+
+        let applied = applied.expect("Windows engine folders must get a PATH prepend");
+        assert!(
+            applied
+                .to_string_lossy()
+                .starts_with(engine.to_string_lossy().as_ref()),
+            "the engine's own folder must come first so its DLLs win: {}",
+            applied.to_string_lossy()
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn run_sidecar_leaves_path_alone_off_windows() {
+        let mut command = std::process::Command::new("does-not-run");
+        assert!(
+            prepend_engine_dir_to_path(&mut command, "/opt/engine/vips").is_none(),
+            "macOS/Linux resolve rpaths at load time, so a PATH prepend would be a silent no-op \
+             that hides the fact the wiring is untested there"
+        );
+    }
+
+    #[test]
+    fn resolve_for_reads_engines_from_the_engine_folder_layout() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("app");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        for name in ["vips", "gs", "qpdf"] {
+            let engine = exe_dir.join("resources").join("engines").join(name);
+            std::fs::create_dir_all(&engine).unwrap();
+            std::fs::write(engine.join(format!("{name}.exe")), b"stub").unwrap();
+        }
+
+        let paths = SidecarPaths::resolve_for(&exe_dir);
+
+        assert!(paths.vips.is_some(), "vips must resolve from engines/vips/");
+        assert!(paths.gs.is_some(), "gs must resolve from engines/gs/");
+        assert!(
+            paths.qpdf.is_some(),
+            "qpdf must resolve from engines/qpdf/, which is where its VC runtime DLLs live"
+        );
+    }
+
+    #[test]
+    fn resolve_for_windows_still_resolves_exe_dir_binaries() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents").join("MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        for name in ["ffmpeg", "ffprobe", "qpdf"] {
+            let filename = crate::sidecar::sidecar_filename(name).unwrap();
+            std::fs::write(exe_dir.join(filename), b"stub").unwrap();
+        }
+
+        let paths = SidecarPaths::resolve_for(&exe_dir);
+
+        assert!(
+            paths.ffmpeg.is_some(),
+            "ffmpeg ships as an externalBin beside the app binary, not in an engine folder"
+        );
+        assert!(paths.ffprobe.is_some());
+        assert!(
+            paths.qpdf.is_some(),
+            "qpdf must still resolve from the flat exe-dir candidates when no engine folder \
+             exists, so existing layouts keep working"
+        );
+    }
 
     fn empty_paths() -> SidecarPaths {
         SidecarPaths {

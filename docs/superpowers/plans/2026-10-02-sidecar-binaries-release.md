@@ -444,6 +444,45 @@ git commit -m "feat(binaries): Windows x64 + arm64 pipeline (BtbN/qpdf/MXE/MSYS2
 
 ---
 
+#### Task 3 Execution Notes (Windows x64 + arm64)
+
+**Delivered.** Both Windows targets are in the manifest with pinned hashes; `prep.mjs` dispatches `-pc-windows-msvc` targets to the new `prep-windows.mjs`; `tauri.windows.conf.json` carries the platform-specific bundle config; `sidecar.rs` gained the `aarch64-pc-windows-msvc` triple, the engine-folder candidate list and the PATH-prepend helper, wired into `SidecarPaths::resolve_for` and `run_sidecar`.
+
+**Every pinned hash was verified against the real artifact, not copied from the plan.** Each of the six archives was downloaded and hashed; all six match the plan byte for byte:
+
+| Artifact | sha256 | verified |
+|---|---|---|
+| BtbN `win64-gpl-9.0` | `74827e09…ffbe` | matches |
+| BtbN `winarm64-gpl-9.0` | `7263744…a1a6` | matches |
+| qpdf `msvc64` | `db87077e…e25d` | matches |
+| qpdf `msvc-arm64` | `2b5d7740…5ab1` | matches |
+| libvips MXE `vips-dev-x64-all-8.18.7` | `78e56ba…eff15` | matches |
+| libvips MXE `vips-dev-arm64-all-8.18.7` | `8f2d3a9…f4a` | matches |
+| MSYS2 gs `ucrt64` | `f2cf054…4367` | matches |
+| MSYS2 gs `clangarm64` | `ade0e91…316e` | matches |
+
+Every `member` path was then confirmed to exist **inside** the downloaded archive, which is how the two deviations below were found.
+
+**Two member paths in the plan do not match the real archives** (same class as Task 2's qpdf top-level-dir finding, and both are recorded here rather than silently absorbed):
+1. **BtbN wraps its binaries in a top-level directory.** The plan says member `bin/ffmpeg.exe`; the real archive has `ffmpeg-n9.0.2-22-g46d8f462ee-<arch>-gpl-9.0/bin/ffmpeg.exe`. The manifest uses the real, verified path — otherwise fetch would fail with "archive member missing".
+2. **libvips MXE and qpdf msvc wrap theirs too**, but exactly as the plan states (`vips-dev-8.18/bin/vips.exe`, `qpdf-12.4.2-msvc64/bin/qpdf.exe`), so those needed no correction.
+
+**A third, larger discrepancy: the pinned MSYS2 Ghostscript package ships no `Resource/`, `fonts/` or `iccprofiles/`.** The plan declares `resources: ["share/ghostscript/10.08.0/{Resource,lib,iccprofiles,fonts}"]`. Extracting the real `ucrt64` package shows **26 directories total** — `bin/`, `include/`, `lib/` and `share/{doc,ghostscript/10.08.0/{doc,lib},licenses,man}` — with no `Resource`, no `fonts`, no `iccprofiles` anywhere, and no `Resource/Init/gs_init.ps`. `share/ghostscript/10.08.0/lib` is real (230 PostScript files). The sibling `mingw-w64-ucrt-x86_64-gsfonts` package only ships `etc/fonts` (a fontconfig config), not the tree either. Worse, the compiled-in search path inside `libgs-10.dll` is `D:/M/msys64/ucrt64/share/ghostscript/10.08.0/Resource/Init;…;C:/Windows/Fonts` — the MSYS2 maintainer's build machine, which will never exist on a user's box.
+
+Consequence, stated plainly rather than papered over: **a Windows `gs.exe` staged from the pinned package cannot render text**, because `Resource/Init/gs_init.ps` is absent and the DLL falls back to a `D:/M/...` path. The manifest keeps the plan's four declared resource dirs so that `prep-windows.mjs` **fails loudly and specifically** on a Windows host ("ghostscript resource dir '…' is missing from the staged package … Check the resources pin") rather than shipping a hollow tree that breaks only at compression time. Picking a gs data source that actually ships `Resource/` (the official Ghostscript Windows installer, or a different packaging channel) is **not resolved by this task** and is the blocker for Windows gs e2e acceptance. Nothing about it is faked: `yarn binaries:prep --target x86_64-pc-windows-msvc` on macOS already fails at the honest point, naming the member it could not find.
+
+**Tauri platform-config merge: verified via Context7 before writing the file.** `/tauri-apps/tauri-docs` (`configuration-files.mdx`, "Merge platform-specific configuration") documents **JSON Merge Patch (RFC 7396)**: objects merge key by key, **arrays are completely replaced**. So `bundle.externalBin` in `tauri.windows.conf.json` (`["binaries/ffmpeg","binaries/ffprobe"]`) **replaces** the base five-entry list rather than appending to it — the base `binaries/vips`, `binaries/qpdf` and `binaries/gs` do **not** leak into a Windows build, which is exactly the ambiguity the plan flagged. `bundle.resources` is an *object* in both files, so it merges: the merged map is `{"gs-resources/": "gs-resources/", "binaries/engines/": "engines/"}`. Both config files parse as valid JSON.
+
+**Windows end-to-end verification is DEFERRED, not done.** Fetch → prep → audit → `tauri build` → manual compress on a real Windows host (x64 *and* arm64) has **not** been run, because this is a macOS machine and the Windows artifacts are Windows PE binaries. What *was* verified here: all pinned hashes and member paths against the downloaded archives; the manifest under `validateManifest`; `prep-windows.mjs` against fixtures that mirror the real archive layouts (including the `ucrt64/` package prefix, sibling DLLs, the `vips-modules-8.18/` subdir, and the VC runtime DLLs); the Rust candidate list, resolution wiring and PATH-prepend core as unit tests; and the macOS arm64 pipeline re-run green end to end as a regression check. The plan's `run_sidecar_prepends_engine_dir_on_windows` test is `#[cfg(windows)]`, so **it does not execute on this host** — the PATH prepend's Windows behaviour is pinned only by the host-independent `path_with_dir_front_prepends_and_dedupes` core plus the `#[cfg(not(windows))]` counterpart that asserts no prepend happens off Windows. Follow-up on a Windows host or in CI must run the real test.
+
+**One test defect found and fixed in self-review.** Two Rust tests — `path_with_dir_front_prepends_and_dedupes` and the pre-existing `sidecar_candidates_prefer_triple_then_plain_name` — were left without their `#[test]` attribute when new tests were inserted above them, so they compiled as dead functions and never ran; `cargo test --list` is what exposed it. Both are registered and running now (418 cargo, up from 413).
+
+**`path_with_dir_front` uses a fixed `;` separator, not `cfg!(windows)`.** It only ever runs for a Windows child, and branching on the host made the pure unit test host-dependent (it failed on first real execution, having never run before). A fixed separator keeps production behaviour identical and the test deterministic.
+
+**Required Tests status.** `target_triple_returns_triple_per_platform` and `sidecar_filename_for_returns_exact_name_per_platform` extended (win-arm64); `sidecar_candidates_prefer_triple_then_plain_name` count still pinned at 2 with the reason spelled out; `engine_folder_candidates_windows_layout`, `path_with_dir_front_prepends_and_dedupes`, `resolve_for_reads_engines_from_the_engine_folder_layout` and `resolve_for_windows_still_resolves_exe_dir_binaries` added and host-runnable; `run_sidecar_prepends_engine_dir_on_windows` present but `#[cfg(windows)]`; `prep_stages_vips_exe_with_sibling_dlls_and_modules_subdir`, `prep_stages_gs_renamed_exe_dlls_and_resources_tree` and `prep_stages_qpdf_exe_with_vc_runtime_dlls` added in `prep-windows.test.mjs`, plus five more covering the missing-resource error, the init-marker guard, the sentinels, the missing-member diagnostic and the transactional swap; `extract_handles_tar_zst_fixture` already existed from Task 1 and passes.
+
+**Gate.** `yarn build && yarn test && cd src-tauri && cargo test` → green: **447 vitest** across 22 files (was 437; +10), **418 cargo** (was 413; +5). `yarn binaries:all --target aarch64-apple-darwin` still prints `gs clean-room smoke: PASS (3514 bytes, 5 staged resource flags, sentinel resolved)` and the byte-identical `sidecar audit: PASS (5 binaries, 71 framework dylibs)`.
+
 ### Task 4: macOS Intel Target
 
 **Files:**

@@ -1,0 +1,12 @@
+{
+  "bundle": {
+    "externalBin": [
+      "binaries/ffmpeg",
+      "binaries/ffprobe"
+    ],
+    "resources": {
+      "binaries/engines/": "engines/",
+      "gs-resources/": "gs-resources/"
+    }
+  }
+}
