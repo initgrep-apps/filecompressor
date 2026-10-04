@@ -8,6 +8,10 @@
 # 3. Adds rpaths for both layouts: bundled (Contents/MacOS → ../Frameworks)
 #    and dev (src-tauri/target/<profile> → ../../frameworks). rpaths are
 #    presence-checked via otool -l; a real install_name_tool failure aborts.
+#    Both the bundled capitalisation and the repo's lowercase src-tauri/
+#    frameworks/ are added: from src-tauri/binaries/ the lowercase sibling is
+#    what resolves, and relying on APFS case-insensitivity to make ../Frameworks
+#    match ../frameworks would break on a case-sensitive volume.
 # 4. Ad-hoc signs everything (install_name_tool invalidates signatures);
 #    signing failures abort.
 # Known limitation: gdk-pixbuf loader modules are dlopened at runtime from a
@@ -25,7 +29,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/sidecar-bundle.common.sh"
 
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-FRAMEWORKS="$ROOT/src-tauri/frameworks"
+FRAMEWORKS_REAL="$ROOT/src-tauri/frameworks"
+FRAMEWORKS_STAGING="$ROOT/src-tauri/.frameworks-staging.$$"
+FRAMEWORKS="$FRAMEWORKS_REAL"
 TRIPLE="$(rustc -Vv | grep '^host:' | sed 's/host: //')"
 SIDECAR="$ROOT/src-tauri/binaries/vips-$TRIPLE"
 
@@ -95,8 +101,10 @@ if [ "$needs_bundle" -eq 0 ]; then
   exit 1
 fi
 
-rm -rf "$FRAMEWORKS"
+rm -rf "$FRAMEWORKS_STAGING"
+trap 'rm -rf "$FRAMEWORKS_STAGING"' EXIT
 
+FRAMEWORKS="$FRAMEWORKS_STAGING"
 collect_deps_of "$SIDECAR"
 
 for lib in "$FRAMEWORKS"/*.dylib; do
@@ -107,11 +115,13 @@ done
 rewrite "$SIDECAR"
 
 ensure_rpath "$SIDECAR" "@executable_path/../Frameworks"
+ensure_rpath "$SIDECAR" "@executable_path/../frameworks"
 ensure_rpath "$SIDECAR" "@executable_path/../../frameworks"
 
 for lib in "$FRAMEWORKS"/*.dylib; do
   [ -e "$lib" ] || continue
   ensure_rpath "$lib" "@executable_path/../Frameworks"
+  ensure_rpath "$lib" "@executable_path/../frameworks"
   ensure_rpath "$lib" "@executable_path/../../frameworks"
 done
 
@@ -120,3 +130,7 @@ for lib in "$FRAMEWORKS"/*.dylib; do
   [ -e "$lib" ] || continue
   codesign --force --sign - "$lib"
 done
+
+rm -rf "$FRAMEWORKS_REAL"
+mv "$FRAMEWORKS_STAGING" "$FRAMEWORKS_REAL"
+rm -rf "$FRAMEWORKS_STAGING"

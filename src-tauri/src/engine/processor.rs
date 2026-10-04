@@ -18,13 +18,28 @@ use crate::engine::progress::ProgressSender;
 use crate::engine::result::{CompressionError, CompressionResult};
 use crate::models::Category;
 use crate::settings::QualityFloors;
-use crate::sidecar::resolve_sidecar_candidate;
+use crate::sidecar::{GsResources, resolve_gs_resources, resolve_sidecar_candidate};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 const WAIT_POLL_MILLIS: u64 = 30;
+/// Appended to a failing Ghostscript pass when no staged resource tree resolved.
+/// `resolve_gs_resources` returning `None` makes `gs_args` omit every `-I` flag,
+/// so gs silently falls back to a system install that this build does not ship —
+/// the "PDF silently breaks on clean machines" incident. The cause line alone
+/// never says that, so the UI-facing error has to.
+pub const GS_RESOURCES_MISSING: &str = "the staged gs-resources/ tree is not available, \
+    so gs was run with no -I search paths and resolved fonts and ICC profiles from a \
+    system Ghostscript this build does not ship (re-run 'yarn binaries:prep' to stage \
+    the resources and rebuild)";
+
+/// Wraps a sidecar failure with the missing-resource-tree hint, preserving the
+/// original cause so the error still names what actually went wrong.
+pub fn gs_failure_with_resources_hint(error: CompressionError) -> CompressionError {
+    CompressionError::SidecarFailed(format!("{} — {GS_RESOURCES_MISSING}", error))
+}
 const STDERR_TAIL_CHARS: usize = 500;
 const STDERR_JOIN_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -69,6 +84,9 @@ pub struct SidecarPaths {
     pub ffprobe: Option<String>,
     pub gs: Option<String>,
     pub qpdf: Option<String>,
+    /// Staged Ghostscript resource tree. `None` means "not staged": the gs
+    /// spawn then carries no `-I` flags, exactly as before the tree existed.
+    pub gs_resources: Option<GsResources>,
 }
 
 impl SidecarPaths {
@@ -80,6 +98,7 @@ impl SidecarPaths {
             ffprobe: resolve("ffprobe"),
             gs: resolve("gs"),
             qpdf: resolve("qpdf"),
+            gs_resources: resolve_gs_resources(exe_dir),
         }
     }
 
@@ -320,6 +339,7 @@ mod tests {
             ffprobe: None,
             gs: None,
             qpdf: None,
+            gs_resources: None,
         }
     }
 
@@ -331,6 +351,7 @@ mod tests {
             ffprobe: Some("/bin/ffprobe".to_string()),
             gs: Some("/bin/gs".to_string()),
             qpdf: Some("/bin/qpdf".to_string()),
+            gs_resources: None,
         };
         for (name, expected) in [
             (SidecarName::Vips, "/bin/vips"),

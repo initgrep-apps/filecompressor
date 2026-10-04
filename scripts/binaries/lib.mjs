@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, readFileSync, constants } from "node:fs";
-import { access, mkdir, rename, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readdir,
+  readlink,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { basename, join } from "node:path";
 import https from "node:https";
@@ -15,7 +23,7 @@ const TRIPLE_ARCH = {
 const KNOWN_SOURCES = ["url", "brew"];
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const MANIFEST_URL_KEYS = ["source", "url", "sha256", "member", "lib", "dest", "expectVersion", "resources"];
-const MANIFEST_BREW_KEYS = ["source", "formula", "dest", "expectVersion", "resources"];
+const MANIFEST_BREW_KEYS = ["source", "formula", "binary", "dest", "expectVersion", "resources"];
 const DOWNLOAD_TIMEOUT_MS = 120000;
 const MAX_REDIRECTS = 20;
 const KNOWN_FLAGS = ["--target", "--root"];
@@ -175,6 +183,30 @@ export function validateLock(lock) {
             `lock schema invalid: ${triple}/${name} stagedSha256 must be 64-hex when present (delete the lock and re-run fetch to regenerate)`,
           );
         }
+        if (entry.libStagedSha256 !== undefined) {
+          if (
+            typeof entry.libStagedSha256 !== "object" ||
+            entry.libStagedSha256 === null ||
+            Array.isArray(entry.libStagedSha256) ||
+            Object.keys(entry.libStagedSha256).length === 0
+          ) {
+            throw new Error(
+              `lock schema invalid: ${triple}/${name} libStagedSha256 must be a non-empty object of path -> sha256 (delete the lock and re-run fetch to regenerate)`,
+            );
+          }
+          for (const [file, digest] of Object.entries(entry.libStagedSha256)) {
+            if (typeof file !== "string" || file.length === 0 || file.startsWith("/") || file.includes("..")) {
+              throw new Error(
+                `lock schema invalid: ${triple}/${name} libStagedSha256 key '${file}' must be a relative path inside the staged lib dir`,
+              );
+            }
+            if (!SHA256_PATTERN.test(String(digest))) {
+              throw new Error(
+                `lock schema invalid: ${triple}/${name} libStagedSha256['${file}'] must be a 64-hex sha256 (delete the lock and re-run fetch to regenerate)`,
+              );
+            }
+          }
+        }
       }
     }
   }
@@ -188,6 +220,26 @@ export function sha256File(path) {
     stream.on("data", (chunk) => hash.update(chunk));
     stream.on("end", () => resolvePromise(hash.digest("hex")));
   });
+}
+
+export async function sha256Tree(dir) {
+  const digests = {};
+  const walk = async (current, prefix) => {
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const full = join(current, entry.name);
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await walk(full, relative);
+      } else if (entry.isFile()) {
+        digests[relative] = await sha256File(full);
+      } else if (entry.isSymbolicLink()) {
+        digests[relative] = createHash("sha256").update(await readlink(full)).digest("hex");
+      }
+    }
+  };
+  await walk(dir, "");
+  return digests;
 }
 
 export function download(url, destPath, options = {}) {

@@ -554,6 +554,7 @@ mod tests {
             ffprobe: None,
             gs: None,
             qpdf: None,
+            gs_resources: None,
         }
     }
 

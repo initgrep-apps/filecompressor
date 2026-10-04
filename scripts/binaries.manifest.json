@@ -16,6 +16,29 @@
         "member": "ffprobe",
         "dest": "ffprobe",
         "expectVersion": "9.0.2"
+      },
+      "qpdf": {
+        "source": "url",
+        "url": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-bin-macos-arm64.zip",
+        "sha256": "62e46987a30ea167cbc530ccb22690aec3d8c812ed09979a941bcee92e504b79",
+        "member": "bin/qpdf",
+        "lib": "lib",
+        "dest": "qpdf",
+        "expectVersion": "12.4.2"
+      },
+      "vips": {
+        "source": "brew",
+        "formula": "vips",
+        "dest": "vips",
+        "expectVersion": "8.18.7"
+      },
+      "gs": {
+        "source": "brew",
+        "formula": "ghostscript",
+        "binary": "gs",
+        "dest": "gs",
+        "expectVersion": "10.08.0",
+        "resources": ["Resource", "lib", "iccprofiles", "fonts"]
       }
     }
   }

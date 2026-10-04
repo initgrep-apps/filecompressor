@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { copyFile, mkdir, readdir, rm, chmod } from "node:fs/promises";
+import { copyFile, cp, mkdir, readdir, rm, chmod } from "node:fs/promises";
 import { dirname, basename, join } from "node:path";
 import {
   binaryDir,
@@ -14,6 +14,7 @@ import {
   parseArgs,
   readJson,
   sha256File,
+  sha256Tree,
   stagingDir,
   validateLock,
   validateManifest,
@@ -60,6 +61,48 @@ async function removeStaging(staging) {
   await rm(staging, { recursive: true, force: true }).catch(() => {});
 }
 
+async function stageLibDir(name, entry, triple, staging) {
+  if (!entry.lib) {
+    return undefined;
+  }
+  const libSource = join(staging, entry.lib);
+  if (!(await exists(libSource))) {
+    const listing = await readdir(staging, { recursive: true }).catch((error) => [
+      `<listing unavailable: ${error.message ?? error}>`,
+    ]);
+    await removeStaging(staging);
+    fail(
+      `lib dir '${entry.lib}' missing in ${name} artifact for ${triple} — extracted files: ${listing.slice(0, 20).join(", ") || "(empty)"}`,
+    );
+  }
+  const libDest = join(staging, "lib");
+  if (libSource !== libDest) {
+    await rm(libDest, { recursive: true, force: true });
+    await cp(libSource, libDest, { recursive: true, verbatimSymlinks: true });
+  }
+  return sha256Tree(libDest);
+}
+
+async function libStagingIntact(entry, staging, lockEntry) {
+  if (!entry.lib) {
+    return true;
+  }
+  const libDest = join(staging, "lib");
+  const digests = await sha256Tree(libDest).catch(() => null);
+  if (!digests || Object.keys(digests).length === 0) {
+    return false;
+  }
+  const pinned = lockEntry?.libStagedSha256;
+  if (!pinned || typeof pinned !== "object" || Object.keys(pinned).length === 0) {
+    return false;
+  }
+  const names = Object.keys(digests).sort();
+  if (names.join(",") !== Object.keys(pinned).sort().join(",")) {
+    return false;
+  }
+  return names.every((name) => digests[name] === pinned[name]);
+}
+
 async function fetchOne(name, entry, triple, root, lockEntry) {
   const dest = expectedDest(entry.dest ?? name, triple);
   const destPath = join(binaryDir(root), dest);
@@ -71,7 +114,8 @@ async function fetchOne(name, entry, triple, root, lockEntry) {
     entry.sha256 &&
     lockEntry.sha256 === entry.sha256 &&
     lockEntry.stagedSha256 &&
-    (await exists(destPath))
+    (await exists(destPath)) &&
+    (await libStagingIntact(entry, staging, lockEntry))
   ) {
     const stagedSha = await sha256File(destPath);
     if (stagedSha === lockEntry.stagedSha256) {
@@ -134,9 +178,13 @@ async function fetchOne(name, entry, triple, root, lockEntry) {
     );
   }
 
+  const libStagedSha256 = await stageLibDir(name, entry, triple, staging);
+
   await mkdir(dirname(destPath), { recursive: true });
   await copyFile(memberPath, destPath);
   await chmod(destPath, 0o755);
+
+  console.log(`fetch: ${dest} staged from ${entry.url}`);
 
   return {
     dest,
@@ -146,6 +194,7 @@ async function fetchOne(name, entry, triple, root, lockEntry) {
       url: entry.url,
       sha256: entry.sha256,
       stagedSha256: await sha256File(destPath),
+      ...(libStagedSha256 ? { libStagedSha256 } : {}),
       date: new Date().toISOString(),
     },
   };

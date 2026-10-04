@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { gsSentinelPaths, isGsSentinel } from "./gs-sentinels.mjs";
 import {
   archForTriple,
   binaryDir,
@@ -73,6 +75,137 @@ async function checkVersion(binPath, expectVersion, triple, root) {
       },
     );
   });
+}
+
+export function gsResourcesDir(root) {
+  return join(root, "src-tauri", "gs-resources");
+}
+
+const GS_INIT_MARKER = join("Resource", "Init", "gs_init.ps");
+export const GS_ACCEPTANCE_SENTINELS = gsSentinelPaths().map((relative) => join(...relative.split("/")));
+
+export async function treeHasFile(dir) {
+  const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => []);
+  return entries.some((entry) => entry.isFile() && !isGsSentinel(entry.name));
+}
+
+export async function resourceSubdirsWithoutFiles(base) {
+  const resourceDir = join(base, "Resource");
+  const entries = await readdir(resourceDir, { withFileTypes: true }).catch(() => []);
+  const empty = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const sub = join(resourceDir, entry.name);
+    if (!(await treeHasFile(sub))) {
+      empty.push(sub);
+    }
+  }
+  return empty;
+}
+
+export async function checkGsResources(root, name, entry, problems) {
+  const resources = entry.resources;
+  if (!Array.isArray(resources) || resources.length === 0) {
+    return;
+  }
+  const base = gsResourcesDir(root);
+  if (!(await exists(base))) {
+    problems.push(
+      `${name}: gs resources dir missing: ${base} — run 'yarn binaries:prep' to stage it; without it the gs sidecar resolves fonts and ICC profiles from a Homebrew prefix and PDF compression fails on machines without brew Ghostscript`,
+    );
+    return;
+  }
+  for (const dirName of resources) {
+    const dir = join(base, dirName);
+    const info = await stat(dir).catch(() => null);
+    if (!info || !info.isDirectory()) {
+      problems.push(`${name}: gs resources dir missing: ${dir} — run 'yarn binaries:prep' to stage it`);
+    }
+  }
+  if (resources.includes("Resource") && !(await exists(join(base, GS_INIT_MARKER)))) {
+    problems.push(
+      `${name}: gs resource marker missing: ${join(base, GS_INIT_MARKER)} — run 'yarn binaries:prep' to restage them`,
+    );
+  }
+  if (resources.includes("Resource")) {
+    for (const sub of await resourceSubdirsWithoutFiles(base)) {
+      problems.push(
+        `${name}: Resource subdir holds no files: ${sub} — gs derives GS_LIBRESOURCE from where it found Resource/Init/gs_init.ps, so every sibling under Resource/ is reached through this same tree; run 'yarn binaries:prep' to restage them`,
+      );
+    }
+  }
+  for (const relative of GS_ACCEPTANCE_SENTINELS) {
+    const sentinel = join(base, relative);
+    if (!(await exists(sentinel))) {
+      problems.push(
+        `${name}: gs acceptance sentinel missing: ${sentinel} — run 'yarn binaries:prep': gs-resources was staged before the acceptance sentinel existed, so the audit's clean-room smoke cannot prove the -I flags are load-bearing`,
+      );
+    }
+  }
+  for (const dirName of resources) {
+    const dir = join(base, dirName);
+    if (!(await exists(dir))) {
+      continue;
+    }
+    if (!(await treeHasFile(dir))) {
+      problems.push(
+        `${name}: gs resources dir has no files anywhere under it: ${dir} — a real PDF needs fonts and ICC profiles from it; run 'yarn binaries:prep' to restage them`,
+      );
+    }
+  }
+}
+
+export const ALLOW_INACTIVE_BREW = "BINARIES_ALLOW_INACTIVE_BREW";
+
+export async function checkBrewVersion(name, entry, problems) {
+  if (entry.source !== "brew") {
+    return;
+  }
+  if (!(await toolOnPath("brew"))) {
+    if (process.env[ALLOW_INACTIVE_BREW] === "1") {
+      console.log(
+        `note: brew version-drift gate INACTIVE for ${name} (formula ${entry.formula}) — ${ALLOW_INACTIVE_BREW}=1 allows the audit to proceed without Homebrew, so a drifted build would pass this run`,
+      );
+      return;
+    }
+    problems.push(
+      `${name}: brew is not on PATH, so the version-drift gate for formula ${entry.formula} is INACTIVE — a drifted Homebrew build would pass this audit. Install Homebrew (https://brew.sh), or set ${ALLOW_INACTIVE_BREW}=1 to acknowledge the gap on a brew-less host (e.g. CI), then re-run the audit`,
+    );
+    return;
+  }
+  let installed;
+  try {
+    const { stdout } = await run("brew", ["list", "--versions", entry.formula]);
+    const fields = stdout.trim().split(/\s+/).filter(Boolean);
+    installed = fields[fields.length - 1];
+    if (!installed) {
+      problems.push(
+        `${name}: 'brew list --versions ${entry.formula}' printed '${stdout.trim()}' — the formula is not installed; run 'brew install ${entry.formula}' then re-run 'yarn binaries:prep'`,
+      );
+      return;
+    }
+  } catch (error) {
+    problems.push(
+      `${name}: 'brew list --versions ${entry.formula}' failed: ${error.message ?? error} — run 'brew install ${entry.formula}' then re-run 'yarn binaries:prep'`,
+    );
+    return;
+  }
+  if (installed !== entry.expectVersion) {
+    problems.push(
+      `${name}: brew version drift — formula ${entry.formula} is ${installed} but scripts/binaries.manifest.json pins ${entry.expectVersion}. Re-pin expectVersion to ${installed} in the manifest (or reinstall the pinned formula), then re-run 'yarn binaries:all'`,
+    );
+  }
+}
+
+async function toolOnPath(tool) {
+  try {
+    await run("sh", ["-c", `command -v ${tool}`]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function verifyTarget(target, root) {
@@ -169,11 +302,11 @@ export async function verifyTarget(target, root) {
     }
 
     const lockEntry = lockTarget[name];
-    if (lockEntry?.stagedSha256) {
+    if (lockEntry?.stagedSha256 && entry.source !== "brew") {
       const stagedSha = await sha256File(binPath);
       if (stagedSha !== lockEntry.stagedSha256) {
         problems.push(
-          `${dest}: sha256 mismatch — lock records staged ${lockEntry.stagedSha256}, file is ${stagedSha} — the staged binary was swapped or corrupted; re-run 'yarn binaries:fetch'`,
+          `${dest}: sha256 mismatch — lock records staged ${lockEntry.stagedSha256}, file is ${stagedSha} — the staged binary was swapped or corrupted; re-run 'yarn binaries:prep', which re-stages it and re-records the digest ('yarn binaries:refresh' will automate this once it lands)`,
         );
         continue;
       }
@@ -185,6 +318,9 @@ export async function verifyTarget(target, root) {
     } else {
       console.log(`verify: ${dest} ${entry.expectVersion} (${expectedArch}) OK`);
     }
+
+    await checkGsResources(root, dest, entry, problems);
+    await checkBrewVersion(dest, entry, problems);
   }
 
   if (problems.length > 0) {

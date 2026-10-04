@@ -29,6 +29,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+      "resources": {
+        "gs-resources/": "gs-resources/"
+      },
       "externalBin": [
         "binaries/vips",
         "binaries/qpdf",
@@ -55,7 +58,6 @@
           "frameworks/libcairo.2.dylib",
           "frameworks/libcfitsio.10.dylib",
           "frameworks/libcgif.0.dylib",
-          "frameworks/libcrypto.3.dylib",
           "frameworks/libdatrie.1.dylib",
           "frameworks/libdeflate.0.dylib",
           "frameworks/libexif.12.dylib",
