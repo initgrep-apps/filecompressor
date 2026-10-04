@@ -39,10 +39,10 @@ FRAMEWORKS="$ROOT/src-tauri/frameworks"
 TRIPLE="$(rustc -Vv | grep '^host:' | sed 's/host: //')"
 STAGING_QPDF_LIB="$ROOT/src-tauri/.staging/qpdf-$TRIPLE/lib"
 GS_RESOURCES="$ROOT/src-tauri/gs-resources"
+GS_RESOURCES_STAGING=""
 read -r -a GS_RESOURCE_DIRS <<<"${FSO_GS_RESOURCE_DIRS:-Resource lib iccprofiles fonts}"
 GS_RESOURCE_DIRS_JOINED="${GS_RESOURCE_DIRS[*]}"
 GS_ACCEPTANCE_SENTINEL="fso-sidecar-acceptance-sentinel.ps"
-GS_RESOURCE_FONT_SENTINEL="fso-sidecar-acceptance-resource-font-sentinel.ps"
 GS_DIR_SENTINEL_PREFIX="fso-sidecar-acceptance-"
 ENGINES=("$ROOT/src-tauri/binaries/qpdf-$TRIPLE" "$ROOT/src-tauri/binaries/gs-$TRIPLE")
 
@@ -208,6 +208,23 @@ copy_tree_sorted() {
   (cd "$src_physical" && find . -print | LC_ALL=C sort | cpio -pdm --quiet "$dst_physical")
 }
 
+assert_source_resource_subdirs_populated() {
+  local source_dir="$1"
+  local sub
+  [ -d "$source_dir/Resource" ] || return 0
+  for sub in "$source_dir"/Resource/*/; do
+    [ -d "$sub" ] || continue
+    if ! dir_has_real_file "$sub"; then
+      printf 'FAIL ghostscript resource subdir %s has no usable files (only sentinels/empty)\n' "${sub%/}" >&2
+      printf "  gs derives GS_LIBRESOURCE from where it found Resource/Init/gs_init.ps, so every\n" >&2
+      printf "  sibling under Resource/ is reached through this same tree.\n" >&2
+      printf '  Run "brew reinstall ghostscript", then re-run "yarn binaries:prep"\n' >&2
+      exit 1
+    fi
+  done
+  return 0
+}
+
 gs_search_dirs_from_declared() {
   local declared="$1"
   local dir
@@ -260,7 +277,7 @@ stage_gs_resources() {
     printf 'FAIL brew not found — the gs sidecar resources come from the build host: run "brew install ghostscript", then re-run "yarn binaries:prep"\n' >&2
     exit 1
   }
-  local prefix source_dir
+  local prefix source_dir candidate
   prefix="$(brew --prefix ghostscript)" || {
     printf 'FAIL brew --prefix ghostscript failed — run "brew install ghostscript", then re-run "yarn binaries:prep"\n' >&2
     exit 1
@@ -279,7 +296,9 @@ stage_gs_resources() {
     exit 1
   fi
   local staging="$GS_RESOURCES.staging.$$"
+  GS_RESOURCES_STAGING="$staging"
   rm -rf "$staging"
+  trap 'rm -rf "${GS_RESOURCES_STAGING:-}"' EXIT
   local name
   for name in "${GS_RESOURCE_DIRS[@]}"; do
     if [ ! -d "$source_dir/$name" ]; then
@@ -311,6 +330,7 @@ stage_gs_resources() {
   done <<EOF
 $(gs_search_dirs_from_declared "$GS_RESOURCE_DIRS_JOINED")
 EOF
+  assert_source_resource_subdirs_populated "$source_dir"
   for name in "${GS_RESOURCE_DIRS[@]}"; do
     copy_tree_sorted "$source_dir/$name" "$staging/$name"
   done

@@ -102,6 +102,7 @@ if [ "$needs_bundle" -eq 0 ]; then
 fi
 
 rm -rf "$FRAMEWORKS_STAGING"
+trap 'rm -rf "$FRAMEWORKS_STAGING"' EXIT
 
 FRAMEWORKS="$FRAMEWORKS_STAGING"
 collect_deps_of "$SIDECAR"

@@ -3,6 +3,12 @@ import { spawn } from "node:child_process";
 import { chmod, copyFile, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  GS_INIT_SENTINEL,
+  GS_SENTINEL_PREFIX,
+  gsSentinelPaths,
+  isGsSentinel,
+} from "./gs-sentinels.mjs";
+import {
   archForTriple,
   binaryDir,
   expectedDest,
@@ -27,12 +33,8 @@ const BUNDLE_SCRIPTS = ["bundle-vips-macos.sh", "bundle-pdf-macos.sh"];
 const GS_INIT_MARKER = join("Resource", "Init", "gs_init.ps");
 const REWRITTEN_BY_BUNDLE = ["vips", "qpdf", "gs"];
 
-export const GS_ACCEPTANCE_SENTINEL = "fso-sidecar-acceptance-sentinel.ps";
-export const GS_ACCEPTANCE_SENTINELS = [
-  join("Resource", "Init", GS_ACCEPTANCE_SENTINEL),
-  join("Resource", "Font", "fso-sidecar-acceptance-resource-font-sentinel.ps"),
-  join("fonts", "fso-sidecar-acceptance-fonts-sentinel.ps"),
-];
+export const GS_ACCEPTANCE_SENTINEL = GS_INIT_SENTINEL;
+export const GS_ACCEPTANCE_SENTINELS = gsSentinelPaths().map((relative) => join(...relative.split("/")));
 
 export class PipelinesError extends Error {
   constructor(message, { remedy = null } = {}) {
@@ -235,15 +237,25 @@ export async function runBundleScripts(root, targetEntries = {}) {
   }
 }
 
-export const GS_SENTINEL_PREFIX = "fso-sidecar-acceptance-";
-
-export function isGsSentinel(name) {
-  return name.startsWith(GS_SENTINEL_PREFIX);
-}
-
 export async function treeHasFile(dir) {
   const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => []);
   return entries.some((entry) => entry.isFile() && !isGsSentinel(entry.name));
+}
+
+export async function resourceSubdirsWithoutFiles(base) {
+  const resourceDir = join(base, "Resource");
+  const entries = await readdir(resourceDir, { withFileTypes: true }).catch(() => []);
+  const empty = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const sub = join(resourceDir, entry.name);
+    if (!(await treeHasFile(sub))) {
+      empty.push(sub);
+    }
+  }
+  return empty;
 }
 
 export async function assertGsResourcesStaged(root, entry, label = entry.formula ?? "gs") {
@@ -283,6 +295,15 @@ export async function assertGsResourcesStaged(root, entry, label = entry.formula
       fail(
         `${label}: gs resources dir has no files anywhere under it: ${dir}`,
         "the gs sidecar would fail on a real PDF; run 'yarn binaries:prep' to restage them",
+      );
+    }
+  }
+  if (resources.includes("Resource")) {
+    const emptySubdirs = await resourceSubdirsWithoutFiles(base);
+    if (emptySubdirs.length > 0) {
+      fail(
+        `${label}: these Resource subdirs hold no files: ${emptySubdirs.join(", ")}`,
+        "gs derives GS_LIBRESOURCE from where it found Resource/Init/gs_init.ps, so every sibling under Resource/ is reached through this same tree; run 'yarn binaries:prep' to restage them",
       );
     }
   }

@@ -7,21 +7,20 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { sha256File } from "./lib.mjs";
+import { gsSentinelPaths } from "./gs-sentinels.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VERIFY = join(HERE, "verify.mjs");
-const GS_SENTINELS = [
-  "Resource/Init/fso-sidecar-acceptance-sentinel.ps",
-  "Resource/Font/fso-sidecar-acceptance-resource-font-sentinel.ps",
-  "fonts/fso-sidecar-acceptance-fonts-sentinel.ps",
-];
+const GS_SENTINELS = gsSentinelPaths();
 
 async function stageGsResources(root, { sentinels = true } = {}) {
   const base = join(root, "src-tauri", "gs-resources");
   for (const [dir, files] of [
     ["Resource/Init", ["gs_init.ps"]],
-    ["lib", ["gs_init.ps"]],
     ["Resource/Font", ["Fontmap"]],
+    ["Resource/CMap", ["Identity-H"]],
+    ["Resource/Encoding", ["Differences"]],
+    ["lib", ["gs_init.ps"]],
     ["iccprofiles", ["default_rgb.icc"]],
     ["fonts", ["Helvetica"]],
   ]) {
@@ -397,5 +396,61 @@ describe("verify.mjs", () => {
     expect(missingManifest.stderr).toContain("manifest");
     await rm(root, { recursive: true, force: true });
     await rm(noManifest, { recursive: true, force: true });
+  });
+});
+
+describe("gs Resource subdir content gate (verify side)", () => {
+  const GS_MANIFEST = {
+    targets: {
+      "aarch64-apple-darwin": {
+        gs: {
+          source: "brew",
+          formula: "ghostscript",
+          binary: "gs",
+          dest: "gs",
+          expectVersion: "10.08.0",
+          resources: ["Resource", "lib", "iccprofiles", "fonts"],
+        },
+      },
+    },
+  };
+
+  it.each(["CMap", "Encoding"])("fails when Resource/%s holds no files", async (subdir) => {
+    const root = await makeRoot(GS_MANIFEST);
+    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    const base = await stageGsResources(root);
+    await rm(join(base, "Resource", subdir), { recursive: true, force: true });
+    await mkdir(join(base, "Resource", subdir), { recursive: true });
+    const stubDir = await makeStubBrewDir("ghostscript 10.08.0");
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubDir}:${process.env.PATH}`,
+    });
+
+    expect(result.code, `Resource/${subdir} empty must not pass verify`).toBe(1);
+    expect(result.stderr).toContain(`Resource/${subdir}`);
+    expect(result.stderr).toContain("GS_LIBRESOURCE");
+    expect(result.stderr).toContain("yarn binaries:prep");
+    expect(result.stdout).not.toContain("verify: PASS");
+    await rm(root, { recursive: true, force: true });
+    await rm(stubDir, { recursive: true, force: true });
+  });
+
+  it("passes for a complete Resource tree, proving the subdir gate is not vacuous", async () => {
+    const root = await makeRoot(GS_MANIFEST);
+    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    await stageGsResources(root);
+    const stubDir = await makeStubBrewDir("ghostscript 10.08.0");
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubDir}:${process.env.PATH}`,
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("verify: PASS");
+    await rm(root, { recursive: true, force: true });
+    await rm(stubDir, { recursive: true, force: true });
   });
 });

@@ -618,5 +618,75 @@ describe("bundle-pdf-macos.sh rejects hollow gs resource sources", () => {
       treeFiles(stagedResources),
       "a rejected source must not wipe a previously working local tree",
     ).toEqual(before);
+  }, 30000);
+});
+
+describe("bundle-pdf-macos.sh staging dirs never leak", () => {
+  it("removes the gs-resources staging dir after a rejected run", () => {
+    const root = makeRoot();
+    const binDir = join(root, "src-tauri", "binaries");
+    mkdirSync(binDir, { recursive: true });
+    const staged = stageStagedLib(root);
+    qpdfFixture(join(binDir, `qpdf-${TRIPLE}`), staged.member);
+    arm64Fixture(join(binDir, `gs-${TRIPLE}`), "gs");
+    writeLock(root, lockDigest(staged.libDir));
+    const { stubBin, brewPrefix } = makeGsFixture(root);
+    const init = join(brewPrefix, "share", "ghostscript", "Resource", "Init");
+    rmSync(join(init, "gs_init.ps"));
+    writeFileSync(join(init, "other.ps"), "%!PS\n");
+
+    const result = runBundle(root, { stubBin });
+
+    expect(result.out).toMatch(/lacks Resource\/Init\/gs_init\.ps/);
+    expect(
+      readdirSync(join(root, "src-tauri")).filter((entry) =>
+        entry.startsWith("gs-resources.staging"),
+      ),
+      "a rejected run must not leave a gs-resources staging tree behind",
+    ).toEqual([]);
+  }, 30000);
+});
+
+describe("bundle-pdf-macos.sh rejects hollow gs Resource subdirs", () => {
+  it.each(["CMap", "Encoding", "ColorSpace"])(
+    "refuses to stage when the brew Resource/%s subdir has no real files",
+    (subdir) => {
+      const root = makeRoot();
+      const binDir = join(root, "src-tauri", "binaries");
+      mkdirSync(binDir, { recursive: true });
+      const staged = stageStagedLib(root);
+      qpdfFixture(join(binDir, `qpdf-${TRIPLE}`), staged.member);
+      arm64Fixture(join(binDir, `gs-${TRIPLE}`), "gs");
+      writeLock(root, lockDigest(staged.libDir));
+      const { stubBin, brewPrefix } = makeGsFixture(root);
+      const target = join(brewPrefix, "share", "ghostscript", "Resource", subdir);
+      rmSync(target, { recursive: true, force: true });
+      mkdirSync(target, { recursive: true });
+
+      const result = runBundle(root, { stubBin });
+
+      expect(result.out).toMatch(
+        new RegExp(`ghostscript resource subdir .*Resource/${subdir} has no usable files`),
+      );
+      expect(result.out).toMatch(/brew reinstall ghostscript/);
+      expect(result.out).not.toContain("staged: gs resources");
+    },
+  );
+
+  it("stages a complete Resource tree, proving the subdir gate is not vacuous", () => {
+    const root = makeRoot();
+    const binDir = join(root, "src-tauri", "binaries");
+    mkdirSync(binDir, { recursive: true });
+    const staged = stageStagedLib(root);
+    qpdfFixture(join(binDir, `qpdf-${TRIPLE}`), staged.member);
+    arm64Fixture(join(binDir, `gs-${TRIPLE}`), "gs");
+    writeLock(root, lockDigest(staged.libDir));
+    const { stubBin, brewPrefix } = makeGsFixture(root);
+    mkdirSync(join(brewPrefix, "share", "ghostscript", "Resource", "CMap"), { recursive: true });
+    writeFileSync(join(brewPrefix, "share", "ghostscript", "Resource", "CMap", "Identity-H"), "x");
+
+    const result = runBundle(root, { stubBin });
+
+    expect(result.out).toContain("staged: gs resources");
   });
 });

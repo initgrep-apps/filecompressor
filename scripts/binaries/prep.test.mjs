@@ -2,8 +2,10 @@
 import { describe, it, expect, afterAll, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, chmod, stat } from "node:fs/promises";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { sha256File } from "./lib.mjs";
 import {
   assertAllEnginesStaged,
@@ -433,21 +435,21 @@ describe("assertGsResourcesStaged", () => {
 
   async function stageResources(root, { icc = true, fonts = true, sentinels = true } = {}) {
     const base = join(root, "src-tauri", "gs-resources");
-    await mkdir(join(base, "Resource", "Init"), { recursive: true });
+    for (const dir of ["Resource/Init", "Resource/Font", "Resource/CMap", "lib", "iccprofiles", "fonts"]) {
+      await mkdir(join(base, dir), { recursive: true });
+    }
     await writeFile(join(base, "Resource", "Init", "gs_init.ps"), "%!PS\n");
-    await mkdir(join(base, "lib"), { recursive: true });
+    await writeFile(join(base, "Resource", "Font", "NimbusRoman-Regular"), "font");
+    await writeFile(join(base, "Resource", "CMap", "Identity-H"), "cmap");
     await writeFile(join(base, "lib", "gs_init.ps"), "%!PS\n");
-    await mkdir(join(base, "iccprofiles"), { recursive: true });
     if (icc) {
       await writeFile(join(base, "iccprofiles", "srgb.icc"), "profile");
     }
-    await mkdir(join(base, "fonts"), { recursive: true });
     if (fonts) {
       await writeFile(join(base, "fonts", "Helvetica"), "font");
     }
     if (sentinels) {
       for (const relative of GS_ACCEPTANCE_SENTINELS) {
-        if (relative.startsWith("fonts") && !fonts) continue;
         const sentinel = join(base, relative);
         await mkdir(join(sentinel, ".."), { recursive: true });
         await writeFile(sentinel, "%!\n");
@@ -807,3 +809,88 @@ async function statMode(path) {
   const { mode } = await import("node:fs/promises").then((fs) => fs.stat(path));
   return mode & 0o777;
 }
+describe("gs Resource subdir content gate", () => {
+  const entry = { source: "brew", formula: "ghostscript", binary: "gs", dest: "gs", resources: ["Resource", "lib", "iccprofiles", "fonts"] };
+
+  async function rootWithRealTree() {
+    const root = await makeRoot({ targets: { "aarch64-apple-darwin": { gs: entry } } });
+    const base = join(root, "src-tauri", "gs-resources");
+    for (const dir of ["Resource/Init", "Resource/Font", "Resource/CMap", "lib", "iccprofiles", "fonts"]) {
+      await mkdir(join(base, dir), { recursive: true });
+    }
+    await writeFile(join(base, "Resource", "Init", "gs_init.ps"), "%!PS\n");
+    await writeFile(join(base, "Resource", "Font", "NimbusRoman-Regular"), "font");
+    await writeFile(join(base, "Resource", "CMap", "Identity-H"), "cmap");
+    await writeFile(join(base, "lib", "gs_init.ps"), "%!PS\n");
+    await writeFile(join(base, "iccprofiles", "srgb.icc"), "profile");
+    await writeFile(join(base, "fonts", "Helvetica"), "font");
+    for (const relative of GS_ACCEPTANCE_SENTINELS) {
+      const sentinel = join(base, relative);
+      await mkdir(join(sentinel, ".."), { recursive: true });
+      await writeFile(sentinel, "%!\n");
+    }
+    return { root, base };
+  }
+
+  it.each(["CMap", "Encoding", "ColorSpace", "CIDFont"])(
+    "fails when Resource/%s is gutted",
+    async (subdir) => {
+      const { root, base } = await rootWithRealTree();
+      rmSync(join(base, "Resource", subdir), { recursive: true, force: true });
+      await mkdir(join(base, "Resource", subdir), { recursive: true });
+
+      await expect(assertGsResourcesStaged(root, entry, "gs")).rejects.toThrow(
+        new RegExp(`Resource subdirs hold no files: .*Resource[/\\\\]${subdir}`),
+      );
+    },
+  );
+
+  it("fails when a Resource subdir holds only a sentinel", async () => {
+    const { root, base } = await rootWithRealTree();
+    rmSync(join(base, "Resource", "CMap"), { recursive: true, force: true });
+    await mkdir(join(base, "Resource", "CMap"), { recursive: true });
+    await writeFile(join(base, "Resource", "CMap", "fso-sidecar-acceptance-cmap-sentinel.ps"), "%!\n");
+
+    await expect(assertGsResourcesStaged(root, entry, "gs")).rejects.toThrow(
+      /Resource subdirs hold no files/,
+    );
+  });
+
+  it("passes for a complete tree", async () => {
+    const { root } = await rootWithRealTree();
+    await expect(assertGsResourcesStaged(root, entry, "gs")).resolves.toBe(true);
+  });
+});
+
+describe("gs sentinel set agreement", () => {
+  it("prep and verify derive the identical sentinel list from gs-sentinels.mjs", async () => {
+    const prep = await import("./prep.mjs");
+    const verify = await import("./verify.mjs");
+    const shared = await import("./gs-sentinels.mjs");
+    expect(prep.GS_ACCEPTANCE_SENTINELS).toEqual(verify.GS_ACCEPTANCE_SENTINELS);
+    expect(prep.GS_ACCEPTANCE_SENTINELS).toEqual(
+      shared.gsSentinelPaths().map((relative) => join(...relative.split("/"))),
+    );
+    expect(shared.gsSentinelPaths()).toHaveLength(4);
+  });
+
+  it("the shell derives every sentinel name from the shared module's rule", async () => {
+    const shared = await import("./gs-sentinels.mjs");
+    const scripts = join(dirname(dirname(fileURLToPath(import.meta.url))));
+    const bundle = readFileSync(join(scripts, "bundle-pdf-macos.sh"), "utf8");
+    const audit = readFileSync(join(scripts, "audit-sidecars.sh"), "utf8");
+    for (const shell of [bundle, audit]) {
+      expect(shell).toContain('GS_DIR_SENTINEL_PREFIX="fso-sidecar-acceptance-"');
+      expect(shell).toContain("tr '/' '-' | tr 'A-Z' 'a-z'");
+      expect(shell).not.toContain("fso-sidecar-acceptance-fonts-sentinel.ps");
+      expect(shell).not.toContain("fso-sidecar-acceptance-lib-sentinel.ps");
+      expect(shell).not.toContain("fso-sidecar-acceptance-resource-font-sentinel.ps");
+    }
+    expect(shared.gsSentinelPaths()).toEqual([
+      "Resource/Init/fso-sidecar-acceptance-sentinel.ps",
+      "lib/fso-sidecar-acceptance-lib-sentinel.ps",
+      "Resource/Font/fso-sidecar-acceptance-resource-font-sentinel.ps",
+      "fonts/fso-sidecar-acceptance-fonts-sentinel.ps",
+    ]);
+  });
+});

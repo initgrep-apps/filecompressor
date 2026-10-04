@@ -2,6 +2,7 @@
 import { execFile } from "node:child_process";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { gsSentinelPaths, isGsSentinel } from "./gs-sentinels.mjs";
 import {
   archForTriple,
   binaryDir,
@@ -81,21 +82,27 @@ export function gsResourcesDir(root) {
 }
 
 const GS_INIT_MARKER = join("Resource", "Init", "gs_init.ps");
-export const GS_ACCEPTANCE_SENTINELS = [
-  join("Resource", "Init", "fso-sidecar-acceptance-sentinel.ps"),
-  join("Resource", "Font", "fso-sidecar-acceptance-resource-font-sentinel.ps"),
-  join("fonts", "fso-sidecar-acceptance-fonts-sentinel.ps"),
-];
-
-const GS_SENTINEL_PREFIX = "fso-sidecar-acceptance-";
-
-function isGsSentinel(name) {
-  return name.startsWith(GS_SENTINEL_PREFIX);
-}
+export const GS_ACCEPTANCE_SENTINELS = gsSentinelPaths().map((relative) => join(...relative.split("/")));
 
 export async function treeHasFile(dir) {
   const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => []);
   return entries.some((entry) => entry.isFile() && !isGsSentinel(entry.name));
+}
+
+export async function resourceSubdirsWithoutFiles(base) {
+  const resourceDir = join(base, "Resource");
+  const entries = await readdir(resourceDir, { withFileTypes: true }).catch(() => []);
+  const empty = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    const sub = join(resourceDir, entry.name);
+    if (!(await treeHasFile(sub))) {
+      empty.push(sub);
+    }
+  }
+  return empty;
 }
 
 export async function checkGsResources(root, name, entry, problems) {
@@ -121,6 +128,13 @@ export async function checkGsResources(root, name, entry, problems) {
     problems.push(
       `${name}: gs resource marker missing: ${join(base, GS_INIT_MARKER)} — run 'yarn binaries:prep' to restage them`,
     );
+  }
+  if (resources.includes("Resource")) {
+    for (const sub of await resourceSubdirsWithoutFiles(base)) {
+      problems.push(
+        `${name}: Resource subdir holds no files: ${sub} — gs derives GS_LIBRESOURCE from where it found Resource/Init/gs_init.ps, so every sibling under Resource/ is reached through this same tree; run 'yarn binaries:prep' to restage them`,
+      );
+    }
   }
   for (const relative of GS_ACCEPTANCE_SENTINELS) {
     const sentinel = join(base, relative);

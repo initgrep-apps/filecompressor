@@ -224,7 +224,7 @@ gs_manifest_resource_dirs() {
 }
 
 gs_smoke_required_dirs() {
-  local search_dirs declared dir
+  local search_dirs declared
   if ! search_dirs="$(gs_smoke_search_dirs)"; then
     return 1
   fi
@@ -233,9 +233,19 @@ gs_smoke_required_dirs() {
   fi
   printf '%s\n' $search_dirs
   for dir in $declared; do
-    if [ "$dir" = "iccprofiles" ]; then
-      printf '%s\n' "$dir"
-    fi
+    printf '%s\n' "$dir"
+  done
+  printf '%s\n' Resource
+  return 0
+}
+
+gs_smoke_resource_subdirs() {
+  local base="$1"
+  local entry
+  [ -d "$base/Resource" ] || return 0
+  for entry in "$base"/Resource/*/; do
+    [ -d "$entry" ] || continue
+    printf '%s\n' "${entry%/}"
   done
   return 0
 }
@@ -305,6 +315,7 @@ gs_clean_room_smoke() {
   local gs_resources="$2"
   local work="$3"
   local dir
+  local subdir
   local -a gs_includes=()
   local -a required_dirs=()
   local declared_list
@@ -343,6 +354,19 @@ EOF
       return 1
     fi
   done
+  while IFS= read -r subdir; do
+    [ -n "$subdir" ] || continue
+    if ! dir_has_file_recursive "$subdir"; then
+      printf 'FAIL gs clean-room smoke: no files anywhere under %s\n' "$subdir" >&2
+      printf "  gs derives GS_LIBRESOURCE from where it found Resource/Init/gs_init.ps, so\n" >&2
+      printf "  every sibling under Resource/ is reached through this same tree. A hole here\n" >&2
+      printf "  means gs silently uses whatever the host has instead.\n" >&2
+      printf "  Run 'yarn binaries:prep' to restage the gs resources.\n" >&2
+      return 1
+    fi
+  done <<EOF
+$(gs_smoke_resource_subdirs "$gs_resources")
+EOF
   if ! assert_gs_sentinels "$gs_resources"; then
     return 1
   fi
@@ -419,7 +443,11 @@ if [ "$gs_smoke_required" -eq 1 ]; then
     printf "  run 'yarn binaries:prep' to stage it — PDF compression cannot work without it\n" >&2
     failures+=("<gs-clean-room-smoke>")
   else
-    gs_smoke_workdir="$(mktemp -d -t gs-clean-room)"
+    if ! gs_smoke_workdir="$(mktemp -d -t gs-clean-room)"; then
+      printf 'FAIL gs clean-room smoke: could not create a temp dir (mktemp -d -t gs-clean-room)\n' >&2
+      printf '  the smoke must run, not be skipped: check that TMPDIR is writable\n' >&2
+      exit 1
+    fi
     if ! gs_clean_room_smoke "$BIN_DIR/gs-$TARGET" "$GS_RESOURCES_DIR" "$gs_smoke_workdir"; then
       failures+=("<gs-clean-room-smoke>")
     fi

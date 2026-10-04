@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { sha256File } from "./lib.mjs";
+import { gsSentinelPairs, gsSentinelPaths } from "./gs-sentinels.mjs";
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const AUDIT = join(SCRIPTS, "..", "audit-sidecars.sh");
@@ -204,8 +205,10 @@ async function makeGsRoot({
     const base = `${root}/src-tauri/gs-resources`;
     for (const [dir, files] of [
       ["Resource/Init", ["gs_init.ps"]],
-      ["lib", ["gs_init.ps"]],
       ["Resource/Font", ["Fontmap"]],
+      ["Resource/CMap", ["Identity-H"]],
+      ["Resource/Encoding", ["Differences"]],
+      ["lib", ["gs_init.ps"]],
       ["iccprofiles", icc ? ["default_rgb.icc"] : []],
       ["fonts", fonts ? ["Helvetica"] : []],
     ]) {
@@ -238,6 +241,13 @@ async function makeStubBrew(version = "10.08.0") {
     `#!/bin/sh\ncase "$1" in\n  --version) echo 'Homebrew 4.6.0' ;;\n  list) printf '%s %s\\n' "$2" '${version}' ;;\n  *) exit 1 ;;\nesac\n`,
     { mode: 0o755 },
   );
+  return dir;
+}
+
+async function makeStubMktemp() {
+  const dir = await mkdtemp(`${tmpdir()}/audit-stub-mktemp-`);
+  cleanupRoots.push(dir);
+  await writeFile(`${dir}/mktemp`, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
   return dir;
 }
 
@@ -479,13 +489,12 @@ describe("audit-sidecars.sh", () => {
     expect(iccResult.stderr).toMatch(/has no files anywhere under it: .*\/iccprofiles/);
   });
 
-  it.each([
-    ["fonts", "fontSentinel"],
-    ["Resource/Font", "resourceFontSentinel"],
-    ["lib", "libSentinel"],
-  ])("fails when %s is gutted down to junk with no sentinel", async (dir, option) => {
-    const root = await makeGsRoot({ [option]: false });
+  it.each(gsSentinelPairs())(
+    "fails when %s is gutted down to junk with no sentinel",
+    async (dir, sentinelName) => {
+    const root = await makeGsRoot();
     const fontDir = `${root}/src-tauri/gs-resources/${dir}`;
+    rmSync(`${fontDir}/${sentinelName}`, { force: true });
     for (const entry of readdirSync(fontDir)) {
       rmSync(`${fontDir}/${entry}`, { recursive: true, force: true });
     }
@@ -678,5 +687,66 @@ describe("audit-sidecars.sh", () => {
     });
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("brew install ghostscript");
+  });
+});
+
+describe("gs sentinel coverage is shared, not duplicated", () => {
+  it("the audit demands exactly the sentinels the shared module defines", () => {
+    expect(gsSentinelPaths()).toEqual([
+      "Resource/Init/fso-sidecar-acceptance-sentinel.ps",
+      "lib/fso-sidecar-acceptance-lib-sentinel.ps",
+      "Resource/Font/fso-sidecar-acceptance-resource-font-sentinel.ps",
+      "fonts/fso-sidecar-acceptance-fonts-sentinel.ps",
+    ]);
+  });
+
+  it("prep and the audit agree on the sentinel set", async () => {
+    const prep = await import("./prep.mjs");
+    const verify = await import("./verify.mjs");
+    expect(prep.GS_ACCEPTANCE_SENTINELS).toEqual(verify.GS_ACCEPTANCE_SENTINELS);
+    expect(prep.GS_ACCEPTANCE_SENTINELS.map((p) => p.split("/").join("/"))).toEqual(
+      gsSentinelPaths(),
+    );
+  });
+});
+
+describe("gs Resource subdir content gate (audit side)", () => {
+  it.each(["CMap", "Encoding"])("fails when Resource/%s holds no files", async (subdir) => {
+    const root = await makeGsRoot();
+    const dir = `${root}/src-tauri/gs-resources/Resource/${subdir}`;
+    for (const entry of readdirSync(dir)) {
+      rmSync(`${dir}/${entry}`, { recursive: true, force: true });
+    }
+    mkdirSync(dir, { recursive: true });
+    const stubBrew = await makeStubBrew();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code, `Resource/${subdir} empty must not pass`).toBe(1);
+    expect(result.stdout + result.stderr).toMatch(
+      new RegExp(`no files anywhere under .*Resource/${subdir}`),
+    );
+    expect(result.stdout).not.toContain("sentinel resolved");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+});
+
+describe("gs smoke temp-dir failures are reported, never silent", () => {
+  it("fails with a message when mktemp cannot create a workdir", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const stubMktemp = await makeStubMktemp();
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubMktemp}:${stubBrew}:${process.env.PATH}`,
+    });
+
+    expect(result.code, "a failed mktemp must not be swallowed by set -e").toBe(1);
+    expect(result.stdout + result.stderr).toContain(
+      "FAIL gs clean-room smoke: could not create a temp dir",
+    );
+    expect(result.stdout).not.toContain("gs clean-room smoke: PASS");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
   });
 });

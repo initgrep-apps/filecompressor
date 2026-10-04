@@ -127,3 +127,38 @@ describe("bundle-vips-macos.sh transactional frameworks swap", () => {
     ).toEqual([]);
   }, 60000);
 });
+describe("staging dirs never leak", () => {
+  it("removes the staging dir after a failed run and git-ignores the pattern", () => {
+    const root = makeRoot();
+    const binDir = join(root, "src-tauri", "binaries");
+    const libDir = join(root, "libs");
+    mkdirSync(libDir, { recursive: true });
+    const good = join(libDir, "libfso-good.dylib");
+    dylib(good, "fso_libfso_good");
+    const sidecar = join(binDir, "vips-aarch64-apple-darwin");
+    vipsFixture(sidecar, good, "libfso-good");
+    const absent = join(libDir, "libfso-absent.dylib");
+    dylib(absent, "fso_libfso_absent");
+    vipsFixture(sidecar, absent, "libfso-absent");
+    rmSync(absent, { force: true });
+
+    const result = runBundle(root);
+
+    expect(result.code).not.toBe(0);
+    expect(
+      readdirSync(join(root, "src-tauri")).filter((entry) => entry.startsWith(".frameworks-staging")),
+      "a failed run must not leave a multi-MB staging tree behind",
+    ).toEqual([]);
+  }, 60000);
+
+  it("git-ignores both staging patterns", () => {
+    const repo = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
+    for (const pattern of [
+      "src-tauri/.frameworks-staging.12345/x.dylib",
+      "src-tauri/gs-resources.staging.999/x.ps",
+    ]) {
+      const probe = spawnSync("git", ["check-ignore", "-q", pattern], { cwd: repo });
+      expect(probe.status, `${pattern} must be git-ignored`).toBe(0);
+    }
+  });
+});
