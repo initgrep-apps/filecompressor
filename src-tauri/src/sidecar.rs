@@ -454,6 +454,137 @@ mod tests {
     }
 
     #[cfg(unix)]
+    const SHARED_SENTINEL_MODULE: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/binaries/gs-sentinels.mjs");
+
+    struct SharedSentinelContract {
+        prefix: String,
+        init_sentinel: String,
+        search_dirs: Vec<String>,
+        sentinel_names: Vec<String>,
+    }
+
+    fn shared_sentinel_contract() -> SharedSentinelContract {
+        let source = std::fs::read_to_string(SHARED_SENTINEL_MODULE).unwrap_or_else(|error| {
+            panic!(
+                "cannot read {} ({error}): the Rust gs sentinel constants are pinned to it, so \
+                 the audit, prep, verify and the shipped sidecar resolver can never disagree \
+                 about which staged files are sentinels",
+                SHARED_SENTINEL_MODULE
+            )
+        });
+        let quoted = |key: &str| -> String {
+            let line = source
+                .lines()
+                .find(|line| line.starts_with(&format!("export const {key} = \"")))
+                .unwrap_or_else(|| panic!("{key} is missing from {SHARED_SENTINEL_MODULE}"));
+            let value = line
+                .split('"')
+                .nth(1)
+                .unwrap_or_else(|| panic!("{key} has no quoted value"));
+            value.to_string()
+        };
+        let prefix = quoted("GS_SENTINEL_PREFIX");
+        let init_sentinel = quoted("GS_INIT_SENTINEL");
+        let dirs_line = source
+            .lines()
+            .find(|line| line.starts_with("export const GS_SEARCH_DIRS = ["))
+            .unwrap_or_else(|| {
+                panic!("GS_SEARCH_DIRS is missing from {SHARED_SENTINEL_MODULE}")
+            });
+        let search_dirs: Vec<String> = dirs_line
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .map(|dir| dir.to_string())
+            .collect();
+        assert!(
+            !search_dirs.is_empty(),
+            "GS_SEARCH_DIRS in {SHARED_SENTINEL_MODULE} parsed as empty, so this parser is stale"
+        );
+        let sentinel_names = search_dirs
+            .iter()
+            .map(|dir| {
+                if dir == "Resource/Init" {
+                    init_sentinel.clone()
+                } else {
+                    format!(
+                        "{}{}-sentinel.ps",
+                        prefix,
+                        dir.replace('/', "-").to_lowercase()
+                    )
+                }
+            })
+            .collect();
+        SharedSentinelContract {
+            prefix,
+            init_sentinel,
+            search_dirs,
+            sentinel_names,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gs_sentinel_constants_match_the_shared_javascript_module() {
+        let shared = shared_sentinel_contract();
+        assert_eq!(
+            GS_SENTINEL_PREFIX,
+            shared.prefix,
+            "Rust's GS_SENTINEL_PREFIX has drifted from scripts/binaries/gs-sentinels.mjs. \
+             The runtime consequence is that the sentinels prep stages stop counting as \
+             sentinels here, so a gs-resources tree whose font dirs hold ONLY those sentinels \
+             resolves to Some(GsResources) instead of None, gs is then spawned with -I flags \
+             into a hollow tree, and PDF compression silently falls back to a system \
+             Ghostscript on clean machines — the exact incident these sentinels exist to catch."
+        );
+        assert_eq!(
+            GS_RESOURCE_SEARCH_DIRS.to_vec(),
+            shared.search_dirs,
+            "Rust's GS_RESOURCE_SEARCH_DIRS has drifted from scripts/binaries/gs-sentinels.mjs, \
+             so the -I flags the app passes differ from the dirs prep staged sentinels into."
+        );
+        let _ = &shared.init_sentinel;
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sentinel_only_font_dirs_using_the_shared_module_names_do_not_resolve() {
+        let shared = shared_sentinel_contract();
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        write_gs_resources(&resources, &["lib", "Resource/Font", "fonts"]);
+        empty_dir(&resources, &["Resource/Font", "fonts"]);
+        let font_sentinel_names: Vec<String> = shared
+            .search_dirs
+            .iter()
+            .zip(shared.sentinel_names.iter())
+            .filter(|(dir, _)| GS_FONT_DIRS.contains(&dir.as_str()))
+            .map(|(_, name)| name.clone())
+            .collect();
+        assert_eq!(
+            font_sentinel_names.len(),
+            GS_FONT_DIRS.len(),
+            "scripts/binaries/gs-sentinels.mjs must declare a sentinel dir for each of {:?}",
+            GS_FONT_DIRS
+        );
+        for name in &font_sentinel_names {
+            for font_dir in GS_FONT_DIRS {
+                std::fs::write(resources.join(font_dir).join(name), b"%!\n").unwrap();
+            }
+        }
+
+        assert!(
+            resolve_gs_resources(&exe_dir).is_none(),
+            "font dirs holding only the sentinels named by scripts/binaries/gs-sentinels.mjs \
+             must not resolve: resolving them would spawn gs with -I flags into a hollow tree \
+             and silently resolve fonts from a system Ghostscript"
+        );
+    }
+
+    #[cfg(unix)]
     fn write_gs_resources(base: &std::path::Path, dirs: &[&str]) {
         for dir in dirs {
             let path = base.join(dir);

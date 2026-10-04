@@ -750,3 +750,84 @@ describe("gs smoke temp-dir failures are reported, never silent", () => {
     expect(result.stdout).not.toContain("sidecar audit: PASS");
   });
 });
+
+async function makeStubNode(script) {
+  const dir = await mkdtemp(`${tmpdir()}/audit-stub-node-`);
+  cleanupRoots.push(dir);
+  const real = execFileSync("which", ["node"]).toString().trim();
+  await writeFile(
+    `${dir}/node`,
+    `#!/bin/sh
+for a in "$@"; do
+  if [ "$a" = "-e" ]; then
+    ${script}
+  fi
+done
+exec ${real} "$@"
+`,
+    { mode: 0o755 },
+  );
+  return dir;
+}
+
+describe("the gs smoke fails closed instead of passing vacuously", () => {
+  it.each([1, 2, 3])(
+    "fails when the %s'th manifest read fails, printing neither sentinel resolved nor PASS",
+    async (nth) => {
+      const root = await makeGsRoot();
+      const stubBrew = await makeStubBrew();
+      const counter = `${root}/node-calls`;
+      const stubNode = await makeStubNode(
+        `n=$(cat ${counter} 2>/dev/null || echo 0); n=$((n+1)); printf '%s' "$n" > ${counter}; if [ "$n" -ge ${nth} ]; then exit 1; fi`,
+      );
+
+      const result = await runAudit(root, "aarch64-apple-darwin", {
+        PATH: `${stubNode}:${stubBrew}:${process.env.PATH}`,
+      });
+
+      expect(result.code, `node -e call #${nth} failing must not pass the audit`).toBe(1);
+      expect(result.stdout + result.stderr).toMatch(
+        /FAIL gs clean-room smoke: no manifest entry for aarch64-apple-darwin declares a "resources" array/,
+      );
+      expect(result.stdout).not.toContain("sentinel resolved");
+      expect(result.stdout).not.toContain("sidecar audit: PASS");
+      expect(result.stdout).not.toContain("gs clean-room smoke: PASS");
+    },
+  );
+
+  it("fails when the manifest read succeeds but yields no resources", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const stubNode = await makeStubNode("exit 0");
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubNode}:${stubBrew}:${process.env.PATH}`,
+    });
+
+    expect(result.code, "an empty sentinel list must not pass vacuously").toBe(1);
+    expect(result.stdout + result.stderr).toContain(
+      "FAIL gs clean-room smoke: the acceptance-sentinel list resolved to zero entries",
+    );
+    expect(result.stdout + result.stderr).toContain("pass\n  vacuously");
+    expect(result.stdout + result.stderr).toContain("yarn binaries:prep");
+    expect(result.stdout).not.toContain("sentinel resolved");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+
+  it("aborts with a FAIL line when a command inside the smoke misbehaves", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const stubBin = await mkdtemp(`${tmpdir()}/audit-stub-wc-`);
+    cleanupRoots.push(stubBin);
+    await writeFile(`${stubBin}/wc`, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBin}:${stubBrew}:${process.env.PATH}`,
+    });
+
+    expect(result.code, "an unreadable render size must not continue past the check").toBe(1);
+    expect(result.stdout + result.stderr).toContain("FAIL gs clean-room smoke: rendered");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+    expect(result.stdout).not.toContain("sentinel resolved");
+  });
+});

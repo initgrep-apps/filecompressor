@@ -8,7 +8,6 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    testTimeout: 30000,
     setupFiles: ['./src/test-setup.ts'],
     exclude: ['**/node_modules/**', '**/dist/**', '.worktrees/**', '**/cypress/**', '**/.{idea,git,cache,output,temp}/**', '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,turbo}.config.*'],
   },

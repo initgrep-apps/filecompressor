@@ -690,3 +690,39 @@ describe("bundle-pdf-macos.sh rejects hollow gs Resource subdirs", () => {
     expect(result.out).toContain("staged: gs resources");
   });
 });
+
+describe("the staged sentinel dirs match gs-sentinels.mjs exactly", () => {
+  it("stages a sentinel in every dir the shared module names, and no others", async () => {
+    const shared = await import("./gs-sentinels.mjs");
+    const root = makeRoot();
+    const binDir = join(root, "src-tauri", "binaries");
+    mkdirSync(binDir, { recursive: true });
+    const staged = stageStagedLib(root);
+    qpdfFixture(join(binDir, `qpdf-${TRIPLE}`), staged.member);
+    arm64Fixture(join(binDir, `gs-${TRIPLE}`), "gs");
+    writeLock(root, lockDigest(staged.libDir));
+    const { stubBin } = makeGsFixture(root);
+
+    const result = runBundle(root, { stubBin });
+
+    expect(result.out).toContain("staged: gs resources");
+    const base = join(root, "src-tauri", "gs-resources");
+    const sentinelDirs = new Set();
+    const walk = (dir, relative) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const child = join(dir, entry.name);
+        const childRelative = relative ? `${relative}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) {
+          walk(child, childRelative);
+        } else if (shared.isGsSentinel(entry.name)) {
+          sentinelDirs.add(relative);
+        }
+      }
+    };
+    walk(base, "");
+    expect(
+      [...sentinelDirs].sort(),
+      "the shell derives its sentinel dirs from the manifest; they must equal the shared module's",
+    ).toEqual(shared.gsSentinelPairs().map(([dir]) => dir).sort());
+  });
+});

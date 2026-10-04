@@ -229,6 +229,9 @@ gs_smoke_required_dirs() {
     return 1
   fi
   if ! declared="$(gs_manifest_resource_dirs)"; then
+    printf 'FAIL gs clean-room smoke: no manifest entry for %s declares a "resources" array\n' "$TARGET" >&2
+    printf '  add the dirs gs needs (Resource, lib, iccprofiles, fonts) to the gs row in\n' >&2
+    printf '  scripts/binaries.manifest.json; without them there is nothing to smoke.\n' >&2
     return 1
   fi
   printf '%s\n' $search_dirs
@@ -266,24 +269,15 @@ gs_smoke_search_dirs() {
       *) ordered+=("$dir") ;;
     esac
   done
-  if [ "${#ordered[@]}" -eq 0 ]; then
-    printf 'FAIL gs clean-room smoke: the manifest resources for %s yield no gs search path\n' "$TARGET" >&2
-    return 1
-  fi
   printf '%s\n' "${ordered[@]}"
+  return 0
 }
 
-gs_smoke_sentinels() {
-  local search_dirs dir
-  if ! search_dirs="$(gs_smoke_search_dirs)"; then
-    return 1
-  fi
-  for dir in $search_dirs; do
-    case "$dir" in
-      Resource/Init) printf '%s\n' "Resource/Init:$GS_ACCEPTANCE_SENTINEL" ;;
-      *) printf '%s\n' "$dir:$GS_DIR_SENTINEL_PREFIX$(printf '%s' "$dir" | tr '/' '-' | tr 'A-Z' 'a-z')-sentinel.ps" ;;
-    esac
-  done
+gs_sentinel_name_for_dir() {
+  case "$1" in
+    Resource/Init) printf '%s\n' "$GS_ACCEPTANCE_SENTINEL" ;;
+    *) printf '%s\n' "$GS_DIR_SENTINEL_PREFIX$(printf '%s' "$1" | tr '/' '-' | tr 'A-Z' 'a-z')-sentinel.ps" ;;
+  esac
 }
 
 dir_has_file_recursive() {
@@ -292,9 +286,9 @@ dir_has_file_recursive() {
 
 assert_gs_sentinels() {
   local gs_resources="$1"
+  shift
   local pair dir name
-  while IFS= read -r pair; do
-    [ -n "$pair" ] || continue
+  for pair in "$@"; do
     dir="${pair%%:*}"
     name="${pair##*:}"
     if [ ! -f "$gs_resources/$dir/$name" ]; then
@@ -305,12 +299,17 @@ assert_gs_sentinels() {
       printf "  Run 'yarn binaries:prep' to restage gs-resources, then re-run the audit.\n" >&2
       return 1
     fi
-  done <<EOF
-$(gs_smoke_sentinels)
-EOF
+  done
+  return 0
+}
+
+gs_smoke_failed() {
+  failures+=("<gs-clean-room-smoke>")
+  return 0
 }
 
 gs_clean_room_smoke() {
+  set -e
   local gs="$1"
   local gs_resources="$2"
   local work="$3"
@@ -320,7 +319,8 @@ gs_clean_room_smoke() {
   local -a required_dirs=()
   local declared_list
   if ! declared_list="$(gs_smoke_required_dirs)"; then
-    return 1
+    gs_smoke_failed
+    return 0
   fi
   while IFS= read -r dir; do
     [ -n "$dir" ] || continue
@@ -331,7 +331,8 @@ EOF
   local -a search_dirs=()
   local search_list
   if ! search_list="$(gs_smoke_search_dirs)"; then
-    return 1
+    gs_smoke_failed
+    return 0
   fi
   while IFS= read -r dir; do
     [ -n "$dir" ] || continue
@@ -339,11 +340,26 @@ EOF
   done <<EOF
 $search_list
 EOF
+  local -a sentinel_pairs=()
+  for dir in "${search_dirs[@]}"; do
+    sentinel_pairs+=("$dir:$(gs_sentinel_name_for_dir "$dir")")
+  done
+  if [ "${#sentinel_pairs[@]}" -eq 0 ]; then
+    printf 'FAIL gs clean-room smoke: the acceptance-sentinel list resolved to zero entries\n' >&2
+    printf "  with no sentinel to require and no -I path to pass, this gate would pass\n" >&2
+    printf "  vacuously: the smoke would report 'sentinel resolved' while resolving nothing\n" >&2
+    printf "  and the staged resources would stay unproven. The list is derived from the\n" >&2
+    printf "  manifest gs row, so run 'yarn binaries:prep' to restage, and check that\n" >&2
+    printf '  scripts/binaries.manifest.json still declares resources for %s.\n' "$TARGET" >&2
+    gs_smoke_failed
+    return 0
+  fi
   for dir in "${required_dirs[@]}"; do
     if [ ! -d "$gs_resources/$dir" ]; then
       printf 'FAIL gs clean-room smoke: required staged resource dir missing: %s\n' "$gs_resources/$dir" >&2
       printf "  every dir here is load-bearing: run 'yarn binaries:prep' to restage them\n" >&2
-      return 1
+      gs_smoke_failed
+      return 0
     fi
   done
   for dir in "${required_dirs[@]}"; do
@@ -351,7 +367,8 @@ EOF
       printf 'FAIL gs clean-room smoke: no files anywhere under %s\n' "$gs_resources/$dir" >&2
       printf "  an empty tree here means the app would fall back to whatever the host has.\n" >&2
       printf "  Run 'yarn binaries:prep' to restage the gs resources.\n" >&2
-      return 1
+      gs_smoke_failed
+      return 0
     fi
   done
   while IFS= read -r subdir; do
@@ -362,13 +379,15 @@ EOF
       printf "  every sibling under Resource/ is reached through this same tree. A hole here\n" >&2
       printf "  means gs silently uses whatever the host has instead.\n" >&2
       printf "  Run 'yarn binaries:prep' to restage the gs resources.\n" >&2
-      return 1
+      gs_smoke_failed
+      return 0
     fi
   done <<EOF
 $(gs_smoke_resource_subdirs "$gs_resources")
 EOF
-  if ! assert_gs_sentinels "$gs_resources"; then
-    return 1
+  if ! assert_gs_sentinels "$gs_resources" "${sentinel_pairs[@]}"; then
+    gs_smoke_failed
+    return 0
   fi
   for dir in "${search_dirs[@]}"; do
     gs_includes+=("-I$gs_resources/$dir")
@@ -381,17 +400,20 @@ EOF
   local out="$work/font-fixture.pdf"
   {
     printf '%s\n' '%!PS'
-    while IFS= read -r pair; do
-      [ -n "$pair" ] || continue
+    for pair in "${sentinel_pairs[@]}"; do
       printf '(%s) runlibfile\n' "${pair##*:}"
-    done < <(gs_smoke_sentinels)
+    done
     printf '%s\n' \
       '/Helvetica-Bold findfont 24 scalefont setfont' \
       '72 700 moveto (gs clean-room smoke) show' \
       '/Helvetica findfont 12 scalefont setfont' \
       '72 660 moveto (font resolution must come from the staged resources) show' \
       'showpage'
-  } >"$fixture"
+  } >"$fixture" || {
+    printf 'FAIL gs clean-room smoke: could not write the PostScript fixture %s\n' "$fixture" >&2
+    gs_smoke_failed
+    return 0
+  }
 
   local status=0
   env -i HOME=/nonexistent PATH=/usr/bin:/bin \
@@ -404,19 +426,22 @@ EOF
     printf "  the acceptance sentinels were present and resolved, so this is a real gs\n" >&2
     printf '  failure, not a compiled-in Homebrew fallback.\n' >&2
     sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2
-    return 1
+    gs_smoke_failed
+    return 0
   fi
   local size
-  size="$(wc -c <"$out" | tr -d ' ')"
-  if [ ! -s "$out" ] || [ "$size" -le 1024 ]; then
-    printf 'FAIL gs clean-room smoke: rendered %s bytes, expected more than 1024 from a font-using fixture\n' "$size" >&2
+  size="$(wc -c <"$out" | tr -d ' ')" || size=""
+  if [ ! -s "$out" ] || [ -z "$size" ] || [ "$size" -le 1024 ]; then
+    printf 'FAIL gs clean-room smoke: rendered %s bytes, expected more than 1024 from a font-using fixture\n' "${size:-<unreadable>}" >&2
     sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2
-    return 1
+    gs_smoke_failed
+    return 0
   fi
   if ! grep -q '%%EOF' "$out"; then
     printf 'FAIL gs clean-room smoke: output is not a complete PDF\n' >&2
     sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2
-    return 1
+    gs_smoke_failed
+    return 0
   fi
   printf 'gs clean-room smoke: PASS (%s bytes, %s staged resource flags, sentinel resolved)\n' "$size" "${#gs_includes[@]}"
 }
@@ -448,9 +473,7 @@ if [ "$gs_smoke_required" -eq 1 ]; then
       printf '  the smoke must run, not be skipped: check that TMPDIR is writable\n' >&2
       exit 1
     fi
-    if ! gs_clean_room_smoke "$BIN_DIR/gs-$TARGET" "$GS_RESOURCES_DIR" "$gs_smoke_workdir"; then
-      failures+=("<gs-clean-room-smoke>")
-    fi
+    gs_clean_room_smoke "$BIN_DIR/gs-$TARGET" "$GS_RESOURCES_DIR" "$gs_smoke_workdir"
   fi
 fi
 if [ -n "$gs_smoke_workdir" ]; then
