@@ -25,7 +25,7 @@
 # any host. Unknown arguments fail rather than being ignored. An explicit
 # --target whose gs sidecar is not staged fails: the clean-room smoke must not
 # silently disappear while the audit still reports PASS.
-set -euo pipefail
+set -eEuo pipefail
 
 failures=()
 audit_finished=0
@@ -43,14 +43,15 @@ audit_body_aborted() {
   return 1
 }
 
+audit_body_trap() {
+  trap 'audit_body_aborted "$?" "$LINENO" "$BASH_COMMAND"' ERR
+}
+
 enumerate_count() {
   local dir="$1"
   shift
   local listing
-  local status
-  listing="$(find "$dir" "$@")"
-  status=$?
-  if [ "$status" -ne 0 ]; then
+  if ! listing="$(find "$dir" "$@")"; then
     printf 'FAIL could not enumerate %s — the PASS count would be wrong; check the directory exists and is readable\n' "$dir" >&2
     return 1
   fi
@@ -64,14 +65,16 @@ enumerate_count() {
 
 audit_exit_trap() {
   if [ -n "$gs_smoke_workdir" ] && [ -d "$gs_smoke_workdir" ]; then
-    rm -rf "$gs_smoke_workdir"
+    if ! rm -rf "$gs_smoke_workdir"; then
+      printf 'WARN sidecar audit: could not remove the smoke workdir %s — remove it by hand; the audit result above still stands\n' "$gs_smoke_workdir" >&2
+    fi
   fi
   if [ "$audit_finished" -eq 0 ] && [ "${#failures[@]}" -gt 0 ]; then
     printf 'sidecar audit: %d file(s) not self-contained\n' "${#failures[@]}"
   fi
 }
 trap audit_exit_trap EXIT
-trap 'audit_body_aborted "$?" "$LINENO" "$BASH_COMMAND"' ERR
+audit_body_trap
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -127,7 +130,14 @@ audit_macho() {
     failures+=("$file")
     return
   fi
-  deps="$(otool -L "$file" | tail -n +2 | awk '{print $1}' | sort -u)"
+  deps=""
+  if ! deps="$(otool -L "$file" | tail -n +2 | awk '{print $1}' | sort -u)"; then
+    printf 'FAIL %s: could not read the dylib load commands (the otool -L pipeline failed)\n' "$file" >&2
+    printf '  without the dependency list the @rpath and absolute-path checks below are unproven.\n' >&2
+    printf '  Free some disk — find and sort both need temp space — then re-run the audit.\n' >&2
+    failures+=("$file")
+    return
+  fi
   if [ -z "$deps" ]; then
     printf 'FAIL %s: no dylib load commands found\n' "$file"
     failures+=("$file")
@@ -370,6 +380,7 @@ assert_gs_sentinels() {
 gs_smoke_failed() {
   trap - ERR
   failures+=("<gs-clean-room-smoke>")
+  audit_body_trap
   return 0
 }
 
@@ -388,8 +399,8 @@ gs_smoke_aborted() {
 
 
 gs_clean_room_smoke() {
-  set -e
   trap 'gs_smoke_aborted "$?" "$LINENO" "$BASH_COMMAND"' ERR
+  set -e
   local gs="$1"
   local gs_resources="$2"
   local work="$3"
@@ -552,6 +563,7 @@ EOF
     return 0
   fi
   trap - ERR
+  audit_body_trap
   printf 'gs clean-room smoke: PASS (%s bytes, %s staged resource flags, sentinel resolved)\n' "$size" "${#gs_includes[@]}"
 }
 
@@ -601,6 +613,6 @@ if [ -d "$FRAMEWORKS_DIR" ]; then
     exit 1
   fi
 fi
-audit_finished=1
 printf 'sidecar audit: PASS (%d binaries, %d framework dylibs)\n' \
   "$binaries_count" "$frameworks_count"
+audit_finished=1

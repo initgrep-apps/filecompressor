@@ -847,6 +847,7 @@ const EARLY_ANCHOR = '  local gs="$1"\n';
 const LATE_ANCHOR = '  local fixture="$work/font-fixture.ps"\n';
 const MACHO_LOOP_ANCHOR = 'for f in "$BIN_DIR"/*; do\n';
 const VERIFY_ANCHOR = 'if ! node "$SCRIPT_DIR/binaries/verify.mjs" --target "$TARGET" --root "$ROOT"; then\n';
+const MACHO_FN_ANCHOR = '  if ! deps="$(otool -L "$file"';
 
 function runPatchedAudit(root, anchor, extraEnv = {}) {
   const patched = `${root}/scripts/audit-sidecars-injected.sh`;
@@ -928,9 +929,16 @@ describe("the smoke's ERR trap cannot outlive the smoke", () => {
     const start = source.indexOf("gs_clean_room_smoke() {");
     const body = source.slice(start, source.indexOf("\ngs_smoke_required=0", start));
     expect(body).toContain('trap \'gs_smoke_aborted "$?" "$LINENO" "$BASH_COMMAND"\' ERR');
-    expect(body, "the ERR trap must be disarmed before the PASS line").toMatch(
-      /trap - ERR\n\s*printf 'gs clean-room smoke: PASS/,
-    );
+    expect(
+      body,
+      "the smoke must disarm its own ERR trap and hand the body trap back before the PASS \
+       line, so neither trap outlives the smoke nor the body is left unarmed",
+    ).toMatch(/trap - ERR\n\s*audit_body_trap\n\s*printf 'gs clean-room smoke: PASS/);
+    expect(
+      source.slice(source.indexOf("gs_smoke_failed() {"), source.indexOf("gs_smoke_aborted() {")),
+      "the ERR trap must be handed back on the explicit failure path too, or the rest of the \
+       audit runs unarmed",
+    ).toMatch(/trap - ERR[\s\S]*audit_body_trap/);
     expect(
       source.slice(source.indexOf("gs_smoke_failed() {"), source.indexOf("gs_smoke_aborted() {")),
       "the ERR trap must be disarmed on the explicit failure path too, or it fires on the next unrelated failure",
@@ -960,6 +968,18 @@ async function makeStubTool(name, script) {
 }
 
 describe("the audit's own claims are fail-closed", () => {
+  it("marks the summary as emitted only after it has actually printed", () => {
+    const source = readFileSync(AUDIT, "utf8");
+    expect(
+      source,
+      "audit_finished must be set after the PASS printf, so a failure inside that printf \
+       still lets the EXIT trap emit a summary",
+    ).toMatch(
+      /printf 'sidecar audit: PASS \(%d binaries, %d framework dylibs\)[\s\S]{0,80}audit_finished=1/,
+    );
+    expect(source).toContain('if [ "$audit_finished" -eq 0 ] && [ "${#failures[@]}" -gt 0 ]; then');
+  });
+
   it("refuses to print a PASS summary when the binary count cannot be enumerated", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -1001,6 +1021,7 @@ describe("the audit's own claims are fail-closed", () => {
   it.each([
     ["inside the Mach-O per-file loop", MACHO_LOOP_ANCHOR],
     ["before the gs smoke, at the verify step", VERIFY_ANCHOR],
+    ["inside the audit_macho function body", MACHO_FN_ANCHOR],
   ])(
     "reports an unguarded failure %s with the line, status and command",
     async (_label, anchor) => {
@@ -1121,5 +1142,58 @@ describe("the dylib cross-check does not mistake a read error for missing dylibs
     expect(output).toMatch(/FAIL could not enumerate \S*frameworks/);
     expect(output).toContain("fix the read error");
     expect(output).not.toContain("lists missing dylib");
+  });
+});
+
+describe("a real tool failure inside the audit is an audit finding, not a silent exit", () => {
+  it("names the binary whose otool -L pipeline failed, without a duplicate trap message", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const stubSort = await makeStubTool("sort", "#!/bin/sh\nexit 5\n");
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubSort}:${stubBrew}:${process.env.PATH}`,
+    });
+
+    expect(result.code).toBe(1);
+    const output = result.stdout + result.stderr;
+    expect(output).toContain("could not read the dylib load commands");
+    expect(
+      output,
+      "the finding must name the affected binary file",
+    ).toMatch(/gs-aarch64-apple-darwin/);
+    expect(
+      output,
+      "the guarded pipeline must record one finding, not also fire the ERR trap",
+    ).not.toContain("aborted at line");
+    expect(
+      result.stdout.match(/sidecar audit:/g) ?? [],
+      "the summary must be printed exactly once",
+    ).toHaveLength(1);
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+
+  it("a failing cleanup degrades to a WARN and leaves the audit verdict intact", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const tmp = await isolatedTmpdir("cleanup");
+    const stubRm = await makeStubTool("rm", "#!/bin/sh\nexit 1\n");
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubRm}:${stubBrew}:${process.env.PATH}`,
+      TMPDIR: tmp,
+    });
+
+    expect(result.stdout).toContain("sidecar audit: PASS");
+    expect(
+      result.code,
+      "a failing rm -rf in the EXIT trap must not turn a green audit into exit 1",
+    ).toBe(0);
+    expect(result.stderr).toContain("WARN sidecar audit: could not remove the smoke workdir");
+    expect(result.stderr).toMatch(/gs-clean-room\./);
+    expect(
+      result.stdout.match(/sidecar audit: PASS/g) ?? [],
+      "the PASS line must print exactly once",
+    ).toHaveLength(1);
   });
 });

@@ -29,19 +29,19 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": {
-      "gs-resources/": "gs-resources/"
-    },
-    "externalBin": [
-      "binaries/vips",
-      "binaries/qpdf",
-      "binaries/gs",
-      "binaries/ffmpeg",
-      "binaries/ffprobe"
-    ],
-    "macOS": {
-      "frameworks": [
-        "frameworks/libIex-3_5.34.dylib",
+      "resources": {
+        "gs-resources/": "gs-resources/"
+      },
+      "externalBin": [
+        "binaries/vips",
+        "binaries/qpdf",
+        "binaries/gs",
+        "binaries/ffmpeg",
+        "binaries/ffprobe"
+      ],
+      "macOS": {
+        "frameworks": [
+          "frameworks/libIex-3_5.34.dylib",
           "frameworks/libIlmThread-3_5.34.dylib",
           "frameworks/libImath-3_2.30.dylib",
           "frameworks/libOpenEXR-3_5.34.dylib",
