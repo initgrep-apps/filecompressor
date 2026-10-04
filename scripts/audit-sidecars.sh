@@ -27,6 +27,52 @@
 # silently disappear while the audit still reports PASS.
 set -euo pipefail
 
+failures=()
+audit_finished=0
+gs_smoke_workdir=""
+
+audit_body_aborted() {
+  local status="$1"
+  local line="$2"
+  local command="$3"
+  trap - ERR
+  printf 'FAIL sidecar audit: aborted at line %s (exit %s): %s\n' "$line" "$status" "$command" >&2
+  printf "  an unguarded command in the audit body failed, so the checks it feeds are\n" >&2
+  printf "  unproven. Fix the reported command, then re-run the audit.\n" >&2
+  failures+=("<audit-body>")
+  return 1
+}
+
+enumerate_count() {
+  local dir="$1"
+  shift
+  local listing
+  local status
+  listing="$(find "$dir" "$@")"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'FAIL could not enumerate %s — the PASS count would be wrong; check the directory exists and is readable\n' "$dir" >&2
+    return 1
+  fi
+  if [ -z "$listing" ]; then
+    printf '0'
+    return 0
+  fi
+  printf '%s\n' "$listing" | wc -l | tr -d ' '
+  return 0
+}
+
+audit_exit_trap() {
+  if [ -n "$gs_smoke_workdir" ] && [ -d "$gs_smoke_workdir" ]; then
+    rm -rf "$gs_smoke_workdir"
+  fi
+  if [ "$audit_finished" -eq 0 ] && [ "${#failures[@]}" -gt 0 ]; then
+    printf 'sidecar audit: %d file(s) not self-contained\n' "${#failures[@]}"
+  fi
+}
+trap audit_exit_trap EXIT
+trap 'audit_body_aborted "$?" "$LINENO" "$BASH_COMMAND"' ERR
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 BIN_DIR="$ROOT/src-tauri/binaries"
@@ -64,8 +110,6 @@ done
 if [ -z "$TARGET" ]; then
   TARGET="${AUDIT_TARGET:-}"
 fi
-
-failures=()
 
 require_tool() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -185,7 +229,15 @@ fi
 if [ -f "$CONF" ]; then
   listed="$(grep -o '"frameworks/[^"]*\.dylib"' "$CONF" | tr -d '"' | sort -u)" || listed=""
   if [ -d "$FRAMEWORKS_DIR" ]; then
-    present="$(cd "$ROOT/src-tauri" && find frameworks -maxdepth 1 -name '*.dylib' | sort)" || present=""
+    fw_listing=""
+    if ! fw_listing="$(cd "$ROOT/src-tauri" && find frameworks -maxdepth 1 -name '*.dylib' | sort)"; then
+      printf 'FAIL could not enumerate %s — the dylib cross-check would be wrong; fix the read error, then re-run the audit\n' "$FRAMEWORKS_DIR" >&2
+      printf "  a permission problem here looks like every bundled dylib going missing, which\n" >&2
+      printf "  would send you to edit tauri.conf.json instead of fixing the directory.\n" >&2
+      failures+=("$FRAMEWORKS_DIR")
+      exit 1
+    fi
+    present="$fw_listing"
   else
     present=""
     if [ -n "$listed" ]; then
@@ -334,49 +386,6 @@ gs_smoke_aborted() {
   return 1
 }
 
-audit_finished=0
-gs_smoke_workdir=""
-
-audit_body_aborted() {
-  local status="$1"
-  local line="$2"
-  local command="$3"
-  trap - ERR
-  printf 'FAIL sidecar audit: aborted at line %s (exit %s): %s\n' "$line" "$status" "$command" >&2
-  printf "  an unguarded command in the audit body failed, so the checks it feeds are\n" >&2
-  printf "  unproven. Fix the reported command, then re-run the audit.\n" >&2
-  failures+=("<audit-body>")
-  return 1
-}
-
-enumerate_count() {
-  local dir="$1"
-  shift
-  local listing
-  local status
-  listing="$(find "$dir" "$@")"
-  status=$?
-  if [ "$status" -ne 0 ]; then
-    printf 'FAIL could not enumerate %s — the PASS count would be wrong; check the directory exists and is readable\n' "$dir" >&2
-    return 1
-  fi
-  if [ -z "$listing" ]; then
-    printf '0'
-    return 0
-  fi
-  printf '%s\n' "$listing" | wc -l | tr -d ' '
-  return 0
-}
-
-audit_exit_trap() {
-  if [ -n "$gs_smoke_workdir" ] && [ -d "$gs_smoke_workdir" ]; then
-    rm -rf "$gs_smoke_workdir"
-  fi
-  if [ "$audit_finished" -eq 0 ] && [ "${#failures[@]}" -gt 0 ]; then
-    printf 'sidecar audit: %d file(s) not self-contained\n' "${#failures[@]}"
-  fi
-}
-trap audit_exit_trap EXIT
 
 gs_clean_room_smoke() {
   set -e
@@ -449,13 +458,7 @@ EOF
     fi
   done
   local subdir_list=""
-  if ! subdir_list="$(gs_smoke_resource_subdirs "$gs_resources")"; then
-    printf 'FAIL gs clean-room smoke: could not enumerate the staged Resource subdirs under %s\n' "$gs_resources/Resource" >&2
-    printf "  without that list the per-subdir content check below would pass vacuously.\n" >&2
-    printf "  Run 'yarn binaries:prep' to restage the gs resources.\n" >&2
-    gs_smoke_failed
-    return 0
-  fi
+  subdir_list="$(gs_smoke_resource_subdirs "$gs_resources")" || subdir_list=""
   local -a subdirs=()
   while IFS= read -r subdir; do
     [ -n "$subdir" ] || continue
@@ -466,7 +469,9 @@ EOF
   if [ "${#subdirs[@]}" -eq 0 ]; then
     printf 'FAIL gs clean-room smoke: no Resource subdirs were enumerated under %s\n' "$gs_resources/Resource" >&2
     printf "  with nothing to check, the per-subdir content gate would pass vacuously: a gutted\n" >&2
-    printf "  Resource/CMap or Resource/Encoding would ship unnoticed.\n" >&2
+    printf "  Resource/CMap or Resource/Encoding would ship unnoticed. This also fires when the\n" >&2
+    printf "  manifest gs row stops declaring 'Resource', since the per-subdir check would then\n" >&2
+    printf "  silently stop covering the tree gs reaches through Resource/Init/gs_init.ps.\n" >&2
     printf "  Run 'yarn binaries:prep' to restage the gs resources.\n" >&2
     gs_smoke_failed
     return 0
@@ -580,7 +585,6 @@ if [ "$gs_smoke_required" -eq 1 ]; then
   fi
 fi
 
-trap 'audit_body_aborted "$?" "$LINENO" "$BASH_COMMAND"' ERR
 if [ ${#failures[@]} -gt 0 ]; then
   audit_finished=1
   printf 'sidecar audit: %d file(s) not self-contained\n' "${#failures[@]}"

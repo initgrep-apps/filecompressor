@@ -166,7 +166,60 @@ describe("verify.mjs", () => {
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("sha256 mismatch");
     expect(result.stderr).toContain("swapped or corrupted");
+    expect(
+      result.stderr,
+      "the remedy must be the command that actually re-stages and re-records the digest",
+    ).toContain("yarn binaries:prep");
     await rm(root, { recursive: true, force: true });
+  });
+
+  it("does not gate a brew row on a machine-local staged digest", async () => {
+    const root = await makeRoot({
+      targets: {
+        "aarch64-apple-darwin": {
+          vips: {
+            source: "brew",
+            formula: "vips",
+            dest: "vips",
+            expectVersion: "8.18.7",
+          },
+        },
+      },
+    });
+    compileFixture("arm64", `${root}/src-tauri/binaries/vips-aarch64-apple-darwin`, "8.18.7");
+    const stubBrew = await makeStubBrewDir("vips 8.18.7");
+    await writeFile(
+      `${root}/scripts/binaries.lock.json`,
+      JSON.stringify({
+        generated: new Date().toISOString(),
+        targets: {
+          "aarch64-apple-darwin": {
+            vips: {
+              source: "brew",
+              version: "8.18.7",
+              formula: "vips",
+              stagedSha256: "0000000000000000000000000000000000000000000000000000000000000000",
+              date: new Date().toISOString(),
+            },
+          },
+        },
+      }),
+    );
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+
+    expect(
+      result.stderr,
+      "a brew row has no upstream digest: the bytes are a local build plus a local codesign, so \
+       pinning them would fail on every other machine with no working remedy",
+    ).not.toContain("sha256 mismatch");
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("verify: PASS");
+    await rm(root, { recursive: true, force: true });
+    await rm(stubBrew, { recursive: true, force: true });
   });
 
   it("fails on brew version drift against the manifest pin even when the lock agrees with brew", async () => {

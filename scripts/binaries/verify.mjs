@@ -302,11 +302,11 @@ export async function verifyTarget(target, root) {
     }
 
     const lockEntry = lockTarget[name];
-    if (lockEntry?.stagedSha256) {
+    if (lockEntry?.stagedSha256 && entry.source !== "brew") {
       const stagedSha = await sha256File(binPath);
       if (stagedSha !== lockEntry.stagedSha256) {
         problems.push(
-          `${dest}: sha256 mismatch — lock records staged ${lockEntry.stagedSha256}, file is ${stagedSha} — the staged binary was swapped or corrupted; re-run 'yarn binaries:fetch'`,
+          `${dest}: sha256 mismatch — lock records staged ${lockEntry.stagedSha256}, file is ${stagedSha} — the staged binary was swapped or corrupted; re-run 'yarn binaries:prep', which re-stages it and re-records the digest ('yarn binaries:refresh' will automate this once it lands)`,
         );
         continue;
       }

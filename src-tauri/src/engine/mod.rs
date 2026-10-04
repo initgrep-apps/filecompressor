@@ -19,7 +19,7 @@ pub mod progress;
 pub mod result;
 
 pub use processor::{
-    BestAttempt, CompressionProcessor, GS_RESOURCES_MISSING, SidecarName, SidecarPaths,
+    BestAttempt, CompressionProcessor, SidecarName, SidecarPaths,
     ToleratedExit, deliver_output, gs_failure_with_resources_hint, recv_stderr_bounded, run_sidecar,
     stderr_tail, strict_exit,
 };

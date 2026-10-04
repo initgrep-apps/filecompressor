@@ -845,7 +845,8 @@ async function isolatedTmpdir(label) {
 
 const EARLY_ANCHOR = '  local gs="$1"\n';
 const LATE_ANCHOR = '  local fixture="$work/font-fixture.ps"\n';
-const BODY_ANCHOR = 'if [ ${#failures[@]} -gt 0 ]; then\n';
+const MACHO_LOOP_ANCHOR = 'for f in "$BIN_DIR"/*; do\n';
+const VERIFY_ANCHOR = 'if ! node "$SCRIPT_DIR/binaries/verify.mjs" --target "$TARGET" --root "$ROOT"; then\n';
 
 function runPatchedAudit(root, anchor, extraEnv = {}) {
   const patched = `${root}/scripts/audit-sidecars-injected.sh`;
@@ -997,72 +998,71 @@ describe("the audit's own claims are fail-closed", () => {
     expect(result.stdout + result.stderr).toMatch(/FAIL could not enumerate \S*frameworks/);
   });
 
-  it("reports an unguarded body failure with the line, status and command", async () => {
-    const root = await makeGsRoot();
-    const stubBrew = await makeStubBrew();
+  it.each([
+    ["inside the Mach-O per-file loop", MACHO_LOOP_ANCHOR],
+    ["before the gs smoke, at the verify step", VERIFY_ANCHOR],
+  ])(
+    "reports an unguarded failure %s with the line, status and command",
+    async (_label, anchor) => {
+      const root = await makeGsRoot();
+      const stubBrew = await makeStubBrew();
 
-    const result = await runPatchedAudit(root, BODY_ANCHOR, {
+      const result = await runPatchedAudit(root, anchor, {
+        PATH: `${stubBrew}:${process.env.PATH}`,
+      });
+
+      expect(result.code).toBe(1);
+      expect(
+        result.stderr.length,
+        "an unguarded body failure must never exit with empty stderr",
+      ).toBeGreaterThan(0);
+      expect(result.stderr).toMatch(
+        /FAIL sidecar audit: aborted at line \d+ \(exit 1\): false/,
+      );
+      expect(
+        result.stderr,
+        "a body failure must never be attributed to the gs smoke",
+      ).not.toContain("gs clean-room smoke");
+      expect(
+        result.stdout.match(/sidecar audit:/g) ?? [],
+        "the summary must be printed exactly once",
+      ).toHaveLength(1);
+      expect(result.stdout).not.toContain("sidecar audit: PASS");
+    },
+  );
+
+  it("fails closed when the Resource subdir enumeration yields nothing", async () => {
+    const root = await makeGsRoot({
+      manifestEntry: {
+        source: "brew",
+        formula: "ghostscript",
+        binary: "gs",
+        dest: "gs",
+        expectVersion: "10.08.0",
+        resources: ["lib", "iccprofiles", "fonts"],
+      },
+    });
+    const stubBrew = await makeStubBrew();
+    const base = `${root}/src-tauri/gs-resources`;
+    await rm(`${base}/Resource`, { recursive: true, force: true });
+    await mkdir(`${base}/Resource`, { recursive: true });
+    await writeFile(`${base}/Resource/gs_load.ps`, "%!PS\n");
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
       PATH: `${stubBrew}:${process.env.PATH}`,
     });
 
-    expect(result.code).toBe(1);
-    expect(result.stderr).toMatch(
-      /FAIL sidecar audit: aborted at line \d+ \(exit 1\): false/,
-    );
-    expect(result.stderr).not.toContain("gs clean-room smoke: aborted");
     expect(
-      result.stdout.match(/sidecar audit:/g) ?? [],
-      "the summary must be printed exactly once",
-    ).toHaveLength(1);
-    expect(result.stdout).not.toContain("sidecar audit: PASS");
-  });
-
-  it("fails closed when the Resource subdir enumeration fails or yields nothing", async () => {
-    const root = await makeGsRoot();
-    const stubBrew = await makeStubBrew();
-    const source = readFileSync(AUDIT, "utf8");
-    const helper = source.slice(
-      source.indexOf("gs_smoke_resource_subdirs() {"),
-      source.indexOf("\n}\n", source.indexOf("gs_smoke_resource_subdirs() {")) + 3,
+      result.code,
+      "an empty Resource subdir list must not pass vacuously: the per-subdir content gate \
+       would silently stop covering the tree gs reaches through Resource/Init/gs_init.ps",
+    ).toBe(1);
+    expect(result.stdout + result.stderr).toContain(
+      "no Resource subdirs were enumerated",
     );
-
-    for (const [label, replacement, expected] of [
-      [
-        "returns non-zero",
-        'gs_smoke_resource_subdirs() {\n  printf "%s\\n" "$1"\n  return 3\n}\n',
-        /could not enumerate the staged Resource subdirs/,
-      ],
-      [
-        "prints nothing",
-        "gs_smoke_resource_subdirs() {\n  return 0\n}\n",
-        /no Resource subdirs were enumerated/,
-      ],
-    ]) {
-      const patched = `${root}/scripts/audit-subdirs-${label.replace(/\W/g, "")}.sh`;
-      writeFileSync(patched, source.replace(helper, replacement));
-      const result = await new Promise((resolvePromise) => {
-        const env = {
-          ...process.env,
-          ROOT: root,
-          AUDIT_TARGET: "aarch64-apple-darwin",
-          PATH: `${stubBrew}:${process.env.PATH}`,
-        };
-        const child = spawn("bash", [patched], { env, cwd: SCRIPTS });
-        let stdout = "";
-        let stderr = "";
-        child.stdout.on("data", (d) => (stdout += d));
-        child.stderr.on("data", (d) => (stderr += d));
-        child.on("close", (code) => resolvePromise({ code, stdout, stderr }));
-      });
-
-      expect(result.code, `an enumeration that ${label} must fail the audit`).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(expected);
-      expect(
-        result.stdout + result.stderr,
-        "an empty subdir list must be called out as vacuous, not as a missing sentinel",
-      ).toMatch(/vacuous|without that list/);
-      expect(result.stdout).not.toContain("sidecar audit: PASS");
-    }
+    expect(result.stdout + result.stderr).toContain("vacuous");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+    expect(result.stdout).not.toContain("gs clean-room smoke: PASS");
   });
 });
 
@@ -1092,5 +1092,34 @@ describe("an unreadable staged dir is not reported as an empty one", () => {
       "the empty-tree remedy must not be the advice for a read error",
     ).not.toMatch(/could not read [^\n]*\n(?:.*\n){0,3}.*Run 'yarn binaries:prep' to restage the gs resources\./);
     expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+});
+
+describe("the dylib cross-check does not mistake a read error for missing dylibs", () => {
+  it("names the enumeration failure instead of blaming tauri.conf.json", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const frameworks = `${root}/src-tauri/frameworks`;
+    await mkdir(frameworks, { recursive: true });
+    await writeFile(
+      `${root}/src-tauri/tauri.conf.json`,
+      JSON.stringify({ bundle: { frameworks: ["frameworks/libz.1.dylib"] } }),
+    );
+    chmodSync(frameworks, 0o000);
+
+    let result;
+    try {
+      result = await runAudit(root, "aarch64-apple-darwin", {
+        PATH: `${stubBrew}:${process.env.PATH}`,
+      });
+    } finally {
+      chmodSync(frameworks, 0o755);
+    }
+
+    expect(result.code).toBe(1);
+    const output = result.stdout + result.stderr;
+    expect(output).toMatch(/FAIL could not enumerate \S*frameworks/);
+    expect(output).toContain("fix the read error");
+    expect(output).not.toContain("lists missing dylib");
   });
 });
