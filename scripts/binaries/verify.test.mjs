@@ -5,10 +5,11 @@ vi.setConfig({ testTimeout: 30_000 });
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { sha256File } from "./lib.mjs";
+import { knownTriples, sha256File, validateManifest } from "./lib.mjs";
 import { gsSentinelPaths } from "./gs-sentinels.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -507,5 +508,137 @@ describe("gs Resource subdir content gate (verify side)", () => {
     expect(result.stdout).toContain("verify: PASS");
     await rm(root, { recursive: true, force: true });
     await rm(stubDir, { recursive: true, force: true });
+  });
+});
+
+describe("the shipped manifest", () => {
+  const REPO_ROOT = join(HERE, "..", "..");
+  const manifest = JSON.parse(
+    readFileSync(join(REPO_ROOT, "scripts", "binaries.manifest.json"), "utf8"),
+  );
+
+  it("manifest_contains_intel_rows_with_pinned_shas", () => {
+    validateManifest(manifest);
+    const intel = manifest.targets["x86_64-apple-darwin"];
+    expect(intel, "the Intel target must exist in the shipped manifest").toBeDefined();
+
+    const pinned = {
+      ffmpeg: "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4",
+      ffprobe: "2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd",
+      qpdf: "dd3b01f4414d198529bb0f13bba59c2f016a328bb3506695087a96fb80fc1481",
+    };
+    for (const [name, sha256] of Object.entries(pinned)) {
+      expect(intel[name], `${name} must be declared for Intel`).toBeDefined();
+      expect(intel[name].source).toBe("url");
+      expect(
+        intel[name].sha256,
+        `${name} must carry the hash of the artifact actually downloaded, not a placeholder`,
+      ).toBe(sha256);
+      expect(intel[name].url).toMatch(/^https:\/\//);
+    }
+    expect(intel.qpdf.member, "the Intel qpdf archive has the same flat bin/ + lib layout as arm64").toBe(
+      "bin/qpdf",
+    );
+    expect(intel.qpdf.lib).toBe("lib");
+    expect(intel.vips).toMatchObject({ source: "brew", formula: "vips", expectVersion: "8.18.7" });
+    expect(intel.gs).toMatchObject({
+      source: "brew",
+      formula: "ghostscript",
+      binary: "gs",
+      expectVersion: "10.08.0",
+    });
+    expect(
+      intel.gs.resources,
+      "the Intel gs row must declare the same resource tree the clean-room smoke proves",
+    ).toEqual(manifest.targets["aarch64-apple-darwin"].gs.resources);
+  });
+
+
+});
+
+describe("no arm64 assumption hides in the script logic", () => {
+  const scriptsDir = join(HERE, "..");
+  const archSet = () => {
+    const libSource = readFileSync(join(HERE, "lib.mjs"), "utf8");
+    const table = libSource.slice(
+      libSource.indexOf("const TRIPLE_ARCH"),
+      libSource.indexOf("};", libSource.indexOf("const TRIPLE_ARCH")),
+    );
+    expect(table, "the triple table is the one legitimate place arch names appear").toContain(
+      '"aarch64-apple-darwin": "arm64"',
+    );
+    return {
+      table,
+      triples: table
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith('"'))
+        .map((line) => line.split('"')[1]),
+      arches: [...new Set([...table.matchAll(/: "([a-z0-9_]+)"/g)].map((m) => m[1]))].sort(),
+    };
+  };
+
+  it("verify_no_hardcoded_aarch64_in_script_logic", () => {
+    const { arches } = archSet();
+    const files = [
+      ...readdirSync(scriptsDir)
+        .filter((name) => name.endsWith(".sh"))
+        .map((name) => join(scriptsDir, name)),
+      ...readdirSync(HERE)
+        .filter((name) => name.endsWith(".mjs") && !name.endsWith(".test.mjs"))
+        .map((name) => join(HERE, name)),
+    ];
+    expect(files.length).toBeGreaterThan(0);
+
+    const archPattern = /\b(aarch64|arm64|x86_64|x64)\b/;
+    const parserPattern = /function (contentArch\w+|\w*[Aa]rch\w*)\([^)]*\) \{[\s\S]*?\n\}/g;
+
+    const offences = [];
+    for (const file of files) {
+      const relative = file.replace(`${scriptsDir}/`, "");
+      if (relative === "binaries/lib.mjs") {
+        continue;
+      }
+      const source = readFileSync(file, "utf8");
+      const parserSpans = [...source.matchAll(parserPattern)].map((m) => [m.index, m.index + m[0].length]);
+      const inParser = (offset) => parserSpans.some(([start, end]) => offset >= start && offset < end);
+
+      source.split("\n").forEach((line, index) => {
+        const match = archPattern.exec(line);
+        if (!match) {
+          return;
+        }
+        const offset = source.split("\n").slice(0, index).join("\n").length + 1;
+        if (inParser(offset)) {
+          return;
+        }
+        offences.push(`${relative}:${index + 1}: ${line.trim()}`);
+      });
+
+      for (const [start, end] of parserSpans) {
+        const body = source.slice(start, end);
+        if (!archPattern.test(body)) {
+          continue;
+        }
+        const missing = arches.filter((arch) => !new RegExp(`\\b${arch}\\b`).test(body));
+        expect(
+          missing,
+          `${relative}: an arch parser that does not handle ${missing.join(", ")} is a \
+               per-arch assumption in waiting — it would pass every arm64 target and fail Intel`,
+        ).toEqual([]);
+      }
+    }
+
+    expect(
+      offences,
+      `arch names outside the TRIPLE_ARCH table or an arch parser mean the pipeline would \
+       keep working on the host arch while silently shipping the wrong binaries: \
+       ${offences.join(" | ")}`,
+    ).toEqual([]);
+  });
+
+  it("names every triple the tooling knows, so no target is half-added", () => {
+    const { triples } = archSet();
+    expect(triples.sort()).toEqual([...knownTriples()].sort());
   });
 });

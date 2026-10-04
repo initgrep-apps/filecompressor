@@ -36,6 +36,10 @@ export function archForTriple(triple) {
   return arch;
 }
 
+export function knownTriples() {
+  return Object.keys(TRIPLE_ARCH);
+}
+
 export function isWindowsTriple(triple) {
   return triple.includes("-windows-");
 }

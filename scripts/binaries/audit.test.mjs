@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { sha256File } from "./lib.mjs";
 import { gsSentinelPairs, gsSentinelPaths } from "./gs-sentinels.mjs";
 const GS_SENTINEL_NAMES = Object.fromEntries(
@@ -1277,5 +1277,58 @@ describe("a failing tool inside a substitution is an audit finding, not a discar
        to edit tauri.conf.json instead of fixing the permissions",
     ).not.toContain("missing bundled dylib");
     expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+});
+
+describe("cross-target audit passthrough", () => {
+  const INTEL = "x86_64-apple-darwin";
+  const ARM = "aarch64-apple-darwin";
+
+  const ffprobeEntry = () => ({ ...manifestEntry(), dest: "ffprobe" });
+
+  async function twoTargetRoot() {
+    const root = await makeRoot();
+    await writeFile(
+      `${root}/scripts/binaries.manifest.json`,
+      JSON.stringify({
+        targets: {
+          [ARM]: { ffprobe: ffprobeEntry() },
+          [INTEL]: { ffprobe: ffprobeEntry() },
+        },
+      }),
+    );
+    return root;
+  }
+
+  it("audit_target_passthrough_cross_audits_fetched_intel_binaries", async () => {
+    const root = await twoTargetRoot();
+    compileFixture("x86_64", `${root}/src-tauri/binaries/ffprobe-${INTEL}`);
+
+    const cross = await runAuditArgs(root, ["--target", INTEL]);
+
+    expect(
+      cross.stdout,
+      `--target ${INTEL} must make verify.mjs check the Intel rows, including the arch of the \
+       staged binary: ${cross.stdout + cross.stderr}`,
+    ).toContain(`verify: ffprobe-${INTEL} 9.0.2 (x86_64) OK`);
+    expect(cross.stdout + cross.stderr).not.toMatch(/does not match/);
+  });
+
+  it("rejects an x86_64 binary wearing the arm64 filename under an Intel audit", async () => {
+    const root = await twoTargetRoot();
+    compileFixture("x86_64", `${root}/src-tauri/binaries/ffprobe-${INTEL}`);
+    renameSync(
+      `${root}/src-tauri/binaries/ffprobe-${INTEL}`,
+      `${root}/src-tauri/binaries/ffprobe-${ARM}`,
+    );
+
+    const crossed = await runAuditArgs(root, ["--target", INTEL]);
+
+    expect(
+      crossed.code,
+      "that is exactly the wrong-arch-still-ships failure the passthrough exists to catch",
+    ).toBe(1);
+    expect(crossed.stdout).not.toContain(`verify: ffprobe-${INTEL} 9.0.2 (x86_64) OK`);
+    expect(crossed.stdout + crossed.stderr).toMatch(/ffprobe/);
   });
 });
