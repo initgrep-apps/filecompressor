@@ -4,7 +4,7 @@ import { vi, afterAll, afterEach, describe, expect, it } from "vitest";
 vi.setConfig({ testTimeout: 30_000 });
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, chmod, stat } from "node:fs/promises";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -558,17 +558,44 @@ describe("prepTarget", () => {
     await expect(prepTarget("aarch64-apple-darwin", root)).rejects.toThrow(/manifest missing/);
   });
 
-  it("points at Task 3 for a Windows target instead of pretending to succeed", async () => {
+  it("dispatches a Windows target to prep-windows.mjs instead of the macOS bundle scripts", async () => {
+    const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(join(tmpdir(), "prep-win-dispatch-"));
     const root = await makeRoot({
       targets: {
-        ...URL_ONLY.targets,
-        "x86_64-pc-windows-msvc": URL_ONLY.targets["aarch64-apple-darwin"],
+        "x86_64-pc-windows-msvc": {
+          vips: {
+            source: "url",
+            url: "https://example.invalid/vips.zip",
+            sha256: "a".repeat(64),
+            member: "vips-dev-8.18/bin/vips.exe",
+            dest: "vips",
+            expectVersion: "8.18.7",
+          },
+        },
       },
     });
-    const error = await prepTarget("x86_64-pc-windows-msvc", root).catch((thrown) => thrown);
+    const staging = join(root, "src-tauri", ".staging", "vips-x86_64-pc-windows-msvc", "vips-dev-8.18", "bin");
+    await mkdir(staging, { recursive: true });
+    await writeFile(join(staging, "vips.exe"), "exe");
+    await writeFile(join(staging, "libglib-2.0-0.dll"), "dll");
+
+    await prepTarget("x86_64-pc-windows-msvc", root);
+
+    expect(existsSync(join(root, "src-tauri", "binaries", "engines", "vips", "vips.exe"))).toBe(true);
+    expect(existsSync(join(root, "src-tauri", "binaries", "engines", "vips", "libglib-2.0-0.dll"))).toBe(true);
+    expect(
+      existsSync(join(root, "src-tauri", "frameworks")),
+      "the macOS bundle scripts must not run for a Windows target",
+    ).toBe(false);
+  });
+
+  it("still refuses an unknown target before doing any work", async () => {
+    const root = await makeRoot({ targets: URL_ONLY.targets });
+    const error = await prepTarget("mips-unknown-linux-gnu", root).catch((thrown) => thrown);
     expect(error).toBeInstanceOf(PipelinesError);
-    expect(error.message).toMatch(/not implemented yet/);
-    expect(error.remedy).toMatch(/Task 3/);
+    expect(error.message).toMatch(/not in manifest/);
   });
 
   it("refuses to report PASS when a manifest row was never staged", async () => {

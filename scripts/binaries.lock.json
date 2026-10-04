@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-04T16:39:42.994Z",
+  "generated": "2026-10-04T21:48:27.502Z",
   "targets": {
     "aarch64-apple-darwin": {
       "ffmpeg": {
@@ -8,7 +8,7 @@
         "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
         "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
         "stagedSha256": "2e11c6f90993cdb79fff84d3f90044d28316b310e75b3e030cfc9a54f2c9d384",
-        "date": "2026-10-03T19:50:38.527Z"
+        "date": "2026-10-04T20:35:30.414Z"
       },
       "ffprobe": {
         "source": "url",
@@ -16,7 +16,7 @@
         "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip",
         "sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6",
         "stagedSha256": "2738aa46a7f9acbc8ab09a6715554c90f7de603171ac403726765685df6a0059",
-        "date": "2026-10-03T19:50:39.839Z"
+        "date": "2026-10-04T20:35:31.777Z"
       },
       "qpdf": {
         "source": "url",
@@ -28,21 +28,21 @@
           "libqpdf.30.4.2.dylib": "216e5544708b39781a2b65f3750adbcee96582e05ea2e47d892201f266b10e8f",
           "libqpdf.30.dylib": "f3ab1ad2cd3beb1c119fa70b5121e4e0cf133d3987826f57bb7e7e70edc76946"
         },
-        "date": "2026-10-04T13:22:23.768Z"
+        "date": "2026-10-04T20:35:32.459Z"
       },
       "vips": {
         "source": "brew",
         "formula": "vips",
         "version": "8.18.7",
         "stagedSha256": "098aa605195b684333194547b535bdafc30b45c5b893aa01c0ecc71fd6fdbe68",
-        "date": "2026-10-04T16:39:41.520Z"
+        "date": "2026-10-04T21:48:26.669Z"
       },
       "gs": {
         "source": "brew",
         "formula": "ghostscript",
         "version": "10.08.0",
         "stagedSha256": "27068a27079d7289af79104c7c3204dc37ff3bf6a65b3913c250032146129a0b",
-        "date": "2026-10-04T16:39:42.982Z"
+        "date": "2026-10-04T21:48:27.492Z"
       }
     }
   }

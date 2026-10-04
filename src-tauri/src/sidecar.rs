@@ -5,6 +5,7 @@ pub(crate) fn target_triple(os: &str, arch: &str) -> Result<&'static str, String
         ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
         ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
         ("windows", "x86_64") => Ok("x86_64-pc-windows-msvc"),
+        ("windows", "aarch64") => Ok("aarch64-pc-windows-msvc"),
         ("linux", "x86_64") => Ok("x86_64-unknown-linux-gnu"),
         ("linux", "aarch64") => Ok("aarch64-unknown-linux-gnu"),
         (os, arch) => Err(format!("Unsupported platform: {} {}", os, arch)),
@@ -57,6 +58,82 @@ fn resolve_sidecar_path(path: &std::path::Path, name: &str) -> Result<String, St
             )
         })
         .map(|s| s.to_string())
+}
+
+/// Windows engines cannot sit next to the app binary: each one needs its own
+/// folder of sibling DLLs, which `prep-windows.mjs` stages under
+/// `binaries/engines/<name>/` and `tauri.windows.conf.json` ships as
+/// `Resources/engines/`. Resolution therefore probes the bundled layout first,
+/// then the repo checkout layout.
+pub(crate) fn engine_candidates(
+    exe_dir: &std::path::Path,
+    name: &str,
+) -> Vec<std::path::PathBuf> {
+    let file = format!("{name}.exe");
+    vec![
+        exe_dir.join("resources").join("engines").join(name).join(&file),
+        exe_dir.join("../../binaries/engines").join(name).join(&file),
+        exe_dir.join("binaries/engines").join(name).join(&file),
+        exe_dir.join("engines").join(name).join(&file),
+    ]
+}
+
+/// Prepends `dir` to an existing PATH, leaving an already-present entry alone.
+/// Windows DLL resolution walks PATH in order, so the engine's own folder must
+/// come first or a same-named DLL elsewhere on PATH wins.
+pub(crate) fn path_with_dir_front(
+    existing: Option<&std::ffi::OsStr>,
+    dir: &std::path::Path,
+) -> std::ffi::OsString {
+    let Some(existing) = existing else {
+        return dir.as_os_str().to_os_string();
+    };
+    let existing = existing.to_string_lossy();
+    let separator = ';';
+    let dir_text = dir.to_string_lossy();
+    let entries: Vec<&str> = existing.split(separator).filter(|e| !e.is_empty()).collect();
+    if entries.iter().any(|entry| *entry == dir_text.as_ref()) {
+        return existing.into_owned().into();
+    }
+    let mut parts = vec![dir_text.into_owned()];
+    parts.extend(entries.into_iter().map(str::to_string));
+    parts.join(&separator.to_string()).into()
+}
+
+pub(crate) fn resolve_engine_candidate(
+    exe_dir: &std::path::Path,
+    name: &str,
+) -> Result<String, String> {
+    let mut first_error: Option<String> = None;
+    for path in engine_candidates(exe_dir, name) {
+        match resolve_sidecar_path(&path, name) {
+            Ok(resolved) => return Ok(resolved),
+            Err(error) => {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+    }
+    Err(first_error.unwrap_or_else(|| format!("Engine error: {name} not available")))
+}
+
+/// Sets the child PATH so the engine's own DLL folder is searched first.
+/// Returns the PATH that was set, or `None` when the sidecar is not a Windows
+/// engine folder (macOS/Linux resolve rpaths at load time).
+pub fn prepend_engine_dir_to_path(
+    cmd: &mut std::process::Command,
+    sidecar_path: &str,
+) -> Option<std::ffi::OsString> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let path = std::path::Path::new(sidecar_path);
+    let dir = path.parent()?;
+    let existing = std::env::var_os("PATH");
+    let fronted = path_with_dir_front(existing.as_deref(), dir);
+    cmd.env("PATH", &fronted);
+    Some(fronted)
 }
 
 fn sidecar_candidates(exe_dir: &std::path::Path, name: &str) -> Vec<std::path::PathBuf> {
@@ -285,6 +362,10 @@ mod tests {
             Ok("x86_64-pc-windows-msvc")
         );
         assert_eq!(
+            target_triple("windows", "aarch64"),
+            Ok("aarch64-pc-windows-msvc")
+        );
+        assert_eq!(
             target_triple("linux", "x86_64"),
             Ok("x86_64-unknown-linux-gnu")
         );
@@ -346,6 +427,14 @@ mod tests {
             Ok("vips-x86_64-pc-windows-msvc.exe".to_string())
         );
         assert_eq!(
+            sidecar_filename_for("windows", "aarch64", "gs"),
+            Ok("gs-aarch64-pc-windows-msvc.exe".to_string())
+        );
+        assert_eq!(
+            sidecar_filename_for("windows", "aarch64", "qpdf"),
+            Ok("qpdf-aarch64-pc-windows-msvc.exe".to_string())
+        );
+        assert_eq!(
             sidecar_filename_for("linux", "x86_64", "vips"),
             Ok("vips-x86_64-unknown-linux-gnu".to_string())
         );
@@ -395,11 +484,69 @@ mod tests {
     }
 
     #[test]
+    fn engine_folder_candidates_windows_layout() {
+        let exe_dir = std::path::PathBuf::from("/opt/app/resources");
+        let candidates = engine_candidates(&exe_dir, "vips");
+
+        assert!(
+            !candidates.is_empty(),
+            "Windows engines live in per-engine folders beside their DLLs, so they need their own \
+             candidate list"
+        );
+        assert!(
+            candidates
+                .iter()
+                .all(|candidate| candidate.to_string_lossy().ends_with("vips.exe")),
+            "every engine candidate must name the <dest>.exe the prep staged: {:?}",
+            candidates
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate.ends_with("binaries/engines/vips/vips.exe")),
+            "the dev layout lives under binaries/engines, which is what the repo checkout runs \
+             against: {:?}",
+            candidates
+        );
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate.ends_with("resources/engines/vips/vips.exe")),
+            "the bundled layout puts engines/ under Resources: {:?}",
+            candidates
+        );
+    }
+
+    #[test]
+    fn path_with_dir_front_prepends_and_dedupes() {
+        use std::ffi::OsStr;
+
+        let existing = Some(OsStr::new("A;B"));
+        let fronted = path_with_dir_front(existing, std::path::Path::new("D"));
+        assert_eq!(fronted.to_string_lossy(), "D;A;B");
+
+        let already = Some(OsStr::new("A;D;B"));
+        let unchanged = path_with_dir_front(already, std::path::Path::new("D"));
+        assert_eq!(
+            unchanged.to_string_lossy(),
+            "A;D;B",
+            "a dir already on PATH must not be duplicated, or a stale copy could win"
+        );
+
+        let bare = path_with_dir_front(None, std::path::Path::new("D"));
+        assert_eq!(bare.to_string_lossy(), "D");
+    }
+
+    #[test]
     fn sidecar_candidates_prefer_triple_then_plain_name() {
         let dir = std::path::PathBuf::from("/opt/engine");
         let candidates = sidecar_candidates(&dir, "vips");
 
-        assert_eq!(candidates.len(), 2);
+        assert_eq!(
+            candidates.len(),
+            2,
+            "the exe-dir candidate list is exactly the triple-suffixed name then the plain name"
+        );
         assert_eq!(
             candidates[0],
             std::path::PathBuf::from("/opt/engine/vips-aarch64-apple-darwin")

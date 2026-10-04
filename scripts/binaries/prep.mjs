@@ -462,6 +462,22 @@ export async function assertAllEnginesStaged(root, target, targetEntries) {
   }
 }
 
+async function prepWindowsTarget(target, root, targetEntries) {
+  const { prepWindowsEngines } = await import("./prep-windows.mjs");
+  const lock = await loadLock(root);
+  lock.targets[target] = lock.targets[target] ?? {};
+  const fetched = Object.entries(targetEntries).filter(([, entry]) => entry.source !== "brew");
+  await assertFetchedEntriesUntouched(lock, target, root, fetched);
+  const staged = await prepWindowsEngines(root, target, targetEntries);
+  lock.generated = new Date().toISOString();
+  await writeJson(lockPath(root), lock);
+  for (const dir of staged) {
+    console.log(`prep: staged ${dir}`);
+  }
+  console.log(`prep: PASS for ${target} (${staged.length} engine folders)`);
+  return true;
+}
+
 export async function prepTarget(target, root) {
   const manifest = await loadManifest(root);
   const targetEntries = manifest.targets?.[target];
@@ -471,10 +487,7 @@ export async function prepTarget(target, root) {
     );
   }
   if (isWindowsTriple(target)) {
-    fail(
-      `prep for ${target} is not implemented yet`,
-      "the Windows engine-folder layout lands in Task 3 of docs/superpowers/plans/2026-10-02-sidecar-binaries-release.md",
-    );
+    return prepWindowsTarget(target, root, targetEntries);
   }
   const expectedArch = archForTriple(target);
 

@@ -38,7 +38,108 @@
         "binary": "gs",
         "dest": "gs",
         "expectVersion": "10.08.0",
-        "resources": ["Resource", "lib", "iccprofiles", "fonts"]
+        "resources": [
+          "Resource",
+          "lib",
+          "iccprofiles",
+          "fonts"
+        ]
+      }
+    },
+    "x86_64-pc-windows-msvc": {
+      "ffmpeg": {
+        "source": "url",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-01-13-06/ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0.zip",
+        "sha256": "74827e097445a136b803febd4dcf80f7cba7f14a4c612fb80f7b5e5cedd3ffbe",
+        "member": "ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0/bin/ffmpeg.exe",
+        "dest": "ffmpeg",
+        "expectVersion": "9.0.2"
+      },
+      "ffprobe": {
+        "source": "url",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-01-13-06/ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0.zip",
+        "sha256": "74827e097445a136b803febd4dcf80f7cba7f14a4c612fb80f7b5e5cedd3ffbe",
+        "member": "ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0/bin/ffprobe.exe",
+        "dest": "ffprobe",
+        "expectVersion": "9.0.2"
+      },
+      "qpdf": {
+        "source": "url",
+        "url": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-msvc64.zip",
+        "sha256": "db87077e683630c1217e0e8f9a20a9749d952ab676e881c3689187763a5de25d",
+        "member": "qpdf-12.4.2-msvc64/bin/qpdf.exe",
+        "dest": "qpdf",
+        "expectVersion": "12.4.2"
+      },
+      "vips": {
+        "source": "url",
+        "url": "https://github.com/libvips/build-win64-mxe/releases/download/v8.18.7/vips-dev-x64-all-8.18.7.zip",
+        "sha256": "78e56ba30c267ba32ff965200534bd5721364cadbead8c4d595e44b58dfeff15",
+        "member": "vips-dev-8.18/bin/vips.exe",
+        "dest": "vips",
+        "expectVersion": "8.18.7"
+      },
+      "gs": {
+        "source": "url",
+        "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-ghostscript-10.08.0-2-any.pkg.tar.zst",
+        "sha256": "f2cf05482407de57b0ab3de7b3daf7c7d442eeae73de6ffc4ced75894bc94367",
+        "member": "ucrt64/bin/gswin64c.exe",
+        "dest": "gs",
+        "expectVersion": "10.08.0",
+        "resources": [
+          "share/ghostscript/10.08.0/Resource",
+          "share/ghostscript/10.08.0/lib",
+          "share/ghostscript/10.08.0/iccprofiles",
+          "share/ghostscript/10.08.0/fonts"
+        ]
+      }
+    },
+    "aarch64-pc-windows-msvc": {
+      "ffmpeg": {
+        "source": "url",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-01-13-06/ffmpeg-n9.0.2-22-g46d8f462ee-winarm64-gpl-9.0.zip",
+        "sha256": "7263744331532e1606bfbac25b5c1a7dcd23091b44614787efd742d6a8dfa1a6",
+        "member": "ffmpeg-n9.0.2-22-g46d8f462ee-winarm64-gpl-9.0/bin/ffmpeg.exe",
+        "dest": "ffmpeg",
+        "expectVersion": "9.0.2"
+      },
+      "ffprobe": {
+        "source": "url",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-01-13-06/ffmpeg-n9.0.2-22-g46d8f462ee-winarm64-gpl-9.0.zip",
+        "sha256": "7263744331532e1606bfbac25b5c1a7dcd23091b44614787efd742d6a8dfa1a6",
+        "member": "ffmpeg-n9.0.2-22-g46d8f462ee-winarm64-gpl-9.0/bin/ffprobe.exe",
+        "dest": "ffprobe",
+        "expectVersion": "9.0.2"
+      },
+      "qpdf": {
+        "source": "url",
+        "url": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-msvc-arm64.zip",
+        "sha256": "2b5d7740a2513d8a841116692dc2cf7efe83f35262386ebab18bed35fbf15ab1",
+        "member": "qpdf-12.4.2-msvc-arm64/bin/qpdf.exe",
+        "dest": "qpdf",
+        "expectVersion": "12.4.2"
+      },
+      "vips": {
+        "source": "url",
+        "url": "https://github.com/libvips/build-win64-mxe/releases/download/v8.18.7/vips-dev-arm64-all-8.18.7.zip",
+        "sha256": "8f2d3a94bbc485a8226cdea012d3a76ac660a373a154fabcd772226978e56f4a",
+        "member": "vips-dev-8.18/bin/vips.exe",
+        "dest": "vips",
+        "expectVersion": "8.18.7"
+      },
+      "gs": {
+        "source": "url",
+        "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-ghostscript-10.08.0-2-any.pkg.tar.zst",
+        "sha256": "ade0e912a306bca8add436d188b4006d86eae5e1635151b1b1d7df563fbe316e",
+        "member": "clangarm64/bin/gswin64c.exe",
+        "dest": "gs",
+        "expectVersion": "10.08.0",
+        "resources": [
+          "share/ghostscript/10.08.0/Resource",
+          "share/ghostscript/10.08.0/lib",
+          "share/ghostscript/10.08.0/iccprofiles",
+          "share/ghostscript/10.08.0/fonts"
+        ]
       }
     }
   }
