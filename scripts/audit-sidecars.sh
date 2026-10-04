@@ -31,11 +31,12 @@ failures=()
 audit_finished=0
 gs_smoke_workdir=""
 
+smoke_mode=0
+
 audit_body_aborted() {
   local status="$1"
   local line="$2"
   local command="$3"
-  trap - ERR
   printf 'FAIL sidecar audit: aborted at line %s (exit %s): %s\n' "$line" "$status" "$command" >&2
   printf "  an unguarded command in the audit body failed, so the checks it feeds are\n" >&2
   printf "  unproven. Fix the reported command, then re-run the audit.\n" >&2
@@ -43,8 +44,33 @@ audit_body_aborted() {
   return 1
 }
 
-audit_body_trap() {
-  trap 'audit_body_aborted "$?" "$LINENO" "$BASH_COMMAND"' ERR
+gs_smoke_aborted() {
+  local status="$1"
+  local line="$2"
+  local command="$3"
+  printf 'FAIL gs clean-room smoke: aborted at line %s (exit %s): %s\n' "$line" "$status" "$command" >&2
+  printf "  an unguarded command inside the smoke failed, so the staged gs resources were\n" >&2
+  printf "  left unproven. Fix the reported command, then run 'yarn binaries:prep' and\n" >&2
+  printf '  re-run the audit.\n' >&2
+  failures+=("<gs-clean-room-smoke>")
+  return 1
+}
+
+err_trap_active=0
+
+audit_err_trap() {
+  local status="$1"
+  local line="$2"
+  local command="$3"
+  if [ "$err_trap_active" -eq 1 ]; then
+    return 1
+  fi
+  err_trap_active=1
+  if [ "$smoke_mode" -eq 1 ]; then
+    gs_smoke_aborted "$status" "$line" "$command"
+  else
+    audit_body_aborted "$status" "$line" "$command"
+  fi
 }
 
 enumerate_count() {
@@ -74,7 +100,7 @@ audit_exit_trap() {
   fi
 }
 trap audit_exit_trap EXIT
-audit_body_trap
+trap 'audit_err_trap "$?" "$LINENO" "$BASH_COMMAND"' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="${ROOT:-$(cd "$SCRIPT_DIR/.." && pwd)}"
@@ -217,7 +243,14 @@ fi
 
 for f in "$BIN_DIR"/*; do
   [ -f "$f" ] || continue
-  kind=$(file -b "$f")
+  kind=""
+  if ! kind="$(file -b "$f")"; then
+    printf 'FAIL %s: could not determine the file type (file -b failed)\n' "$f" >&2
+    printf "  the Mach-O/ELF/PE32 dispatch below is unproven without it. Check that file\n" >&2
+    printf '  works on this path, then re-run the audit.\n' >&2
+    failures+=("$f")
+    continue
+  fi
   case "$kind" in
     *"Mach-O"*) audit_macho "$f" ;;
     *"ELF"*) audit_elf "$f" ;;
@@ -237,7 +270,14 @@ if [ -d "$FRAMEWORKS_DIR" ]; then
 fi
 
 if [ -f "$CONF" ]; then
-  listed="$(grep -o '"frameworks/[^"]*\.dylib"' "$CONF" | tr -d '"' | sort -u)" || listed=""
+  listed=""
+  if ! listed="$(grep -o '"frameworks/[^"]*\.dylib"' "$CONF" | tr -d '"' | sort -u)"; then
+    printf 'FAIL could not read %s — the dylib cross-check would be wrong; fix the read error, then re-run the audit\n' "$CONF" >&2
+    printf "  an unreadable config looks like every bundled dylib being unlisted, which would send\n" >&2
+    printf "  you to edit tauri.conf.json instead of fixing the permissions.\n" >&2
+    failures+=("$CONF")
+    exit 1
+  fi
   if [ -d "$FRAMEWORKS_DIR" ]; then
     fw_listing=""
     if ! fw_listing="$(cd "$ROOT/src-tauri" && find frameworks -maxdepth 1 -name '*.dylib' | sort)"; then
@@ -335,11 +375,21 @@ gs_smoke_search_dirs() {
   return 0
 }
 
+gs_sentinel_name=""
+
 gs_sentinel_name_for_dir() {
   case "$1" in
-    Resource/Init) printf '%s\n' "$GS_ACCEPTANCE_SENTINEL" ;;
-    *) printf '%s\n' "$GS_DIR_SENTINEL_PREFIX$(printf '%s' "$1" | tr '/' '-' | tr 'A-Z' 'a-z')-sentinel.ps" ;;
+    Resource/Init)
+      gs_sentinel_name="$GS_ACCEPTANCE_SENTINEL"
+      return 0
+      ;;
   esac
+  local slug
+  if ! slug="$(printf '%s' "$1" | tr '/' '-' | tr 'A-Z' 'a-z')"; then
+    return 1
+  fi
+  gs_sentinel_name="$GS_DIR_SENTINEL_PREFIX$slug-sentinel.ps"
+  return 0
 }
 
 dir_has_file_recursive() {
@@ -378,28 +428,14 @@ assert_gs_sentinels() {
 }
 
 gs_smoke_failed() {
-  trap - ERR
   failures+=("<gs-clean-room-smoke>")
-  audit_body_trap
+  smoke_mode=0
   return 0
-}
-
-gs_smoke_aborted() {
-  local status="$1"
-  local line="$2"
-  local command="$3"
-  trap - ERR
-  printf 'FAIL gs clean-room smoke: aborted at line %s (exit %s): %s\n' "$line" "$status" "$command" >&2
-  printf "  an unguarded command inside the smoke failed, so the staged gs resources were\n" >&2
-  printf "  left unproven. Fix the reported command, then run 'yarn binaries:prep' and\n" >&2
-  printf '  re-run the audit.\n' >&2
-  gs_smoke_failed
-  return 1
 }
 
 
 gs_clean_room_smoke() {
-  trap 'gs_smoke_aborted "$?" "$LINENO" "$BASH_COMMAND"' ERR
+  smoke_mode=1
   set -e
   local gs="$1"
   local gs_resources="$2"
@@ -433,7 +469,16 @@ $search_list
 EOF
   local -a sentinel_pairs=()
   for dir in "${search_dirs[@]}"; do
-    sentinel_pairs+=("$dir:$(gs_sentinel_name_for_dir "$dir")")
+    gs_sentinel_name=""
+    if ! gs_sentinel_name_for_dir "$dir"; then
+      printf 'FAIL gs clean-room smoke: could not derive the sentinel name for %s\n' "$dir" >&2
+      printf "  these names are what the -I proof below checks for; an empty or wrong one would\n" >&2
+      printf "  let the smoke pass without proving the staged tree. Check that tr works\n" >&2
+      printf '  (it is used to build the name), then re-run the audit.\n' >&2
+      gs_smoke_failed
+      return 0
+    fi
+    sentinel_pairs+=("$dir:$gs_sentinel_name")
   done
   if [ "${#sentinel_pairs[@]}" -eq 0 ]; then
     printf 'FAIL gs clean-room smoke: the acceptance-sentinel list resolved to zero entries\n' >&2
@@ -562,8 +607,7 @@ EOF
     gs_smoke_failed
     return 0
   fi
-  trap - ERR
-  audit_body_trap
+  smoke_mode=0
   printf 'gs clean-room smoke: PASS (%s bytes, %s staged resource flags, sentinel resolved)\n' "$size" "${#gs_includes[@]}"
 }
 
@@ -613,6 +657,6 @@ if [ -d "$FRAMEWORKS_DIR" ]; then
     exit 1
   fi
 fi
-printf 'sidecar audit: PASS (%d binaries, %d framework dylibs)\n' \
-  "$binaries_count" "$frameworks_count"
+pass_summary="sidecar audit: PASS ($binaries_count binaries, $frameworks_count framework dylibs)"
+printf '%s\n' "$pass_summary"
 audit_finished=1

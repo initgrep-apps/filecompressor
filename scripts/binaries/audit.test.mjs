@@ -925,24 +925,24 @@ describe("an unguarded failure inside the gs smoke is reported, not silent", () 
 describe("the smoke's ERR trap cannot outlive the smoke", () => {
   const source = readFileSync(AUDIT, "utf8");
 
-  it("disarms the ERR trap on the success path and on every explicit failure path", () => {
-    const start = source.indexOf("gs_clean_room_smoke() {");
-    const body = source.slice(start, source.indexOf("\ngs_smoke_required=0", start));
-    expect(body).toContain('trap \'gs_smoke_aborted "$?" "$LINENO" "$BASH_COMMAND"\' ERR');
+  it("arms the ERR trap exactly once and never disarms it", () => {
+    const arms = source.match(/trap 'audit_err_trap .*' ERR/g) ?? [];
+    expect(arms, "the ERR trap must be armed once, for the whole script").toHaveLength(1);
     expect(
-      body,
-      "the smoke must disarm its own ERR trap and hand the body trap back before the PASS \
-       line, so neither trap outlives the smoke nor the body is left unarmed",
-    ).toMatch(/trap - ERR\n\s*audit_body_trap\n\s*printf 'gs clean-room smoke: PASS/);
+      source.match(/trap - ERR/g) ?? [],
+      "disarming the ERR trap opens a window where a failure exits 1 with no diagnostics, and \
+       four consecutive rounds have produced a new such window; the mode flag replaces it",
+    ).toHaveLength(0);
     expect(
-      source.slice(source.indexOf("gs_smoke_failed() {"), source.indexOf("gs_smoke_aborted() {")),
-      "the ERR trap must be handed back on the explicit failure path too, or the rest of the \
-       audit runs unarmed",
-    ).toMatch(/trap - ERR[\s\S]*audit_body_trap/);
+      source.match(/smoke_mode=1/g) ?? [],
+      "the smoke must enter smoke mode exactly once",
+    ).toHaveLength(1);
     expect(
-      source.slice(source.indexOf("gs_smoke_failed() {"), source.indexOf("gs_smoke_aborted() {")),
-      "the ERR trap must be disarmed on the explicit failure path too, or it fires on the next unrelated failure",
-    ).toContain("trap - ERR");
+      source.match(/smoke_mode=0/g) ?? [],
+      "smoke mode must be left on both smoke exit paths, or later body failures are \
+       misattributed to the gs smoke",
+    ).toHaveLength(3);
+    expect(source).toContain("err_trap_active=1");
   });
 
   it("the ERR trap is not inherited by the rest of the audit after the smoke returns", async () => {
@@ -974,9 +974,12 @@ describe("the audit's own claims are fail-closed", () => {
       source,
       "audit_finished must be set after the PASS printf, so a failure inside that printf \
        still lets the EXIT trap emit a summary",
-    ).toMatch(
-      /printf 'sidecar audit: PASS \(%d binaries, %d framework dylibs\)[\s\S]{0,80}audit_finished=1/,
-    );
+    ).toMatch(/pass_summary="sidecar audit: PASS[\s\S]{0,160}audit_finished=1/);
+    expect(
+      source,
+      "the PASS line must be a single-argument printf, so there is no mid-command seam where \
+       a write failure could emit both a PASS and the not-self-contained summary",
+    ).toContain("printf '%s\\n' \"$pass_summary\"");
     expect(source).toContain('if [ "$audit_finished" -eq 0 ] && [ "${#failures[@]}" -gt 0 ]; then');
   });
 
@@ -1195,5 +1198,84 @@ describe("a real tool failure inside the audit is an audit finding, not a silent
       result.stdout.match(/sidecar audit: PASS/g) ?? [],
       "the PASS line must print exactly once",
     ).toHaveLength(1);
+  });
+});
+
+describe("a failing tool inside a substitution is an audit finding, not a discarded subshell", () => {
+  it("names the sentinel-name derivation once, with no abort blocks", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const stubTr = await makeStubTool("tr", "#!/bin/sh\nexit 9\n");
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubTr}:${stubBrew}:${process.env.PATH}`,
+    });
+
+    expect(result.code, "a failing tr must not leave the audit green").toBe(1);
+    const output = result.stdout + result.stderr;
+    expect(output).toContain("could not derive the sentinel name for");
+    expect(output).toContain("an empty or wrong one would");
+    expect(
+      output.match(/could not derive the sentinel name for/g) ?? [],
+      "one failure must produce one report",
+    ).toHaveLength(1);
+    expect(
+      output,
+      "a failure inside a command substitution fires the trap in a subshell whose \
+       failures+= is discarded, so the audit used to print several abort blocks and still \
+       exit 0",
+    ).not.toContain("aborted at line");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+    expect(
+      result.stdout.match(/sidecar audit:/g) ?? [],
+    ).toHaveLength(1);
+  });
+
+  it("names the binary whose file type could not be determined", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const stubFile = await makeStubTool("file", "#!/bin/sh\nexit 4\n");
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubFile}:${stubBrew}:${process.env.PATH}`,
+    });
+
+    expect(result.code).toBe(1);
+    const output = result.stdout + result.stderr;
+    expect(output).toContain("could not determine the file type");
+    expect(output).toMatch(/gs-aarch64-apple-darwin/);
+    expect(output).toContain("Mach-O/ELF/PE32 dispatch");
+    expect(output).not.toContain("aborted at line");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+    expect(result.stdout.match(/sidecar audit:/g) ?? []).toHaveLength(1);
+  });
+
+  it("names an unreadable tauri.conf.json instead of blaming the config", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const conf = `${root}/src-tauri/tauri.conf.json`;
+    await mkdir(`${root}/src-tauri/frameworks`, { recursive: true });
+    await writeFile(conf, JSON.stringify({ bundle: { frameworks: ["frameworks/libz.1.dylib"] } }));
+    chmodSync(conf, 0o000);
+
+    let result;
+    try {
+      result = await runAudit(root, "aarch64-apple-darwin", {
+        PATH: `${stubBrew}:${process.env.PATH}`,
+      });
+    } finally {
+      chmodSync(conf, 0o644);
+    }
+
+    expect(result.code).toBe(1);
+    const output = result.stdout + result.stderr;
+    expect(output).toContain("could not read");
+    expect(output).toContain("the dylib cross-check would be wrong");
+    expect(
+      output,
+      "an unreadable config must not be reported as an unlisted dylib, which sends the user \
+       to edit tauri.conf.json instead of fixing the permissions",
+    ).not.toContain("missing bundled dylib");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
   });
 });
