@@ -304,12 +304,40 @@ assert_gs_sentinels() {
 }
 
 gs_smoke_failed() {
+  trap - ERR
   failures+=("<gs-clean-room-smoke>")
   return 0
 }
 
+gs_smoke_aborted() {
+  local status="$1"
+  local line="$2"
+  local command="$3"
+  trap - ERR
+  printf 'FAIL gs clean-room smoke: aborted at line %s (exit %s): %s\n' "$line" "$status" "$command" >&2
+  printf "  an unguarded command inside the smoke failed, so the staged gs resources were\n" >&2
+  printf "  left unproven. Fix the reported command, then run 'yarn binaries:prep' and\n" >&2
+  printf '  re-run the audit.\n' >&2
+  gs_smoke_failed
+  return 1
+}
+
+audit_finished=0
+gs_smoke_workdir=""
+
+audit_exit_trap() {
+  if [ -n "$gs_smoke_workdir" ] && [ -d "$gs_smoke_workdir" ]; then
+    rm -rf "$gs_smoke_workdir"
+  fi
+  if [ "$audit_finished" -eq 0 ] && [ "${#failures[@]}" -gt 0 ]; then
+    printf 'sidecar audit: %d file(s) not self-contained\n' "${#failures[@]}"
+  fi
+}
+trap audit_exit_trap EXIT
+
 gs_clean_room_smoke() {
   set -e
+  trap 'gs_smoke_aborted "$?" "$LINENO" "$BASH_COMMAND"' ERR
   local gs="$1"
   local gs_resources="$2"
   local work="$3"
@@ -443,10 +471,10 @@ EOF
     gs_smoke_failed
     return 0
   fi
+  trap - ERR
   printf 'gs clean-room smoke: PASS (%s bytes, %s staged resource flags, sentinel resolved)\n' "$size" "${#gs_includes[@]}"
 }
 
-gs_smoke_workdir=""
 gs_smoke_required=0
 if [ -n "$TARGET" ] && [ -f "$BIN_DIR/gs-$TARGET" ]; then
   gs_smoke_required=1
@@ -476,15 +504,13 @@ if [ "$gs_smoke_required" -eq 1 ]; then
     gs_clean_room_smoke "$BIN_DIR/gs-$TARGET" "$GS_RESOURCES_DIR" "$gs_smoke_workdir"
   fi
 fi
-if [ -n "$gs_smoke_workdir" ]; then
-  rm -rf "$gs_smoke_workdir"
-fi
-
 if [ ${#failures[@]} -gt 0 ]; then
+  audit_finished=1
   printf 'sidecar audit: %d file(s) not self-contained\n' "${#failures[@]}"
   exit 1
 fi
 
+audit_finished=1
 printf 'sidecar audit: PASS (%d binaries, %d framework dylibs)\n' \
   "$(find "$BIN_DIR" -type f | wc -l)" \
   "$( [ -d "$FRAMEWORKS_DIR" ] && find "$FRAMEWORKS_DIR" -name '*.dylib' | wc -l || echo 0 )"

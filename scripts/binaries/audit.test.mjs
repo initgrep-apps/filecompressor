@@ -6,9 +6,12 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { sha256File } from "./lib.mjs";
 import { gsSentinelPairs, gsSentinelPaths } from "./gs-sentinels.mjs";
+const GS_SENTINEL_NAMES = Object.fromEntries(
+  gsSentinelPairs().map(([dir, name]) => [dir.split("/").pop(), name]),
+);
 
 const SCRIPTS = dirname(fileURLToPath(import.meta.url));
 const AUDIT = join(SCRIPTS, "..", "audit-sidecars.sh");
@@ -829,5 +832,116 @@ describe("the gs smoke fails closed instead of passing vacuously", () => {
     expect(result.stdout + result.stderr).toContain("FAIL gs clean-room smoke: rendered");
     expect(result.stdout).not.toContain("sidecar audit: PASS");
     expect(result.stdout).not.toContain("sentinel resolved");
+  });
+});
+
+function countSmokeWorkdirs() {
+  return readdirSync(tmpdir()).filter((entry) => entry.startsWith("gs-clean-room.")).length;
+}
+
+const EARLY_ANCHOR = '  local gs="$1"\n';
+const LATE_ANCHOR = '  local fixture="$work/font-fixture.ps"\n';
+
+function runPatchedAudit(root, anchor, extraEnv = {}) {
+  const patched = `${root}/scripts/audit-sidecars-injected.sh`;
+  const source = readFileSync(AUDIT, "utf8");
+  if (!source.includes(anchor)) {
+    throw new Error("the injection anchor moved in audit-sidecars.sh; update this test");
+  }
+  writeFileSync(patched, source.replace(anchor, `  false\n${anchor}`));
+  symlinkSync(SCRIPTS, `${root}/scripts/binaries`);
+  return new Promise((resolvePromise) => {
+    const env = { ...process.env, ROOT: root, AUDIT_TARGET: "aarch64-apple-darwin", ...extraEnv };
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined || value === null) delete env[key];
+    }
+    const child = spawn("bash", [patched], { env, cwd: SCRIPTS });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    child.on("close", (code) => resolvePromise({ code, stdout, stderr }));
+  });
+}
+
+describe("an unguarded failure inside the gs smoke is reported, not silent", () => {
+  it("prints a FAIL naming line/status/command and leaves no temp workdir", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const before = countSmokeWorkdirs();
+
+    const result = await runPatchedAudit(root, EARLY_ANCHOR, {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+
+    console.log('DEBUG-STDERR>>>', result.stderr);
+    expect(result.code, "an unguarded smoke failure must not exit 0").toBe(1);
+    expect(result.stderr).toMatch(
+      /FAIL gs clean-room smoke: aborted at line \d+ \(exit 1\): false/,
+    );
+    expect(result.stderr).toContain("yarn binaries:prep");
+    expect(result.stdout).not.toContain("sidecar audit: PASS");
+    expect(result.stdout).not.toContain("gs clean-room smoke: PASS");
+    expect(
+      result.stdout.match(/sidecar audit:/g) ?? [],
+      "the summary must be printed exactly once",
+    ).toHaveLength(1);
+    expect(
+      countSmokeWorkdirs(),
+      "the smoke workdir must be cleaned up on the failure path too",
+    ).toBe(before);
+  });
+
+  it("does not double-report the explicit failure paths", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    await rm(`${root}/src-tauri/gs-resources/fonts/${GS_SENTINEL_NAMES.fonts}`, { force: true });
+
+    const result = await runPatchedAudit(root, LATE_ANCHOR, {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      "FAIL gs clean-room smoke: staged acceptance sentinel missing",
+    );
+    expect(result.stderr, "the ERR trap must not fire on an explicit failure path").not.toContain(
+      "aborted at line",
+    );
+    expect(
+      result.stdout.match(/sidecar audit:/g) ?? [],
+      "the EXIT trap must not re-print a summary the body already printed",
+    ).toHaveLength(1);
+  });
+});
+
+describe("the smoke's ERR trap cannot outlive the smoke", () => {
+  const source = readFileSync(AUDIT, "utf8");
+
+  it("disarms the ERR trap on the success path and on every explicit failure path", () => {
+    const start = source.indexOf("gs_clean_room_smoke() {");
+    const body = source.slice(start, source.indexOf("\ngs_smoke_required=0", start));
+    expect(body).toContain('trap \'gs_smoke_aborted "$?" "$LINENO" "$BASH_COMMAND"\' ERR');
+    expect(body, "the ERR trap must be disarmed before the PASS line").toMatch(
+      /trap - ERR\n\s*printf 'gs clean-room smoke: PASS/,
+    );
+    expect(
+      source.slice(source.indexOf("gs_smoke_failed() {"), source.indexOf("gs_smoke_aborted() {")),
+      "the ERR trap must be disarmed on the explicit failure path too, or it fires on the next unrelated failure",
+    ).toContain("trap - ERR");
+  });
+
+  it("the ERR trap is not inherited by the rest of the audit after the smoke returns", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("gs clean-room smoke: PASS");
+    expect(
+      result.stdout + result.stderr,
+      "a green smoke must leave no armed ERR trap behind",
+    ).not.toContain("aborted at line");
   });
 });

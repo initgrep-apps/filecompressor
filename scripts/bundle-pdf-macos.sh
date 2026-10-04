@@ -26,7 +26,7 @@
 # Ghostscript comes from brew, and its resource tree is staged into
 # src-tauri/gs-resources/ so the sidecar never needs a Homebrew prefix at runtime.
 # The staged dirs are the ones the manifest declares (prep passes them in
-# FSO_GS_RESOURCE_DIRS); the three acceptance sentinels are always staged because
+# FSO_GS_RESOURCE_DIRS); the four acceptance sentinels are always staged because
 # the audit's clean-room smoke resolves them through the -I search paths.
 set -euo pipefail
 
