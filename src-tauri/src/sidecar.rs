@@ -73,8 +73,6 @@ pub(crate) fn engine_candidates(
     vec![
         exe_dir.join("resources").join("engines").join(name).join(&file),
         exe_dir.join("../../binaries/engines").join(name).join(&file),
-        exe_dir.join("binaries/engines").join(name).join(&file),
-        exe_dir.join("engines").join(name).join(&file),
     ]
 }
 
