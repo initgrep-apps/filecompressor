@@ -147,20 +147,58 @@ fn is_gs_sentinel(name: &std::ffi::OsStr) -> bool {
     name.to_string_lossy().starts_with(GS_SENTINEL_PREFIX)
 }
 
-fn dir_has_file(dir: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
+#[derive(Debug, PartialEq, Eq)]
+enum DirContents {
+    Populated,
+    Empty,
+    Unreadable(std::io::ErrorKind),
+}
+
+fn dir_contents(dir: &Path) -> DirContents {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) => return DirContents::Unreadable(error.kind()),
     };
-    entries.flatten().any(|entry| {
+    let mut populated = false;
+    for entry in entries.flatten() {
         let path = entry.path();
         if path.is_file() {
-            !is_gs_sentinel(&entry.file_name())
-        } else if path.is_dir() {
-            dir_has_file(&path)
-        } else {
+            if !is_gs_sentinel(&entry.file_name()) {
+                populated = true;
+            }
+        } else if path.is_dir() && dir_contents(&path) != DirContents::Empty {
+            populated = true;
+        }
+    }
+    if populated {
+        DirContents::Populated
+    } else {
+        DirContents::Empty
+    }
+}
+
+fn dir_has_file(dir: &Path) -> bool {
+    match dir_contents(dir) {
+        DirContents::Populated => true,
+        DirContents::Empty => false,
+        DirContents::Unreadable(kind) => {
+            eprintln!(
+                "warn: could not read {} ({kind}) — treating it as unusable rather than empty, \
+                 because reporting 'no real files' would send you to restage the tree when the \
+                 actual problem is {kind}",
+                dir.display(),
+            );
             false
         }
-    })
+    }
+}
+
+fn missing_gs_search_dirs(base: &Path) -> Vec<&'static str> {
+    GS_RESOURCE_SEARCH_DIRS
+        .iter()
+        .filter(|relative| !base.join(relative).is_dir())
+        .copied()
+        .collect()
 }
 
 /// Returns the resolved tree, or `None` when the candidate exists but cannot
@@ -190,11 +228,19 @@ fn build_gs_resources(base: &Path) -> Option<GsResources> {
             return None;
         }
     }
-    let search_paths = GS_RESOURCE_SEARCH_DIRS
+    let missing = missing_gs_search_dirs(&base);
+    for relative in &missing {
+        eprintln!(
+            "warn: {relative} is absent from the staged gs resources at {} — no -I flag will be \
+             passed for it, so gs falls back to its compiled-in Homebrew prefix for anything it \
+             holds. Run 'yarn binaries:prep' to restage.",
+            base.display()
+        );
+    }
+    let search_paths: Vec<String> = GS_RESOURCE_SEARCH_DIRS
         .iter()
-        .map(|relative| base.join(relative))
-        .filter(|candidate| candidate.is_dir())
-        .map(|candidate| candidate.to_string_lossy().into_owned())
+        .filter(|relative| !missing.contains(relative))
+        .map(|relative| base.join(relative).to_string_lossy().into_owned())
         .collect();
     let icc = base.join(GS_ICC_PROFILES_DIR);
     let icc_profiles_dir = icc
@@ -649,6 +695,59 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn missing_search_dirs_are_reported_rather_than_silently_dropped() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let base = dir.path().join("gs-resources");
+        std::fs::create_dir_all(base.join("Resource/Init")).unwrap();
+        std::fs::create_dir_all(base.join("Resource/Font")).unwrap();
+        std::fs::create_dir_all(base.join("fonts")).unwrap();
+
+        assert_eq!(
+            missing_gs_search_dirs(&base),
+            vec!["lib"],
+            "a staged tree without lib/ must be named, not quietly filtered out of the -I list: \
+             silently dropping it is how gs ends up resolving lib/ from a system Ghostscript"
+        );
+
+        std::fs::create_dir_all(base.join("lib")).unwrap();
+        assert!(
+            missing_gs_search_dirs(&base).is_empty(),
+            "a complete tree must report nothing missing"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_dir_is_distinguished_from_an_empty_one() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::TempDir::new().unwrap();
+        let empty = dir.path().join("empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert_eq!(dir_contents(&empty), DirContents::Empty);
+
+        let unreadable = dir.path().join("unreadable");
+        std::fs::create_dir_all(&unreadable).unwrap();
+        std::fs::write(unreadable.join("real-font"), b"font").unwrap();
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+        assert_eq!(
+            dir_contents(&unreadable),
+            DirContents::Unreadable(std::io::ErrorKind::PermissionDenied),
+            "a permissions problem must not be reported as an empty tree: the remedy is not to \
+             restage the tree but to fix the permissions"
+        );
+        assert!(
+            !dir_has_file(&unreadable),
+            "an unreadable dir still fails closed"
+        );
+
+        std::fs::set_permissions(&unreadable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(dir_contents(&unreadable), DirContents::Populated);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn resolve_gs_resources_omits_absent_dirs_and_icc_profiles() {
         let dir = tempfile::TempDir::new().unwrap();
         let exe_dir = dir.path().join("Contents/MacOS");
@@ -962,8 +1061,39 @@ mod tests {
     }
 
     #[cfg(unix)]
+    fn gs_artifacts_staged(bin_dir: &std::path::Path) -> bool {
+        bin_dir.is_dir()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unstaged_binaries_dir_is_detected_so_the_gate_reports_not_staged() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin_dir = dir.path().join("binaries");
+        assert!(
+            !gs_artifacts_staged(&bin_dir),
+            "src-tauri/binaries is a generated, gitignored artifact, so its absence must be              reported as not-staged rather than failing as a code defect"
+        );
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        assert!(
+            gs_artifacts_staged(&bin_dir),
+            "once the artifacts are staged the audit's assertions must run for real"
+        );
+    }
+
+    #[cfg(unix)]
     #[test]
     fn sidecars_are_self_contained() {
+        let bin_dir = format!("{}/binaries", env!("CARGO_MANIFEST_DIR"));
+        if !gs_artifacts_staged(std::path::Path::new(&bin_dir)) {
+            eprintln!(
+                "skipping sidecars_are_self_contained: {} does not exist. It is a generated, \
+                 gitignored artifact — run 'yarn binaries:all --target <triple>' to stage it. \
+                 The audit's own assertions run unchanged once it is present.",
+                bin_dir
+            );
+            return;
+        }
         let script = format!(
             "{}/../scripts/audit-sidecars.sh",
             env!("CARGO_MANIFEST_DIR")

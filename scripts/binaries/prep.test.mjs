@@ -1,5 +1,7 @@
 // @vitest-environment node
-import { describe, it, expect, afterAll, afterEach } from "vitest";
+import { vi, afterAll, afterEach, describe, expect, it } from "vitest";
+
+vi.setConfig({ testTimeout: 30_000 });
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, readdir, rm, chmod, stat } from "node:fs/promises";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";

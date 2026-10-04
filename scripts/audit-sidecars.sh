@@ -281,7 +281,19 @@ gs_sentinel_name_for_dir() {
 }
 
 dir_has_file_recursive() {
-  find "$1" -type f ! -name "$GS_SENTINEL_GLOB" -print -quit 2>/dev/null | grep -q .
+  local listing errors status
+  errors="$(mktemp -t gs-dir-read-error)"
+  listing="$(find "$1" -type f ! -name "$GS_SENTINEL_GLOB" -print -quit 2>"$errors")"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'FAIL gs clean-room smoke: could not read %s: %s\n' "$1" "$(tr '\n' ' ' <"$errors")" >&2
+    printf "  this is a read error, not an empty tree — 'yarn binaries:prep' will not fix a\n" >&2
+    printf "  permissions problem. Fix the reported error, then re-run the audit.\n" >&2
+    rm -f "$errors"
+    return 2
+  fi
+  rm -f "$errors"
+  [ -n "$listing" ]
 }
 
 assert_gs_sentinels() {
@@ -324,6 +336,37 @@ gs_smoke_aborted() {
 
 audit_finished=0
 gs_smoke_workdir=""
+
+audit_body_aborted() {
+  local status="$1"
+  local line="$2"
+  local command="$3"
+  trap - ERR
+  printf 'FAIL sidecar audit: aborted at line %s (exit %s): %s\n' "$line" "$status" "$command" >&2
+  printf "  an unguarded command in the audit body failed, so the checks it feeds are\n" >&2
+  printf "  unproven. Fix the reported command, then re-run the audit.\n" >&2
+  failures+=("<audit-body>")
+  return 1
+}
+
+enumerate_count() {
+  local dir="$1"
+  shift
+  local listing
+  local status
+  listing="$(find "$dir" "$@")"
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'FAIL could not enumerate %s — the PASS count would be wrong; check the directory exists and is readable\n' "$dir" >&2
+    return 1
+  fi
+  if [ -z "$listing" ]; then
+    printf '0'
+    return 0
+  fi
+  printf '%s\n' "$listing" | wc -l | tr -d ' '
+  return 0
+}
 
 audit_exit_trap() {
   if [ -n "$gs_smoke_workdir" ] && [ -d "$gs_smoke_workdir" ]; then
@@ -391,7 +434,13 @@ EOF
     fi
   done
   for dir in "${required_dirs[@]}"; do
-    if ! dir_has_file_recursive "$gs_resources/$dir"; then
+    local dir_has_files=0
+    dir_has_file_recursive "$gs_resources/$dir" || dir_has_files=$?
+    if [ "$dir_has_files" -eq 2 ]; then
+      gs_smoke_failed
+      return 0
+    fi
+    if [ "$dir_has_files" -ne 0 ]; then
       printf 'FAIL gs clean-room smoke: no files anywhere under %s\n' "$gs_resources/$dir" >&2
       printf "  an empty tree here means the app would fall back to whatever the host has.\n" >&2
       printf "  Run 'yarn binaries:prep' to restage the gs resources.\n" >&2
@@ -399,9 +448,37 @@ EOF
       return 0
     fi
   done
+  local subdir_list=""
+  if ! subdir_list="$(gs_smoke_resource_subdirs "$gs_resources")"; then
+    printf 'FAIL gs clean-room smoke: could not enumerate the staged Resource subdirs under %s\n' "$gs_resources/Resource" >&2
+    printf "  without that list the per-subdir content check below would pass vacuously.\n" >&2
+    printf "  Run 'yarn binaries:prep' to restage the gs resources.\n" >&2
+    gs_smoke_failed
+    return 0
+  fi
+  local -a subdirs=()
   while IFS= read -r subdir; do
     [ -n "$subdir" ] || continue
-    if ! dir_has_file_recursive "$subdir"; then
+    subdirs+=("$subdir")
+  done <<EOF
+$subdir_list
+EOF
+  if [ "${#subdirs[@]}" -eq 0 ]; then
+    printf 'FAIL gs clean-room smoke: no Resource subdirs were enumerated under %s\n' "$gs_resources/Resource" >&2
+    printf "  with nothing to check, the per-subdir content gate would pass vacuously: a gutted\n" >&2
+    printf "  Resource/CMap or Resource/Encoding would ship unnoticed.\n" >&2
+    printf "  Run 'yarn binaries:prep' to restage the gs resources.\n" >&2
+    gs_smoke_failed
+    return 0
+  fi
+  for subdir in "${subdirs[@]}"; do
+    local sub_has_files=0
+    dir_has_file_recursive "$subdir" || sub_has_files=$?
+    if [ "$sub_has_files" -eq 2 ]; then
+      gs_smoke_failed
+      return 0
+    fi
+    if [ "$sub_has_files" -ne 0 ]; then
       printf 'FAIL gs clean-room smoke: no files anywhere under %s\n' "$subdir" >&2
       printf "  gs derives GS_LIBRESOURCE from where it found Resource/Init/gs_init.ps, so\n" >&2
       printf "  every sibling under Resource/ is reached through this same tree. A hole here\n" >&2
@@ -410,9 +487,7 @@ EOF
       gs_smoke_failed
       return 0
     fi
-  done <<EOF
-$(gs_smoke_resource_subdirs "$gs_resources")
-EOF
+  done
   if ! assert_gs_sentinels "$gs_resources" "${sentinel_pairs[@]}"; then
     gs_smoke_failed
     return 0
@@ -504,13 +579,24 @@ if [ "$gs_smoke_required" -eq 1 ]; then
     gs_clean_room_smoke "$BIN_DIR/gs-$TARGET" "$GS_RESOURCES_DIR" "$gs_smoke_workdir"
   fi
 fi
+
+trap 'audit_body_aborted "$?" "$LINENO" "$BASH_COMMAND"' ERR
 if [ ${#failures[@]} -gt 0 ]; then
   audit_finished=1
   printf 'sidecar audit: %d file(s) not self-contained\n' "${#failures[@]}"
   exit 1
 fi
 
+binaries_count=""
+if ! binaries_count="$(enumerate_count "$BIN_DIR" -type f)"; then
+  exit 1
+fi
+frameworks_count=0
+if [ -d "$FRAMEWORKS_DIR" ]; then
+  if ! frameworks_count="$(enumerate_count "$FRAMEWORKS_DIR" -name '*.dylib')"; then
+    exit 1
+  fi
+fi
 audit_finished=1
 printf 'sidecar audit: PASS (%d binaries, %d framework dylibs)\n' \
-  "$(find "$BIN_DIR" -type f | wc -l)" \
-  "$( [ -d "$FRAMEWORKS_DIR" ] && find "$FRAMEWORKS_DIR" -name '*.dylib' | wc -l || echo 0 )"
+  "$binaries_count" "$frameworks_count"

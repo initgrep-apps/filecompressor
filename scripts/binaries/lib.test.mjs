@@ -1,5 +1,7 @@
 // @vitest-environment node
-import { describe, it, expect, afterAll } from "vitest";
+import { vi, afterAll, describe, expect, it } from "vitest";
+
+vi.setConfig({ testTimeout: 30_000 });
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";

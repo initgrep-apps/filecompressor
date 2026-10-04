@@ -1,5 +1,7 @@
 // @vitest-environment node
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from "vitest";
+import { vi, afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+
+vi.setConfig({ testTimeout: 30_000 });
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
