@@ -25,8 +25,9 @@ const TRIPLE = "aarch64-apple-darwin";
 
 const SENTINELS = [
   ["Resource/Init", "fso-sidecar-acceptance-sentinel.ps"],
-  ["fonts", "fso-sidecar-acceptance-fonts-sentinel.ps"],
   ["Resource/Font", "fso-sidecar-acceptance-resource-font-sentinel.ps"],
+  ["lib", "fso-sidecar-acceptance-lib-sentinel.ps"],
+  ["fonts", "fso-sidecar-acceptance-fonts-sentinel.ps"],
 ];
 
 const cleanupRoots = [];
@@ -175,7 +176,7 @@ function writeLock(root, libStagedSha256) {
 
 function makeGsFixture(root, { symlinkSource = false } = {}) {
   const realShare = join(root, "real-share");
-  for (const dir of ["Resource/Init", "lib", "iccprofiles", "fonts"]) {
+  for (const dir of ["Resource/Init", "Resource/Font", "lib", "iccprofiles", "fonts"]) {
     mkdirSync(join(realShare, "ghostscript", "share", "ghostscript", dir), { recursive: true });
     writeFileSync(join(realShare, "ghostscript", "share", "ghostscript", dir, "file.txt"), dir);
   }
@@ -406,17 +407,25 @@ function treeFiles(root) {
 
 const SENTINEL_PATHS = SENTINELS.map(([dir, name]) => `${dir}/${name}`);
 
+function expectedSentinelsFor(dir) {
+  const expected = {};
+  for (const sentinelPath of SENTINEL_PATHS) {
+    if (sentinelPath.startsWith(`${dir}/`)) {
+      expected[sentinelPath.slice(dir.length + 1)] = expect.stringContaining(
+        "% Staged-only sentinel",
+      );
+    }
+  }
+  return expected;
+}
+
 function expectStagedCopyMatches(stagedResources, brewPrefix, dir) {
   const from = treeFiles(join(brewPrefix, "share", "ghostscript", dir));
   const to = treeFiles(join(stagedResources, dir));
-  const expected = { ...from };
-  for (const sentinelPath of SENTINEL_PATHS) {
-    if (sentinelPath.startsWith(`${dir}/`)) {
-      expected[sentinelPath.slice(dir.length + 1)] =
-        expect.stringContaining("% Staged-only sentinel");
-    }
-  }
-  expect(to, "a partial or failed copy would leave the staged tree incomplete").toEqual(expected);
+  expect(to, "a partial or failed copy would leave the staged tree incomplete").toEqual({
+    ...from,
+    ...expectedSentinelsFor(dir),
+  });
 }
 
 describe("bundle-pdf-macos.sh gs resource staging", () => {
@@ -474,6 +483,7 @@ describe("bundle-pdf-macos.sh gs resource staging", () => {
     for (const dir of ["Resource", "lib", "iccprofiles", "fonts"]) {
       expectStagedCopyMatches(stagedResources, brewPrefix, dir);
     }
+    expectStagedCopyMatches(stagedResources, brewPrefix, "Resource/Font");
     for (const [dir, name] of SENTINELS) {
       expect(readFileSync(join(stagedResources, dir, name), "utf8")).toMatch(/^%!\n% Staged-only/);
     }
@@ -498,13 +508,14 @@ describe("bundle-pdf-macos.sh gs resource staging", () => {
     expect(result.out).toContain("bundled: qpdf + gs sidecars self-contained");
     const stagedResources = join(root, "src-tauri", "gs-resources");
     expect(readFileSync(join(stagedResources, "extra-stuff", "only.txt"), "utf8")).toBe("x");
-    expect(
-      readdirSync(stagedResources).includes("iccprofiles"),
-      "a dir dropped from the declared list must not be staged",
-    ).toBe(false);
-    expect(readdirSync(stagedResources).includes("fonts")).toBe(
-      true,
-      "the font dirs exist only because the acceptance sentinels live in them",
+    for (const dropped of ["iccprofiles", "fonts"]) {
+      expect(
+        readdirSync(stagedResources).includes(dropped),
+        `${dropped} was dropped from the declared list and must not be staged — an undeclared dir must never reappear just because a sentinel targets it`,
+      ).toBe(false);
+    }
+    expect(readFileSync(join(stagedResources, "lib", "fso-sidecar-acceptance-lib-sentinel.ps"), "utf8")).toMatch(
+      /^%!\n% Staged-only/,
     );
   });
 
@@ -525,5 +536,87 @@ describe("bundle-pdf-macos.sh gs resource staging", () => {
     const result = runBundle(root, { stubBin });
     expect(result.out).toMatch(/ghostscript resource dir iccprofiles missing/);
     expect(result.out).not.toContain("bundled: qpdf + gs sidecars self-contained");
+  });
+});
+describe("bundle-pdf-macos.sh rejects hollow gs resource sources", () => {
+  function prepare(root) {
+    const binDir = join(root, "src-tauri", "binaries");
+    mkdirSync(binDir, { recursive: true });
+    const staged = stageStagedLib(root);
+    qpdfFixture(join(binDir, `qpdf-${TRIPLE}`), staged.member);
+    arm64Fixture(join(binDir, `gs-${TRIPLE}`), "gs");
+    writeLock(root, lockDigest(staged.libDir));
+    return makeGsFixture(root);
+  }
+
+  function gutSourceDir(brewPrefix, dir, { sentinelJunk = false } = {}) {
+    const target = join(brewPrefix, "share", "ghostscript", dir);
+    rmSync(target, { recursive: true, force: true });
+    mkdirSync(target, { recursive: true });
+    if (sentinelJunk) {
+      writeFileSync(join(target, "fso-sidecar-acceptance-fonts-sentinel.ps"), "%!\n");
+      writeFileSync(join(target, "fso-sidecar-acceptance-sentinel.ps"), "%!\n");
+    }
+  }
+
+  it.each(["fonts", "Resource/Font", "iccprofiles", "lib"])(
+    "refuses to stage when the brew %s dir has no real files",
+    (dir) => {
+      const root = makeRoot();
+      const { stubBin, brewPrefix } = prepare(root);
+      gutSourceDir(brewPrefix, dir);
+
+      const result = runBundle(root, { stubBin });
+
+      expect(result.out).toMatch(
+        new RegExp(`ghostscript resource dir ${dir.replace("/", "\\/")} at .* has no usable files`),
+      );
+      expect(result.out).toMatch(/brew reinstall ghostscript/);
+      expect(result.out).not.toContain("staged: gs resources");
+    },
+  );
+
+  it("refuses when a source dir holds only sentinel-shaped junk", () => {
+    const root = makeRoot();
+    const { stubBin, brewPrefix } = prepare(root);
+    gutSourceDir(brewPrefix, "fonts", { sentinelJunk: true });
+
+    const result = runBundle(root, { stubBin });
+
+    expect(result.out).toMatch(/resource dir fonts .* has no usable files/);
+    expect(result.out).toMatch(/brew reinstall ghostscript/);
+  });
+
+  it("stages a complete source tree, proving the gate is not vacuous", () => {
+    const root = makeRoot();
+    const { stubBin, brewPrefix } = prepare(root);
+
+    const result = runBundle(root, { stubBin });
+
+    expect(result.out).toContain("staged: gs resources");
+    for (const [dir, name] of SENTINELS) {
+      expect(readFileSync(join(root, "src-tauri", "gs-resources", dir, name), "utf8")).toMatch(
+        /^%!\n% Staged-only/,
+      );
+    }
+  });
+
+  it("leaves an existing gs-resources tree intact when the source is rejected", () => {
+    const root = makeRoot();
+    const { stubBin, brewPrefix } = prepare(root);
+    const stagedResources = join(root, "src-tauri", "gs-resources");
+    const first = runBundle(root, { stubBin });
+    expect(first.out).toContain("staged: gs resources");
+    const before = treeFiles(stagedResources);
+    expect(Object.keys(before).length).toBeGreaterThan(0);
+    gutSourceDir(brewPrefix, "iccprofiles");
+
+    const result = runBundle(root, { stubBin });
+
+    expect(result.out).toMatch(/has no usable files/);
+    expect(
+      treeFiles(stagedResources),
+      "a rejected source must not wipe a previously working local tree",
+    ).toEqual(before);
   });
 });

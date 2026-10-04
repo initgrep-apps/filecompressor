@@ -35,8 +35,8 @@ GS_RESOURCES_DIR="$ROOT/src-tauri/gs-resources"
 CONF="$ROOT/src-tauri/tauri.conf.json"
 MANIFEST="$ROOT/scripts/binaries.manifest.json"
 GS_ACCEPTANCE_SENTINEL="fso-sidecar-acceptance-sentinel.ps"
-GS_ACCEPTANCE_FONT_SENTINEL="fso-sidecar-acceptance-fonts-sentinel.ps"
-GS_ACCEPTANCE_RESOURCE_FONT_SENTINEL="fso-sidecar-acceptance-resource-font-sentinel.ps"
+GS_SENTINEL_GLOB='fso-sidecar-acceptance-*'
+GS_DIR_SENTINEL_PREFIX="fso-sidecar-acceptance-"
 
 TARGET=""
 TARGET_EXPLICIT=0
@@ -224,20 +224,29 @@ gs_manifest_resource_dirs() {
 }
 
 gs_smoke_required_dirs() {
-  local declared
-  if ! declared="$(gs_manifest_resource_dirs)"; then
-    printf 'FAIL gs clean-room smoke: no manifest entry for %s declares a "resources" array\n' "$TARGET" >&2
-    printf "  add the dirs gs needs (Resource, lib, iccprofiles, fonts) to the gs row in\n" >&2
-    printf '  scripts/binaries.manifest.json; without them there is nothing to smoke.\n' >&2
+  local search_dirs declared dir
+  if ! search_dirs="$(gs_smoke_search_dirs)"; then
     return 1
   fi
-  printf '%s\n' $declared Resource/Font
+  if ! declared="$(gs_manifest_resource_dirs)"; then
+    return 1
+  fi
+  printf '%s\n' $search_dirs
+  for dir in $declared; do
+    if [ "$dir" = "iccprofiles" ]; then
+      printf '%s\n' "$dir"
+    fi
+  done
+  return 0
 }
 
 gs_smoke_search_dirs() {
   local declared dir
   local -a ordered=()
   if ! declared="$(gs_manifest_resource_dirs)"; then
+    printf 'FAIL gs clean-room smoke: no manifest entry for %s declares a "resources" array\n' "$TARGET" >&2
+    printf "  add the dirs gs needs (Resource, lib, iccprofiles, fonts) to the gs row in\n" >&2
+    printf '  scripts/binaries.manifest.json; without them there is nothing to smoke.\n' >&2
     return 1
   fi
   for dir in $declared; do
@@ -255,14 +264,20 @@ gs_smoke_search_dirs() {
 }
 
 gs_smoke_sentinels() {
-  printf '%s\n' \
-    "Resource/Init:$GS_ACCEPTANCE_SENTINEL" \
-    "fonts:$GS_ACCEPTANCE_FONT_SENTINEL" \
-    "Resource/Font:$GS_ACCEPTANCE_RESOURCE_FONT_SENTINEL"
+  local search_dirs dir
+  if ! search_dirs="$(gs_smoke_search_dirs)"; then
+    return 1
+  fi
+  for dir in $search_dirs; do
+    case "$dir" in
+      Resource/Init) printf '%s\n' "Resource/Init:$GS_ACCEPTANCE_SENTINEL" ;;
+      *) printf '%s\n' "$dir:$GS_DIR_SENTINEL_PREFIX$(printf '%s' "$dir" | tr '/' '-' | tr 'A-Z' 'a-z')-sentinel.ps" ;;
+    esac
+  done
 }
 
 dir_has_file_recursive() {
-  find "$1" -type f -print -quit 2>/dev/null | grep -q .
+  find "$1" -type f ! -name "$GS_SENTINEL_GLOB" -print -quit 2>/dev/null | grep -q .
 }
 
 assert_gs_sentinels() {

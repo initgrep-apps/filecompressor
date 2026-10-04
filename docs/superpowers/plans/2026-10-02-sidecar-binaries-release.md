@@ -276,11 +276,11 @@ git commit -m "feat(binaries): manifest-driven fetch with arch gate; fix Intel f
 - `resolve_gs_resources_prefers_bundle_layout` — Resources/gs-resources first; `search_paths` ordered Init, lib, Resource/Font, fonts; `icc_profiles_dir` Some iff `iccprofiles/` exists
 - `resolve_gs_resources_returns_none_when_absent`
 - `resolve_for_attaches_gs_resources`
-- `resolve_gs_resources_pending_candidate_tiebreak` — when only `exe_dir/gs-resources` (dev layout) exists, that candidate wins (second candidate exercised — analyzer gap)
+- `resolve_gs_resources_dev_layout_candidate_resolves_alone` — when only `exe_dir/gs-resources` (the dev layout) exists, that candidate resolves on its own (renamed from `resolve_gs_resources_pending_candidate_tiebreak`, which did not test a tiebreak)
 - `gs_args_prepend_resource_flags_in_order` — resources set → args begin `[ -I<init>, -I<lib>, -I<font>, -I<fonts>, -sICCProfilesDir=<icc>, -sDEVICE=pdfwrite, … ]`
 - `gs_args_without_resources_match_today` — None → byte-identical to current vector (genuine, not redundant: current pdf.rs tests `pdf.rs:697-706,758-797` assert flag membership, not order)
 - `audit_fails_when_gs_resources_missing_entirely` — spec §9.3 gate must not silently skip when dir absent (analyzer critical gap: regression = PDF breaks on clean machines, invisible)
-- `audit_fails_when_iccprofiles_or_fonts_empty` — staged dirs present but empty → fail (§9.3 "non-empty")
+- `audit_fails_when_iccprofiles_or_fonts_dir_has_no_files_at_all` — staged dirs present but hold no files anywhere under them → fail (§9.3 "non-empty"; renamed from `audit_fails_when_iccprofiles_or_fonts_empty`, which only checked a flat `readdir`)
 - `audit_fails_on_brew_version_drift` — stub `brew list --versions` returning `ghostscript 10.08.1` vs lock `10.08.0` → fail (§8.1/§11 drift gate)
 - gs clean-room smoke: `env -i HOME=/nonexistent PATH=/usr/bin:/bin` + `-I` staged dirs + `/Helvetica findfont … show` fixture → exit 0, output > 1 KB (script-level, §9.4)
 

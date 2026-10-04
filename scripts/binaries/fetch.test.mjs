@@ -399,7 +399,6 @@ describe("fetch.mjs", () => {
     expect((await runFetch(["--target", "aarch64-apple-darwin", "--root", root])).code).toBe(0);
     expect(await readFile(libMember, "utf8")).toBe("fake-libqpdf-arm64");
     const stagedSha = await sha256File(staged);
-    const lockBefore = await readFile(`${root}/scripts/binaries.lock.json`, "utf8");
 
     await rm(`${root}/src-tauri/.staging`, { recursive: true, force: true });
 
@@ -424,7 +423,6 @@ describe("fetch.mjs", () => {
       "libqpdf.30.dylib": await sha256File(libMember),
     });
     expect(lockAfter.targets["aarch64-apple-darwin"].qpdf.stagedSha256).toBe(stagedSha);
-    expect(lockBefore).not.toBe(undefined);
   });
 
   it("re-downloads when the lock predates libStagedSha256, so the lib is pinned", async () => {

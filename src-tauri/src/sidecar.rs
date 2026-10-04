@@ -115,6 +115,8 @@ pub(crate) struct GsResources {
 const GS_RESOURCE_SEARCH_DIRS: [&str; 4] = ["Resource/Init", "lib", "Resource/Font", "fonts"];
 const GS_ICC_PROFILES_DIR: &str = "iccprofiles";
 const GS_INIT_MARKER: &str = "Resource/Init/gs_init.ps";
+const GS_SENTINEL_PREFIX: &str = "fso-sidecar-acceptance-";
+const GS_FONT_DIRS: [&str; 2] = ["Resource/Font", "fonts"];
 
 fn normalize_path(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
@@ -141,6 +143,10 @@ fn gs_resources_candidates(exe_dir: &Path) -> Vec<PathBuf> {
     ]
 }
 
+fn is_gs_sentinel(name: &std::ffi::OsStr) -> bool {
+    name.to_string_lossy().starts_with(GS_SENTINEL_PREFIX)
+}
+
 fn dir_has_file(dir: &Path) -> bool {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
@@ -148,7 +154,7 @@ fn dir_has_file(dir: &Path) -> bool {
     entries.flatten().any(|entry| {
         let path = entry.path();
         if path.is_file() {
-            true
+            !is_gs_sentinel(&entry.file_name())
         } else if path.is_dir() {
             dir_has_file(&path)
         } else {
@@ -158,10 +164,12 @@ fn dir_has_file(dir: &Path) -> bool {
 }
 
 /// Returns the resolved tree, or `None` when the candidate exists but cannot
-/// actually serve one. Requiring the Init marker plus a non-empty font source
-/// means a present-but-hollow `gs-resources/` never yields a `Some` with an
-/// empty `search_paths` (which would silently degrade to gs's compiled-in
-/// Homebrew prefix with no warning).
+/// actually serve one. Requiring the Init marker plus real font files in BOTH
+/// `Resource/Font` and `fonts` (sentinels excluded — they are staged by the
+/// audit's own smoke and must not make a hollow tree look populated) means a
+/// present-but-empty `gs-resources/` never yields a `Some`, so the caller can
+/// surface a `SidecarFailed` hint instead of letting gs silently fall back to
+/// its compiled-in Homebrew prefix.
 fn build_gs_resources(base: &Path) -> Option<GsResources> {
     let base = normalize_path(base);
     if !base.join(GS_INIT_MARKER).is_file() {
@@ -172,16 +180,15 @@ fn build_gs_resources(base: &Path) -> Option<GsResources> {
         );
         return None;
     }
-    let font_dirs: Vec<&str> = vec!["Resource/Font", "fonts"];
-    if !font_dirs
-        .iter()
-        .any(|relative| base.join(relative).is_dir() && dir_has_file(&base.join(relative)))
-    {
-        eprintln!(
-            "warn: ignoring gs resources at {} — no font files under Resource/Font or fonts, so gs could not render text",
-            base.display()
-        );
-        return None;
+    for relative in GS_FONT_DIRS {
+        let dir = base.join(relative);
+        if !dir.is_dir() || !dir_has_file(&dir) {
+            eprintln!(
+                "warn: ignoring gs resources at {} — no real font files under {relative}, so gs could not render text from this tree",
+                base.display()
+            );
+            return None;
+        }
     }
     let search_paths = GS_RESOURCE_SEARCH_DIRS
         .iter()
@@ -516,13 +523,14 @@ mod tests {
         let exe_dir = dir.path().join("Contents/MacOS");
         std::fs::create_dir_all(&exe_dir).unwrap();
         let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
-        write_gs_resources(&resources, &["fonts"]);
+        write_gs_resources(&resources, &["Resource/Font", "fonts"]);
 
         let resolved = resolve_gs_resources(&exe_dir).expect("bundle layout resolves");
         assert_eq!(
             resolved.search_paths,
             vec![
                 resources.join("Resource/Init").to_str().unwrap().to_string(),
+                resources.join("Resource/Font").to_str().unwrap().to_string(),
                 resources.join("fonts").to_str().unwrap().to_string(),
             ],
             "only dirs that exist are passed as -I flags, in the fixed order"
@@ -550,7 +558,7 @@ mod tests {
         let exe_dir = dir.path().join("target/debug");
         std::fs::create_dir_all(&exe_dir).unwrap();
         let dev_layout = gs_resource_root(dir.path(), "target/debug/gs-resources");
-        write_gs_resources(&dev_layout, &["lib", "fonts"]);
+        write_gs_resources(&dev_layout, &["lib", "Resource/Font", "fonts"]);
 
         let resolved = resolve_gs_resources(&exe_dir).expect("dev layout resolves");
         assert_eq!(
@@ -567,7 +575,7 @@ mod tests {
         let exe_dir = dir.path().join("target/debug");
         std::fs::create_dir_all(&exe_dir).unwrap();
         let layout = gs_resource_root(dir.path(), "gs-resources");
-        write_gs_resources(&layout, &["lib", "fonts"]);
+        write_gs_resources(&layout, &["lib", "Resource/Font", "fonts"]);
 
         let resolved = resolve_gs_resources(&exe_dir)
             .expect("exe_dir/../../gs-resources (the tauri dev layout) resolves");
@@ -584,7 +592,7 @@ mod tests {
         let exe_dir = dir.path().join("Contents/MacOS");
         std::fs::create_dir_all(&exe_dir).unwrap();
         let layout = gs_resource_root(dir.path(), "Contents/MacOS/resources/gs-resources");
-        write_gs_resources(&layout, &["lib", "fonts"]);
+        write_gs_resources(&layout, &["lib", "Resource/Font", "fonts"]);
 
         let resolved = resolve_gs_resources(&exe_dir)
             .expect("exe_dir/resources/gs-resources resolves");
@@ -607,6 +615,43 @@ mod tests {
         assert!(
             resolve_gs_resources(&exe_dir).is_none(),
             "a tree with no font files must not resolve: gs would silently use its compiled-in prefix"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_returns_none_when_a_font_dir_holds_only_sentinels() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        write_gs_resources(&resources, &["lib", "Resource/Font", "fonts"]);
+        empty_dir(&resources, &["Resource/Font", "fonts"]);
+        for name in [GS_SENTINEL_PREFIX, &format!("{GS_SENTINEL_PREFIX}fonts-sentinel.ps")] {
+            std::fs::write(resources.join("Resource/Font").join(name), b"%!\n").unwrap();
+            std::fs::write(resources.join("fonts").join(name), b"%!\n").unwrap();
+        }
+
+        assert!(
+            resolve_gs_resources(&exe_dir).is_none(),
+            "a sentinel-only font dir must not resolve: the sentinels are staged by the audit's own smoke and would otherwise make a hollow tree look populated, defeating the SidecarFailed hint"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_gs_resources_returns_none_when_only_one_font_dir_is_populated() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe_dir = dir.path().join("Contents/MacOS");
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
+        write_gs_resources(&resources, &["lib", "Resource/Font"]);
+        empty_dir(&resources, &["fonts"]);
+        std::fs::create_dir_all(resources.join("fonts")).unwrap();
+
+        assert!(
+            resolve_gs_resources(&exe_dir).is_none(),
+            "both font dirs are required, not just one of them"
         );
     }
 
@@ -646,7 +691,7 @@ mod tests {
         let exe_dir = dir.path().join("Contents/MacOS");
         std::fs::create_dir_all(&exe_dir).unwrap();
         let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
-        write_gs_resources(&resources, &["lib", "fonts"]);
+        write_gs_resources(&resources, &["lib", "Resource/Font", "fonts"]);
         std::fs::remove_file(resources.join(GS_INIT_MARKER)).unwrap();
 
         assert!(
@@ -665,7 +710,7 @@ mod tests {
         write_gs_resources(&hollow, &["Resource/Font", "fonts"]);
         empty_dir(&hollow, &["Resource/Font", "fonts"]);
         let usable = gs_resource_root(dir.path(), "Contents/MacOS/resources/gs-resources");
-        write_gs_resources(&usable, &["lib", "fonts"]);
+        write_gs_resources(&usable, &["lib", "Resource/Font", "fonts"]);
 
         let resolved = resolve_gs_resources(&exe_dir).expect("a later usable candidate wins");
         assert_eq!(
@@ -682,9 +727,9 @@ mod tests {
         let exe_dir = dir.path().join("Contents/MacOS");
         std::fs::create_dir_all(&exe_dir).unwrap();
         let bundle = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
-        write_gs_resources(&bundle, &["lib", "fonts"]);
+        write_gs_resources(&bundle, &["lib", "Resource/Font", "fonts"]);
         let dev = gs_resource_root(dir.path(), "target/debug/gs-resources");
-        write_gs_resources(&dev, &["lib", "fonts"]);
+        write_gs_resources(&dev, &["lib", "Resource/Font", "fonts"]);
 
         let resolved = resolve_gs_resources(&exe_dir).expect("bundle layout resolves");
         assert_eq!(
@@ -707,7 +752,7 @@ mod tests {
         std::fs::write(exe_dir.join(sidecar_filename("gs").unwrap()), b"stub").unwrap();
         std::fs::write(exe_dir.join(sidecar_filename("qpdf").unwrap()), b"stub").unwrap();
         let resources = gs_resource_root(dir.path(), "Contents/Resources/gs-resources");
-        write_gs_resources(&resources, &["lib", "fonts"]);
+        write_gs_resources(&resources, &["lib", "Resource/Font", "fonts"]);
 
         let paths = crate::engine::SidecarPaths::resolve_for(&exe_dir);
         let attached = paths

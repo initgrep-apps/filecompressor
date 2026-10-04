@@ -40,9 +40,10 @@ TRIPLE="$(rustc -Vv | grep '^host:' | sed 's/host: //')"
 STAGING_QPDF_LIB="$ROOT/src-tauri/.staging/qpdf-$TRIPLE/lib"
 GS_RESOURCES="$ROOT/src-tauri/gs-resources"
 read -r -a GS_RESOURCE_DIRS <<<"${FSO_GS_RESOURCE_DIRS:-Resource lib iccprofiles fonts}"
+GS_RESOURCE_DIRS_JOINED="${GS_RESOURCE_DIRS[*]}"
 GS_ACCEPTANCE_SENTINEL="fso-sidecar-acceptance-sentinel.ps"
-GS_FONT_SENTINEL="fso-sidecar-acceptance-fonts-sentinel.ps"
 GS_RESOURCE_FONT_SENTINEL="fso-sidecar-acceptance-resource-font-sentinel.ps"
+GS_DIR_SENTINEL_PREFIX="fso-sidecar-acceptance-"
 ENGINES=("$ROOT/src-tauri/binaries/qpdf-$TRIPLE" "$ROOT/src-tauri/binaries/gs-$TRIPLE")
 
 for sidecar in "${ENGINES[@]}"; do
@@ -187,6 +188,12 @@ replace_frameworks_with_staged_qpdf_lib() {
   done
 }
 
+GS_SENTINEL_GLOB='fso-sidecar-acceptance-*'
+
+dir_has_real_file() {
+  find "$1" -type f ! -name "$GS_SENTINEL_GLOB" -print -quit 2>/dev/null | grep -q .
+}
+
 copy_tree_sorted() {
   local src="$1"
   local dst="$2"
@@ -201,12 +208,41 @@ copy_tree_sorted() {
   (cd "$src_physical" && find . -print | LC_ALL=C sort | cpio -pdm --quiet "$dst_physical")
 }
 
+gs_search_dirs_from_declared() {
+  local declared="$1"
+  local dir
+  for dir in $declared; do
+    case "$dir" in
+      Resource) printf '%s\n' Resource/Init Resource/Font ;;
+      iccprofiles) ;;
+      *) printf '%s\n' "$dir" ;;
+    esac
+  done
+}
+
+gs_sentinel_pairs() {
+  local search_dirs="$1"
+  local dir
+  for dir in $search_dirs; do
+    case "$dir" in
+      Resource/Init) printf '%s\n' "Resource/Init:$GS_ACCEPTANCE_SENTINEL" ;;
+      *) printf '%s\n' "$dir:$GS_DIR_SENTINEL_PREFIX$(printf '%s' "$dir" | tr '/' '-' | tr 'A-Z' 'a-z')-sentinel.ps" ;;
+    esac
+  done
+}
+
 stage_gs_acceptance_sentinel() {
   local pair dir name
-  for pair in "Resource/Init:$GS_ACCEPTANCE_SENTINEL" "fonts:$GS_FONT_SENTINEL" "Resource/Font:$GS_RESOURCE_FONT_SENTINEL"; do
+  while IFS= read -r pair; do
+    [ -n "$pair" ] || continue
     dir="$GS_RESOURCES/${pair%%:*}"
     name="${pair##*:}"
-    mkdir -p "$dir"
+    if [ ! -d "$dir" ]; then
+      printf 'FAIL cannot stage the gs acceptance sentinel: %s is not a staged resource dir\n' "$dir" >&2
+      printf "  a sentinel is only ever written into a dir that already holds real gs resources,\n" >&2
+      printf "  so it can never make a hollow tree look populated.\n" >&2
+      exit 1
+    fi
     printf '%%!\n%% Staged-only sentinel: gs resolves it through the -I search paths, so the\n%% audit clean-room smoke fails if gs falls back to its compiled-in Homebrew prefix.\n' \
       >"$dir/$name"
     if [ ! -f "$dir/$name" ]; then
@@ -214,7 +250,9 @@ stage_gs_acceptance_sentinel() {
       exit 1
     fi
     printf 'staged: gs acceptance sentinel -> %s/%s\n' "$dir" "$name"
-  done
+  done <<EOF
+$(gs_sentinel_pairs "$(gs_search_dirs_from_declared "$GS_RESOURCE_DIRS_JOINED")")
+EOF
 }
 
 stage_gs_resources() {
@@ -240,19 +278,48 @@ stage_gs_resources() {
     printf 'FAIL no ghostscript resource tree (Resource/, lib/, iccprofiles/, fonts/) under %s/share/ghostscript — run "brew reinstall ghostscript", then re-run "yarn binaries:prep"\n' "$prefix" >&2
     exit 1
   fi
-  rm -rf "$GS_RESOURCES"
+  local staging="$GS_RESOURCES.staging.$$"
+  rm -rf "$staging"
   local name
   for name in "${GS_RESOURCE_DIRS[@]}"; do
     if [ ! -d "$source_dir/$name" ]; then
       printf 'FAIL ghostscript resource dir %s missing at %s — run "brew reinstall ghostscript", then re-run "yarn binaries:prep"\n' "$name" "$source_dir" >&2
       exit 1
     fi
-    copy_tree_sorted "$source_dir/$name" "$GS_RESOURCES/$name"
   done
-  if [ ! -f "$GS_RESOURCES/Resource/Init/gs_init.ps" ]; then
+  for name in "${GS_RESOURCE_DIRS[@]}"; do
+    if ! dir_has_real_file "$source_dir/$name"; then
+      printf 'FAIL ghostscript resource dir %s at %s has no usable files (only sentinels/empty)\n' "$name" "$source_dir" >&2
+      printf "  gs would fall back to its compiled-in Homebrew prefix and every PDF that needs\n" >&2
+      printf "  a font or ICC profile from this tree would break on a clean machine.\n" >&2
+      printf '  Run "brew reinstall ghostscript", then re-run "yarn binaries:prep"\n' >&2
+      exit 1
+    fi
+  done
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    case "$name" in
+      Resource/Init) continue ;;
+    esac
+    if ! dir_has_real_file "$source_dir/$name"; then
+      printf 'FAIL ghostscript resource dir %s at %s has no usable files (only sentinels/empty)\n' "$name" "$source_dir" >&2
+      printf "  this is an -I search path gs loads directly; without files here it falls back\n" >&2
+      printf "  to its compiled-in Homebrew prefix.\n" >&2
+      printf '  Run "brew reinstall ghostscript", then re-run "yarn binaries:prep"\n' >&2
+      exit 1
+    fi
+  done <<EOF
+$(gs_search_dirs_from_declared "$GS_RESOURCE_DIRS_JOINED")
+EOF
+  for name in "${GS_RESOURCE_DIRS[@]}"; do
+    copy_tree_sorted "$source_dir/$name" "$staging/$name"
+  done
+  if [ ! -f "$staging/Resource/Init/gs_init.ps" ]; then
     printf 'FAIL staged gs-resources lacks Resource/Init/gs_init.ps (source %s) — the gs sidecar cannot start without it\n' "$source_dir" >&2
     exit 1
   fi
+  rm -rf "$GS_RESOURCES"
+  mv "$staging" "$GS_RESOURCES"
   stage_gs_acceptance_sentinel
   printf 'staged: gs resources -> %s (from %s)\n' "$GS_RESOURCES" "$source_dir"
 }

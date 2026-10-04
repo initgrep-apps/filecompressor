@@ -235,9 +235,15 @@ export async function runBundleScripts(root, targetEntries = {}) {
   }
 }
 
+export const GS_SENTINEL_PREFIX = "fso-sidecar-acceptance-";
+
+export function isGsSentinel(name) {
+  return name.startsWith(GS_SENTINEL_PREFIX);
+}
+
 export async function treeHasFile(dir) {
   const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => []);
-  return entries.some((entry) => entry.isFile());
+  return entries.some((entry) => entry.isFile() && !isGsSentinel(entry.name));
 }
 
 export async function assertGsResourcesStaged(root, entry, label = entry.formula ?? "gs") {
@@ -452,6 +458,13 @@ export async function prepTarget(target, root) {
   const expectedArch = archForTriple(target);
 
   const brewEntries = Object.entries(targetEntries).filter(([, entry]) => entry.source === "brew");
+
+  const lock = await loadLock(root);
+  lock.targets[target] = lock.targets[target] ?? {};
+  await assertBrewVersionsPinned(brewEntries);
+  await assertFetchedEntriesUntouched(lock, target, root, Object.entries(targetEntries));
+  await assertStagedLibsPinned(lock, target, root, Object.entries(targetEntries));
+
   const staged = [];
   for (const [name, entry] of brewEntries) {
     const stagedBinary = await stageBrewBinary(root, target, name, entry);
@@ -461,12 +474,6 @@ export async function prepTarget(target, root) {
       `prep: ${stagedBinary.dest} staged from brew ${entry.formula} (${archs.join(" ")})`,
     );
   }
-
-  const lock = await loadLock(root);
-  lock.targets[target] = lock.targets[target] ?? {};
-  await assertFetchedEntriesUntouched(lock, target, root, Object.entries(targetEntries));
-  await assertStagedLibsPinned(lock, target, root, Object.entries(targetEntries));
-  await assertBrewVersionsPinned(brewEntries);
 
   await runBundleScripts(root, targetEntries);
 

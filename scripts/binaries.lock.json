@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-03T22:59:50.634Z",
+  "generated": "2026-10-04T00:11:36.614Z",
   "targets": {
     "aarch64-apple-darwin": {
       "ffmpeg": {
@@ -35,14 +35,14 @@
         "formula": "vips",
         "version": "8.18.7",
         "stagedSha256": "098aa605195b684333194547b535bdafc30b45c5b893aa01c0ecc71fd6fdbe68",
-        "date": "2026-10-03T22:59:49.878Z"
+        "date": "2026-10-04T00:11:35.917Z"
       },
       "gs": {
         "source": "brew",
         "formula": "ghostscript",
         "version": "10.08.0",
         "stagedSha256": "27068a27079d7289af79104c7c3204dc37ff3bf6a65b3913c250032146129a0b",
-        "date": "2026-10-03T22:59:50.625Z"
+        "date": "2026-10-04T00:11:36.605Z"
       }
     }
   }

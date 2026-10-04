@@ -640,6 +640,37 @@ describe("prepTarget", () => {
     await expect(readdir(join(root, "src-tauri"))).rejects.toThrow();
     expect(process.env.PATH, "withPath must restore the process PATH").toBe(originalPath);
   });
+
+  it("leaves the staged tree untouched when brew has drifted", async () => {
+    const root = await makeRoot(WITH_BREW);
+    const prefix = await makeFormulaPrefix("vips");
+    useStubBrew(await makeStubBrew(stubBrewScript(prefix, "8.19.0")));
+    await mkdir(join(root, "src-tauri", "binaries"), { recursive: true });
+    const destPath = join(root, "src-tauri", "binaries", "vips-aarch64-apple-darwin");
+    await writeFile(destPath, "previously staged bytes");
+    const before = await sha256File(destPath);
+
+    const error = await prepTarget("aarch64-apple-darwin", root).catch((thrown) => thrown);
+
+    expect(error).toBeInstanceOf(PipelinesError);
+    expect(error.message).toMatch(/brew version drift/);
+    expect(await sha256File(destPath)).toBe(
+      before,
+      "the drift gate must run before stageBrewBinary, so an aborted prep leaves no drifted, unpinned binary behind",
+    );
+    expect(await readFile(destPath, "utf8")).toBe("previously staged bytes");
+  });
+
+  it("reports the drift without creating binaries/ at all", async () => {
+    const root = await makeRoot(WITH_BREW);
+    const prefix = await makeFormulaPrefix("vips");
+    useStubBrew(await makeStubBrew(stubBrewScript(prefix, "8.19.0")));
+
+    const error = await prepTarget("aarch64-apple-darwin", root).catch((thrown) => thrown);
+
+    expect(error).toBeInstanceOf(PipelinesError);
+    await expect(readdir(join(root, "src-tauri"))).rejects.toThrow();
+  });
 });
 
 describe("prepTarget guard wiring", () => {

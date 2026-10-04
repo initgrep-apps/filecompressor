@@ -56,11 +56,13 @@ const GS_FIXTURE_C = `
 static const char *const kSentinelDirs[] = {
   "Resource/Init",
   "Resource/Font",
+  "lib",
   "fonts",
 };
 static const char *const kSentinelNames[] = {
   "fso-sidecar-acceptance-sentinel.ps",
   "fso-sidecar-acceptance-resource-font-sentinel.ps",
+  "fso-sidecar-acceptance-lib-sentinel.ps",
   "fso-sidecar-acceptance-fonts-sentinel.ps",
 };
 static const size_t kSentinelCount = sizeof(kSentinelDirs) / sizeof(kSentinelDirs[0]);
@@ -146,6 +148,7 @@ function compileGsFixture(arch, outPath, exitCode = 0) {
 const SENTINEL = "fso-sidecar-acceptance-sentinel.ps";
 const FONT_SENTINEL = "fso-sidecar-acceptance-fonts-sentinel.ps";
 const RESOURCE_FONT_SENTINEL = "fso-sidecar-acceptance-resource-font-sentinel.ps";
+const LIB_SENTINEL = "fso-sidecar-acceptance-lib-sentinel.ps";
 
 const GS_MANIFEST_ENTRY = {
   source: "brew",
@@ -163,6 +166,7 @@ async function makeGsRoot({
   sentinel = true,
   fontSentinel = true,
   resourceFontSentinel = true,
+  libSentinel = true,
   manifestEntry = GS_MANIFEST_ENTRY,
   stageGs = true,
 } = {}) {
@@ -218,6 +222,9 @@ async function makeGsRoot({
     }
     if (resourceFontSentinel) {
       await writeFile(`${base}/Resource/Font/${RESOURCE_FONT_SENTINEL}`, "%!\n");
+    }
+    if (libSentinel) {
+      await writeFile(`${base}/lib/${LIB_SENTINEL}`, "%!\n");
     }
   }
   return root;
@@ -403,11 +410,18 @@ describe("audit-sidecars.sh", () => {
     expect(result.stdout).not.toContain("sentinel resolved");
   });
 
-  it("fails the smoke when a staged resource dir is emptied", async () => {
+  it("fails the smoke when a staged resource dir keeps only its sentinel", async () => {
     const root = await makeGsRoot();
-    for (const entry of readdirSync(`${root}/src-tauri/gs-resources/Resource/Font`)) {
-      rmSync(`${root}/src-tauri/gs-resources/Resource/Font/${entry}`, { recursive: true, force: true });
+    const fontDir = `${root}/src-tauri/gs-resources/Resource/Font`;
+    for (const entry of readdirSync(fontDir)) {
+      if (entry.startsWith("fso-sidecar-acceptance-")) {
+        continue;
+      }
+      rmSync(`${fontDir}/${entry}`, { recursive: true, force: true });
     }
+    expect(readdirSync(fontDir), "only the sentinel must remain").toEqual([
+      RESOURCE_FONT_SENTINEL,
+    ]);
     const stubBrew = await makeStubBrew();
 
     const result = await runAudit(root, "aarch64-apple-darwin", {
@@ -465,37 +479,20 @@ describe("audit-sidecars.sh", () => {
     expect(iccResult.stderr).toMatch(/has no files anywhere under it: .*\/iccprofiles/);
   });
 
-  it("fails when the fonts/ dir keeps junk files but loses the font sentinel", async () => {
-    const root = await makeGsRoot({ fontSentinel: false });
-    for (const entry of readdirSync(`${root}/src-tauri/gs-resources/fonts`)) {
-      rmSync(`${root}/src-tauri/gs-resources/fonts/${entry}`, { recursive: true, force: true });
-    }
-    mkdirSync(`${root}/src-tauri/gs-resources/fonts`, { recursive: true });
-    for (const name of ["only.txt", "also-only.txt"]) {
-      writeFileSync(`${root}/src-tauri/gs-resources/fonts/${name}`, "junk");
-    }
-    const stubBrew = await makeStubBrew();
-
-    const result = await runAudit(root, "aarch64-apple-darwin", {
-      PATH: `${stubBrew}:${process.env.PATH}`,
-    });
-    expect(result.code).toBe(1);
-    expect(result.stdout + result.stderr).toMatch(/fonts/);
-    expect(result.stdout).not.toContain("sentinel resolved");
-    expect(result.stdout).not.toContain("sidecar audit: PASS");
-  });
-
   it.each([
     ["fonts", "fontSentinel"],
     ["Resource/Font", "resourceFontSentinel"],
-  ])("fails when %s is gutted down to the sentinel only", async (dir, option) => {
+    ["lib", "libSentinel"],
+  ])("fails when %s is gutted down to junk with no sentinel", async (dir, option) => {
     const root = await makeGsRoot({ [option]: false });
     const fontDir = `${root}/src-tauri/gs-resources/${dir}`;
     for (const entry of readdirSync(fontDir)) {
       rmSync(`${fontDir}/${entry}`, { recursive: true, force: true });
     }
     mkdirSync(fontDir, { recursive: true });
-    writeFileSync(`${fontDir}/only.txt`, "junk");
+    for (const junk of ["only.txt", "also-only.txt"]) {
+      writeFileSync(`${fontDir}/${junk}`, "junk");
+    }
     const stubBrew = await makeStubBrew();
 
     const result = await runAudit(root, "aarch64-apple-darwin", {
@@ -525,7 +522,7 @@ describe("audit-sidecars.sh", () => {
     expect(result.stdout).not.toContain("sentinel resolved");
   });
 
-  it("passes for a complete staged tree with all three sentinels", async () => {
+  it("passes for a complete staged tree with every search-path sentinel", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
 
@@ -617,6 +614,9 @@ describe("audit-sidecars.sh", () => {
     const root = await makeGsRoot();
     const fontDir = `${root}/src-tauri/gs-resources/Resource/Font`;
     for (const entry of readdirSync(fontDir)) {
+      if (entry.startsWith("fso-sidecar-acceptance-")) {
+        continue;
+      }
       rmSync(`${fontDir}/${entry}`, { recursive: true, force: true });
     }
     mkdirSync(`${fontDir}/Init`, { recursive: true });
@@ -628,7 +628,8 @@ describe("audit-sidecars.sh", () => {
     expect(result.code).toBe(1);
     const output = result.stdout + result.stderr;
     expect(output).toMatch(
-      /no files anywhere under .*Resource\/Font|has no files anywhere under it: .*Resource\/Font/,
+      /no files anywhere under .*Resource\/Font/,
+      "an empty Resource/Font is a search dir gs loads, so the smoke must reject it",
     );
     expect(result.stdout).not.toContain("sentinel resolved");
   });

@@ -29,7 +29,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "$SCRIPT_DIR/sidecar-bundle.common.sh"
 
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-FRAMEWORKS="$ROOT/src-tauri/frameworks"
+FRAMEWORKS_REAL="$ROOT/src-tauri/frameworks"
+FRAMEWORKS_STAGING="$ROOT/src-tauri/.frameworks-staging.$$"
+FRAMEWORKS="$FRAMEWORKS_REAL"
 TRIPLE="$(rustc -Vv | grep '^host:' | sed 's/host: //')"
 SIDECAR="$ROOT/src-tauri/binaries/vips-$TRIPLE"
 
@@ -99,8 +101,9 @@ if [ "$needs_bundle" -eq 0 ]; then
   exit 1
 fi
 
-rm -rf "$FRAMEWORKS"
+rm -rf "$FRAMEWORKS_STAGING"
 
+FRAMEWORKS="$FRAMEWORKS_STAGING"
 collect_deps_of "$SIDECAR"
 
 for lib in "$FRAMEWORKS"/*.dylib; do
@@ -126,3 +129,7 @@ for lib in "$FRAMEWORKS"/*.dylib; do
   [ -e "$lib" ] || continue
   codesign --force --sign - "$lib"
 done
+
+rm -rf "$FRAMEWORKS_REAL"
+mv "$FRAMEWORKS_STAGING" "$FRAMEWORKS_REAL"
+rm -rf "$FRAMEWORKS_STAGING"

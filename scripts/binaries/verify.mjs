@@ -87,9 +87,15 @@ export const GS_ACCEPTANCE_SENTINELS = [
   join("fonts", "fso-sidecar-acceptance-fonts-sentinel.ps"),
 ];
 
+const GS_SENTINEL_PREFIX = "fso-sidecar-acceptance-";
+
+function isGsSentinel(name) {
+  return name.startsWith(GS_SENTINEL_PREFIX);
+}
+
 export async function treeHasFile(dir) {
   const entries = await readdir(dir, { withFileTypes: true, recursive: true }).catch(() => []);
-  return entries.some((entry) => entry.isFile());
+  return entries.some((entry) => entry.isFile() && !isGsSentinel(entry.name));
 }
 
 export async function checkGsResources(root, name, entry, problems) {
