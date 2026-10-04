@@ -530,6 +530,30 @@ git commit -m "feat(binaries): macOS Intel target manifest (Riedl amd64, qpdf x8
 
 ---
 
+#### Task 4 Execution Notes (macOS Intel target)
+
+**Delivered.** `x86_64-apple-darwin` added to the manifest (ffmpeg, ffprobe, qpdf from vendor Intel artifacts; vips + gs as brew rows), plus three Required Tests and one small data-driven change to `verify.mjs`'s error text. **No prep-script changes were needed** — the bundle scripts already derive the triple from `rustc -Vv host`, which is the only triple source in the tree.
+
+**All three Intel hashes were verified against the real artifacts, not copied from the plan.** Each archive was downloaded and hashed; all three match byte for byte: Riedl amd64 ffmpeg `7c6b4125…cacd4`, Riedl amd64 ffprobe `2322438e…fdfd`, qpdf macOS x86_64 `dd3b01f4…1481`. The Intel qpdf archive was also listed and has the **same flat `bin/qpdf` + `lib/` layout** as the arm64 one, so `member: "bin/qpdf"` / `lib: "lib"` carries over unchanged — the same deliberate deviation from the plan's snippet that Task 2 recorded for arm64, now confirmed for Intel rather than assumed.
+
+**The arm64-hardcode sweep came back clean, and the test that encodes it is stronger than a grep.** `verify_no_hardcoded_aarch64_in_script_logic` does not simply ban the strings `aarch64`/`arm64`/`x86_64`, because two places legitimately contain them: the `TRIPLE_ARCH` table (data) and the tool-output arch parsers such as `contentArchWindows`, which must recognise every arch in order to read `file`/`lipo` output for any target. A naive ban flagged `verify.mjs:20-21` as offences. Instead the test allows arch names inside arch-parser functions but then asserts each such parser handles **every** arch in the arch set — so a parser can never quietly become arm64-only. Both directions were revert-verified: injecting `const INTEL_ONLY = "aarch64-apple-darwin"` into `prep.mjs` fails the test naming file:line, and deleting the `x86_64` branch from `contentArchWindows` fails it with "an arch parser that does not handle x86_64".
+
+**One real hardcode removed.** `verify.mjs`'s unknown-triple error hardcoded an example, `e.g. aarch64-apple-darwin`. It is now data-driven from a new additive `knownTriples()` export in `lib.mjs` (`lib.mjs` exports are additions only, per the constraint), so the message lists every triple the tooling actually knows — which is what a user hitting it needs.
+
+**`audit-sidecars.sh` already had `--target` passthrough from Task 2**, so step 2's wiring was a confirmation rather than a change: the script parses `--target`, sets `TARGET_EXPLICIT`, and forwards `--target "$TARGET"` to `verify.mjs`. The plan's Required Test `audit_target_passthrough_cross_audits_fetched_intel_binaries` did not exist and was added: it compiles an **x86_64** fixture named `ffprobe-x86_64-apple-darwin`, asserts `--target x86_64-apple-darwin` makes verify report `verify: ffprobe-x86_64-apple-darwin 9.0.2 (x86_64) OK`, and a companion test renames that same x86_64 binary to the arm64 filename and asserts the Intel audit no longer reports it OK.
+
+**One assertion was removed as unreachable rather than left failing.** I first asserted that the same tree audited as `--target aarch64-apple-darwin` must reject the x86_64 binary. It cannot: the audit's pre-flight guard for an explicit `--target` whose `gs` is not staged exits **before** `verify.mjs` runs (confirmed by running the audit by hand — no `verify:` line is emitted at all). The pre-existing `honours an explicit --target instead of auditing the host` test already covers target precedence, so the duplicate was dropped rather than papered over with a weaker regex.
+
+**Intel end-to-end verification is DEFERRED, not done.** No Intel Mac and no `macos-15-intel` runner was available, so fetch → prep → audit → `tauri build` → manual image/video/PDF compression on Intel has **not** been run, and the vips/gs brew rows in particular are unexercised for Intel. What *was* verified here: the three vendor hashes and the qpdf layout against the downloaded archives; the manifest under `validateManifest`; the passthrough behaviour through the real `audit-sidecars.sh`; and the macOS arm64 pipeline re-run green as a regression check.
+
+- CI flow (spec §7, deferred to the CI/CD task): `yarn binaries:all --target x86_64-apple-darwin && yarn app:build --target x86_64-apple-darwin` on `macos-15-intel`.
+- Manual runbook: clone on an Intel host, `yarn install && yarn binaries:all && yarn app:build`, then compress one image, one video and one PDF.
+- **Shelf life (spec §12).** GitHub retires Intel macOS runners **Fall 2027**; Martin Riedl stops Intel macOS ffmpeg releases **January 2027**; Homebrew moved Intel macOS to **Tier 3** (Sep 2026, no routine bottles). Intel is supported for this release cycle. Documented migration: **MacPorts** prebuilt archives for vips/gs, and a self-hosted Intel runner if needed. The Riedl Intel ffmpeg/ffprobe pins are the ones to re-check first when that date arrives — after January 2027 there is no upstream Intel ffmpeg release to pin.
+
+**Required Tests status.** `manifest_contains_intel_rows_with_pinned_shas` (validates the shipped manifest, asserts the three hashes and the qpdf member/lib, the brew rows, and that Intel declares the same gs `resources` the clean-room smoke proves) · `verify_no_hardcoded_aarch64_in_script_logic` (sweep + parser symmetry) · `audit_target_passthrough_cross_audits_fetched_intel_binaries` plus its wrong-arch companion. Manifest pins, the arm64 target and the arch-symmetry assertion are each revert-verified.
+
+**Gate.** `yarn build && yarn test && cd src-tauri && cargo test` → green: **452 vitest** across 22 files (was 447; +5), **418 cargo** (unchanged). `yarn binaries:all --target aarch64-apple-darwin` still prints `gs clean-room smoke: PASS (3514 bytes, 5 staged resource flags, sentinel resolved)` and the byte-identical `sidecar audit: PASS (5 binaries, 71 framework dylibs)`.
+
 ### Task 5: SBOM + License Notices
 
 **Files:**

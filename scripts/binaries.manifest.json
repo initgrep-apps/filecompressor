@@ -141,6 +141,52 @@
           "share/ghostscript/10.08.0/fonts"
         ]
       }
+    },
+    "x86_64-apple-darwin": {
+      "ffmpeg": {
+        "source": "url",
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip",
+        "sha256": "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4",
+        "member": "ffmpeg",
+        "dest": "ffmpeg",
+        "expectVersion": "9.0.2"
+      },
+      "ffprobe": {
+        "source": "url",
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffprobe.zip",
+        "sha256": "2322438ed2f6319a691291b247d09c69dcaa3a982460d1f269a7e1af335cfdfd",
+        "member": "ffprobe",
+        "dest": "ffprobe",
+        "expectVersion": "9.0.2"
+      },
+      "qpdf": {
+        "source": "url",
+        "url": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-bin-macos-x86_64.zip",
+        "sha256": "dd3b01f4414d198529bb0f13bba59c2f016a328bb3506695087a96fb80fc1481",
+        "member": "bin/qpdf",
+        "lib": "lib",
+        "dest": "qpdf",
+        "expectVersion": "12.4.2"
+      },
+      "vips": {
+        "source": "brew",
+        "formula": "vips",
+        "dest": "vips",
+        "expectVersion": "8.18.7"
+      },
+      "gs": {
+        "source": "brew",
+        "formula": "ghostscript",
+        "binary": "gs",
+        "dest": "gs",
+        "expectVersion": "10.08.0",
+        "resources": [
+          "Resource",
+          "lib",
+          "iccprofiles",
+          "fonts"
+        ]
+      }
     }
   }
 }

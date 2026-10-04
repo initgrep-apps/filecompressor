@@ -3,23 +3,7 @@ import { execFile } from "node:child_process";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { gsSentinelPaths, isGsSentinel } from "./gs-sentinels.mjs";
-import {
-  archForTriple,
-  binaryDir,
-  expectedDest,
-  exists,
-  hostTriple,
-  isMain,
-  isWindowsTriple,
-  lockPath,
-  manifestPath,
-  parseArgs,
-  readJson,
-  run,
-  sha256File,
-  validateLock,
-  validateManifest,
-} from "./lib.mjs";
+import { archForTriple, binaryDir, exists, expectedDest, hostTriple, isMain, isWindowsTriple, knownTriples, lockPath, manifestPath, parseArgs, readJson, run, sha256File, validateLock, validateManifest } from "./lib.mjs";
 
 async function contentArchMac(path) {
   try {
@@ -223,7 +207,7 @@ export async function verifyTarget(target, root) {
     expectedArch = archForTriple(triple);
   } catch {
     console.error(
-      `FAIL unknown triple '${triple}' — pass --target <triple> with a known target (e.g. aarch64-apple-darwin)`,
+      `FAIL unknown triple '${triple}' — pass --target <triple> with one of: ${knownTriples().join(", ")}`,
     );
     return false;
   }
