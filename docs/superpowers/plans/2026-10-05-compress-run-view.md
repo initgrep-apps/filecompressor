@@ -113,11 +113,11 @@ Input classes the spec implies that component tests could miss — each is pinne
 - `filtering does not mutate the input array`
 - `empty input yields no lanes and zero counts`
 
-- [ ] **Step 1: Write failing tests** — fixtures built with a `makeFile(partial)` helper: statuses in one lane ordered pending, compressing, done, failed, cancelled, best_effort, already_under_target inserted shuffled → `groupByCategory` returns them compressing → terminal (in drop order) → queued; unknown category absent from input → no lane; all-one-category → single lane; unsupported exclusion; cancelled-counts-as-terminal; `batchCounts` aggregation matches the 10-file scenario from the spec (2 processing, 4 complete, 1 belowTarget, 1 failed, 2 queued, 6 processed); direct `laneDonePill` and `isTerminal` assertions; `filterFiles` for every StatusFilter value; filtering does not mutate input; empty array boundary.
-- [ ] **Step 2: Run `yarn test -- grouping`. Expected: FAIL (module missing).**
-- [ ] **Step 3: Implement** signatures above (simple sorts/filters, no deps).
-- [ ] **Step 4: Run `yarn test -- grouping`. Expected: PASS.**
-- [ ] **Step 5: Commit** `feat(compress): add pure grouping/counts/filter lib for run board`
+- [x] **Step 1: Write failing tests** — fixtures built with a `makeFile(partial)` helper: statuses in one lane ordered pending, compressing, done, failed, cancelled, best_effort, already_under_target inserted shuffled → `groupByCategory` returns them compressing → terminal (in drop order) → queued; unknown category absent from input → no lane; all-one-category → single lane; unsupported exclusion; cancelled-counts-as-terminal; `batchCounts` aggregation matches the 10-file scenario from the spec (2 processing, 4 complete, 1 belowTarget, 1 failed, 2 queued, 6 processed); direct `laneDonePill` and `isTerminal` assertions; `filterFiles` for every StatusFilter value; filtering does not mutate input; empty array boundary.
+- [x] **Step 2: Run `yarn test -- grouping`. Expected: FAIL (module missing).**
+- [x] **Step 3: Implement** signatures above (simple sorts/filters, no deps).
+- [x] **Step 4: Run `yarn test -- grouping`. Expected: PASS.**
+- [x] **Step 5: Commit** `feat(compress): add pure grouping/counts/filter lib for run board`
 
 ### Task 3: `lib/strategyLabels.ts` — strategy display strings
 
