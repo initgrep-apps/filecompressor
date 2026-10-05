@@ -18,14 +18,16 @@ import type { Category } from '@/types'
 
 export function strategyLabel(strategy: string | null, category: Category): string {
   if (!strategy) return ''
+  if (strategy.includes('best-effort')) return 'Best effort'
   if (strategy.startsWith('two-pass h264')) return 'H.264 two-pass · Lossy'
   if (strategy.startsWith('crf=')) return 'H.264 CRF · Lossy'
   if (strategy.startsWith('qpdf-lossless')) return 'QPDF · Lossless'
   if (strategy.startsWith('qpdf-image-opt')) return 'QPDF image optimize · Lossy'
   if (strategy.startsWith('gs')) return 'Ghostscript · Lossy'
-  if (strategy.includes('best-effort')) return 'Best effort'
-  if (strategy.startsWith('quality=') && category === 'document') return 'Rebuild · Lossless'
-  if (strategy.startsWith('quality=') && category === 'image') return 'Re-encode · Lossy'
-  if (strategy.startsWith('quality=') && category === 'pdf') return 'Ghostscript · Lossy'
+  if (strategy.startsWith('quality=')) {
+    if (category === 'document') return 'Rebuild · Lossless'
+    if (category === 'image') return 'Re-encode · Lossy'
+    if (category === 'pdf') return 'Ghostscript · Lossy'
+  }
   return strategy
 }

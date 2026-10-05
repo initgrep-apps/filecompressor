@@ -31,7 +31,7 @@ describe('strategyLabel', () => {
   })
 
   it('strips numeric/format suffixes from the label', () => {
-    expect(strategyLabel('quality=80,dims=50%', 'image')).toMatch(/^Re-encode · Lossy$/)
+    expect(strategyLabel('quality=80,dims=50%', 'image')).toBe('Re-encode · Lossy')
     expect(strategyLabel('quality=80,dims=50%', 'image')).not.toContain('dims=')
     expect(strategyLabel('two-pass h264 b=1200k scale=720', 'video')).not.toContain('b=')
     expect(strategyLabel('two-pass h264 b=1200k scale=720', 'video')).not.toContain('scale=')
@@ -42,13 +42,21 @@ describe('strategyLabel', () => {
     expect(strategyLabel('crf=24', 'video')).not.toContain('crf=')
   })
 
-  it('maps best-effort fallback strings to Best effort', () => {
-    expect(strategyLabel('best-effort,b=64k', 'video')).toBe('Best effort')
+  it('best-effort suffix wins over the image re-encode fallback', () => {
+    expect(strategyLabel('quality=80,best-effort', 'image')).toBe('Best effort')
   })
 
   it('best-effort rule wins over quality= for document rezip fallback', () => {
     expect(strategyLabel('quality=60,best-effort', 'document')).toBe('Best effort')
     expect(strategyLabel('rezip-deflate9,best-effort', 'document')).toBe('Best effort')
+  })
+
+  it('best-effort appended to any processor prefix still maps to Best effort', () => {
+    expect(strategyLabel('crf=24,best-effort', 'video')).toBe('Best effort')
+    expect(strategyLabel('two-pass h264 b=1200k,best-effort', 'video')).toBe('Best effort')
+    expect(strategyLabel('gs-screen,best-effort', 'pdf')).toBe('Best effort')
+    expect(strategyLabel('qpdf-lossless,best-effort', 'pdf')).toBe('Best effort')
+    expect(strategyLabel('quality=80,best-effort', 'image')).toBe('Best effort')
   })
 
   it('quality= with unmatched category falls through to the raw string', () => {
