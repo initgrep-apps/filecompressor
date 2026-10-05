@@ -29,7 +29,10 @@ export function useFileList() {
   const addFiles = useCallback(async (paths: string[]) => {
     try {
       const newEntries = await invoke<FileEntry[]>('add_files', { filePaths: paths })
-      setFiles((prev) => [...prev, ...newEntries])
+      setFiles((prev) => [
+        ...prev,
+        ...newEntries.map((e) => ({ ...e, strategyUsed: null, qualityUsed: null })),
+      ])
       setError(null)
     } catch (err) {
       setError(`Could not add files: ${toMessage(err)}`)

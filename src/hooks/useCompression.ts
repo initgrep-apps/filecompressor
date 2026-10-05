@@ -32,6 +32,8 @@ interface CompletePayload {
   compressedSize: number
   status: FileStatus
   metTarget: boolean
+  strategyUsed?: string | null
+  qualityUsed?: number | null
 }
 
 interface ErrorPayload {
@@ -70,6 +72,7 @@ export function useCompression(
   const [progressByFile, setProgressByFile] = useState<Record<string, number>>({})
   const processedCountRef = useRef(0)
   const errorCountRef = useRef(0)
+  const cancelledRef = useRef(false)
 
   const filesRef = useRef(files)
   filesRef.current = files
@@ -98,6 +101,12 @@ export function useCompression(
       callbacksRef.current?.onBatchError?.('Lost connection to compression worker')
     }
 
+    const clearCancelled = () => {
+      if (!cancelledRef.current) return
+      cancelledRef.current = false
+      toast.info('Batch cancelled')
+    }
+
     listen<ProgressPayload>('file:progress', (e) => {
       const { fileId, percent } = e.payload
       const file = filesRef.current.find((f) => f.id === fileId)
@@ -114,14 +123,23 @@ export function useCompression(
       .catch(reportListenFailure('file:progress'))
 
     listen<CompletePayload>('file:complete', (e) => {
-      const { fileId, outputPath, compressedSize, status } = e.payload
+      const {
+        fileId,
+        outputPath,
+        compressedSize,
+        status,
+        strategyUsed = null,
+        qualityUsed = null,
+      } = e.payload
       if (filesRef.current.some((f) => f.id === fileId)) {
         processedCountRef.current += 1
       }
       dropProgress(fileId)
       setFiles((prev) =>
         prev.map((f) =>
-          f.id === fileId ? { ...f, status, compressedSize, outputPath } : f
+          f.id === fileId
+            ? { ...f, status, compressedSize, outputPath, strategyUsed, qualityUsed }
+            : f
         )
       )
     })
@@ -137,7 +155,9 @@ export function useCompression(
       dropProgress(fileId)
       setFiles((prev) =>
         prev.map((f) =>
-          f.id === fileId ? { ...f, status: 'failed', error: errorMessage } : f
+          f.id === fileId
+            ? { ...f, status: 'failed', error: errorMessage, strategyUsed: null, qualityUsed: null }
+            : f
         )
       )
     })
@@ -149,7 +169,9 @@ export function useCompression(
       dropProgress(fileId)
       setFiles((prev) =>
         prev.map((f) =>
-          f.id === fileId ? { ...f, status: 'cancelled' } : f
+          f.id === fileId
+            ? { ...f, status: 'cancelled', strategyUsed: null, qualityUsed: null }
+            : f
         )
       )
     })
@@ -162,6 +184,7 @@ export function useCompression(
       const errors = errorCountRef.current
       processedCountRef.current = 0
       errorCountRef.current = 0
+      clearCancelled()
       if (processed > 0) {
         callbacksRef.current?.onBatchComplete?.(e.payload.totalSavedBytes, processed, errors)
       }
@@ -173,6 +196,7 @@ export function useCompression(
       setIsCompressing(false)
       processedCountRef.current = 0
       errorCountRef.current = 0
+      clearCancelled()
       callbacksRef.current?.onBatchError?.(e.payload.errorMessage)
     })
       .then(done)
@@ -188,6 +212,7 @@ export function useCompression(
     const pendingCount = filesRef.current.filter((f) => f.status === 'pending').length
     if (pendingCount === 0) return
     setIsCompressing(true)
+    cancelledRef.current = false
     try {
       const batchId = await invoke<string>('compress_all')
       if (batchId === '') {
@@ -211,6 +236,7 @@ export function useCompression(
   const cancelAll = useCallback(async () => {
     try {
       await invoke('cancel_all')
+      cancelledRef.current = true
     } catch (err) {
       toast.error(`Could not cancel: ${toMessage(err)}`)
     }

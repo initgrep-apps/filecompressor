@@ -65,14 +65,14 @@ Input classes the spec implies that component tests could miss — each is pinne
 - `cancelAll invoke rejection does not set the cancelled flag` — failed cancel leaves the normal complete path intact
 - `batch:complete without cancel does not show cancelled toast` (guard)
 
-- [ ] **Step 1: Write failing tests in `useCompression.test.ts`** (follow existing mock-listen patterns in that file; update the sonner mock — it currently has only `success`/`error` — to add `info: vi.fn()`):
+- [x] **Step 1: Write failing tests in `useCompression.test.ts`** (follow existing mock-listen patterns in that file; update the sonner mock — it currently has only `success`/`error` — to add `info: vi.fn()`):
   - `file:complete persists strategyUsed and qualityUsed onto the file entry`: emit complete with `strategyUsed: "crf=24"`, `qualityUsed: 24` → file in state has those values.
   - `cancelAll then batch:complete shows Batch cancelled toast and not success toast`: invoke cancelAll, emit `batch:complete` → `toast.info` called with "Batch cancelled"; `onBatchComplete` callback NOT called when zero processed; when some files processed before cancel, `onBatchComplete` still called AND cancelled toast shown.
   - `batch:complete without cancel does not show cancelled toast` (guard).
-- [ ] **Step 2: Run `yarn test -- useCompression`. Expected: new tests FAIL (payload fields missing / no toast).**
-- [ ] **Step 3: Implement** in `src/types.ts` add to `FileEntry`: `strategyUsed: string | null`, `qualityUsed: number | null`. In `useCompression.ts`: extend `CompletePayload` with `strategyUsed?: string | null`, `qualityUsed?: number | null`; listener spreads them onto the mapped entry (default `null`). Add `cancelledRef`; set true in `cancelAll()` success; on `batch:complete` and `batch:error`: if `cancelledRef.current` → `toast.info('Batch cancelled')`, reset ref; always reset ref on new `compressAll`.
-- [ ] **Step 4: Run `yarn test -- useCompression`. Expected: PASS (old tests still pass — update any fixture FileEntries missing the new fields).**
-- [ ] **Step 5: Commit** `feat(compression): capture strategy metadata and cancelled-batch toast`
+- [x] **Step 2: Run `yarn test -- useCompression`. Expected: new tests FAIL (payload fields missing / no toast).**
+- [x] **Step 3: Implement** in `src/types.ts` add to `FileEntry`: `strategyUsed: string | null`, `qualityUsed: number | null`. In `useCompression.ts`: extend `CompletePayload` with `strategyUsed?: string | null`, `qualityUsed?: number | null`; listener spreads them onto the mapped entry (default `null`). Add `cancelledRef`; set true in `cancelAll()` success; on `batch:complete` and `batch:error`: if `cancelledRef.current` → `toast.info('Batch cancelled')`, reset ref; always reset ref on new `compressAll`.
+- [x] **Step 4: Run `yarn test -- useCompression`. Expected: PASS (old tests still pass — update any fixture FileEntries missing the new fields).**
+- [x] **Step 5: Commit** `feat(compression): capture strategy metadata and cancelled-batch toast`
 
 ### Task 2: `lib/grouping.ts` — pure lane grouping, counts, filtering
 

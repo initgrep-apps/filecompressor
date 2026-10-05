@@ -24,7 +24,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 vi.mock('sonner', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }))
 
 import { useCompression, type CompressionCallbacks } from '@/hooks/useCompression'
@@ -51,6 +51,8 @@ function entry(overrides: Partial<FileEntry> = {}): FileEntry {
     compressedSize: null,
     outputPath: null,
     error: null,
+    strategyUsed: null,
+    qualityUsed: null,
     ...overrides,
   }
 }
@@ -142,8 +144,8 @@ describe('useCompression event handling', () => {
     })
   })
 
-  it('file:error sets failed with message', async () => {
-    const { result } = setup([entry()])
+  it('file:error sets failed with message and resets stale strategy fields', async () => {
+    const { result } = setup([entry({ strategyUsed: 'stale=old', qualityUsed: 7 })])
     await flush()
     emit('file:progress', { fileId: 'f1', percent: 20 })
     emit('file:error', { fileId: 'f1', errorMessage: 'Cannot read file: locked' })
@@ -151,16 +153,22 @@ describe('useCompression event handling', () => {
     expect(result.current.files[0]).toMatchObject({
       status: 'failed',
       error: 'Cannot read file: locked',
+      strategyUsed: null,
+      qualityUsed: null,
     })
   })
 
-  it('file:cancelled sets cancelled status', async () => {
-    const { result } = setup([entry()])
+  it('file:cancelled sets cancelled status and resets stale strategy fields', async () => {
+    const { result } = setup([entry({ strategyUsed: 'stale=old', qualityUsed: 7 })])
     await flush()
     emit('file:progress', { fileId: 'f1', percent: 20 })
     emit('file:cancelled', { fileId: 'f1' })
     expect(result.current.comp.progressByFile['f1']).toBeUndefined()
-    expect(result.current.files[0].status).toBe('cancelled')
+    expect(result.current.files[0]).toMatchObject({
+      status: 'cancelled',
+      strategyUsed: null,
+      qualityUsed: null,
+    })
   })
 
   it('terminal events for unknown fileIds leave state unchanged', async () => {
@@ -474,5 +482,132 @@ describe('useCompression listener lifecycle', () => {
     setup([entry()], { onBatchError })
     await flush()
     expect(onBatchError).toHaveBeenCalledWith('Lost connection to compression worker')
+  })
+})
+
+describe('useCompression strategy capture', () => {
+  it('file:complete persists strategyUsed and qualityUsed onto the file entry', async () => {
+    const { result } = setup([entry()])
+    await flush()
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 1024,
+      compressedSize: 500,
+      status: 'done',
+      metTarget: true,
+      strategyUsed: 'crf=24',
+      qualityUsed: 24,
+    })
+    expect(result.current.files[0]).toMatchObject({
+      strategyUsed: 'crf=24',
+      qualityUsed: 24,
+    })
+  })
+
+  it('file:complete without strategy fields defaults them to null', async () => {
+    const { result } = setup([entry({ strategyUsed: 'stale=old', qualityUsed: 99 })])
+    await flush()
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 1024,
+      compressedSize: 500,
+      status: 'done',
+      metTarget: true,
+    })
+    expect(result.current.files[0]).toMatchObject({
+      strategyUsed: null,
+      qualityUsed: null,
+    })
+  })
+})
+
+describe('useCompression batch cancellation', () => {
+  const completePayload = {
+    fileId: 'f1',
+    outputPath: '/o/a.jpg',
+    originalSize: 10,
+    compressedSize: 5,
+    status: 'done',
+    metTarget: true,
+  }
+
+  it('cancelAll then batch:complete shows Batch cancelled toast', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.cancelAll())
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
+    expect(toast.info).toHaveBeenCalledWith('Batch cancelled')
+    expect(onBatchComplete).not.toHaveBeenCalled()
+  })
+
+  it('cancelAll with processed files still fires onBatchComplete and shows Batch cancelled toast', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('file:complete', completePayload)
+    await act(() => result.current.comp.cancelAll())
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
+    expect(toast.info).toHaveBeenCalledWith('Batch cancelled')
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
+  })
+
+  it('batch:error after cancelAll shows Batch cancelled toast and resets the flag', async () => {
+    const onBatchError = vi.fn()
+    const { result } = setup([entry()], { onBatchError })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    await act(() => result.current.comp.cancelAll())
+    emit('batch:error', { batchId: 'b1', errorMessage: 'worker unavailable' })
+    expect(toast.info).toHaveBeenCalledWith('Batch cancelled')
+    expect(onBatchError).toHaveBeenCalledWith('worker unavailable')
+    vi.mocked(toast.info).mockClear()
+    emit('batch:complete', { batchId: 'b2', totalSavedBytes: 0 })
+    expect(toast.info).not.toHaveBeenCalled()
+  })
+
+  it('compressAll after a cancelled batch runs to completion without cancelled toast', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup(
+      [entry({ id: 'f1' }), entry({ id: 'f2', name: 'b.jpg' })],
+      { onBatchComplete }
+    )
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    await act(() => result.current.comp.cancelAll())
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
+    expect(toast.info).toHaveBeenCalledWith('Batch cancelled')
+    vi.mocked(toast.info).mockClear()
+    await act(() => result.current.comp.compressAll())
+    emit('file:complete', { ...completePayload, fileId: 'f2', outputPath: '/o/b.jpg' })
+    emit('batch:complete', { batchId: 'b2', totalSavedBytes: 5 })
+    expect(toast.info).not.toHaveBeenCalled()
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
+  })
+
+  it('cancelAll invoke rejection does not set the cancelled flag', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('ipc down'))
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.cancelAll())
+    expect(toast.error).toHaveBeenCalledWith('Could not cancel: ipc down')
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
+    expect(toast.info).not.toHaveBeenCalled()
+    expect(onBatchComplete).not.toHaveBeenCalled()
+  })
+
+  it('batch:complete without cancel does not show cancelled toast', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('file:complete', completePayload)
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
+    expect(toast.info).not.toHaveBeenCalled()
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
   })
 })

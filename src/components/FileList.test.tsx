@@ -16,6 +16,8 @@ function entry(overrides: Partial<FileEntry> = {}): FileEntry {
     compressedSize: null,
     outputPath: null,
     error: null,
+    strategyUsed: null,
+    qualityUsed: null,
     ...overrides,
   }
 }
