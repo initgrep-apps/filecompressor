@@ -37,6 +37,8 @@ export interface FileEntry {
   compressedSize: number | null
   outputPath: string | null
   error: string | null
+  strategyUsed: string | null
+  qualityUsed: number | null
 }
 
 export interface CategoryTarget {
