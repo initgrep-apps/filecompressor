@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { describe, it, expect } from 'vitest'
-import type { FileEntry, FileStatus } from '@/types'
+import { describe, it, expect, vi } from 'vitest'
+import type { Category, FileEntry, FileStatus } from '@/types'
 import {
   LANE_ORDER,
   isTerminal,
@@ -201,6 +201,43 @@ describe('grouping', () => {
     groupByCategory(files)
     expect(files.map((f) => f.id)).toEqual(['c', 'd', 'q'])
     expect(files).toEqual(snapshot)
+  })
+
+  it('unknown runtime statuses are treated as processed-only with a warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const rawStatus: string = 'zzz_new'
+    const file = makeFile({ id: 'u', status: rawStatus as FileStatus })
+    try {
+      expect(isTerminal(file.status)).toBe(false)
+      expect(batchCounts([file])).toEqual({
+        all: 1,
+        processing: 0,
+        complete: 0,
+        belowTarget: 0,
+        failed: 0,
+        queued: 0,
+        processed: 1,
+      })
+      expect(laneDonePill([file])).toEqual({ done: 1, total: 1 })
+      expect(warn).toHaveBeenCalledWith('unknown file status "zzz_new" treated as processed-only')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('unknown runtime categories are filed under the other lane', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const rawCategory: string = 'archive'
+    const file = makeFile({ id: 'w', category: rawCategory as Category, status: 'done' })
+    try {
+      const lanes = groupByCategory([file])
+      expect(lanes).toHaveLength(1)
+      expect(lanes[0].category).toBe('other')
+      expect(lanes[0].files.map((f) => f.id)).toEqual(['w'])
+      expect(warn).toHaveBeenCalledWith('unknown file category "archive" filed under other')
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('empty input yields no lanes and zero counts', () => {

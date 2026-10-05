@@ -20,6 +20,10 @@ export type StatusFilter = 'all' | 'compressing' | 'complete' | 'below_target' |
 
 export const LANE_ORDER = ['image', 'video', 'pdf', 'document', 'other'] as const satisfies readonly Category[]
 
+type MissingLanes = Exclude<Category, (typeof LANE_ORDER)[number]>
+type AssertNever<T extends never> = T
+export type LaneOrderCoverage = AssertNever<MissingLanes>
+
 export interface CategoryLane {
   category: Category
   files: FileEntry[]
@@ -36,8 +40,9 @@ export interface BatchCounts {
 }
 
 type CountBucket = 'processing' | 'complete' | 'belowTarget' | 'failed' | 'queued'
+type StatusBucket = CountBucket | 'processedOnly' | 'unsupported'
 
-const STATUS_BUCKETS: Record<FileStatus, CountBucket | 'processedOnly' | 'unsupported'> = {
+const STATUS_BUCKETS: Record<FileStatus, StatusBucket> = {
   pending: 'queued',
   compressing: 'processing',
   done: 'complete',
@@ -48,33 +53,53 @@ const STATUS_BUCKETS: Record<FileStatus, CountBucket | 'processedOnly' | 'unsupp
   already_under_target: 'belowTarget',
 }
 
-export function isTerminal(status: FileStatus): boolean {
+function bucketOf(status: FileStatus): StatusBucket {
   const bucket = STATUS_BUCKETS[status]
+  if (bucket) return bucket
+  console.warn(`unknown file status "${status}" treated as processed-only`)
+  return 'processedOnly'
+}
+
+function laneOf(category: Category): Category {
+  if (LANE_ORDER.includes(category)) return category
+  console.warn(`unknown file category "${category}" filed under other`)
+  return 'other'
+}
+
+function countsTowardProcessed(bucket: StatusBucket): boolean {
   return bucket !== 'unsupported' && bucket !== 'processing' && bucket !== 'queued'
 }
 
+export function isTerminal(status: FileStatus): boolean {
+  if (!(status in STATUS_BUCKETS)) return false
+  return countsTowardProcessed(bucketOf(status))
+}
+
 function laneRank(status: FileStatus): number {
-  if (status === 'compressing') return 0
-  if (isTerminal(status)) return 1
+  const bucket = bucketOf(status)
+  if (bucket === 'processing') return 0
+  if (countsTowardProcessed(bucket)) return 1
   return 2
 }
 
 export function groupByCategory(files: FileEntry[]): Array<CategoryLane> {
   const lanes = new Map<Category, FileEntry[]>()
   for (const file of files) {
-    if (STATUS_BUCKETS[file.status] === 'unsupported') continue
-    const lane = lanes.get(file.category)
+    if (bucketOf(file.status) === 'unsupported') continue
+    const category = laneOf(file.category)
+    const lane = lanes.get(category)
     if (lane) {
       lane.push(file)
     } else {
-      lanes.set(file.category, [file])
+      lanes.set(category, [file])
     }
   }
   return LANE_ORDER.flatMap((category) => {
     const lane = lanes.get(category)
-    return lane
-      ? [{ category, files: lane.slice().sort((a, b) => laneRank(a.status) - laneRank(b.status)) }]
-      : []
+    if (!lane) return []
+    const ranked = lane.map((file) => ({ file, rank: laneRank(file.status) }))
+    ranked.sort((a, b) => a.rank - b.rank)
+    return [{ category, files: ranked.map((entry) => entry.file) }]
   })
 }
 
@@ -89,27 +114,27 @@ export function batchCounts(files: FileEntry[]): BatchCounts {
     processed: 0,
   }
   for (const file of files) {
-    const bucket = STATUS_BUCKETS[file.status]
+    const bucket = bucketOf(file.status)
     if (bucket === 'unsupported') continue
     counts.all += 1
-    if (bucket !== 'processing' && bucket !== 'queued') counts.processed += 1
+    if (countsTowardProcessed(bucket)) counts.processed += 1
     if (bucket !== 'processedOnly') counts[bucket] += 1
   }
   return counts
 }
 
 export function laneDonePill(files: FileEntry[]): { done: number; total: number } {
-  const inLane = files.filter((file) => STATUS_BUCKETS[file.status] !== 'unsupported')
-  const done = inLane.filter((file) => isTerminal(file.status)).length
+  const inLane = files.filter((file) => bucketOf(file.status) !== 'unsupported')
+  const done = inLane.filter((file) => countsTowardProcessed(bucketOf(file.status))).length
   return { done, total: inLane.length }
 }
 
 const FILTER_PREDICATES: Record<Exclude<StatusFilter, 'all'>, (status: FileStatus) => boolean> = {
-  compressing: (status) => STATUS_BUCKETS[status] === 'processing',
-  complete: (status) => STATUS_BUCKETS[status] === 'complete',
-  below_target: (status) => STATUS_BUCKETS[status] === 'belowTarget',
-  failed: (status) => STATUS_BUCKETS[status] === 'failed',
-  queued: (status) => STATUS_BUCKETS[status] === 'queued',
+  compressing: (status) => bucketOf(status) === 'processing',
+  complete: (status) => bucketOf(status) === 'complete',
+  below_target: (status) => bucketOf(status) === 'belowTarget',
+  failed: (status) => bucketOf(status) === 'failed',
+  queued: (status) => bucketOf(status) === 'queued',
 }
 
 export function filterFiles(files: FileEntry[], filter: StatusFilter): FileEntry[] {
