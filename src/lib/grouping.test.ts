@@ -208,7 +208,7 @@ describe('grouping', () => {
     const rawStatus: string = 'zzz_new'
     const file = makeFile({ id: 'u', status: rawStatus as FileStatus })
     try {
-      expect(isTerminal(file.status)).toBe(false)
+      expect(isTerminal(file.status)).toBe(true)
       expect(batchCounts([file])).toEqual({
         all: 1,
         processing: 0,
@@ -220,6 +220,7 @@ describe('grouping', () => {
       })
       expect(laneDonePill([file])).toEqual({ done: 1, total: 1 })
       expect(warn).toHaveBeenCalledWith('unknown file status "zzz_new" treated as processed-only')
+      expect(warn).toHaveBeenCalledTimes(1)
     } finally {
       warn.mockRestore()
     }

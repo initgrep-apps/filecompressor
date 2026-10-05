@@ -53,16 +53,24 @@ const STATUS_BUCKETS: Record<FileStatus, StatusBucket> = {
   already_under_target: 'belowTarget',
 }
 
+const WARNED = new Set<string>()
+
+function warnOnce(message: string): void {
+  if (WARNED.has(message)) return
+  WARNED.add(message)
+  console.warn(message)
+}
+
 function bucketOf(status: FileStatus): StatusBucket {
   const bucket = STATUS_BUCKETS[status]
   if (bucket) return bucket
-  console.warn(`unknown file status "${status}" treated as processed-only`)
+  warnOnce(`unknown file status "${status}" treated as processed-only`)
   return 'processedOnly'
 }
 
 function laneOf(category: Category): Category {
   if (LANE_ORDER.includes(category)) return category
-  console.warn(`unknown file category "${category}" filed under other`)
+  warnOnce(`unknown file category "${category}" filed under other`)
   return 'other'
 }
 
@@ -71,7 +79,6 @@ function countsTowardProcessed(bucket: StatusBucket): boolean {
 }
 
 export function isTerminal(status: FileStatus): boolean {
-  if (!(status in STATUS_BUCKETS)) return false
   return countsTowardProcessed(bucketOf(status))
 }
 
