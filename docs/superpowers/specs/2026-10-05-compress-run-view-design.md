@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-05
 **Status:** Approved design, pending implementation plan
-**Mockups:** `docs/mockups/2026-10-05-compress-run-view.html` (run screens) · `docs/mockups/2026-10-05-staging-states.html` (staging states)
+**Mockups:** `docs/mockups/2026-10-05-compress-run-view.html` (run screens) · `docs/mockups/2026-10-05-staging-states.html` (staging states) · `docs/mockups/2026-10-05-chip-filters.html` (chip filtering)
 
 ---
 
@@ -17,7 +17,7 @@ A two-screen compress flow:
 1. **Staging** — drop/browse, review staged files, Compress. The app always opens here.
 2. **Run monitor** — opened by pressing Compress. A kanban-style board with one lane per file category present in the batch. Actively compressing rows are visually pinned at the top of their lane, finished rows below, queued rows last. The screen is locked while the batch runs; results and the exit action appear when it completes.
 
-Non-goals (explicitly cut from the Stitch mockups and this iteration): Pause All (backend has no pause), Batch Presets / Auto-Quality panel (overlaps Settings; future feature), CPU/RAM/AVX2/SIMD/throughput/ETA telemetry (not provided by the core; fabricated data is a trust risk), "Show Finished" collapse toggle (rows stay expanded; no expand/collapse controls), interactive filter chips, "Archives/Data" category, PRO badge, CLI status, flavor text, Thread/Seq numbering, history sidebar badge.
+Non-goals (explicitly cut from the Stitch mockups and this iteration): Pause All (backend has no pause), Batch Presets / Auto-Quality panel (overlaps Settings; future feature), CPU/RAM/AVX2/SIMD/throughput/ETA telemetry (not provided by the core; fabricated data is a trust risk), "Show Finished" collapse toggle (rows stay expanded; no expand/collapse controls), "Archives/Data" category, PRO badge, CLI status, flavor text, Thread/Seq numbering, history sidebar badge.
 
 ## 3. Locked decisions (from design review)
 
@@ -27,7 +27,7 @@ Non-goals (explicitly cut from the Stitch mockups and this iteration): Pause All
 | Layout | Horizontal kanban lanes, one per category present in the batch. Single-type batch = one lane, left-aligned. Lanes scroll horizontally when the window is narrow. |
 | Lane row order | Compressing (top) → completed (drop order) → queued/pending (bottom). No section headers; state conveyed by row styling and icons. |
 | Collapse | None, anywhere. |
-| Status chips | Non-interactive summary counters: All files · Processing · Complete · Below target · Failed · Queued. Zero-count chips are hidden; `All files` is always shown. |
+| Status chips | Interactive **single-select filters** (default `All files`): click a chip to show only rows with that status. Counts are always computed from the full roster and never change when filtering. Zero-count chips hidden; `All files` always shown. Clicking the active chip again resets to `All`. |
 | Batch header | `Batch #<n>` pill + status pill that transitions `Compressing` (pulsing dot) → `Complete` (solid, check icon). |
 | Run screen lock | No drop zone, no add-files, no back button while running. Dropping during a run shows a toast: "Batch in progress — wait until it completes". |
 | Exit | `New batch` button appears when the batch completes (or is cancelled). Returns to staging with final statuses intact. |
@@ -89,7 +89,13 @@ When a file drag enters the window, the drop surface wakes up: border solidifies
 
 ### 6.2 Chips row
 
-Counters computed from the roster: `All files n · Processing n · Complete n · Below target n · Failed n · Queued n`, plus right-aligned `x/y processed` (y = roster size, x = terminal statuses) with a thin overall progress bar. `Complete` counts `done` + `best_effort`; `Below target` counts `already_under_target`; `Queued` counts `pending`; `Processing` counts `compressing`.
+Chips are single-select filters: `All files n · Processing n · Complete n · Below target n · Failed n · Queued n`, plus right-aligned `x/y processed` (y = roster size, x = terminal statuses) with a thin overall progress bar. `Complete` counts `done` + `best_effort`; `Below target` counts `already_under_target`; `Queued` counts `pending`; `Processing` counts `compressing`.
+
+Filtering rules:
+- Selecting a chip (other than `All files`) renders only rows with that status; lanes with zero matching rows are not rendered. Counts and the overall progress bar always reflect the full roster, never the filtered view.
+- Rows that change status while filtered animate out of the board (AnimatePresence exit); e.g. under the `Queued` filter the queue visibly shrinks as rows start compressing.
+- If the active filter empties the board entirely, show a one-line empty message ("Nothing failed right now" / "Nothing queued right now" / etc.) with a `Show all` link that resets the filter.
+- Chips are buttons with `aria-pressed`; the active chip gets its status color at full strength (failed filter = destructive styling).
 
 ### 6.3 Kanban board
 
@@ -128,7 +134,7 @@ src/
   components/run/KanbanBoard.tsx    # horizontal lanes container
   components/run/Lane.tsx           # lane header + rows
   components/run/RunRow.tsx         # row variants (compressing/completed/queued)
-  lib/grouping.ts                   # pure: roster → lanes + counts + lane ordering
+  lib/grouping.ts                   # pure: roster → lanes + counts + lane ordering; filterByStatus(files, chip)
   lib/strategyLabels.ts             # pure: strategy id → { label, lossless } display mapping
   hooks/useCompression.ts           # + strategyUsed/qualityUsed capture into files; + cancelled flag ref
 ```
@@ -156,12 +162,12 @@ src/
 
 ## 11. Testing
 
-- `lib/grouping.test.ts`: lane assignment, lane ordering (compressing → terminal → pending), counts aggregation, single-category case, unsupported exclusion.
+- `lib/grouping.test.ts`: lane assignment, lane ordering (compressing → terminal → pending), counts aggregation, single-category case, unsupported exclusion, `filterByStatus` (each chip value, hidden empty lanes, full-roster count invariance).
 - `lib/strategyLabels.test.ts`: known ids map to label + lossless flag; unknown id passthrough.
 - `useCompression.test.ts`: `file:complete` with `strategyUsed`/`qualityUsed` updates the file entry; cancelled-batch flag exposes "Batch cancelled" path.
 - `CompressView.test.tsx`: staging → run on compress; locked screen (no drop zone/back) while running; `New batch` returns to staging; chips reflect counts; batch number increments across runs.
 - `DropZone.test.tsx`: empty state renders full-surface variant with format pills; populated state renders compact hero with mono formats line; click/Enter on surface triggers browse; drag-over applies hover state and file count.
-- `RunHeader`/`Lane`/`RunRow` render tests: status pill transitions, zero-count chip hiding, reveal/cancel/remove wiring.
+- `RunHeader`/`Lane`/`RunRow` render tests: status pill transitions, chip filter selection + `aria-pressed` + reset, filtered-board empty message with `Show all` link, zero-count chip hiding, reveal/cancel/remove wiring.
 - Rust: extend existing queue tests to assert the `file:complete` event payload includes strategy fields.
 - Gate: `yarn build && yarn test && cd src-tauri && cargo test`.
 
