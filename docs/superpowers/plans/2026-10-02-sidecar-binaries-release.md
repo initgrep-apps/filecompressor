@@ -297,7 +297,7 @@ git commit -m "feat(binaries): manifest-driven fetch with arch gate; fix Intel f
   - `pub fn resolve_gs_resources(exe_dir: &Path) -> Option<GsResources>` in `sidecar.rs`; candidate dirs (first existing wins): `exe_dir/../Resources/gs-resources`, `exe_dir/../../gs-resources`, `exe_dir/resources/gs-resources`, `exe_dir/gs-resources`.
   - `gs_args(dpi, jpegq, input, output, resources: Option<&GsResources>) -> Vec<String>` — when resources present, args are `-I<search_paths joined>` (one `-I` per path, each as its own arg, in order: Resource/Init, lib, Resource/Font, fonts) followed by `-uICCProfilesDir=<icc>` when present (corrected to `-uICCProfilesDir`: `-sICCProfilesDir` is not a pdfwrite parameter and aborts device init — see Execution Notes), prepended BEFORE existing `-sDEVICE=pdfwrite`; when absent, output must be byte-identical to today's args (existing tests pin order).
 
-- [ ] **Step 1: Extend manifest with qpdf/vips/gs (mac arm64)**
+- [x] **Step 1: Extend manifest with qpdf/vips/gs (mac arm64)**
 
 Add to `aarch64-apple-darwin`:
 ```json
@@ -317,40 +317,40 @@ Add to `aarch64-apple-darwin`:
 }
 ```
 
-- [ ] **Step 2: TDD fetch `lib` staging + gs resource staging**
+- [x] **Step 2: TDD fetch `lib` staging + gs resource staging**
 
 Add to `fetch.test.mjs`: qpdf-style fixture with `member` + `lib` stages the binary to `binaries/` (rewritten load commands are prep's concern) and copies the lib dir to `.staging/<name>-<triple>/lib/`; verify test asserts the lib dir exists there.
 Run: `yarn vitest run scripts/binaries/fetch.test.mjs` → expect new tests FAIL, implement, PASS.
 
-- [ ] **Step 3: TDD prep: staging-aware dylib collection + gs resources staging**
+- [x] **Step 3: TDD prep: staging-aware dylib collection + gs resources staging**
 
 Extend `bundle-pdf-macos.sh` `collect_deps_of`: before `find_in_brew`, when resolving `@rpath/<base>`, substitute `@loader_path` against `<root>/src-tauri/.staging/qpdf-<triple>/lib` — i.e. add candidate `${STAGING_QPDF_LIB}/<depbase>`. When staging lib exists, prefer it over frameworks and, before collection, `rm -f "$FRAMEWORKS/libqpdf.30.dylib"` so the official lib replaces the brew-era copy (fingerprint guard intentionally bypassed only for this replacement; log `note: replacing frameworks/libqpdf.* with official qpdf lib`).
 Extend `bundle-pdf-macos.sh` after codesign: stage gs resources: `GSPREFIX="$(brew --prefix ghostscript)"`; copy `share/ghostscript/{Resource,lib,iccprofiles,fonts}` → `<root>/src-tauri/gs-resources/` (delete target first; fail if any source missing). Same content check must be deterministic (sorted copy).
 `prep.mjs` for `--target *-apple-darwin`: run `bundle-vips-macos.sh` then `bundle-pdf-macos.sh`; then write lock entries for vips/gs from `brew list --versions`.
 Local verification (this machine, brew gs present): `yarn binaries:prep --target aarch64-apple-darwin && ls src-tauri/gs-resources/Resource/Init/gs_init.ps` → exists.
 
-- [ ] **Step 4: TDD Rust `GsResources` resolution**
+- [x] **Step 4: TDD Rust `GsResources` resolution**
 
 In `sidecar.rs` tests: `resolve_gs_resources_prefers_bundle_layout` (temp dir with `Resources/gs-resources/Resource/Init/gs_init.ps` + `fonts/` → resolves, `search_paths` ordered Init, lib, Resource/Font, fonts, `icc_profiles_dir` = Some when `iccprofiles/` exists); `resolve_gs_resources_returns_none_when_absent`; `resolve_for_attaches_gs_resources` (SidecarPaths gains the field).
 Run: `cd src-tauri && cargo test resolve_gs_resources` → FAIL → implement → PASS. `SidecarPaths::resolve_for` sets `gs_resources: resolve_gs_resources(exe_dir)`.
 
-- [ ] **Step 5: TDD gs args with resources**
+- [x] **Step 5: TDD gs args with resources**
 
 In `pdf.rs` tests: `gs_args_prepend_resource_flags_in_order` — with resources (4 paths + icc), assert args begin `["-I<init>", "-I<lib>", "-I<font>", "-I<fonts>", "-uICCProfilesDir=<icc>", "-sDEVICE=pdfwrite", ...]` (corrected to `-uICCProfilesDir`: `-sICCProfilesDir` is not a pdfwrite parameter and aborts device init — see Execution Notes); `gs_args_without_resources_match_today` — None/resources-absent yields exactly the current argument vector (existing tests unchanged). Thread `sidecar_paths.gs_resources.as_ref()` through `pass_spec`/`gs_args` call sites.
 Run: `cd src-tauri && cargo test gs_args` → FAIL → implement → PASS.
 
-- [ ] **Step 6: Clean-room gs smoke in audit (bundled resources only)**
+- [x] **Step 6: Clean-room gs smoke in audit (bundled resources only)**
 
 Add to `audit-sidecars.sh` (mac): when `gs-resources` exists, run gs with `env -i HOME=/nonexistent PATH=/usr/bin:/bin` and `-I` flags for the four staged dirs, rendering a font-using fixture (`/Helvetica findfont … show showpage`) → assert exit 0 and output file > 1 KB. This is the regression guard for the "works only via brew" defect. (True no-brew clean room runs in CI later: install → stage → `brew uninstall ghostscript` → smoke; out of scope here.)
 Verify: `bash scripts/audit-sidecars.sh` → PASS includes `gs clean-room smoke: PASS`.
 
-- [ ] **Step 7: tauri.conf resources + full end-to-end acceptance**
+- [x] **Step 7: tauri.conf resources + full end-to-end acceptance**
 
 `src-tauri/tauri.conf.json` bundle add: `"resources": { "gs-resources/": "gs-resources/" }` (map notation; verify with `yarn tauri build --no-bundle` that `Contents/Resources/gs-resources/Resource/Init/gs_init.ps` lands in the `.app`).
 Manual acceptance (this machine): `yarn tauri dev`, compress one JPEG, one MP4, one PDF with Homebrew Ghostscript temporarily renamed (`mv /opt/homebrew/opt/ghostscript /opt/homebrew/opt/ghostscript.bak`, restore after) → PDF still compresses to target; `ps` shows gs running with `-I` flags.
 Record results in `docs/superpowers/plans/2026-10-02-sidecar-binaries-release.md` Execution Notes when executing.
 
-- [ ] **Step 8: Full gate + commit**
+- [x] **Step 8: Full gate + commit**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: all green.
@@ -579,22 +579,40 @@ git commit -m "feat(binaries): macOS Intel target manifest (Riedl amd64, qpdf x8
 - Boundary rules enforced (per AGENTS.md)
 - Produces: `sbom.json` (CycloneDX-lite shape: `{ "generated": ISO, "components": [ { "name", "version", "license", "source", "sha256", "targets": [triple] } ] }`) and `THIRD_PARTY_LICENSES.md` with one section per engine: name, version(s), license (FFmpeg GPLv2+, Ghostscript AGPLv3, vips LGPL-3.0, qpdf Apache-2.0), source URL, and the license text pointer.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 `sbom.test.mjs` (node env): fixture lock with two targets and three engines → `components` dedupe by (name, version) with merged `targets` arrays; every component has `license` from a pure `licenseFor(name)` map (`ffmpeg/ffprobe -> "GPL-2.0-or-later"`, `gs -> "AGPL-3.0"`, `vips -> "LGPL-3.0"`, `qpdf -> "Apache-2.0"`); markdown contains one heading per component and all four license identifiers.
 Run: `yarn vitest run scripts/binaries/sbom.test.mjs` → FAIL.
 
-- [ ] **Step 2: Implement, make pass, generate**
+- [x] **Step 2: Implement, make pass, generate**
 
 Implement `sbom.mjs` (no deps); run `yarn sbom`; inspect `sbom.json` + `THIRD_PARTY_LICENSES.md` for the real lock (mac arm64 rows after Tasks 1–2).
 Run: `yarn vitest run scripts/binaries/sbom.test.mjs` → PASS.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add -A
 git commit -m "feat(binaries): SBOM + third-party license notices from lock"
 ```
+
+**Execution Notes — Task 5 (SBOM + License Notices)**
+
+**Delivered.** `yarn sbom` now reads `scripts/binaries.lock.json` and writes `sbom.json` (CycloneDX-lite) + `THIRD_PARTY_LICENSES.md`. Components are deduped by `name+version` with merged `targets` arrays. License map: `ffmpeg/ffprobe` → `GPL-2.0-or-later`, `gs` → `AGPL-3.0`, `vips` → `LGPL-3.0`, `qpdf` → `Apache-2.0`. Brew components carry `sha256: null` (portable lock requirement). `yarn sbom` against the current lock (mac arm64) produces 5 single-target components; the cross-target merge path is tested by the fixture but not exercised by the committed lock.
+
+**Three defects found by the tests and fixed in implementation:**
+
+1. **Two `## ffmpeg` sections rendered identically.** Components are keyed by `name+version`; if two versions exist, two headings `## ffmpeg` would be indistinguishable. Headings now carry the version (`## ffmpeg 9.0.2`).
+
+2. **Merged components mislabelled digests.** The original merge was first-write-wins, so the arm64 zip's `sha256` was carried as if it covered the Intel zip too — a verifier could "confirm" a download that was never verified. Merged components now carry per-target `artifacts` arrays; the scalar `sha256` appears only when all targets agree, otherwise the notice says "differs per target". This activates when Intel/Windows rows are fetched.
+
+3. **Wall-clock `generated` made staleness undetectable.** The notice says "fail the release if it is stale", which is impossible against output that changes on every run. Both artifacts are now pure functions of the lock; a lock with no `generated` is a hard error.
+
+**Brew `sha256: null`** is deliberate — `stagedSha256` is machine-local and non-portable; shipping it in a committed SBOM would recreate the lock-coupling problem from Task 2.
+
+**Required Tests status.** All 5 plan-required tests plus 8 additions: `components_dedupe_by_name_version_with_merged_targets`, `license_for_maps_all_four_engines_and_rejects_unknown`, `markdown_contains_one_heading_per_component_and_all_four_license_ids`, `sbom_fails_clearly_when_lock_missing_or_empty`, `sbom_handles_brew_rows_without_sha256`, plus the version-in-heading, per-target artifacts, missing-generated, duplicate `sbom_fails...` variants, and `rejects_unknown` with a `licenseFor` test.
+
+**Gate.** `yarn build && yarn test && cd src-tauri && cargo test` → **465 vitest** (was 452; +13), **418 cargo** (unchanged). `yarn binaries:all --target aarch64-apple-darwin` still prints `gs clean-room smoke: PASS (3514 bytes, 5 staged resource flags, sentinel resolved)` and the byte-identical `sidecar audit: PASS (5 binaries, 71 framework dylibs)`.
 
 ---
 
