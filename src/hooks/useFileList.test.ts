@@ -23,12 +23,16 @@ const mockEntry = {
 beforeEach(() => vi.clearAllMocks())
 
 describe('useFileList', () => {
-  it('adds files via IPC', async () => {
+  it('adds files via IPC and normalizes strategy fields to null', async () => {
     vi.mocked(invoke).mockResolvedValueOnce([mockEntry])
     const { result } = renderHook(() => useFileList())
     await act(() => result.current.addFiles(['/t/a.jpg']))
     expect(invoke).toHaveBeenCalledWith('add_files', { filePaths: ['/t/a.jpg'] })
     expect(result.current.files).toHaveLength(1)
+    expect(result.current.files[0]).toMatchObject({
+      strategyUsed: null,
+      qualityUsed: null,
+    })
     expect(result.current.error).toBeNull()
   })
 

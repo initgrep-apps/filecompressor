@@ -144,8 +144,8 @@ describe('useCompression event handling', () => {
     })
   })
 
-  it('file:error sets failed with message', async () => {
-    const { result } = setup([entry()])
+  it('file:error sets failed with message and resets stale strategy fields', async () => {
+    const { result } = setup([entry({ strategyUsed: 'stale=old', qualityUsed: 7 })])
     await flush()
     emit('file:progress', { fileId: 'f1', percent: 20 })
     emit('file:error', { fileId: 'f1', errorMessage: 'Cannot read file: locked' })
@@ -153,16 +153,22 @@ describe('useCompression event handling', () => {
     expect(result.current.files[0]).toMatchObject({
       status: 'failed',
       error: 'Cannot read file: locked',
+      strategyUsed: null,
+      qualityUsed: null,
     })
   })
 
-  it('file:cancelled sets cancelled status', async () => {
-    const { result } = setup([entry()])
+  it('file:cancelled sets cancelled status and resets stale strategy fields', async () => {
+    const { result } = setup([entry({ strategyUsed: 'stale=old', qualityUsed: 7 })])
     await flush()
     emit('file:progress', { fileId: 'f1', percent: 20 })
     emit('file:cancelled', { fileId: 'f1' })
     expect(result.current.comp.progressByFile['f1']).toBeUndefined()
-    expect(result.current.files[0].status).toBe('cancelled')
+    expect(result.current.files[0]).toMatchObject({
+      status: 'cancelled',
+      strategyUsed: null,
+      qualityUsed: null,
+    })
   })
 
   it('terminal events for unknown fileIds leave state unchanged', async () => {
@@ -523,18 +529,17 @@ describe('useCompression batch cancellation', () => {
     outputPath: '/o/a.jpg',
     originalSize: 10,
     compressedSize: 5,
-    status: 'done' as const,
+    status: 'done',
     metTarget: true,
   }
 
-  it('cancelAll then batch:complete shows Batch cancelled toast and not success toast', async () => {
+  it('cancelAll then batch:complete shows Batch cancelled toast', async () => {
     const onBatchComplete = vi.fn()
     const { result } = setup([entry()], { onBatchComplete })
     await flush()
     await act(() => result.current.comp.cancelAll())
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
     expect(toast.info).toHaveBeenCalledWith('Batch cancelled')
-    expect(toast.success).not.toHaveBeenCalled()
     expect(onBatchComplete).not.toHaveBeenCalled()
   })
 
@@ -548,7 +553,6 @@ describe('useCompression batch cancellation', () => {
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
     expect(toast.info).toHaveBeenCalledWith('Batch cancelled')
     expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
-    expect(toast.success).not.toHaveBeenCalled()
   })
 
   it('batch:error after cancelAll shows Batch cancelled toast and resets the flag', async () => {

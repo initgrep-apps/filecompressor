@@ -101,6 +101,12 @@ export function useCompression(
       callbacksRef.current?.onBatchError?.('Lost connection to compression worker')
     }
 
+    const clearCancelled = () => {
+      if (!cancelledRef.current) return
+      cancelledRef.current = false
+      toast.info('Batch cancelled')
+    }
+
     listen<ProgressPayload>('file:progress', (e) => {
       const { fileId, percent } = e.payload
       const file = filesRef.current.find((f) => f.id === fileId)
@@ -117,7 +123,14 @@ export function useCompression(
       .catch(reportListenFailure('file:progress'))
 
     listen<CompletePayload>('file:complete', (e) => {
-      const { fileId, outputPath, compressedSize, status, strategyUsed = null, qualityUsed = null } = e.payload
+      const {
+        fileId,
+        outputPath,
+        compressedSize,
+        status,
+        strategyUsed = null,
+        qualityUsed = null,
+      } = e.payload
       if (filesRef.current.some((f) => f.id === fileId)) {
         processedCountRef.current += 1
       }
@@ -142,7 +155,9 @@ export function useCompression(
       dropProgress(fileId)
       setFiles((prev) =>
         prev.map((f) =>
-          f.id === fileId ? { ...f, status: 'failed', error: errorMessage } : f
+          f.id === fileId
+            ? { ...f, status: 'failed', error: errorMessage, strategyUsed: null, qualityUsed: null }
+            : f
         )
       )
     })
@@ -154,7 +169,9 @@ export function useCompression(
       dropProgress(fileId)
       setFiles((prev) =>
         prev.map((f) =>
-          f.id === fileId ? { ...f, status: 'cancelled' } : f
+          f.id === fileId
+            ? { ...f, status: 'cancelled', strategyUsed: null, qualityUsed: null }
+            : f
         )
       )
     })
@@ -167,10 +184,7 @@ export function useCompression(
       const errors = errorCountRef.current
       processedCountRef.current = 0
       errorCountRef.current = 0
-      if (cancelledRef.current) {
-        toast.info('Batch cancelled')
-        cancelledRef.current = false
-      }
+      clearCancelled()
       if (processed > 0) {
         callbacksRef.current?.onBatchComplete?.(e.payload.totalSavedBytes, processed, errors)
       }
@@ -182,10 +196,7 @@ export function useCompression(
       setIsCompressing(false)
       processedCountRef.current = 0
       errorCountRef.current = 0
-      if (cancelledRef.current) {
-        toast.info('Batch cancelled')
-        cancelledRef.current = false
-      }
+      clearCancelled()
       callbacksRef.current?.onBatchError?.(e.payload.errorMessage)
     })
       .then(done)
