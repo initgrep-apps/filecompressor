@@ -170,8 +170,10 @@ Install dependency first: `yarn add motion`.
 **Files:**
 - Modify: `src/providers/CompressionProvider.tsx` (run state machine)
 - Modify: `src/views/CompressView.tsx` (full rewrite of body)
+- Modify: `src/components/FileList.tsx` (staging table slim-down: remove the compressing-row progress bar and per-row Cancel button — unreachable now that a run always shows the run screen; keep Status badges for terminal statuses, remove button, reveal for rows with output from a finished run)
 - Modify: `src/providers/CompressionProvider.test.tsx`
 - Test: `src/views/CompressView.test.tsx` (rewrite cases that assert the old single-screen flow)
+- Test: `src/components/FileList.test.tsx` (drop progress-bar/cancel cases, keep status/remove/reveal cases)
 
 **Interfaces:**
 - Consumes: `useCompression` (Task 1), `useFileList`, grouping lib (Task 2), `RunHeader`/`KanbanBoard` (Task 6), `DropZone` (Task 4), `FileList` (existing staging table).
@@ -189,7 +191,7 @@ Install dependency first: `yarn add motion`.
   - Review Focus #1: while running, simulated webview drop (mock listener) → toast "Batch in progress — wait until it completes", files unchanged. Implement: run screen mounts a minimal `getCurrentWebview().onDragDropEvent` listener (same try/catch pattern as DropZone) that calls `toast.info` on drop and ignores paths.
   - batch:error event → header shows Failed pill + error (integration of Task 6 component).
   - batch number increments on second compress.
-- [ ] **Step 6: Run `yarn test -- CompressView`. Expected: FAIL → implement view (staging + run screens; footer summary format change) → PASS.**
+- [ ] **Step 6: Run `yarn test -- CompressView FileList`. Expected: FAIL → implement view + FileList slim-down → PASS.**
 - [ ] **Step 7: Full gate: `yarn build && yarn test`. Expected: PASS. Commit** `feat(compress): two-screen compress flow with locked run monitor`
 
 ### Task 8: Sidebar Compress badge
