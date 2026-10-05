@@ -24,7 +24,8 @@
         "member": "bin/qpdf",
         "lib": "lib",
         "dest": "qpdf",
-        "expectVersion": "12.4.2"
+        "expectVersion": "12.4.2",
+        "assetPattern": "bin-macos-arm64\\.zip$"
       },
       "vips": {
         "source": "brew",
@@ -53,7 +54,8 @@
         "sha256": "74827e097445a136b803febd4dcf80f7cba7f14a4c612fb80f7b5e5cedd3ffbe",
         "member": "ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0/bin/ffmpeg.exe",
         "dest": "ffmpeg",
-        "expectVersion": "9.0.2"
+        "expectVersion": "9.0.2",
+        "assetPattern": "win64-gpl-9\\.0\\.zip$"
       },
       "ffprobe": {
         "source": "url",
@@ -61,7 +63,8 @@
         "sha256": "74827e097445a136b803febd4dcf80f7cba7f14a4c612fb80f7b5e5cedd3ffbe",
         "member": "ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0/bin/ffprobe.exe",
         "dest": "ffprobe",
-        "expectVersion": "9.0.2"
+        "expectVersion": "9.0.2",
+        "assetPattern": "win64-gpl-9\\.0\\.zip$"
       },
       "qpdf": {
         "source": "url",
@@ -69,7 +72,8 @@
         "sha256": "db87077e683630c1217e0e8f9a20a9749d952ab676e881c3689187763a5de25d",
         "member": "qpdf-12.4.2-msvc64/bin/qpdf.exe",
         "dest": "qpdf",
-        "expectVersion": "12.4.2"
+        "expectVersion": "12.4.2",
+        "assetPattern": "^qpdf-\\d[\\d.]*-msvc64\\.zip$"
       },
       "vips": {
         "source": "url",
@@ -77,7 +81,8 @@
         "sha256": "78e56ba30c267ba32ff965200534bd5721364cadbead8c4d595e44b58dfeff15",
         "member": "vips-dev-8.18/bin/vips.exe",
         "dest": "vips",
-        "expectVersion": "8.18.7"
+        "expectVersion": "8.18.7",
+        "assetPattern": "^vips-dev-x64-all-[\\d.]+\\.zip$"
       },
       "gs": {
         "source": "url",
@@ -101,7 +106,8 @@
         "sha256": "7263744331532e1606bfbac25b5c1a7dcd23091b44614787efd742d6a8dfa1a6",
         "member": "ffmpeg-n9.0.2-22-g46d8f462ee-winarm64-gpl-9.0/bin/ffmpeg.exe",
         "dest": "ffmpeg",
-        "expectVersion": "9.0.2"
+        "expectVersion": "9.0.2",
+        "assetPattern": "winarm64-gpl-9\\.0\\.zip$"
       },
       "ffprobe": {
         "source": "url",
@@ -109,7 +115,8 @@
         "sha256": "7263744331532e1606bfbac25b5c1a7dcd23091b44614787efd742d6a8dfa1a6",
         "member": "ffmpeg-n9.0.2-22-g46d8f462ee-winarm64-gpl-9.0/bin/ffprobe.exe",
         "dest": "ffprobe",
-        "expectVersion": "9.0.2"
+        "expectVersion": "9.0.2",
+        "assetPattern": "winarm64-gpl-9\\.0\\.zip$"
       },
       "qpdf": {
         "source": "url",
@@ -117,7 +124,8 @@
         "sha256": "2b5d7740a2513d8a841116692dc2cf7efe83f35262386ebab18bed35fbf15ab1",
         "member": "qpdf-12.4.2-msvc-arm64/bin/qpdf.exe",
         "dest": "qpdf",
-        "expectVersion": "12.4.2"
+        "expectVersion": "12.4.2",
+        "assetPattern": "^qpdf-\\d[\\d.]*-msvc-arm64\\.zip$"
       },
       "vips": {
         "source": "url",
@@ -125,7 +133,8 @@
         "sha256": "8f2d3a94bbc485a8226cdea012d3a76ac660a373a154fabcd772226978e56f4a",
         "member": "vips-dev-8.18/bin/vips.exe",
         "dest": "vips",
-        "expectVersion": "8.18.7"
+        "expectVersion": "8.18.7",
+        "assetPattern": "^vips-dev-arm64-all-[\\d.]+\\.zip$"
       },
       "gs": {
         "source": "url",
@@ -166,7 +175,8 @@
         "member": "bin/qpdf",
         "lib": "lib",
         "dest": "qpdf",
-        "expectVersion": "12.4.2"
+        "expectVersion": "12.4.2",
+        "assetPattern": "bin-macos-x86_64\\.zip$"
       },
       "vips": {
         "source": "brew",
