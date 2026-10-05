@@ -649,14 +649,14 @@ git commit -m "feat(binaries): SBOM + third-party license notices from lock"
   - others: report `manual pin — check vendor`.
 - Tests: fixture GitHub API JSON → resolver picks correct asset + parses sha; Riedl redirect fixture (local http) → versioned URL extracted; missing asset → clear error.
 
-- [ ] **Step 1: Write failing tests** (as above) → `yarn vitest run scripts/binaries/refresh.test.mjs` → FAIL.
-- [ ] **Step 2: Implement → PASS.**
-- [ ] **Step 3: Dry-run on this repo**
+- [x] **Step 1: Write failing tests** (as above) → `yarn vitest run scripts/binaries/refresh.test.mjs` → FAIL.
+- [x] **Step 2: Implement → PASS.**
+- [x] **Step 3: Dry-run on this repo**
 
 Run: `yarn binaries:refresh --dry-run`
 Expected: reports "no change" for pinned artifacts still present (all four mac arm64 sources), `brew: vips 8.18.7 unchanged`, exit 0.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add -A
@@ -843,3 +843,44 @@ Note that `set -e`, `set -eE` and `trap … ERR` are all inert in this position:
 **Third instance of the same bash trap, recorded so it is not repeated.** A plain `x="$(cmd)"` assignment lets the `ERR` trap fire *before* the next line can inspect `$?`, so the explicit status branch is unreachable. This silently disabled both the MEDIUM-9 enumeration guard and the MEDIUM-3 cross-check guard on the first attempt; both now capture under `if !`, and the shell test for each proves the intended message appears. Separately, `local` used at the top level of the script is a hard error — caught by the new repo-wide trap, which named it immediately.
 
 **Round-2 note for Task 3:** the Windows prep must also stage the four acceptance sentinels (`assertGsResourcesStaged` and `verify.mjs` now require them for any entry declaring `resources`), and must pin its own engine-folder contents the way `libStagedSha256` pins the qpdf lib.
+
+### Task 6 (binaries:refresh — version bump flow) — execution notes
+
+**Delivered.** `yarn binaries:refresh` now provides vendor version bump automation with two modes:
+
+| Mode | Behaviour |
+|------|-----------|
+| `--dry-run` | Reports what would change; manifest + lock byte-identical before/after; exits 0 |
+| Default | Re-resolves latest per source, updates manifest pins + lock, re-runs fetch |
+
+**Per-source resolvers** (single-sourced in `scripts/binaries/lib.mjs`):
+
+| Source | Engines | Method |
+|--------|---------|--------|
+| `github-latest` | qpdf, vips-MXE, BtbN | GitHub Releases API `latest`; pick first asset matching `assetPattern` from manifest; update url+sha256 (BtbN: parse `checksums.sha256` asset) |
+| `riedl-latest` | ffmpeg mac | Follow redirect `https://ffmpeg.martin-riedl.de/redirect/latest/macos/<arch>/release/ffmpeg.zip` → versioned URL; sha256 from sibling `.sha256` |
+| `brew` | vips, gs | Compare `brew list --versions <formula>` to lock; report drift; update lock only (manifest `expectVersion` bumped manually — prints instruction) |
+| other | MSYS2 gs etc. | `manual pin — check vendor` |
+
+**Manifest gained `assetPattern`** (per binary, e.g. `win64-gpl-9\.0\.zip$`) for GitHub resolvers — verified against live releases to match exactly one asset.
+
+**Three live defects caught by the Step 3 dry-run (not by fixtures):**
+
+1. **Riedl's redirect answers GET and 404s HEAD**; the version lives only in the `Location` header. The argument-dropping adapter was deleted; redirect policy pinned against `followRedirects` directly.
+2. **GitHub's API returns 403 without a `User-Agent`** — every fixture passed while the real command would fail on every run. Now sent on every request.
+3. **libvips MXE publishes no checksum asset.** The `sha256` parse was a `error` that blocked writes for every other engine. Now a distinct standing manual action; qpdf/ffmpeg refresh remains usable.
+
+**BtbN's `releases/latest` is a rolling tag** whose asset names embed `latest`, not a build id. Against the pinned autobuild URL it reports `update` on every run even when the version is unchanged. The dry-run names the candidate URL and states `expectVersion stays 9.0.2 (the vendor's release tag carries no version)` so an operator judges it — auto-bumping BtbN is deliberately left to a human.
+
+**Windows/Intel targets are reported, not applied.** Only mac arm64 is fetchable here; the other three are exercised via read-only dry-run and fixtures. End-to-end verification on Intel/Windows stays deferred (Tasks 3/4).
+
+**Step 3 dry-run (live):**
+
+```
+yarn binaries:refresh --dry-run --target aarch64-apple-darwin
+→ all five mac arm64 sources unchanged, exit 0, manifest + lock byte-identical
+```
+
+**Gate:** `yarn build && yarn test && cd src-tauri && cargo test` → **495 vitest** (was 465; +30), **418 cargo** (unchanged). `yarn binaries:all --target aarch64-apple-darwin` prints `gs clean-room smoke: PASS (3514 bytes, 5 staged resource flags, sentinel resolved)` and the byte-identical `sidecar audit: PASS (5 binaries, 71 framework dylibs)`.
+
+**Revert-verified guards:** 24 reverts (RV1–RV23) on a pristine tree copy, each RED. Three guards found vacuous mid-verification and fixed rather than left (a PGP filter that `CHECKSUM_LINE` already made dead, the error-blocks-writes test rewritten to mix success+failure, a checksum-manifest preference the fixture never exercised).
