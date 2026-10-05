@@ -118,8 +118,13 @@ All from existing tokens: primary for active/success, destructive for failed, am
 
 ## 7. IPC changes (Rust)
 
-1. **`file:complete` payload gains strategy fields.** `queue.rs` already computes `strategy_used: Option<String>` and `quality_used: Option<u32>` when writing history records; add both to the emitted `CompletePayload` (serde camelCase: `strategyUsed`, `qualityUsed`). No processor changes.
-2. `compress_all` return value stays a `String` batchId (roster + batch number are frontend-derived). No other backend changes.
+**None required.** Verified against the code: `FileCompletePayload` (queue.rs:96-107, serde camelCase) already emits `qualityUsed` and `strategyUsed` on `file:complete`, populated at queue.rs:650-662, and the test `file_complete_payload_carries_strategy_fields` (queue.rs:1775) already pins the serialization. The work is frontend consumption: capture the fields into `FileEntry`.
+
+Known strategy string formats (from processors):
+- image: `quality={q}` / `quality={min_quality},dims={scale}%`
+- video: `two-pass h264 b={bitrate}k[ scale={w}]` / `crf={crf}[ scale={w}]`
+- pdf: `qpdf-lossless` / `qpdf-image-opt,jpeg-quality={q}` / `gs-screen` / `gs dpi={dpi},jpegq={q}`
+- document: `quality={q}` (deflate rebuild) / `best-effort …`
 
 Frontend types (`src/types.ts`): `FileEntry` gains `strategyUsed: string | null`, `qualityUsed: number | null`.
 
@@ -141,7 +146,8 @@ src/
 
 - `grouping.ts` is a pure module (unit-testable without DOM): `groupByCategory(files)`, `laneOrder(files)`, `batchCounts(files)`.
 - `strategyLabels.ts` maps known strategy ids emitted by processors to human labels + a lossless flag; unknown ids render raw without a lossy/lossless tag.
-- `App.tsx`: Compress nav badge = staged file count (needs `files` from context — already available via `useCompressionContext`).
+- `views/CompressView.tsx` renders per `runState.screen`, but the state machine itself (screen, batch roster, batch number) lives in `CompressionProvider` — CompressView unmounts when navigating to History/Settings mid-run, and the provider is what survives; returning to the Compress tab shows the run screen in its current phase (spec §4).
+- App.tsx: Compress nav badge = staged file count (needs `files` from context — already available via `useCompressionContext`).
 
 ## 9. Animation
 
@@ -168,7 +174,7 @@ src/
 - `CompressView.test.tsx`: staging → run on compress; locked screen (no drop zone/back) while running; `New batch` returns to staging; chips reflect counts; batch number increments across runs.
 - `DropZone.test.tsx`: empty state renders full-surface variant with format pills; populated state renders compact hero with mono formats line; click/Enter on surface triggers browse; drag-over applies hover state and file count.
 - `RunHeader`/`Lane`/`RunRow` render tests: status pill transitions, chip filter selection + `aria-pressed` + reset, filtered-board empty message with `Show all` link, zero-count chip hiding, reveal/cancel/remove wiring.
-- Rust: extend existing queue tests to assert the `file:complete` event payload includes strategy fields.
+- Rust: no changes needed — existing test `file_complete_payload_carries_strategy_fields` (queue.rs) already pins the payload; it runs in the gate.
 - Gate: `yarn build && yarn test && cd src-tauri && cargo test`.
 
 ## 12. Rollout
