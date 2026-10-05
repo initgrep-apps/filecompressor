@@ -1875,9 +1875,9 @@ cp "$(command -v vips)" "src-tauri/binaries/vips-$(rustc -Vv | grep host | sed '
 chmod +x src-tauri/binaries/vips-*
 ```
 
-Note: `command -v vips` copies the brew shim/binary. If the brew vips binary is a script wrapper or dylib-linked in a way that breaks standalone execution, build a static/portable binary instead — see `COMPRESSION_TOOLS_RESEARCH.md` for per-platform binary sources (Windows: `https://github.com/libvips/build-win64-mxe/releases`; Linux: distro package or build). Verify standalone execution: run the copied binary directly from the binaries dir.
+Note: `command -v vips` copies the brew shim/binary. If the brew vips binary is a script wrapper or dylib-linked in a way that breaks standalone execution, build a static/portable binary instead — per-platform binary sources: Windows: `https://github.com/libvips/build-win64-mxe/releases`; Linux: distro package or build. Verify standalone execution: run the copied binary directly from the binaries dir.
 
-Windows / Linux: download from the sources in `COMPRESSION_TOOLS_RESEARCH.md`, rename to `vips-x86_64-pc-windows-msvc.exe` / `vips-x86_64-unknown-linux-gnu`.
+Windows / Linux: download from `https://github.com/libvips/build-win64-mxe/releases` (Windows) or a distro package / local build (Linux), rename to `vips-x86_64-pc-windows-msvc.exe` / `vips-x86_64-unknown-linux-gnu`.
 
 - [x] **Step 2: Add externalBin to tauri.conf.json**
 

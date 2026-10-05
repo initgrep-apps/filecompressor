@@ -571,6 +571,6 @@ All 4 categories in v1:
 
 ## 10. Research References
 
-- **Compression tools research:** `COMPRESSION_TOOLS_RESEARCH.md` (CLI commands, licensing, binary sources per platform)
+- **Compression tools (decision record):** the standalone research report was retired on 2026-10-05; the decision it produced is recorded here. Chosen stack: **libvips CLI** for images and document embedded media (fastest, lowest memory, streaming architecture, LGPLv3 — chosen over ImageMagick which is slower and uses ~10× more memory); **FFmpeg + ffprobe** for video (industry standard, two-pass target-size H.264 encoding, GPLv2+); **qpdf** for lossless/lossy PDF optimization passes (Apache-2.0); **Ghostscript** for aggressive PDF recompression (AGPLv3); **Rust `zip` crate** for OOXML repack (unzip → recompress media → rezip at deflate 9). Rejected alternatives: ImageMagick (images), mutool/MuPDF (PDF). The authoritative, version-pinned record of binary sources, checksums, and licenses is `scripts/binaries.manifest.json` + `scripts/binaries.lock.json` (see the sidecar release spec).
 - **Tauri-skills security audit:** `full-stack-skills/tauri-skills` repo contains markdown prompt files only — no executable code, no network, no secrets. Safe to use as a topic index. Community-maintained (not official Tauri). Pin commit SHA if installing. Cross-check against `v2.tauri.app` docs.
 - **UI library research:** Every production Tauri+React app (Clypra, wealthfolio, clash-nyanpasu) uses Radix UI + Tailwind, most via shadcn/ui. No Tauri app uses Mantine/Chakra/Ant Design.

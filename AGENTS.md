@@ -8,7 +8,7 @@ Offline desktop app for batch-optimizing files to maximum size limits. Tauri 2 +
 
 - `PLAN_GLOB` — `docs/superpowers/plans/*.md`
 - `TECH_SPEC_PATH` — `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md`
-- `PRD_PATH` — `initial-spec.md`
+- `PRD_PATH` — `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md` (original `initial-spec.md` retired 2026-10-05; the approved design spec supersedes it)
 - `GATE_COMMAND` — `yarn build && yarn test && cd src-tauri && cargo test`
 - `GATE_E2E_COMMAND` — `none`
 - `BOUNDARY_RULES_REF` — `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md → Section 2: Architecture`
