@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-05
 **Status:** Approved design, pending implementation plan
-**Mockups:** `docs/mockups/2026-10-05-compress-run-view.html` (approved v2)
+**Mockups:** `docs/mockups/2026-10-05-compress-run-view.html` (run screens) · `docs/mockups/2026-10-05-staging-states.html` (staging states)
 
 ---
 
@@ -59,9 +59,26 @@ At `compressAll`, capture the ids of all `pending` files — this snapshot is th
 
 ## 5. Screen 1 — Staging
 
-- Hero: split layout — dashed drop zone (left, larger) + "Or choose a file from your system", primary **Browse your files** button, and the supported-formats line in mono (`JPEG, PNG, WebP, HEIC, MP4, MOV, PDF, DOCX, XLSX, PPTX`). Implemented by extending the existing `DropZone`.
+Staging has two states driven by `files.length === 0`; the transition between them animates (~280ms, `motion` layout, honors `prefers-reduced-motion`). The old "No files yet" empty-state card is removed entirely.
+
+### 5.1 Empty state (no files)
+
+- The **entire content area is the drop target**: one centered dashed surface (large icon, `Drag and drop files here`, primary **Browse your files** button, hint "…or click anywhere in this area").
+- The whole surface is a click/keyboard hit target (Enter/Space opens the file dialog; the inner Browse button remains for pointer/AT clarity). `role="button"` + `tabIndex=0` + aria-label.
+- **Supported formats render as category-colored pills with the category icon** (not plain text): blue Image (JPEG, PNG, WebP, HEIC), violet Video (MP4, MOV), red PDF, amber Document (DOCX, XLSX, PPTX). Pills reuse the same category palette and glyphs used by the staged-table chips and run-board lanes — one color language.
+- Compress sidebar badge is hidden at zero files.
+
+### 5.2 Drag-hover (both states)
+
+When a file drag enters the window, the drop surface wakes up: border solidifies to primary, background tints, icon scales, copy flips to `Release to add files` + `N files detected` (N from the real Tauri drag-event payload). In the populated state the compact hero bar reacts the same way. Drag-leave restores rest state.
+
+### 5.3 Populated state (files staged)
+
+- The drop surface condenses into a **compact hero bar**: small icon + `Drop more files here or [Browse]`, with the supported formats as a plain mono text line right-aligned (pills would compete with the table).
+- The bar remains a live drop target and click/keyboard target for adding more files at any time.
 - Table (existing `FileList`, kept): columns File · Original Size · Category · Target Size · Status (status column shows results when returning from a run) · remove. Unsupported rows dimmed with an `Unsupported` chip and no target.
 - Footer: `N files selected · Total size: ~X MB` (counts only compressible files) + `Clear List` + `▶ Compress` (disabled unless ≥ 1 pending and not running). Footer stays in the view's `CardFooter` as today.
+- Removing the last file (or Clear List) transitions back to the empty state with the same animation.
 
 ## 6. Screen 2/3 — Run monitor
 
@@ -105,7 +122,7 @@ Frontend types (`src/types.ts`): `FileEntry` gains `strategyUsed: string | null`
 ```
 src/
   views/CompressView.tsx            # state machine: staging | run; owns batch roster + batch number
-  components/staging/DropZone.tsx   # extended: split hero + supported line (existing component)
+  components/staging/DropZone.tsx   # two variants (empty full-surface | compact hero), format pills, drag-hover state
   components/FileList.tsx           # staging table (existing, footer counts move here or stay in view)
   components/run/RunHeader.tsx      # batch pills, chips row, overall progress, actions
   components/run/KanbanBoard.tsx    # horizontal lanes container
@@ -143,6 +160,7 @@ src/
 - `lib/strategyLabels.test.ts`: known ids map to label + lossless flag; unknown id passthrough.
 - `useCompression.test.ts`: `file:complete` with `strategyUsed`/`qualityUsed` updates the file entry; cancelled-batch flag exposes "Batch cancelled" path.
 - `CompressView.test.tsx`: staging → run on compress; locked screen (no drop zone/back) while running; `New batch` returns to staging; chips reflect counts; batch number increments across runs.
+- `DropZone.test.tsx`: empty state renders full-surface variant with format pills; populated state renders compact hero with mono formats line; click/Enter on surface triggers browse; drag-over applies hover state and file count.
 - `RunHeader`/`Lane`/`RunRow` render tests: status pill transitions, zero-count chip hiding, reveal/cancel/remove wiring.
 - Rust: extend existing queue tests to assert the `file:complete` event payload includes strategy fields.
 - Gate: `yarn build && yarn test && cd src-tauri && cargo test`.
