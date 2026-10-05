@@ -155,11 +155,11 @@ Input classes the spec implies that component tests could miss — each is pinne
 - `quality= with unmatched category falls through to the raw string`
 - `null returns empty string; unknown passes through raw` (incl. `already-under-target`)
 
-- [ ] **Step 1: Write failing tests** covering every row above (use real strings from spec §7), plus explicit suffix-stripping and precedence assertions per Required Tests.
-- [ ] **Step 2: Run `yarn test -- strategyLabels`. Expected: FAIL.**
-- [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run `yarn test -- strategyLabels`. Expected: PASS.**
-- [ ] **Step 5: Commit** `feat(compress): strategy label mapping for completed rows`
+- [x] **Step 1: Write failing tests** covering every row above (use real strings from spec §7), plus explicit suffix-stripping and precedence assertions per Required Tests.
+- [x] **Step 2: Run `yarn test -- strategyLabels`. Expected: FAIL.**
+- [x] **Step 3: Implement.**
+- [x] **Step 4: Run `yarn test -- strategyLabels`. Expected: PASS.**
+- [x] **Step 5: Commit** `feat(compress): strategy label mapping for completed rows`
 
 ### Task 4: `DropZone` — two variants (empty full-surface | compact hero)
 
