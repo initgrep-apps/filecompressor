@@ -61,18 +61,30 @@ describe('grouping', () => {
 
   it('groupByCategory orders lane rows compressing, then terminal, then queued', () => {
     const files = [
-      makeFile({ id: 'a', status: 'done' }),
-      makeFile({ id: 'b', status: 'pending' }),
-      makeFile({ id: 'c', status: 'compressing' }),
-      makeFile({ id: 'd', status: 'failed' }),
-      makeFile({ id: 'e', status: 'cancelled' }),
-      makeFile({ id: 'f', status: 'best_effort' }),
-      makeFile({ id: 'g', status: 'already_under_target' }),
+      makeFile({ id: 'z-done', status: 'done' }),
+      makeFile({ id: 'b-queued', status: 'pending' }),
+      makeFile({ id: 'c-zulu', status: 'compressing' }),
+      makeFile({ id: 'm-failed', status: 'failed' }),
+      makeFile({ id: 'a-queued', status: 'pending' }),
+      makeFile({ id: 'c-alpha', status: 'compressing' }),
+      makeFile({ id: 'q-best', status: 'best_effort' }),
+      makeFile({ id: 'e-under', status: 'already_under_target' }),
+      makeFile({ id: 'r-cancelled', status: 'cancelled' }),
     ]
     const lanes = groupByCategory(files)
     expect(lanes).toHaveLength(1)
     expect(lanes[0].category).toBe('image')
-    expect(lanes[0].files.map((f) => f.id)).toEqual(['c', 'a', 'd', 'e', 'f', 'g', 'b'])
+    expect(lanes[0].files.map((f) => f.id)).toEqual([
+      'c-zulu',
+      'c-alpha',
+      'z-done',
+      'm-failed',
+      'q-best',
+      'e-under',
+      'r-cancelled',
+      'b-queued',
+      'a-queued',
+    ])
   })
 
   it('groupByCategory omits lanes for categories not present and collapses all-one-category input to a single lane', () => {
