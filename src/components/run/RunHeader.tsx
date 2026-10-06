@@ -175,29 +175,29 @@ export function RunHeader({
           </span>
         </button>
         {FILTER_CHIPS.filter((chip) => counts[COUNT_KEYS[chip.value]] > 0).map((chip) => {
-            const active = statusFilter === chip.value
-            return (
-              <button
-                key={chip.value}
-                type="button"
-                data-testid={`chip-${chip.value}`}
-                aria-pressed={active}
-                className={cn(
-                  CHIP_BASE,
-                  active && (chip.value === 'failed' ? CHIP_ACTIVE_FAIL : CHIP_ACTIVE_PRIMARY)
-                )}
-                onClick={() => onFilterChange(active ? 'all' : chip.value)}
+          const active = statusFilter === chip.value
+          return (
+            <button
+              key={chip.value}
+              type="button"
+              data-testid={`chip-${chip.value}`}
+              aria-pressed={active}
+              className={cn(
+                CHIP_BASE,
+                active && (chip.value === 'failed' ? CHIP_ACTIVE_FAIL : CHIP_ACTIVE_PRIMARY)
+              )}
+              onClick={() => onFilterChange(active ? 'all' : chip.value)}
+            >
+              {chip.label}
+              <span
+                data-testid="chip-count"
+                className="font-mono text-[10.5px] font-semibold tabular-nums"
               >
-                {chip.label}
-                <span
-                  data-testid="chip-count"
-                  className="font-mono text-[10.5px] font-semibold tabular-nums"
-                >
-                  {counts[COUNT_KEYS[chip.value]]}
-                </span>
-              </button>
-            )
-          })}
+                {counts[COUNT_KEYS[chip.value]]}
+              </span>
+            </button>
+          )
+        })}
         <div data-testid="batch-progress" className="ml-auto flex items-center gap-[9px]">
           <span className="whitespace-nowrap font-mono text-[11px] tabular-nums text-muted-foreground">
             Batch: {counts.processed}/{total} processed
