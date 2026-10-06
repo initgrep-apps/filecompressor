@@ -30,21 +30,19 @@ export interface RunHeaderProps {
   onNewBatch: () => void
 }
 
-const FILTER_CHIPS: Array<{ value: Exclude<StatusFilter, 'all'>; label: string }> = [
-  { value: 'compressing', label: 'Processing' },
-  { value: 'complete', label: 'Complete' },
-  { value: 'below_target', label: 'Below target' },
-  { value: 'failed', label: 'Failed' },
-  { value: 'queued', label: 'Queued' },
-]
+type ChipCountKey = 'processing' | 'complete' | 'belowTarget' | 'failed' | 'queued'
 
-const COUNT_KEYS: Record<Exclude<StatusFilter, 'all'>, keyof BatchCounts> = {
-  compressing: 'processing',
-  complete: 'complete',
-  below_target: 'belowTarget',
-  failed: 'failed',
-  queued: 'queued',
-}
+const FILTER_CHIPS: Array<{
+  value: Exclude<StatusFilter, 'all'>
+  label: string
+  count: ChipCountKey
+}> = [
+  { value: 'compressing', label: 'Processing', count: 'processing' },
+  { value: 'complete', label: 'Complete', count: 'complete' },
+  { value: 'below_target', label: 'Below target', count: 'belowTarget' },
+  { value: 'failed', label: 'Failed', count: 'failed' },
+  { value: 'queued', label: 'Queued', count: 'queued' },
+]
 
 const CHIP_BASE =
   'inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-card px-[11px] py-1 text-[11.5px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
@@ -54,6 +52,8 @@ const CHIP_ACTIVE_PRIMARY =
 
 const CHIP_ACTIVE_FAIL =
   'border-destructive/30 bg-destructive/10 font-semibold text-destructive hover:text-destructive'
+
+const CHIP_COUNT = 'font-mono text-[10.5px] font-semibold tabular-nums'
 
 function statusPill(running: boolean, batchError: string | null) {
   if (batchError) {
@@ -170,11 +170,11 @@ export function RunHeader({
           onClick={() => onFilterChange('all')}
         >
           All files
-          <span data-testid="chip-count" className="font-mono text-[10.5px] font-semibold tabular-nums">
+          <span data-testid="chip-count" className={CHIP_COUNT}>
             {counts.all}
           </span>
         </button>
-        {FILTER_CHIPS.filter((chip) => counts[COUNT_KEYS[chip.value]] > 0).map((chip) => {
+        {FILTER_CHIPS.filter((chip) => counts[chip.count] > 0).map((chip) => {
           const active = statusFilter === chip.value
           return (
             <button
@@ -189,11 +189,8 @@ export function RunHeader({
               onClick={() => onFilterChange(active ? 'all' : chip.value)}
             >
               {chip.label}
-              <span
-                data-testid="chip-count"
-                className="font-mono text-[10.5px] font-semibold tabular-nums"
-              >
-                {counts[COUNT_KEYS[chip.value]]}
+              <span data-testid="chip-count" className={CHIP_COUNT}>
+                {counts[chip.count]}
               </span>
             </button>
           )

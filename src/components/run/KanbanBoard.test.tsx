@@ -28,21 +28,19 @@ function makeFile(patch: Partial<FileEntry> = {}): FileEntry {
   }
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
-  image: 'Image',
-  video: 'Video',
-  pdf: 'PDF',
-  document: 'Document',
-  other: 'Other',
+const LABEL_TO_CATEGORY: Record<string, string> = {
+  Image: 'image',
+  Video: 'video',
+  PDF: 'pdf',
+  Document: 'document',
+  Other: 'other',
 }
 
 function laneLabels(): string[] {
-  const wanted = new Set(Object.values(CATEGORY_LABELS))
-  return Array.from(document.querySelectorAll('span'))
-    .filter((el) => wanted.has(el.textContent ?? ''))
-    .map((el) =>
-      Object.entries(CATEGORY_LABELS).find(([, label]) => label === el.textContent)?.[0] ?? ''
-    )
+  return Array.from(document.querySelectorAll('span')).flatMap((el) => {
+    const category = LABEL_TO_CATEGORY[el.textContent ?? '']
+    return category ? [category] : []
+  })
 }
 
 const ALL_HANDLERS = {
@@ -163,10 +161,50 @@ describe('KanbanBoard', () => {
     unmount()
   })
 
+  it('populated board rerenders to filtered-empty when every row leaves the filter, showing same-tree empty state', () => {
+    const initial = [
+      makeFile({ id: 'a', name: 'Fail_A.mov', status: 'failed' }),
+      makeFile({ id: 'b', name: 'Fail_B.mov', status: 'failed' }),
+    ]
+    const next = [
+      makeFile({ id: 'a', name: 'Fail_A.mov', status: 'done' }),
+      makeFile({ id: 'b', name: 'Fail_B.mov', status: 'done' }),
+    ]
+    const propsFor = (roster: FileEntry[]) => ({
+      roster,
+      statusFilter: 'failed' as StatusFilter,
+      onFilterChange: vi.fn(),
+      onCancel: vi.fn(),
+      onReveal: vi.fn(),
+      onRemove: vi.fn(),
+    })
+
+    const { rerender } = render(<KanbanBoard {...propsFor(initial)} />)
+    expect(laneLabels()).toEqual(['video'])
+
+    rerender(<KanbanBoard {...propsFor(next)} />)
+    expect(screen.queryByTestId('kanban-board')).not.toBeInTheDocument()
+    expect(screen.getByText('Nothing failed right now')).toBeInTheDocument()
+    expect(screen.getByTestId('show-all')).toBeInTheDocument()
+    expect(screen.queryByText('Fail_A.mov')).not.toBeInTheDocument()
+    expect(screen.queryByText('Fail_B.mov')).not.toBeInTheDocument()
+  })
+
   it('Show all link resets the filter to all', () => {
-    render(boardFor([makeFile({ status: 'done' })], 'failed'))
+    const onFilterChange = vi.fn()
+    render(
+      <KanbanBoard
+        roster={[makeFile({ status: 'done' })]}
+        statusFilter="failed"
+        onFilterChange={onFilterChange}
+        onCancel={vi.fn()}
+        onReveal={vi.fn()}
+        onRemove={vi.fn()}
+      />
+    )
     fireEvent.click(screen.getByTestId('show-all'))
-    expect(ALL_HANDLERS.onFilterChange).toHaveBeenCalledWith('all')
+    expect(onFilterChange).toHaveBeenCalledTimes(1)
+    expect(onFilterChange).toHaveBeenCalledWith('all')
   })
 
   it('lane bodies cap at max height and scroll vertically inside the board', () => {
@@ -189,6 +227,7 @@ describe('KanbanBoard', () => {
   })
 
   it('removeDisabled suppresses row remove buttons; otherwise Remove is wired', () => {
+    const onRemove = vi.fn()
     const { rerender } = render(
       <KanbanBoard
         roster={[makeFile({ id: 'f1', name: 'Remove.png' })]}
@@ -196,7 +235,7 @@ describe('KanbanBoard', () => {
         onFilterChange={vi.fn()}
         onCancel={vi.fn()}
         onReveal={vi.fn()}
-        onRemove={ALL_HANDLERS.onRemove}
+        onRemove={onRemove}
         removeDisabled
       />
     )
@@ -209,10 +248,11 @@ describe('KanbanBoard', () => {
         onFilterChange={vi.fn()}
         onCancel={vi.fn()}
         onReveal={vi.fn()}
-        onRemove={ALL_HANDLERS.onRemove}
+        onRemove={onRemove}
       />
     )
     fireEvent.click(screen.getByRole('button', { name: 'Remove Remove.png' }))
-    expect(ALL_HANDLERS.onRemove).toHaveBeenCalledWith('f1')
+    expect(onRemove).toHaveBeenCalledTimes(1)
+    expect(onRemove).toHaveBeenCalledWith('f1')
   })
 })

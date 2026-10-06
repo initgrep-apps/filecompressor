@@ -97,7 +97,7 @@ export function KanbanBoard({
             </div>
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-y-0 right-0 w-12 [background:linear-gradient(to_right,transparent,var(--card))]"
+              className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-linear-to-r from-transparent to-card"
             />
           </div>
         )}

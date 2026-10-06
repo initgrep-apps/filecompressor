@@ -9,9 +9,11 @@ beforeAll(() => {
   setupMotionStubs()
 })
 
+let entrySeq = 0
 function entry(status: FileEntry['status']): FileEntry {
+  entrySeq += 1
   return {
-    id: Math.random().toString(),
+    id: `entry-${entrySeq}`,
     name: 'f',
     path: '/tmp/f',
     category: 'video',
@@ -156,6 +158,7 @@ describe('RunHeader', () => {
       />
     )
     fireEvent.click(screen.getByTestId('chip-failed'))
+    expect(first.onFilterChange).toHaveBeenCalledTimes(1)
     expect(first.onFilterChange).toHaveBeenCalledWith('failed')
 
     const second = { ...baseProps(), statusFilter: 'failed' as const, onFilterChange: vi.fn() }
@@ -178,7 +181,17 @@ describe('RunHeader', () => {
     expect(screen.getByTestId('chip-failed').className).toContain('bg-destructive/10')
     expect(screen.getByTestId('chip-all').getAttribute('aria-pressed')).toBe('false')
     fireEvent.click(screen.getByTestId('chip-failed'))
+    expect(second.onFilterChange).toHaveBeenCalledTimes(1)
     expect(second.onFilterChange).toHaveBeenCalledWith('all')
+  })
+
+  it('All files chip click wires onFilterChange with "all"', () => {
+    const props = { ...baseProps(), counts: countsOf(['done', 'failed']) }
+
+    render(<RunHeader {...props} />)
+    fireEvent.click(screen.getByTestId('chip-all'))
+    expect(props.onFilterChange).toHaveBeenCalledTimes(1)
+    expect(props.onFilterChange).toHaveBeenCalledWith('all')
   })
 
   it('processed label and progress bar width reflect processed/total', () => {
