@@ -28,6 +28,8 @@ describe('strategyLabel', () => {
     expect(strategyLabel('quality=60', 'document')).toBe('Rebuild · Lossless')
     expect(strategyLabel('quality=80', 'image')).toBe('Re-encode · Lossy')
     expect(strategyLabel('quality=80', 'pdf')).toBe('Ghostscript · Lossy')
+    expect(strategyLabel('palette,dims=50%', 'image')).toBe('PNG palette · Lossy')
+    expect(strategyLabel('rezip-deflate9', 'document')).toBe('Rezip · Lossless')
   })
 
   it('strips numeric/format suffixes from the label', () => {
@@ -40,6 +42,8 @@ describe('strategyLabel', () => {
     expect(strategyLabel('gs dpi=300,jpegq=85', 'pdf')).not.toContain('dpi=')
     expect(strategyLabel('qpdf-image-opt,jpeg-quality=70', 'pdf')).not.toContain('jpeg-quality=')
     expect(strategyLabel('crf=24', 'video')).not.toContain('crf=')
+    expect(strategyLabel('palette,dims=50%', 'image')).not.toContain('dims=')
+    expect(strategyLabel('rezip-deflate9', 'document')).not.toContain('deflate9')
   })
 
   it('best-effort suffix wins over the image re-encode fallback', () => {
@@ -57,6 +61,8 @@ describe('strategyLabel', () => {
     expect(strategyLabel('gs-screen,best-effort', 'pdf')).toBe('Best effort')
     expect(strategyLabel('qpdf-lossless,best-effort', 'pdf')).toBe('Best effort')
     expect(strategyLabel('quality=80,best-effort', 'image')).toBe('Best effort')
+    expect(strategyLabel('palette,best-effort', 'image')).toBe('Best effort')
+    expect(strategyLabel('rezip-deflate9,best-effort', 'document')).toBe('Best effort')
   })
 
   it('quality= with unmatched category falls through to the raw string', () => {

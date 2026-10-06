@@ -121,10 +121,10 @@ All from existing tokens: primary for active/success, destructive for failed, am
 **None required.** Verified against the code: `FileCompletePayload` (queue.rs:96-107, serde camelCase) already emits `qualityUsed` and `strategyUsed` on `file:complete`, populated at queue.rs:650-662, and the test `file_complete_payload_carries_strategy_fields` (queue.rs:1775) already pins the serialization. The work is frontend consumption: capture the fields into `FileEntry`.
 
 Known strategy string formats (from processors):
-- image: `quality={q}` / `quality={min_quality},dims={scale}%`
+- image: `quality={q}` / `quality={min_quality},dims={scale}%` / `palette,dims={scale}%` (PNG success — image.rs ~325)
 - video: `two-pass h264 b={bitrate}k[ scale={w}]` / `crf={crf}[ scale={w}]`
 - pdf: `qpdf-lossless` / `qpdf-image-opt,jpeg-quality={q}` / `gs-screen` / `gs dpi={dpi},jpegq={q}`
-- document: `quality={q}` (deflate rebuild) / `best-effort …`
+- document: `quality={q}` (deflate rebuild) / `rezip-deflate9` (zero-media success — document.rs ~383) / `best-effort …`
 
 Frontend types (`src/types.ts`): `FileEntry` gains `strategyUsed: string | null`, `qualityUsed: number | null`.
 
