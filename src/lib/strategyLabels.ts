@@ -19,6 +19,8 @@ import type { Category } from '@/types'
 export function strategyLabel(strategy: string | null, category: Category): string {
   if (!strategy) return ''
   if (strategy.includes('best-effort')) return 'Best effort'
+  if (strategy.startsWith('palette')) return 'PNG palette · Lossy'
+  if (strategy.startsWith('rezip')) return 'Rezip · Lossless'
   if (strategy.startsWith('two-pass h264')) return 'H.264 two-pass · Lossy'
   if (strategy.startsWith('crf=')) return 'H.264 CRF · Lossy'
   if (strategy.startsWith('qpdf-lossless')) return 'QPDF · Lossless'
