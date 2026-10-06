@@ -14,21 +14,111 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import type { MouseEvent, KeyboardEvent, ReactNode } from 'react'
 import { useState, useCallback, useEffect, useRef } from 'react'
+import type { DragDropEvent } from '@tauri-apps/api/webview'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { Card, CardContent } from '@/components/ui/card'
-import { Separator } from '@/components/ui/separator'
 import { Button } from '@/components/ui/button'
 import { RiUploadCloud2Line } from '@remixicon/react'
+import type { Category } from '@/types'
 
 interface DropZoneProps {
   onBrowse: () => void
   onDrop: (paths: string[]) => void
   className?: string
+  compact?: boolean
 }
 
-export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
+const FORMATS: Array<{ ext: string; category: Category }> = [
+  { ext: 'JPEG', category: 'image' },
+  { ext: 'PNG', category: 'image' },
+  { ext: 'WebP', category: 'image' },
+  { ext: 'HEIC', category: 'image' },
+  { ext: 'MP4', category: 'video' },
+  { ext: 'MOV', category: 'video' },
+  { ext: 'PDF', category: 'pdf' },
+  { ext: 'DOCX', category: 'document' },
+  { ext: 'XLSX', category: 'document' },
+  { ext: 'PPTX', category: 'document' },
+]
+
+const MONO_FORMATS = FORMATS.map((f) => f.ext).join(', ')
+
+const CATEGORY_TINTS: Record<Category, string> = {
+  image: 'bg-blue-500/10 text-blue-600',
+  video: 'bg-violet-500/10 text-violet-600',
+  pdf: 'bg-destructive/10 text-destructive',
+  document: 'bg-amber-500/10 text-amber-600',
+  other: 'bg-muted text-muted-foreground',
+}
+
+const CATEGORY_GLYPHS: Record<Category, ReactNode> = {
+  image: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21" />
+    </>
+  ),
+  video: (
+    <>
+      <path d="m22 8-6 4 6 4V8Z" />
+      <rect x="2" y="6" width="14" height="12" rx="2" />
+    </>
+  ),
+  pdf: (
+    <>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </>
+  ),
+  document: (
+    <>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+    </>
+  ),
+  other: (
+    <>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+    </>
+  ),
+}
+
+function CategoryIcon({ category }: { category: Category }) {
+  return (
+    <svg
+      width="11"
+      height="11"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {CATEGORY_GLYPHS[category]}
+    </svg>
+  )
+}
+
+function FormatPill({ ext, category }: { ext: string; category: Category }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-[3.5px] text-[10.5px] font-semibold tracking-[0.01em] ${CATEGORY_TINTS[category]}`}
+    >
+      <CategoryIcon category={category} />
+      {ext}
+    </span>
+  )
+}
+
+export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
+  const [dragCount, setDragCount] = useState(0)
   const onDropRef = useRef(onDrop)
 
   useEffect(() => {
@@ -41,19 +131,23 @@ export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
 
     let subscription: Promise<() => void>
     try {
-      subscription = getCurrentWebview().onDragDropEvent((event) => {
+      subscription = getCurrentWebview().onDragDropEvent((event: { payload: DragDropEvent }) => {
         if (cancelled) return
-        if (event.payload.type === 'enter') {
+        const payload = event.payload
+        if (payload.type === 'enter' || payload.type === 'over') {
           setIsDragging(true)
-        } else if (event.payload.type === 'over') {
-          setIsDragging(true)
-        } else if (event.payload.type === 'drop') {
+          if ('paths' in payload && payload.paths.length > 0) {
+            setDragCount(payload.paths.length)
+          }
+        } else if (payload.type === 'drop') {
           setIsDragging(false)
-          if (event.payload.paths.length > 0) {
-            onDropRef.current(event.payload.paths)
+          setDragCount(0)
+          if (payload.paths.length > 0) {
+            onDropRef.current(payload.paths)
           }
         } else {
           setIsDragging(false)
+          setDragCount(0)
         }
       })
     } catch (err) {
@@ -76,53 +170,107 @@ export function DropZone({ onBrowse, onDrop, className }: DropZoneProps) {
     }
   }, [])
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       onBrowse()
     }
   }, [onBrowse])
 
+  const stopBrowseKey = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
+  }, [])
+
+  const handleBrowseClick = useCallback((e: MouseEvent) => {
+    e.stopPropagation()
+    onBrowse()
+  }, [onBrowse])
+
+  const filesDetected = dragCount > 0 ? `${dragCount} files detected` : 'Files detected'
+
+  if (compact) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label="Add more files: drop here or press Enter to browse"
+        onClick={onBrowse}
+        onKeyDown={handleKeyDown}
+        className={`flex w-full cursor-pointer items-center gap-3 px-3.5 py-2.5 transition-colors ${
+          isDragging
+            ? 'border border-dashed border-primary bg-primary/5'
+            : 'border border-dashed border-primary/35 bg-primary/3'
+        } ${className ?? ''}`}
+      >
+        <div
+          className={`flex size-[34px] shrink-0 items-center justify-center rounded-[9px] bg-primary text-primary-foreground transition-transform ${
+            isDragging ? 'scale-105' : ''
+          }`}
+        >
+          <RiUploadCloud2Line size={16} />
+        </div>
+        <span className="whitespace-nowrap text-[13px] font-semibold">
+          {isDragging ? 'Release to add files' : 'Drop more files here'}
+        </span>
+        {isDragging ? (
+          <span className="whitespace-nowrap text-xs text-muted-foreground">{filesDetected}</span>
+        ) : (
+          <span className="text-xs text-muted-foreground">or</span>
+        )}
+        <Button variant="outline" size="sm" onClick={handleBrowseClick} onKeyDown={stopBrowseKey}>
+          Browse
+        </Button>
+        <span className="ml-auto min-w-0 max-w-[300px] truncate font-mono text-[10px] text-muted-foreground">
+          {MONO_FORMATS}
+        </span>
+      </div>
+    )
+  }
+
   return (
-    <Card
-      onClick={onBrowse}
-      onKeyDown={handleKeyDown}
+    <div
       role="button"
       tabIndex={0}
-      aria-label="Drop files to compress or click to browse"
-      className={`cursor-pointer border border-dashed transition-colors ${
+      aria-label="Add files: drop files here or press Enter to browse"
+      onClick={onBrowse}
+      onKeyDown={handleKeyDown}
+      className={`flex w-full cursor-pointer flex-col items-center gap-3 px-6 py-12 text-center transition-colors ${
         isDragging
-          ? 'border-primary bg-primary/5'
-          : 'border-input bg-muted/30 hover:bg-muted/50'
+          ? 'border border-dashed border-primary bg-primary/5'
+          : 'border border-dashed border-input bg-muted/30 hover:bg-muted/50'
       } ${className ?? ''}`}
     >
-      <CardContent className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 py-8">
-        <div className="flex flex-col items-center gap-2">
-          <div className="flex size-12 items-center justify-center rounded-xl bg-primary/10 text-primary">
-            <RiUploadCloud2Line size={24} />
-          </div>
-          <p className="text-sm font-medium">Drag and drop</p>
-        </div>
-        <Separator orientation="vertical" className="h-20" />
-        <div className="flex flex-col items-center gap-2.5">
-          <p className="text-sm font-medium">Or choose a file</p>
-          <Button
-            size="sm"
-            onClick={(e) => {
-              e.stopPropagation()
-              onBrowse()
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') e.stopPropagation()
-            }}
-          >
-            Browse your files
-          </Button>
-          <p className="text-xs text-muted-foreground">
-            Supported: JPEG, PNG, WebP, HEIC, MP4, MOV, PDF, DOCX, XLSX, PPTX
-          </p>
-        </div>
-      </CardContent>
-    </Card>
+      <div
+        className={`flex size-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_10px_26px_-10px_color-mix(in_oklab,var(--color-primary)_55%,transparent)] transition-transform ${
+          isDragging ? 'scale-110' : ''
+        }`}
+      >
+        <RiUploadCloud2Line size={28} />
+      </div>
+      <p className="text-lg font-bold">{isDragging ? 'Release to add files' : 'Drag and drop files here'}</p>
+      <Button size="lg" onClick={handleBrowseClick} onKeyDown={stopBrowseKey}>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+        </svg>
+        Browse your files
+      </Button>
+      <p className={`text-[11px] ${isDragging ? 'font-semibold text-primary' : 'text-muted-foreground'}`}>
+        {isDragging ? filesDetected : '…or click anywhere in this area'}
+      </p>
+      <div className="mt-1.5 flex max-w-[560px] flex-wrap items-center justify-center gap-1.5">
+        {FORMATS.map((f) => (
+          <FormatPill key={f.ext} ext={f.ext} category={f.category} />
+        ))}
+      </div>
+    </div>
   )
 }

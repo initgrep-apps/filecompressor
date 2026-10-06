@@ -19,6 +19,8 @@ vi.mock('@tauri-apps/api/webview', () => ({
 
 import { DropZone } from '@/components/DropZone'
 
+const ALL_FORMATS = 'JPEG, PNG, WebP, HEIC, MP4, MOV, PDF, DOCX, XLSX, PPTX'
+
 function emit(evt: unknown) {
   act(() => {
     for (const h of handlers) h(evt)
@@ -35,7 +37,7 @@ describe('DropZone', () => {
     }))
   })
 
-  it('subscription rejection does not crash and browse still works', async () => {
+  it('listener setup failure is caught and the component still renders', async () => {
     const user = userEvent.setup()
     const onBrowse = vi.fn()
     getCurrentWebviewMock.mockImplementation(() => ({
@@ -63,7 +65,8 @@ describe('DropZone', () => {
     expect(onBrowse).toHaveBeenCalled()
   })
 
-  it('calls onDrop with Tauri-provided paths on drop event', async () => {
+  it('drop event delivers payload paths to onDrop', async () => {
+    const paths = ['/a/b.jpg', '/a/c.mp4']
     const onDrop = vi.fn()
     const onBrowse = vi.fn()
     render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
@@ -75,7 +78,9 @@ describe('DropZone', () => {
         position: { x: 0, y: 0 },
       },
     })
-    expect(onDrop).toHaveBeenCalledWith(['/a/b.jpg', '/a/c.mp4'])
+    expect(onDrop).toHaveBeenCalledTimes(1)
+    expect(onDrop).toHaveBeenCalledWith(paths)
+    expect(onDrop.mock.calls[0][0]).toEqual(paths)
   })
 
   it('ignores enter/over/leave for onDrop', async () => {
@@ -85,7 +90,9 @@ describe('DropZone', () => {
     emit({
       payload: { type: 'enter', paths: ['/a.jpg'], position: { x: 0, y: 0 } },
     })
-    emit({ payload: { type: 'over', position: { x: 0, y: 0 } } })
+    emit({
+      payload: { type: 'over', paths: ['/a.jpg'], position: { x: 0, y: 0 } },
+    })
     emit({
       payload: { type: 'drop', paths: ['/a.jpg'], position: { x: 0, y: 0 } },
     })
@@ -105,6 +112,8 @@ describe('DropZone', () => {
     render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
     await waitFor(() => expect(handlers.length).toBeGreaterThan(0))
     const zone = screen.getByRole('button', { name: /drop files/i })
+    expect(zone.className).toContain('border-dashed')
+    expect(zone.className).toContain('border-input')
     emit({
       payload: { type: 'enter', paths: ['/a.jpg'], position: { x: 0, y: 0 } },
     })
@@ -116,6 +125,101 @@ describe('DropZone', () => {
     expect(zone.className).toContain('bg-muted/30')
     expect(zone.className).not.toContain('border-primary')
     expect(zone.className).not.toContain('bg-primary/5')
+  })
+
+  it('empty variant renders heading, browse button, and 10 format pills with per-category tints', () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    expect(screen.getByText('Drag and drop files here')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Browse your files' })).toBeInTheDocument()
+    expect(screen.getByText('…or click anywhere in this area')).toBeInTheDocument()
+    for (const ext of ['JPEG', 'PNG', 'WebP', 'HEIC', 'MP4', 'MOV', 'PDF', 'DOCX', 'XLSX', 'PPTX']) {
+      expect(screen.getByText(ext)).toBeInTheDocument()
+    }
+    expect(screen.getByText('JPEG').className).toContain('text-blue-600')
+    expect(screen.getByText('HEIC').className).toContain('text-blue-600')
+    expect(screen.getByText('MP4').className).toContain('text-violet-600')
+    expect(screen.getByText('MOV').className).toContain('text-violet-600')
+    expect(screen.getByText('PDF').className).toContain('text-destructive')
+    expect(screen.getByText('DOCX').className).toContain('text-amber-600')
+    expect(screen.getByText('XLSX').className).toContain('text-amber-600')
+    const surface = screen.getByRole('button', { name: /drop files here or press/i })
+    expect(surface).toHaveAttribute('tabindex', '0')
+  })
+
+  it('surface click, Enter, and Space each call onBrowse; browse button does not double-fire', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={vi.fn()} />)
+    const surface = screen.getByRole('button', { name: /drop files/i })
+    await user.click(surface)
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+    surface.focus()
+    await user.keyboard('{Enter}')
+    await user.keyboard(' ')
+    expect(onBrowse).toHaveBeenCalledTimes(3)
+    await user.click(screen.getByRole('button', { name: 'Browse your files' }))
+    expect(onBrowse).toHaveBeenCalledTimes(4)
+  })
+
+  it('drag enter/over shows Release to add files and N files detected; drag leave restores rest state', async () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    await waitFor(() => expect(handlers.length).toBeGreaterThan(0))
+    emit({
+      payload: {
+        type: 'enter',
+        paths: ['/a.jpg', '/b.png', '/c.mp4'],
+        position: { x: 0, y: 0 },
+      },
+    })
+    expect(screen.getByText('Release to add files')).toBeInTheDocument()
+    expect(screen.getByText('3 files detected')).toBeInTheDocument()
+    expect(screen.queryByText('Drag and drop files here')).not.toBeInTheDocument()
+    emit({ payload: { type: 'over', position: { x: 0, y: 0 } } })
+    expect(screen.getByText('3 files detected')).toBeInTheDocument()
+    emit({ payload: { type: 'leave' } })
+    expect(screen.getByText('Drag and drop files here')).toBeInTheDocument()
+    expect(screen.queryByText('Release to add files')).not.toBeInTheDocument()
+    expect(screen.queryByText('3 files detected')).not.toBeInTheDocument()
+  })
+
+  it('compact variant renders hero bar with mono formats line and no pills; compact Browse click calls onBrowse', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} compact />)
+    expect(screen.getByText('Drop more files here')).toBeInTheDocument()
+    expect(screen.getByText('or')).toBeInTheDocument()
+    expect(screen.getByText(ALL_FORMATS)).toBeInTheDocument()
+    expect(screen.queryByText('JPEG')).not.toBeInTheDocument()
+    expect(screen.queryByText('MP4')).not.toBeInTheDocument()
+    const surface = screen.getByRole('button', { name: /drop here or press/i })
+    expect(surface).toHaveAttribute('tabindex', '0')
+    await user.click(screen.getByRole('button', { name: 'Browse' }))
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+    expect(onDrop).not.toHaveBeenCalled()
+    await user.click(surface)
+    expect(onBrowse).toHaveBeenCalledTimes(2)
+  })
+
+  it('compact variant reacts to drag hover the same way', async () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} compact />)
+    await waitFor(() => expect(handlers.length).toBeGreaterThan(0))
+    emit({
+      payload: {
+        type: 'enter',
+        paths: ['/a.jpg', '/b.mov'],
+        position: { x: 0, y: 0 },
+      },
+    })
+    expect(screen.getByText('Release to add files')).toBeInTheDocument()
+    expect(screen.getByText('2 files detected')).toBeInTheDocument()
+    expect(screen.queryByText('Drop more files here')).not.toBeInTheDocument()
+    emit({ payload: { type: 'leave' } })
+    expect(screen.getByText('Drop more files here')).toBeInTheDocument()
+    expect(screen.getByText('or')).toBeInTheDocument()
+    expect(screen.getByText(ALL_FORMATS)).toBeInTheDocument()
+    expect(screen.queryByText('Release to add files')).not.toBeInTheDocument()
+    expect(screen.queryByText('2 files detected')).not.toBeInTheDocument()
   })
 
   it('click triggers browse', async () => {
@@ -152,7 +256,7 @@ describe('DropZone', () => {
     const onBrowse = vi.fn()
     const onDrop = vi.fn()
     render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
-    await user.click(screen.getByText('Drag and drop'))
+    await user.click(screen.getByText('Drag and drop files here'))
     expect(onBrowse).toHaveBeenCalledTimes(1)
   })
 
