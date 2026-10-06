@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { createContext, useContext, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
 import { useFileList } from '@/hooks/useFileList'
 import { useCompression } from '@/hooks/useCompression'
 import { toast } from 'sonner'
@@ -24,6 +24,8 @@ function formatSavedBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
   return formatSize(bytes)
 }
+
+export type RunScreen = 'staging' | 'run'
 
 interface CompressionContextValue {
   files: ReturnType<typeof useFileList>['files']
@@ -38,6 +40,12 @@ interface CompressionContextValue {
   cancelFile: ReturnType<typeof useCompression>['cancelFile']
   cancelAll: ReturnType<typeof useCompression>['cancelAll']
   revealInFolder: ReturnType<typeof useCompression>['revealInFolder']
+  runScreen: RunScreen
+  batchNumber: number
+  batchError: string | null
+  roster: string[]
+  startRun: () => void
+  endRun: () => void
 }
 
 const CompressionContext = createContext<CompressionContextValue | null>(null)
@@ -49,9 +57,36 @@ export function CompressionProvider({ children }: { children: ReactNode }) {
       onBatchComplete: (saved, count, errorCount) => {
         toast.success(`Compressed ${count} files. Saved ${formatSavedBytes(saved)} total.`)
         if (errorCount > 0) toast.error(`${errorCount} files could not reach target.`)
+        setBatchError(null)
       },
-      onBatchError: (message) => toast.error(message),
+      onBatchError: (message) => {
+        toast.error(message)
+        setBatchError(message)
+      },
     })
+
+  const filesRef = useRef(files)
+  filesRef.current = files
+  const rosterRef = useRef<string[]>([])
+  const [runScreen, setRunScreen] = useState<RunScreen>('staging')
+  const [batchNumber, setBatchNumber] = useState(0)
+  const [batchError, setBatchError] = useState<string | null>(null)
+  const [roster, setRoster] = useState<string[]>([])
+
+  const startRun = useCallback(() => {
+    const pendingIds = filesRef.current
+      .filter((f) => f.status === 'pending')
+      .map((f) => f.id)
+    rosterRef.current = pendingIds
+    setRoster(pendingIds)
+    setBatchNumber((n) => n + 1)
+    setBatchError(null)
+    setRunScreen('run')
+  }, [])
+
+  const endRun = useCallback(() => {
+    setRunScreen('staging')
+  }, [])
 
   const value: CompressionContextValue = {
     files,
@@ -66,6 +101,12 @@ export function CompressionProvider({ children }: { children: ReactNode }) {
     cancelFile,
     cancelAll,
     revealInFolder,
+    runScreen,
+    batchNumber,
+    batchError,
+    roster,
+    startRun,
+    endRun,
   }
 
   return (
