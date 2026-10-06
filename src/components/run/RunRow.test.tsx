@@ -196,6 +196,10 @@ describe('RunRow', () => {
       <RunRow file={makeFile({ status: 'done', originalSize: 0, compressedSize: 0 })} onReveal={vi.fn()} />
     )
     expect(screen.queryByTestId('run-chip')).not.toBeInTheDocument()
+    rerender(
+      <RunRow file={makeFile({ status: 'done', compressedSize: null })} onReveal={vi.fn()} />
+    )
+    expect(screen.queryByTestId('run-chip')).not.toBeInTheDocument()
     rerender(<RunRow file={makeFile({ status: 'done', compressedSize: 2_000_000 })} onReveal={vi.fn()} />)
     expect(screen.getByTestId('run-chip').textContent).toBe('-0%')
   })

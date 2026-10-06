@@ -212,7 +212,7 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
           </button>
         )}
       </div>
-      {(sizes || hasResult) && (
+      {sizes && (
         <div className="mt-[5px] flex flex-wrap items-center gap-x-2 gap-y-1">
           {sizes && (
             <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground">{sizes}</span>
