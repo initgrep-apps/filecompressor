@@ -48,6 +48,7 @@ interface CancelledPayload {
 interface BatchCompletePayload {
   batchId: string
   totalSavedBytes: number
+  cancelled?: boolean
 }
 
 interface BatchErrorPayload {
@@ -56,7 +57,12 @@ interface BatchErrorPayload {
 }
 
 export interface CompressionCallbacks {
-  onBatchComplete?: (totalSavedBytes: number, processedCount: number, errorCount: number) => void
+  onBatchComplete?: (
+    totalSavedBytes: number,
+    processedCount: number,
+    errorCount: number,
+    cancelled: boolean
+  ) => void
   onBatchError?: (errorMessage: string) => void
 }
 
@@ -102,10 +108,13 @@ export function useCompression(
       callbacksRef.current?.onBatchError?.('Lost connection to compression worker')
     }
 
-    const clearCancelled = () => {
-      if (!cancelledRef.current) return
+    const clearCancelled = (payloadCancelled?: boolean) => {
+      const wasCancelled =
+        payloadCancelled === true || (payloadCancelled === undefined && cancelledRef.current)
       cancelledRef.current = false
-      toast.info('Batch cancelled')
+      if (wasCancelled) {
+        toast.info('Batch cancelled')
+      }
     }
 
     listen<ProgressPayload>('file:progress', (e) => {
@@ -190,9 +199,15 @@ export function useCompression(
       const errors = errorCountRef.current
       processedCountRef.current = 0
       errorCountRef.current = 0
-      clearCancelled()
-      if (processed > 0) {
-        callbacksRef.current?.onBatchComplete?.(e.payload.totalSavedBytes, processed, errors)
+      const cancelled = e.payload.cancelled ?? cancelledRef.current
+      clearCancelled(e.payload.cancelled)
+      if (processed > 0 || cancelled) {
+        callbacksRef.current?.onBatchComplete?.(
+          e.payload.totalSavedBytes,
+          processed,
+          errors,
+          cancelled
+        )
       }
     })
       .then(done)

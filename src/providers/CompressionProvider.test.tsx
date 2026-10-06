@@ -81,6 +81,7 @@ function RunConsumer({ paths }: { paths: string[] }) {
     batchNumber,
     roster,
     batchError,
+    batchCancelled,
     addFiles,
     startRun,
     endRun,
@@ -100,6 +101,7 @@ function RunConsumer({ paths }: { paths: string[] }) {
       <p data-testid="batch-number">{batchNumber}</p>
       <p data-testid="roster">{roster.join(',')}</p>
       <p data-testid="batch-error">{batchError ?? ''}</p>
+      <p data-testid="batch-cancelled">{String(batchCancelled)}</p>
       <ul>
         {files.map((f) => (
           <li key={f.id}>
@@ -259,6 +261,46 @@ describe('CompressionProvider', () => {
       screen.getByRole('button', { name: 'start run' }).click()
     })
     expect(screen.getByTestId('batch-number')).toHaveTextContent('2')
+  })
+
+  it('provider sets batchCancelled on cancelled terminal and clears it on startRun', async () => {
+    vi.mocked(invoke).mockResolvedValue([entry()])
+    render(
+      <CompressionProvider>
+        <RunConsumer paths={['/t/a.jpg']} />
+      </CompressionProvider>
+    )
+    await flush()
+    await act(async () => {
+      await screen.getByRole('button', { name: 'add' }).click()
+    })
+    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('false')
+    await act(() => {
+      screen.getByRole('button', { name: 'start run' }).click()
+    })
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 10,
+      compressedSize: 5,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
+    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('false')
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0, cancelled: true })
+    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('true')
+    await act(() => {
+      screen.getByRole('button', { name: 'end run' }).click()
+    })
+    // startRun no-ops with zero pending files, so the next run needs a fresh pending row.
+    await act(async () => {
+      await screen.getByRole('button', { name: 'add' }).click()
+    })
+    await act(() => {
+      screen.getByRole('button', { name: 'start run' }).click()
+    })
+    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('false')
   })
 
   it('startRun no-ops when there are no pending files', async () => {

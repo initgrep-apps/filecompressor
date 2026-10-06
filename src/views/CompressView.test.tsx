@@ -193,6 +193,7 @@ describe('CompressView', () => {
       runScreen: 'staging',
       batchNumber: 1,
       batchError: null,
+      batchCancelled: false,
       roster: [],
       startRun: vi.fn(),
       endRun: vi.fn(),

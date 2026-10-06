@@ -28,7 +28,7 @@ Non-goals (explicitly cut from the Stitch mockups and this iteration): Pause All
 | Lane row order | Compressing (top) → completed (drop order) → queued/pending (bottom). No section headers; state conveyed by row styling and icons. |
 | Collapse | None, anywhere. |
 | Status chips | Interactive **single-select filters** (default `All files`): click a chip to show only rows with that status. Counts are always computed from the full roster and never change when filtering. Zero-count chips hidden; `All files` always shown. Clicking the active chip again resets to `All`. |
-| Batch header | `Batch #<n>` pill + status pill that transitions `Compressing` (pulsing dot) → `Complete` (solid, check icon). |
+| Batch header | `Batch #<n>` pill + status pill that transitions `Compressing` (pulsing dot) → `Complete` (solid, check icon); a completed batch that was cancelled shows `Cancelled` (muted) instead of `Complete`. Precedence: `Compressing` → `Failed` → `Cancelled` → `Complete`. |
 | Run screen lock | No drop zone, no add-files, no back button while running. Dropping during a run shows a toast: "Batch in progress — wait until it completes". |
 | Exit | `New batch` button appears when the batch completes (or is cancelled). Returns to staging with final statuses intact. |
 | App launch | Always staging. The run screen is transient state, never a persisted route. |
@@ -84,7 +84,7 @@ When a file drag enters the window, the drop surface wakes up: border solidifies
 
 ### 6.1 Header
 
-- Left: `Batch #<n>` mono pill + status pill. `n` is a per-session counter incremented on each successful `compressAll` (frontend ref — no backend change; resets on app restart, which always lands on staging). Status pill: `● Compressing` (pulsing) while `isCompressing`; `✓ Complete` (solid primary) when finished; `✓ Complete` with a "Batch cancelled" toast when cancelled.
+- Left: `Batch #<n>` mono pill + status pill. `n` is a per-session counter incremented on each successful `compressAll` (frontend ref — no backend change; resets on app restart, which always lands on staging). Status pill: `● Compressing` (pulsing) while `isCompressing`; `✓ Complete` (solid primary) when finished normally; `Cancelled` (muted) when the completed batch was cancelled (backend `batch:complete` carries `cancelled: true`) with the "Batch cancelled" toast. Precedence: `Compressing` → `Failed` (destructive, on `batch:error`) → `Cancelled` → `Complete`.
 - Right: `Cancel All` (destructive outline) while running; `New batch` (primary) when finished/cancelled.
 
 ### 6.2 Chips row

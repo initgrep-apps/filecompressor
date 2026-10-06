@@ -22,6 +22,7 @@ export interface RunHeaderProps {
   batchNumber: number
   running: boolean
   batchError: string | null
+  cancelled?: boolean
   counts: BatchCounts
   total: number
   statusFilter: StatusFilter
@@ -55,7 +56,7 @@ const CHIP_ACTIVE_FAIL =
 
 const CHIP_COUNT = 'font-mono text-[10.5px] font-semibold tabular-nums'
 
-function statusPill(running: boolean, batchError: string | null) {
+function statusPill(running: boolean, batchError: string | null, cancelled: boolean) {
   if (running) {
     return (
       <span
@@ -80,6 +81,17 @@ function statusPill(running: boolean, batchError: string | null) {
         className="inline-flex items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/10 px-[11px] py-1 text-[11px] font-semibold text-destructive"
       >
         Failed
+      </span>
+    )
+  }
+  if (cancelled) {
+    return (
+      <span
+        data-testid="status-pill"
+        data-state="cancelled"
+        className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-[11px] py-1 text-[11px] font-semibold text-muted-foreground"
+      >
+        Cancelled
       </span>
     )
   }
@@ -111,6 +123,7 @@ export function RunHeader({
   batchNumber,
   running,
   batchError,
+  cancelled,
   counts,
   total,
   statusFilter,
@@ -131,7 +144,7 @@ export function RunHeader({
           >
             Batch #{batchNumber}
           </span>
-          {statusPill(running, batchError)}
+          {statusPill(running, batchError, cancelled ?? false)}
         </div>
         <div className="flex items-center gap-2">
           {running ? (

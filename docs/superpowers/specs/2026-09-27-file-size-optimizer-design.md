@@ -457,7 +457,7 @@ photo-1.jpg exists → photo-2.jpg
 | `file:complete` | `{ file_id, output_path, original_size, compressed_size, status }` | File done |
 | `file:error` | `{ file_id, error_message }` | File failed |
 | `file:cancelled` | `{ file_id }` | File was cancelled |
-| `batch:complete` | `{ batch_id, total_saved_bytes }` | All files in batch processed |
+| `batch:complete` | `{ batch_id, total_saved_bytes, cancelled }` | All files in batch processed; `cancelled: true` when the batch ended via cancel |
 | `file:added` | `{ file_id, name, category, target, size }` | After `add_files` resolves categories |
 
 ### Data Types

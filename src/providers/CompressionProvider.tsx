@@ -43,6 +43,7 @@ export interface CompressionContextValue {
   runScreen: RunScreen
   batchNumber: number
   batchError: string | null
+  batchCancelled: boolean
   roster: Array<FileEntry['id']>
   startRun: () => void
   endRun: () => void
@@ -54,10 +55,13 @@ export function CompressionProvider({ children }: { children: ReactNode }) {
   const { files, error, addFiles, browseFiles, removeFile, clearList, setFiles } = useFileList()
   const { isCompressing, progressByFile, compressAll, cancelFile, cancelAll, revealInFolder } =
     useCompression(files, setFiles, {
-      onBatchComplete: (saved, count, errorCount) => {
-        toast.success(`Compressed ${count} files. Saved ${formatSavedBytes(saved)} total.`)
+      onBatchComplete: (saved, count, errorCount, cancelled) => {
+        if (count > 0) {
+          toast.success(`Compressed ${count} files. Saved ${formatSavedBytes(saved)} total.`)
+        }
         if (errorCount > 0) toast.error(`${errorCount} files could not reach target.`)
         setBatchError(null)
+        setBatchCancelled(cancelled)
       },
       onBatchError: (message) => {
         toast.error(message)
@@ -70,6 +74,7 @@ export function CompressionProvider({ children }: { children: ReactNode }) {
   const [runScreen, setRunScreen] = useState<RunScreen>('staging')
   const [batchNumber, setBatchNumber] = useState(0)
   const [batchError, setBatchError] = useState<string | null>(null)
+  const [batchCancelled, setBatchCancelled] = useState(false)
   const [roster, setRoster] = useState<Array<FileEntry['id']>>([])
 
   const startRun = useCallback(() => {
@@ -80,6 +85,7 @@ export function CompressionProvider({ children }: { children: ReactNode }) {
     if (pendingIds.length === 0) return
     setRoster(pendingIds)
     setBatchNumber((n) => n + 1)
+    setBatchCancelled(false)
     setRunScreen('run')
     void compressAll()
   }, [compressAll, isCompressing])
@@ -103,6 +109,7 @@ export function CompressionProvider({ children }: { children: ReactNode }) {
     runScreen,
     batchNumber,
     batchError,
+    batchCancelled,
     roster,
     startRun,
     endRun,
