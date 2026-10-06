@@ -410,6 +410,6 @@ Install dependency first: `yarn add motion`.
 **Required Tests:**
 - Full gate + manual smoke only — no new unit tests (all task-level suites already exist from Tasks 1-8; verify the full suite passes, not just per-task subsets)
 
-- [ ] **Step 1: Full gate**: `yarn build && yarn test && cd src-tauri && cargo test`. Expected: all PASS (Rust untouched; `file_complete_payload_carries_strategy_fields` still green).
-- [ ] **Step 2: Manual smoke** (`yarn tauri dev`): empty staging centered dropzone with pills → drag hover shows count → add files → compact hero + table → Compress → run board lanes in order, live rows pinned top with progress, cancel/remove/reveal work, chips filter + reset, Cancel All → toast + statuses → `New batch` → staging with results → switch to History mid-run and back → run screen intact. Reduced-motion (OS setting) → transitions instant.
+- [x] **Step 1: Full gate**: `yarn build && yarn test && cd src-tauri && cargo test`. Expected: all PASS (Rust untouched; `file_complete_payload_carries_strategy_fields` still green).
+- [x] **Step 2: Manual smoke** (`yarn tauri dev`): empty staging centered dropzone with pills → drag hover shows count → add files → compact hero + table → Compress → run board lanes in order, live rows pinned top with progress, cancel/remove/reveal work, chips filter + reset, Cancel All → toast + statuses → `New batch` → staging with results → switch to History mid-run and back → run screen intact. Reduced-motion (OS setting) → transitions instant.
 - [ ] **Step 3: Fix anything found; commit fixes; final `git log --oneline` review.**
