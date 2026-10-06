@@ -48,6 +48,7 @@ interface CancelledPayload {
 interface BatchCompletePayload {
   batchId: string
   totalSavedBytes: number
+  cancelled?: boolean
 }
 
 interface BatchErrorPayload {
@@ -56,7 +57,12 @@ interface BatchErrorPayload {
 }
 
 export interface CompressionCallbacks {
-  onBatchComplete?: (totalSavedBytes: number, processedCount: number, errorCount: number) => void
+  onBatchComplete?: (
+    totalSavedBytes: number,
+    processedCount: number,
+    errorCount: number,
+    cancelled: boolean
+  ) => void
   onBatchError?: (errorMessage: string) => void
 }
 
@@ -74,6 +80,7 @@ export function useCompression(
   const errorCountRef = useRef(0)
   const cancelledRef = useRef(false)
   const activeBatchRef = useRef<string | null>(null)
+  const lastTerminalRef = useRef<string | null>(null)
 
   const filesRef = useRef(files)
   filesRef.current = files
@@ -102,10 +109,13 @@ export function useCompression(
       callbacksRef.current?.onBatchError?.('Lost connection to compression worker')
     }
 
-    const clearCancelled = () => {
-      if (!cancelledRef.current) return
+    const clearCancelled = (payloadCancelled?: boolean) => {
+      const wasCancelled = payloadCancelled ?? cancelledRef.current
       cancelledRef.current = false
-      toast.info('Batch cancelled')
+      if (wasCancelled) {
+        toast.info('Batch cancelled')
+      }
+      return wasCancelled
     }
 
     listen<ProgressPayload>('file:progress', (e) => {
@@ -184,15 +194,22 @@ export function useCompression(
 
     listen<BatchCompletePayload>('batch:complete', (e) => {
       if (staleBatchEvent(e.payload.batchId)) return
+      if (e.payload.batchId === lastTerminalRef.current) return
+      lastTerminalRef.current = e.payload.batchId
       activeBatchRef.current = null
       setIsCompressing(false)
       const processed = processedCountRef.current
       const errors = errorCountRef.current
       processedCountRef.current = 0
       errorCountRef.current = 0
-      clearCancelled()
-      if (processed > 0) {
-        callbacksRef.current?.onBatchComplete?.(e.payload.totalSavedBytes, processed, errors)
+      const cancelled = clearCancelled(e.payload.cancelled)
+      if (processed > 0 || cancelled) {
+        callbacksRef.current?.onBatchComplete?.(
+          e.payload.totalSavedBytes,
+          processed,
+          errors,
+          cancelled
+        )
       }
     })
       .then(done)
@@ -200,6 +217,8 @@ export function useCompression(
 
     listen<BatchErrorPayload>('batch:error', (e) => {
       if (staleBatchEvent(e.payload.batchId)) return
+      if (e.payload.batchId === lastTerminalRef.current) return
+      lastTerminalRef.current = e.payload.batchId
       activeBatchRef.current = null
       setIsCompressing(false)
       processedCountRef.current = 0
@@ -224,12 +243,14 @@ export function useCompression(
     try {
       const batchId = await invoke<string>('compress_all')
       activeBatchRef.current = typeof batchId === 'string' && batchId !== '' ? batchId : null
+      lastTerminalRef.current = null
       if (batchId === '') {
         setIsCompressing(false)
         callbacksRef.current?.onBatchError?.('No pending files')
       }
     } catch (err) {
       activeBatchRef.current = null
+      lastTerminalRef.current = null
       setIsCompressing(false)
       callbacksRef.current?.onBatchError?.(toMessage(err))
     }

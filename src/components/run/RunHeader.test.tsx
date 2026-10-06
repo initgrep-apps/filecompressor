@@ -108,6 +108,41 @@ describe('RunHeader', () => {
     expect(screen.getByTestId('new-batch')).toBeInTheDocument()
   })
 
+  it('cancelled batch shows muted Cancelled pill, not Complete', () => {
+    render(
+      <RunHeader {...baseProps()} cancelled counts={countsOf(['cancelled', 'pending'])} />
+    )
+    const pill = screen.getByTestId('status-pill')
+    expect(pill.textContent).toBe('Cancelled')
+    expect(pill.getAttribute('data-state')).toBe('cancelled')
+    expect(pill.className).toContain('text-muted-foreground')
+    expect(pill.className).not.toContain('bg-primary')
+    expect(screen.queryByTestId('compressing-dot')).not.toBeInTheDocument()
+    expect(screen.getByTestId('new-batch')).toBeInTheDocument()
+    expect(screen.queryByTestId('cancel-all')).not.toBeInTheDocument()
+  })
+
+  it('running still shows Compressing pill even with cancelled prop; error still shows Failed', () => {
+    const { rerender } = render(
+      <RunHeader {...baseProps()} running cancelled counts={countsOf(['compressing'])} />
+    )
+    const runningPill = screen.getByTestId('status-pill')
+    expect(runningPill.textContent).toBe('Compressing')
+    expect(runningPill.getAttribute('data-state')).toBe('running')
+
+    rerender(
+      <RunHeader
+        {...baseProps()}
+        cancelled
+        batchError="worker gone"
+        counts={countsOf(['failed'])}
+      />
+    )
+    const failedPill = screen.getByTestId('status-pill')
+    expect(failedPill.textContent).toBe('Failed')
+    expect(failedPill.getAttribute('data-state')).toBe('failed')
+  })
+
   it('Cancel All (destructive outline) while running, New batch (primary) otherwise, wired to handlers', () => {
     const { rerender } = render(
       <RunHeader {...baseProps()} running counts={countsOf(['compressing'])} />

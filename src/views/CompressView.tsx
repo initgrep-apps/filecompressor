@@ -76,6 +76,7 @@ function RunMonitor() {
     batchNumber,
     roster,
     batchError,
+    batchCancelled,
     endRun,
   } = useCompressionContext()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
@@ -91,6 +92,7 @@ function RunMonitor() {
         batchNumber={batchNumber}
         running={isCompressing}
         batchError={batchError}
+        cancelled={batchCancelled}
         counts={counts}
         total={total}
         statusFilter={statusFilter}

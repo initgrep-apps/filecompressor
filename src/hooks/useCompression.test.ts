@@ -197,7 +197,7 @@ describe('useCompression event handling', () => {
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 1024 })
     expect(result.current.comp.isCompressing).toBe(false)
-    expect(onBatchComplete).toHaveBeenCalledWith(1024, 1, 0)
+    expect(onBatchComplete).toHaveBeenCalledWith(1024, 1, 0, false)
   })
 
   it('batch:error resets isCompressing and fires onBatchError', async () => {
@@ -226,7 +226,7 @@ describe('useCompression event handling', () => {
       metTarget: true,
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
-    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, false)
   })
 
   it('cancelled files are not counted and a zero-count batch suppresses the success toast', async () => {
@@ -258,7 +258,7 @@ describe('useCompression event handling', () => {
       metTarget: true,
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
-    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, false)
   })
 
   it('processed count resets between batches', async () => {
@@ -278,7 +278,7 @@ describe('useCompression event handling', () => {
       metTarget: true,
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
-    expect(onBatchComplete).toHaveBeenLastCalledWith(5, 1, 0)
+    expect(onBatchComplete).toHaveBeenLastCalledWith(5, 1, 0, false)
     emit('file:complete', {
       fileId: 'f2',
       outputPath: '/o/b.jpg',
@@ -288,7 +288,7 @@ describe('useCompression event handling', () => {
       metTarget: true,
     })
     emit('batch:complete', { batchId: 'b2', totalSavedBytes: 7 })
-    expect(onBatchComplete).toHaveBeenLastCalledWith(7, 1, 0)
+    expect(onBatchComplete).toHaveBeenLastCalledWith(7, 1, 0, false)
   })
 
   it('error count accumulates file:error events and reaches onBatchComplete', async () => {
@@ -310,7 +310,7 @@ describe('useCompression event handling', () => {
       metTarget: true,
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
-    expect(onBatchComplete).toHaveBeenCalledWith(5, 3, 2)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 3, 2, false)
   })
 
   it('error count ignores unknown fileIds', async () => {
@@ -328,7 +328,7 @@ describe('useCompression event handling', () => {
       metTarget: true,
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
-    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, false)
   })
 
   it('error count resets between batches', async () => {
@@ -340,7 +340,7 @@ describe('useCompression event handling', () => {
     await act(() => result.current.comp.compressAll())
     emit('file:error', { fileId: 'f1', errorMessage: 'boom' })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
-    expect(onBatchComplete).toHaveBeenLastCalledWith(0, 1, 1)
+    expect(onBatchComplete).toHaveBeenLastCalledWith(0, 1, 1, false)
     emit('file:complete', {
       fileId: 'f2',
       outputPath: '/o/b.jpg',
@@ -350,7 +350,7 @@ describe('useCompression event handling', () => {
       metTarget: true,
     })
     emit('batch:complete', { batchId: 'b2', totalSavedBytes: 7 })
-    expect(onBatchComplete).toHaveBeenLastCalledWith(7, 1, 0)
+    expect(onBatchComplete).toHaveBeenLastCalledWith(7, 1, 0, false)
   })
 })
 
@@ -369,6 +369,38 @@ describe('useCompression batch isolation', () => {
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 99 })
     expect(result.current.comp.isCompressing).toBe(true)
     expect(onBatchComplete).not.toHaveBeenCalled()
+  })
+
+  it('stale cancelled batch:complete is ignored', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce('b2')
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 99, cancelled: true })
+    expect(result.current.comp.isCompressing).toBe(true)
+    expect(toast.info).not.toHaveBeenCalled()
+    expect(onBatchComplete).not.toHaveBeenCalled()
+  })
+
+  it('duplicate batch:complete events are processed exactly once', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 10,
+      compressedSize: 5,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5, cancelled: true })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5, cancelled: true })
+    expect(toast.info).toHaveBeenCalledTimes(1)
+    expect(onBatchComplete).toHaveBeenCalledTimes(1)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, true)
   })
 
   it('batch events carrying the active batchId are processed normally', async () => {
@@ -497,7 +529,7 @@ describe('useCompression listener lifecycle', () => {
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
     expect(onBatchComplete).toHaveBeenCalledTimes(1)
-    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, false)
     unmount()
     await flush()
     expect(unlistens.length).toBeGreaterThan(0)
@@ -563,14 +595,38 @@ describe('useCompression batch cancellation', () => {
     metTarget: true,
   }
 
-  it('cancelAll then batch:complete shows Batch cancelled toast', async () => {
+  it('batch:complete without cancelled field falls back to the cancelled ref', async () => {
     const onBatchComplete = vi.fn()
     const { result } = setup([entry()], { onBatchComplete })
     await flush()
     await act(() => result.current.comp.cancelAll())
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
     expect(toast.info).toHaveBeenCalledWith('Batch cancelled')
-    expect(onBatchComplete).not.toHaveBeenCalled()
+    expect(onBatchComplete).toHaveBeenCalledWith(0, 0, 0, true)
+  })
+
+  it('batch:complete with cancelled payload shows exactly one Batch cancelled toast', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('file:complete', completePayload)
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5, cancelled: true })
+    expect(toast.info).toHaveBeenCalledTimes(1)
+    expect(toast.info).toHaveBeenCalledWith('Batch cancelled')
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, true)
+  })
+
+  it('batch:complete with cancelled: false payload overrides a stale cancelled ref', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('file:complete', completePayload)
+    await act(() => result.current.comp.cancelAll())
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5, cancelled: false })
+    expect(toast.info).not.toHaveBeenCalled()
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, false)
   })
 
   it('cancelAll with processed files still fires onBatchComplete and shows Batch cancelled toast', async () => {
@@ -582,7 +638,7 @@ describe('useCompression batch cancellation', () => {
     await act(() => result.current.comp.cancelAll())
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
     expect(toast.info).toHaveBeenCalledWith('Batch cancelled')
-    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, true)
   })
 
   it('batch:error after cancelAll shows Batch cancelled toast and resets the flag', async () => {
@@ -615,7 +671,7 @@ describe('useCompression batch cancellation', () => {
     emit('file:complete', { ...completePayload, fileId: 'f2', outputPath: '/o/b.jpg' })
     emit('batch:complete', { batchId: 'b2', totalSavedBytes: 5 })
     expect(toast.info).not.toHaveBeenCalled()
-    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, false)
   })
 
   it('cancelAll invoke rejection does not set the cancelled flag', async () => {
@@ -638,6 +694,6 @@ describe('useCompression batch cancellation', () => {
     emit('file:complete', completePayload)
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
     expect(toast.info).not.toHaveBeenCalled()
-    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, false)
   })
 })

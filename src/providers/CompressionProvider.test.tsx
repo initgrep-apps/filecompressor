@@ -81,6 +81,7 @@ function RunConsumer({ paths }: { paths: string[] }) {
     batchNumber,
     roster,
     batchError,
+    batchCancelled,
     addFiles,
     startRun,
     endRun,
@@ -100,6 +101,7 @@ function RunConsumer({ paths }: { paths: string[] }) {
       <p data-testid="batch-number">{batchNumber}</p>
       <p data-testid="roster">{roster.join(',')}</p>
       <p data-testid="batch-error">{batchError ?? ''}</p>
+      <p data-testid="batch-cancelled">{String(batchCancelled)}</p>
       <ul>
         {files.map((f) => (
           <li key={f.id}>
@@ -259,6 +261,42 @@ describe('CompressionProvider', () => {
       screen.getByRole('button', { name: 'start run' }).click()
     })
     expect(screen.getByTestId('batch-number')).toHaveTextContent('2')
+  })
+
+  it('provider sets batchCancelled on cancelled terminal and clears it on startRun', async () => {
+    vi.mocked(invoke).mockResolvedValue([entry()])
+    render(
+      <CompressionProvider>
+        <RunConsumer paths={['/t/a.jpg']} />
+      </CompressionProvider>
+    )
+    await flush()
+    await act(async () => {
+      await screen.getByRole('button', { name: 'add' }).click()
+    })
+    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('false')
+    await act(() => {
+      screen.getByRole('button', { name: 'start run' }).click()
+    })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0, cancelled: true })
+    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('true')
+    expect(toast.success).not.toHaveBeenCalled()
+    await act(() => {
+      screen.getByRole('button', { name: 'start run' }).click()
+    })
+    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('false')
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 10,
+      compressedSize: 5,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b2', totalSavedBytes: 5 })
+    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('false')
+    expect(toast.success).toHaveBeenCalledTimes(1)
+    expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/Compressed 1 files/))
   })
 
   it('startRun no-ops when there are no pending files', async () => {

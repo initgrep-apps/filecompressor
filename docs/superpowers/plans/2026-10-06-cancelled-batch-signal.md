@@ -85,12 +85,12 @@ Base spec: `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md`
 - `cancelled batch shows muted Cancelled pill, not Complete` (Review Focus #1)
 - `running still shows Compressing pill even with cancelled prop; error still shows Failed` (precedence pins)
 
-- [ ] **Step 1: Write failing tests** (hook: payload-authoritative toast + fallback + stale-swallow; provider: batchCancelled lifecycle; RunHeader: Cancelled pill + precedence).
-- [ ] **Step 2: Run per-suite. Expected: FAIL.**
-- [ ] **Step 3: Implement** hook → provider → RunHeader (order: hook first so provider arg exists).
-- [ ] **Step 4: Run suites. Expected: PASS.**
-- [ ] **Step 5: Amend spec §3** (Cancelled pill row) — same commit or separate `docs:` commit.
-- [ ] **Step 6: Gate `yarn build && yarn test`. Commit** `feat(compression): backend-driven cancelled batch state`
+- [x] **Step 1: Write failing tests** (hook: payload-authoritative toast + fallback + stale-swallow; provider: batchCancelled lifecycle; RunHeader: Cancelled pill + precedence).
+- [x] **Step 2: Run per-suite. Expected: FAIL.**
+- [x] **Step 3: Implement** hook → provider → RunHeader (order: hook first so provider arg exists).
+- [x] **Step 4: Run suites. Expected: PASS.**
+- [x] **Step 5: Amend spec §3** (Cancelled pill row) — same commit or separate `docs:` commit.
+- [x] **Step 6: Gate `yarn build && yarn test`. Commit** `feat(compression): backend-driven cancelled batch state`
 
 ### Task 3: Frontend — terminal watchdog
 
