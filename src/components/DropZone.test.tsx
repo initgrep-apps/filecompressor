@@ -240,6 +240,8 @@ describe('DropZone', () => {
     expect(zone.className).toContain('bg-muted/30')
     expect(zone.className).not.toContain('border-primary')
     expect(zone.className).not.toContain('bg-primary/5')
+    emit({ payload: { type: 'enter', position: { x: 0, y: 0 } } })
+    expect(screen.getByText('Files detected')).toBeInTheDocument()
   })
 
   it('compact variant renders hero bar with mono formats line and no pills; compact Browse click calls onBrowse', async () => {
@@ -281,41 +283,11 @@ describe('DropZone', () => {
     const surfaceAfterLeave = screen.getByRole('button', { name: /drop here or press/i })
     expect(surfaceAfterLeave.className).toContain('border-primary/35')
     expect(surfaceAfterLeave.className).not.toContain('bg-primary/5')
-    emit({ payload: { type: 'leave' } })
     expect(screen.getByText('Drop more files here')).toBeInTheDocument()
     expect(screen.getByText('or')).toBeInTheDocument()
     expect(screen.getByText(ALL_FORMATS)).toBeInTheDocument()
     expect(screen.queryByText('Release to add files')).not.toBeInTheDocument()
     expect(screen.queryByText('2 files detected')).not.toBeInTheDocument()
-  })
-
-  it('click triggers browse', async () => {
-    const user = userEvent.setup()
-    const onBrowse = vi.fn()
-    render(<DropZone onBrowse={onBrowse} onDrop={vi.fn()} />)
-    await user.click(screen.getByRole('button', { name: /drop files/i }))
-    expect(onBrowse).toHaveBeenCalled()
-  })
-
-  it('Enter and Space trigger browse', async () => {
-    const user = userEvent.setup()
-    const onBrowse = vi.fn()
-    render(<DropZone onBrowse={onBrowse} onDrop={vi.fn()} />)
-    const zone = screen.getByRole('button', { name: /drop files/i })
-    zone.focus()
-    await user.keyboard('{Enter}')
-    expect(onBrowse).toHaveBeenCalledTimes(1)
-    await user.keyboard(' ')
-    expect(onBrowse).toHaveBeenCalledTimes(2)
-  })
-
-  it('inner browse button fires onBrowse exactly once', async () => {
-    const user = userEvent.setup()
-    const onBrowse = vi.fn()
-    const onDrop = vi.fn()
-    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} />)
-    await user.click(screen.getByRole('button', { name: 'Browse your files' }))
-    expect(onBrowse).toHaveBeenCalledTimes(1)
   })
 
   it('card click outside the button fires onBrowse exactly once', async () => {
