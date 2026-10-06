@@ -115,8 +115,8 @@ Base spec: `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md`
 - `second compressAll clears a pending watchdog` (arm, re-run, advance — no watchdog fire from first arm)
 - `invoke rejection never arms the watchdog`
 
-- [ ] **Step 1: Write failing tests** (use fake timers; follow existing listener-mock patterns; sonner mock already has `error`).
-- [ ] **Step 2: Run `yarn test -- useCompression`. Expected: FAIL.**
-- [ ] **Step 3: Implement** — `watchdogRef`; arm in `compressAll` post-invoke; clear helper called from both terminal listeners + invoke catch + re-arm path.
-- [ ] **Step 4: Run suite. Expected: PASS. Full gate** `yarn build && yarn test && cd src-tauri && cargo test`.
-- [ ] **Step 5: Commit** `fix(compression): terminal watchdog for lost batch events`
+- [x] **Step 1: Write failing tests** (use fake timers; follow existing listener-mock patterns; sonner mock already has `error`).
+- [x] **Step 2: Run `yarn test -- useCompression`. Expected: FAIL.**
+- [x] **Step 3: Implement** — `watchdogRef`; arm in `compressAll` post-invoke; clear helper called from both terminal listeners + invoke catch + re-arm path.
+- [x] **Step 4: Run suite. Expected: PASS. Full gate** `yarn build && yarn test && cd src-tauri && cargo test`.
+- [x] **Step 5: Commit** `fix(compression): terminal watchdog for lost batch events`
