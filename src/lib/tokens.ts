@@ -17,10 +17,10 @@
 import type { Category, FileStatus } from '@/types'
 
 interface Tone {
-  tint: string
-  text: string
-  border: string
-  accent: string
+  readonly tint: string
+  readonly text: string
+  readonly border: string
+  readonly accent: string
 }
 
 const MUTED: Tone = {
