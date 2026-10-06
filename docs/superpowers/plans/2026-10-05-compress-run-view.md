@@ -254,11 +254,11 @@ Install dependency first: `yarn add motion`.
 - `Lane pill gets green tint while any row is compressing`
 - `Lane renders no rows for empty files array; missing progress entry for a row does not crash`
 
-- [ ] **Step 1: Write failing tests** (`RunRow.test.tsx`): one per variant — compressing row shows name/percent/progress bar/cancel; done row shows sizes, `-%` chip, strategy label, Reveal; best_effort shows amber `Best effort` chip (+ error when present); already_under_target shows `≤ target` chip and no arrow-sizes; failed shows `Failed` chip + error text and no Reveal; cancelled muted; pending dashed + remove; callback wiring assertions (cancel/reveal/remove dispatch the row's id/outputPath); aria-label contract; Review Focus #5: 200-char name truncates and `title` attribute equals full name; long error gets `title` with full error.
-- [ ] **Step 2: Run `yarn test -- RunRow`. Expected: FAIL.** Implement `RunRow`.
-- [ ] **Step 3: Run `yarn test -- RunRow`. Expected: PASS. Commit** `feat(compress): run row variants with strategy display`.
-- [ ] **Step 4: Write failing `Lane.test.tsx`**: renders header with category label + `x/y done` pill from `laneDonePill`; rows render in given order; removing a row from props unmounts it (AnimatePresence exit keeps it briefly — assert it disappears after a tick with `waitFor`); pill gets green tint when any row is compressing.
-- [ ] **Step 5: Run `yarn test -- Lane`. Expected: FAIL → implement → PASS. Commit** `feat(compress): lane component with animated rows`
+- [x] **Step 1: Write failing tests** (`RunRow.test.tsx`): one per variant — compressing row shows name/percent/progress bar/cancel; done row shows sizes, `-%` chip, strategy label, Reveal; best_effort shows amber `Best effort` chip (+ error when present); already_under_target shows `≤ target` chip and no arrow-sizes; failed shows `Failed` chip + error text and no Reveal; cancelled muted; pending dashed + remove; callback wiring assertions (cancel/reveal/remove dispatch the row's id/outputPath); aria-label contract; Review Focus #5: 200-char name truncates and `title` attribute equals full name; long error gets `title` with full error.
+- [x] **Step 2: Run `yarn test -- RunRow`. Expected: FAIL.** Implement `RunRow`.
+- [x] **Step 3: Run `yarn test -- RunRow`. Expected: PASS. Commit** `feat(compress): run row variants with strategy display`.
+- [x] **Step 4: Write failing `Lane.test.tsx`**: renders header with category label + `x/y done` pill from `laneDonePill`; rows render in given order; removing a row from props unmounts it (AnimatePresence exit keeps it briefly — assert it disappears after a tick with `waitFor`); pill gets green tint when any row is compressing.
+- [x] **Step 5: Run `yarn test -- Lane`. Expected: FAIL → implement → PASS. Commit** `feat(compress): lane component with animated rows`
 
 ### Task 6: `KanbanBoard` + `RunHeader` — board, chips filters, batch header
 
