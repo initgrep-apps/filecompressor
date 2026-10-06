@@ -123,7 +123,7 @@ export function RunHeader({
   batchNumber,
   running,
   batchError,
-  cancelled,
+  cancelled = false,
   counts,
   total,
   statusFilter,
@@ -144,7 +144,7 @@ export function RunHeader({
           >
             Batch #{batchNumber}
           </span>
-          {statusPill(running, batchError, cancelled ?? false)}
+          {statusPill(running, batchError, cancelled)}
         </div>
         <div className="flex items-center gap-2">
           {running ? (

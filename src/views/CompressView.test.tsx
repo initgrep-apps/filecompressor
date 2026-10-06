@@ -233,6 +233,17 @@ describe('CompressView', () => {
     expect(screen.queryByRole('button', { name: 'Compress' })).not.toBeInTheDocument()
   })
 
+  it('cancelled batch terminal shows the muted Cancelled pill on the run screen', async () => {
+    renderView()
+    await addFileInView()
+    await pressCompress()
+    emit('file:cancelled', { fileId: 'f1' })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0, cancelled: true })
+    const pill = screen.getByTestId('status-pill')
+    expect(pill.getAttribute('data-state')).toBe('cancelled')
+    expect(pill).toHaveTextContent('Cancelled')
+  })
+
   it('run screen toasts and ignores drop while running', async () => {
     renderView()
     await addFileInView()

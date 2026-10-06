@@ -383,6 +383,26 @@ describe('useCompression batch isolation', () => {
     expect(onBatchComplete).not.toHaveBeenCalled()
   })
 
+  it('duplicate batch:complete events are processed exactly once', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 10,
+      compressedSize: 5,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5, cancelled: true })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5, cancelled: true })
+    expect(toast.info).toHaveBeenCalledTimes(1)
+    expect(onBatchComplete).toHaveBeenCalledTimes(1)
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, true)
+  })
+
   it('batch events carrying the active batchId are processed normally', async () => {
     vi.mocked(invoke).mockResolvedValueOnce('b2')
     const onBatchError = vi.fn()
@@ -595,6 +615,18 @@ describe('useCompression batch cancellation', () => {
     expect(toast.info).toHaveBeenCalledTimes(1)
     expect(toast.info).toHaveBeenCalledWith('Batch cancelled')
     expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, true)
+  })
+
+  it('batch:complete with cancelled: false payload overrides a stale cancelled ref', async () => {
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('file:complete', completePayload)
+    await act(() => result.current.comp.cancelAll())
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5, cancelled: false })
+    expect(toast.info).not.toHaveBeenCalled()
+    expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, false)
   })
 
   it('cancelAll with processed files still fires onBatchComplete and shows Batch cancelled toast', async () => {

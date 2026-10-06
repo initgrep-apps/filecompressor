@@ -278,6 +278,12 @@ describe('CompressionProvider', () => {
     await act(() => {
       screen.getByRole('button', { name: 'start run' }).click()
     })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0, cancelled: true })
+    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('true')
+    await act(() => {
+      screen.getByRole('button', { name: 'start run' }).click()
+    })
+    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('false')
     emit('file:complete', {
       fileId: 'f1',
       outputPath: '/o/a.jpg',
@@ -286,20 +292,7 @@ describe('CompressionProvider', () => {
       status: 'done',
       metTarget: true,
     })
-    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
-    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('false')
-    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0, cancelled: true })
-    expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('true')
-    await act(() => {
-      screen.getByRole('button', { name: 'end run' }).click()
-    })
-    // startRun no-ops with zero pending files, so the next run needs a fresh pending row.
-    await act(async () => {
-      await screen.getByRole('button', { name: 'add' }).click()
-    })
-    await act(() => {
-      screen.getByRole('button', { name: 'start run' }).click()
-    })
+    emit('batch:complete', { batchId: 'b2', totalSavedBytes: 5 })
     expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('false')
   })
 
