@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import type { FileEntry, Category, FileStatus } from '@/types'
+import { formatSize, reductionPercentOrZero } from '@/lib/sizeFormat'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 
@@ -41,25 +42,6 @@ const categoryLabel: Record<Category, string> = {
   pdf: 'PDF',
   document: 'Document',
   other: 'Other',
-}
-
-export function formatSize(bytes: number): string {
-  if (bytes === 0) return '—'
-  const KB = 1024
-  const MB = 1024 * 1024
-  const GB = 1024 * 1024 * 1024
-  if (bytes < KB) return `${bytes} B`
-  if (bytes < MB) return `${(bytes / KB).toFixed(0)} KB`
-  if (bytes < GB) return `${(bytes / MB).toFixed(1)} MB`
-  return `${(bytes / GB).toFixed(2)} GB`
-}
-
-function reductionPercent(file: FileEntry): number {
-  if (file.originalSize === 0 || file.compressedSize === null) return 0
-  return Math.max(
-    0,
-    Math.round(((file.originalSize - file.compressedSize) / file.originalSize) * 100)
-  )
 }
 
 function StatusBadge({ status }: { status: FileStatus }) {
@@ -138,7 +120,7 @@ export function FileList({ files, onRemove, onReveal, removeDisabled }: FileList
                       }`}
                     >
                       {formatSize(file.originalSize)} → {formatSize(file.compressedSize!)} ·{' '}
-                      {reductionPercent(file)}% smaller
+                      {reductionPercentOrZero(file)}% smaller
                     </div>
                   ) : (
                     <div className="text-xs text-muted-foreground mt-0.5 tabular-nums">

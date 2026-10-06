@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { RunRow } from '@/components/run/RunRow'
-import { formatSize } from '@/components/FileList'
+import { formatSize } from '@/lib/sizeFormat'
 import { setupMotionStubs } from '@/test/motionStubs'
 import type { FileEntry } from '@/types'
 
