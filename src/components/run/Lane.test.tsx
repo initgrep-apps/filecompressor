@@ -1,30 +1,12 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { Lane } from '@/components/run/Lane'
 import { formatSize } from '@/components/FileList'
+import { setupMotionStubs } from '@/test/motionStubs'
 import type { Category, FileEntry } from '@/types'
 
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-const matchMediaStub = (query: string) => ({
-  matches: false,
-  media: query,
-  onchange: null,
-  addListener() {},
-  removeListener() {},
-  addEventListener() {},
-  removeEventListener() {},
-  dispatchEvent() {
-    return false
-  },
-})
-
 beforeAll(() => {
-  vi.stubGlobal('ResizeObserver', ResizeObserverStub)
-  vi.stubGlobal('matchMedia', matchMediaStub)
+  setupMotionStubs()
 })
 
 function makeFile(patch: Partial<FileEntry> = {}): FileEntry {
@@ -128,6 +110,11 @@ describe('Lane', () => {
       screen.getByText(`${formatSize(1_100_000)} → …`)
     ).toBeInTheDocument()
     expect(screen.getByTestId('run-progress-fill').style.width).toBe('0%')
+    rerender(
+      <Lane category="image" files={[makeFile({ status: 'compressing' })]} progress={{ f1: 45 }} />
+    )
+    expect(screen.getByTestId('run-progress-fill').style.width).toBe('45%')
+    expect(screen.getByText('45%')).toBeInTheDocument()
     unmount()
   })
 

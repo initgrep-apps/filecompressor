@@ -15,11 +15,11 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { motion } from 'motion/react'
-import { formatSize } from '@/components/FileList'
+import { formatSize, RESULT_STATUSES } from '@/components/FileList'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { strategyLabel } from '@/lib/strategyLabels'
-import type { FileEntry } from '@/types'
+import type { FileEntry, FileStatus } from '@/types'
 
 export interface RunRowProps {
   file: FileEntry
@@ -41,6 +41,11 @@ const CHIP_TONES: Record<ChipTone, string> = {
 const ICON_BUTTON =
   'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
 
+const NAME_TONES: Partial<Record<FileStatus, string>> = {
+  compressing: 'text-primary font-semibold',
+  pending: 'text-muted-foreground',
+}
+
 function reductionPercent(file: FileEntry): number | null {
   if (file.originalSize === 0 || file.compressedSize === null) return null
   return Math.max(
@@ -49,15 +54,19 @@ function reductionPercent(file: FileEntry): number | null {
   )
 }
 
+function safePercent(percent: number | undefined): number {
+  return percent !== undefined && Number.isFinite(percent)
+    ? Math.min(100, Math.max(0, percent))
+    : 0
+}
+
 function chipFor(file: FileEntry): { label: string; tone: ChipTone } | null {
   switch (file.status) {
-    case 'done': {
-      const pct = reductionPercent(file)
-      return pct === null ? null : { label: `-${pct}%`, tone: 'primary' }
-    }
+    case 'done':
     case 'best_effort': {
       const pct = reductionPercent(file)
-      return pct === null ? null : { label: `-${pct}%`, tone: 'amber' }
+      if (pct === null) return null
+      return { label: `-${pct}%`, tone: file.status === 'done' ? 'primary' : 'amber' }
     }
     case 'already_under_target':
       return { label: '≤ target', tone: 'primary' }
@@ -99,24 +108,14 @@ function strategyLineFor(file: FileEntry): string {
   return label
 }
 
-const REVEAL_STATUSES = ['done', 'best_effort', 'already_under_target'] as const
-
 export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowProps) {
-  const { status } = file
+  const { status, outputPath, error } = file
   const tone = chipFor(file)
   const sizes = sizesFor(file)
   const note = strategyLineFor(file)
-  const showNote = status === 'done' || status === 'best_effort' || status === 'already_under_target'
-  const showError = file.error && (status === 'failed' || status === 'best_effort')
-  const showReveal =
-    (REVEAL_STATUSES as readonly string[]).includes(status) && file.outputPath !== null
+  const hasResult = RESULT_STATUSES.includes(status)
   const dimmed = status === 'cancelled'
-  const nameTone =
-    status === 'compressing'
-      ? 'text-primary font-semibold'
-      : status === 'pending'
-        ? 'text-muted-foreground'
-        : 'text-foreground'
+  const nameTone = NAME_TONES[status] ?? 'text-foreground'
 
   return (
     <motion.div
@@ -149,12 +148,12 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
             {tone.label}
           </span>
         )}
-        {status === 'compressing' && (
+        {status === 'compressing' && onCancel && (
           <button
             type="button"
             aria-label={`Cancel ${file.name}`}
             className={ICON_BUTTON}
-            onClick={() => onCancel?.(file.id)}
+            onClick={() => onCancel(file.id)}
           >
             <svg
               width="12"
@@ -169,13 +168,13 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
             </svg>
           </button>
         )}
-        {showReveal && (
+        {hasResult && onReveal && outputPath && (
           <button
             type="button"
             aria-label={`Reveal ${file.name}`}
             title="Reveal in Finder"
             className={ICON_BUTTON}
-            onClick={() => onReveal?.(file.outputPath as string)}
+            onClick={() => onReveal(outputPath)}
           >
             <svg
               width="12"
@@ -191,12 +190,12 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
             </svg>
           </button>
         )}
-        {status === 'pending' && (
+        {status === 'pending' && onRemove && (
           <button
             type="button"
             aria-label={`Remove ${file.name}`}
             className={ICON_BUTTON}
-            onClick={() => onRemove?.(file.id)}
+            onClick={() => onRemove(file.id)}
           >
             <svg
               width="12"
@@ -213,12 +212,12 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
           </button>
         )}
       </div>
-      {(sizes || showNote) && (
+      {(sizes || hasResult) && (
         <div className="mt-[5px] flex flex-wrap items-center gap-x-2 gap-y-1">
           {sizes && (
             <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground">{sizes}</span>
           )}
-          {showNote && note && (
+          {hasResult && note && (
             <span className="font-mono text-[10px] text-muted-foreground">{note}</span>
           )}
         </div>
@@ -229,21 +228,21 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
             <div
               data-testid="run-progress-fill"
               className="h-full rounded-full bg-primary transition-[width]"
-              style={{ width: `${percent ?? 0}%` }}
+              style={{ width: `${safePercent(percent)}%` }}
             />
           </div>
           <div className="mt-1.5 flex items-center gap-[7px] font-mono text-[10.5px] text-primary">
             <Spinner className="size-2.5" />
-            <span>{Math.round(percent ?? 0)}%</span>
+            <span>{Math.round(safePercent(percent))}%</span>
           </div>
         </>
       )}
-      {showError && (
+      {(status === 'failed' || status === 'best_effort') && error && (
         <p
           className="mt-[5px] line-clamp-2 text-[10.5px] leading-[1.45] text-destructive"
-          title={file.error as string}
+          title={error}
         >
-          {file.error}
+          {error}
         </p>
       )}
     </motion.div>

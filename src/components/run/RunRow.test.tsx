@@ -1,35 +1,12 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-import type { ReactNode } from 'react'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { RunRow } from '@/components/run/RunRow'
 import { formatSize } from '@/components/FileList'
+import { setupMotionStubs } from '@/test/motionStubs'
 import type { FileEntry } from '@/types'
 
-function Disposer({ children }: { children: ReactNode }) {
-  return <div>{children}</div>
-}
-
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-const matchMediaStub = (query: string) => ({
-  matches: false,
-  media: query,
-  onchange: null,
-  addListener() {},
-  removeListener() {},
-  addEventListener() {},
-  removeEventListener() {},
-  dispatchEvent() {
-    return false
-  },
-})
-
 beforeAll(() => {
-  vi.stubGlobal('ResizeObserver', ResizeObserverStub)
-  vi.stubGlobal('matchMedia', matchMediaStub)
+  setupMotionStubs()
 })
 
 function makeFile(patch: Partial<FileEntry> = {}): FileEntry {
@@ -114,6 +91,7 @@ describe('RunRow', () => {
           compressedSize: null,
           targetBytes: 1_572_864,
         })}
+        onReveal={vi.fn()}
       />
     )
     expect(screen.getByText('≤ target')).toBeInTheDocument()
@@ -121,12 +99,10 @@ describe('RunRow', () => {
     expect(screen.getByText(`${formatSize(1_100_000)}`)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reveal IMG_5647.MOV' })).toBeInTheDocument()
     expect(screen.queryByText('-36%')).not.toBeInTheDocument()
-    expect(description()).not.toContain('already-under-target')
+    expect(
+      document.querySelector('[data-testid="run-row-already_under_target"]')?.textContent
+    ).not.toContain('already-under-target')
   })
-
-  function description(): string | null {
-    return document.querySelector('[data-testid="run-row-already_under_target"]')?.textContent ?? null
-  }
 
   it('failed row shows Failed chip, wrapped error with full title, and no Reveal', () => {
     const err = 'Encoder error: unsupported color profile and a very long trailing detail message'
@@ -163,11 +139,11 @@ describe('RunRow', () => {
 
   it('aria labels match Cancel {name} / Reveal {name} / Remove {name}', () => {
     render(
-      <Disposer>
+      <>
         <RunRow file={makeFile({ id: 'f1', status: 'compressing' })} onCancel={vi.fn()} />
         <RunRow file={makeFile({ id: 'f2', name: 'Done.pdf', status: 'done' })} onReveal={vi.fn()} />
         <RunRow file={makeFile({ id: 'f3', name: 'Removed.png', status: 'pending' })} onRemove={vi.fn()} />
-      </Disposer>
+      </>
     )
     expect(screen.getByRole('button', { name: 'Cancel IMG_5647.MOV' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Reveal Done.pdf' })).toBeInTheDocument()
@@ -179,14 +155,49 @@ describe('RunRow', () => {
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
   })
 
-  it('progress bar width tracks percent ?? 0', () => {
+  it('progress bar width tracks percent ?? 0 and the label rounds', () => {
     const { unmount } = render(
       <RunRow file={makeFile({ status: 'compressing' })} percent={62.4} />
     )
     expect(screen.getByTestId('run-progress-fill').style.width).toBe('62.4%')
+    expect(screen.getByText('62%')).toBeInTheDocument()
     unmount()
     render(<RunRow file={makeFile({ status: 'compressing' })} />)
     expect(screen.getByTestId('run-progress-fill').style.width).toBe('0%')
+  })
+
+  it('progress bar clamps NaN, negative, and overflowing percents', () => {
+    const { rerender } = render(<RunRow file={makeFile({ status: 'compressing' })} percent={NaN as number} />)
+    expect(screen.getByTestId('run-progress-fill').style.width).toBe('0%')
+    expect(screen.getByText('0%')).toBeInTheDocument()
+    rerender(<RunRow file={makeFile({ status: 'compressing' })} percent={-20} />)
+    expect(screen.getByTestId('run-progress-fill').style.width).toBe('0%')
+    rerender(<RunRow file={makeFile({ status: 'compressing' })} percent={150} />)
+    expect(screen.getByTestId('run-progress-fill').style.width).toBe('100%')
+    expect(screen.getByText('100%')).toBeInTheDocument()
+  })
+
+  it('buttons are not rendered when their handlers are omitted (no dead affordances)', () => {
+    render(
+      <>
+        <RunRow file={makeFile({ id: 'f1', status: 'compressing' })} />
+        <RunRow file={makeFile({ id: 'f2', name: 'Done.pdf', status: 'done' })} />
+        <RunRow file={makeFile({ id: 'f3', name: 'Removed.png', status: 'pending' })} />
+      </>
+    )
+    expect(screen.queryByRole('button', { name: 'Cancel IMG_5647.MOV' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reveal Done.pdf' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Remove Removed.png' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
+
+  it('done row with zero original size shows no chip; oversized result clamps to -0%', () => {
+    const { rerender } = render(
+      <RunRow file={makeFile({ status: 'done', originalSize: 0, compressedSize: 0 })} onReveal={vi.fn()} />
+    )
+    expect(screen.queryByTestId('run-chip')).not.toBeInTheDocument()
+    rerender(<RunRow file={makeFile({ status: 'done', compressedSize: 2_000_000 })} onReveal={vi.fn()} />)
+    expect(screen.getByTestId('run-chip').textContent).toBe('-0%')
   })
 
   it('long name truncates and title attribute equals full name', () => {

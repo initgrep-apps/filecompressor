@@ -18,16 +18,13 @@ import type { ReactNode } from 'react'
 import { AnimatePresence } from 'motion/react'
 import { laneDonePill } from '@/lib/grouping'
 import { cn } from '@/lib/utils'
-import { RunRow } from '@/components/run/RunRow'
+import { RunRow, type RunRowProps } from '@/components/run/RunRow'
 import type { Category, FileEntry } from '@/types'
 
-export interface LaneProps {
+export interface LaneProps extends Pick<RunRowProps, 'onCancel' | 'onReveal' | 'onRemove'> {
   category: Category
   files: FileEntry[]
   progress?: Record<string, number>
-  onCancel?: (fileId: string) => void
-  onReveal?: (outputPath: string) => void
-  onRemove?: (fileId: string) => void
 }
 
 const LANE_META: Record<Category, { label: string; tint: string }> = {
@@ -37,6 +34,13 @@ const LANE_META: Record<Category, { label: string; tint: string }> = {
   document: { label: 'Document', tint: 'bg-amber-500/10 text-amber-600' },
   other: { label: 'Other', tint: 'bg-muted text-muted-foreground' },
 }
+
+const DOC_GLYPH_PATHS = (
+  <>
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+  </>
+)
 
 const GLYPHS: Record<Category, ReactNode> = {
   image: (
@@ -52,24 +56,17 @@ const GLYPHS: Record<Category, ReactNode> = {
       <rect x="2" y="6" width="14" height="12" rx="2" />
     </>
   ),
-  pdf: (
-    <>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-    </>
-  ),
+  pdf: DOC_GLYPH_PATHS,
   document: (
     <>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
+      {DOC_GLYPH_PATHS}
       <line x1="16" y1="13" x2="8" y2="13" />
       <line x1="16" y1="17" x2="8" y2="17" />
     </>
   ),
   other: (
     <>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
+      {DOC_GLYPH_PATHS}
       <line x1="16" y1="13" x2="8" y2="13" />
     </>
   ),
