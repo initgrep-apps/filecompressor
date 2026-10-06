@@ -15,12 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { useState } from "react"
-import {
-  RiUploadCloud2Line,
-  RiHistoryLine,
-  RiSettings3Line,
-  RiFileReduceLine,
-} from "@remixicon/react"
+import { RiFileReduceLine } from "@remixicon/react"
 import {
   Sidebar,
   SidebarContent,
@@ -50,26 +45,7 @@ import { HistoryView } from "@/views/HistoryView"
 import { SettingsView } from "@/views/SettingsView"
 import { Toaster } from "@/components/ui/sonner"
 import { CompressionProvider } from "@/providers/CompressionProvider"
-
-type ViewId = "compress" | "history" | "settings"
-
-const navItems: { id: ViewId; label: string; icon: React.ReactNode }[] = [
-  {
-    id: "compress",
-    label: "Compress",
-    icon: <RiUploadCloud2Line size={16} />,
-  },
-  {
-    id: "history",
-    label: "History",
-    icon: <RiHistoryLine size={16} />,
-  },
-  {
-    id: "settings",
-    label: "Settings",
-    icon: <RiSettings3Line size={16} />,
-  },
-]
+import { SidebarNav, navItems, type ViewId } from "@/components/SidebarNav"
 
 function App() {
   const [activeView, setActiveView] = useState<ViewId>("compress")
@@ -105,20 +81,7 @@ function App() {
         <SidebarContent>
           <SidebarGroup>
             <SidebarGroupContent>
-              <SidebarMenu>
-                {navItems.map((item) => (
-                  <SidebarMenuItem key={item.id}>
-                    <SidebarMenuButton
-                      isActive={activeView === item.id}
-                      tooltip={item.label}
-                      onClick={() => setActiveView(item.id)}
-                    >
-                      {item.icon}
-                      <span>{item.label}</span>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
+              <SidebarNav activeView={activeView} setActiveView={setActiveView} />
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>
