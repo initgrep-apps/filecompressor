@@ -100,7 +100,7 @@ Base spec: `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md`
 
 **Interfaces:**
 - Internal only. Constant `TERMINAL_WATCHDOG_MS = 10 * 60 * 1000` (10 min — batches of 100+ files stay well under; configurable const at top of file).
-- On watchdog fire while still compressing: `setIsCompressing(false)`, `setProgressByFile({})`, `toast.error('Compression status lost — check History for results')`, `onBatchError?.('Compression status lost')` (drives provider batchError → Failed pill + New batch on run screen), `activeBatchRef.current = null`.
+- On watchdog fire while still compressing: `setIsCompressing(false)`, `setProgressByFile({})`, `onBatchError?.('Compression status lost — check History for results')` — single toast: the provider already toasts the passed reason and sets the batchError banner (Failed pill + New batch on run screen); the hook does not toast itself, `activeBatchRef.current = null`.
 
 **Acceptance Criteria:**
 - Watchdog armed only after `compress_all` invoke resolves with a batchId; disarmed on every terminal (`batch:complete`, `batch:error`) and on invoke failure (never armed)
@@ -111,12 +111,12 @@ Base spec: `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md`
 
 **Required Tests:**
 - `watchdog does not fire while batch terminal arrives in time` (fake timers; emit terminal before advancing past TERMINAL_WATCHDOG_MS)
-- `watchdog recovers run state when the terminal event never arrives` (advance timers; assert isCompressing false, toast.error, onBatchError called, progress cleared)
+- `watchdog recovers run state when the terminal event never arrives` (advance timers; assert isCompressing false, progress cleared, onBatchError called once with the full message — single-toast semantics: toast.error NOT called)
 - `second compressAll clears a pending watchdog` (arm, re-run, advance — no watchdog fire from first arm)
 - `invoke rejection never arms the watchdog`
 
-- [ ] **Step 1: Write failing tests** (use fake timers; follow existing listener-mock patterns; sonner mock already has `error`).
-- [ ] **Step 2: Run `yarn test -- useCompression`. Expected: FAIL.**
-- [ ] **Step 3: Implement** — `watchdogRef`; arm in `compressAll` post-invoke; clear helper called from both terminal listeners + invoke catch + re-arm path.
-- [ ] **Step 4: Run suite. Expected: PASS. Full gate** `yarn build && yarn test && cd src-tauri && cargo test`.
-- [ ] **Step 5: Commit** `fix(compression): terminal watchdog for lost batch events`
+- [x] **Step 1: Write failing tests** (use fake timers; follow existing listener-mock patterns; sonner mock already has `error`).
+- [x] **Step 2: Run `yarn test -- useCompression`. Expected: FAIL.**
+- [x] **Step 3: Implement** — `watchdogRef`; arm in `compressAll` post-invoke; clear helper called from both terminal listeners + invoke catch + re-arm path.
+- [x] **Step 4: Run suite. Expected: PASS. Full gate** `yarn build && yarn test && cd src-tauri && cargo test`.
+- [x] **Step 5: Commit** `fix(compression): terminal watchdog for lost batch events`
