@@ -390,11 +390,11 @@ Install dependency first: `yarn add motion`.
 - `History nav item has no badge` — pins the "History nav badge: Removed" decision
 - `clicking History still switches views` (regression)
 
-- [ ] **Step 1: Write failing tests in `App.test.tsx`**: 0 files → no badge text next to Compress; 5 files → badge `5` visible; badge reactively updates on file add/remove; History item shows NO badge (spec §3 decision pinned); clicking History still switches views (regression). Update the App.test.tsx FileEntry fixture to include the Task 1 strategy fields.
-- [ ] **Step 2: Run `yarn test -- App`. Expected: FAIL.**
-- [ ] **Step 3: Implement `SidebarNav.tsx`** (GPLv3 header; component must be rendered inside `CompressionProvider` so the hook works — App already wraps everything in it).
-- [ ] **Step 4: Run `yarn test -- App`. Expected: PASS.**
-- [ ] **Step 5: Commit** `feat(compress): staged-files badge on sidebar`
+- [x] **Step 1: Write failing tests in `App.test.tsx`**: 0 files → no badge text next to Compress; 5 files → badge `5` visible; badge reactively updates on file add/remove; History item shows NO badge (spec §3 decision pinned); clicking History still switches views (regression). Update the App.test.tsx FileEntry fixture to include the Task 1 strategy fields.
+- [x] **Step 2: Run `yarn test -- App`. Expected: FAIL.**
+- [x] **Step 3: Implement `SidebarNav.tsx`** (GPLv3 header; component must be rendered inside `CompressionProvider` so the hook works — App already wraps everything in it).
+- [x] **Step 4: Run `yarn test -- App`. Expected: PASS.**
+- [x] **Step 5: Commit** `feat(compress): staged-files badge on sidebar`
 
 ### Task 9: Final gate + manual smoke
 
