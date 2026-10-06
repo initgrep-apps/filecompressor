@@ -117,6 +117,7 @@ struct FileCancelledPayload<'a> {
 struct BatchCompletePayload<'a> {
     batch_id: &'a str,
     total_saved_bytes: u64,
+    cancelled: bool,
 }
 
 /// Managed state shared by commands and the worker task.
@@ -750,6 +751,7 @@ impl<R: Runtime> QueueState<R> {
             BatchCompletePayload {
                 batch_id,
                 total_saved_bytes: total_saved,
+                cancelled,
             },
         );
     }
@@ -2214,6 +2216,57 @@ mod tests {
             );
         }
         assert!(s.cancelled, "batch ended via cancel-all");
+    }
+
+    #[tokio::test]
+    async fn batch_complete_payload_carries_cancelled_flag() {
+        let _temp_guard = temp_guard();
+        let (_root, app, _out) = setup_app("1");
+        let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
+
+        let ids = add_entries(&app, &[("a.jpg", crate::models::Category::Image, "/tmp/a.jpg")]);
+        let rx = events_of(&app.handle(), &["file:error", "batch:complete"]);
+        QueueState::start_batch(queue.inner(), &app.handle(), "b-natural".into(), ids);
+        let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(topic, "file:error");
+        let (topic, payload) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(topic, "batch:complete");
+        assert_eq!(payload["batchId"], "b-natural");
+        assert!(
+            payload["totalSavedBytes"].is_u64(),
+            "complete payload carries the saved total: {payload}"
+        );
+        assert_eq!(
+            payload["cancelled"], false,
+            "natural completion must carry cancelled:false: {payload}"
+        );
+
+        let ids = add_entries(&app, &[
+            ("i1.jpg", crate::models::Category::Image, "/tmp/i1.jpg"),
+            ("i2.jpg", crate::models::Category::Image, "/tmp/i2.jpg"),
+            ("p1.pdf", crate::models::Category::Pdf, "/tmp/p1.pdf"),
+            ("p2.pdf", crate::models::Category::Pdf, "/tmp/p2.pdf"),
+            ("v1.mp4", crate::models::Category::Video, "/tmp/v1.mp4"),
+            ("v2.mp4", crate::models::Category::Video, "/tmp/v2.mp4"),
+        ]);
+        let rx = events_of(&app.handle(), &["file:error", "batch:complete"]);
+        QueueState::start_batch(queue.inner(), &app.handle(), "b-cancel".into(), ids);
+        let (topic, _) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(topic, "file:error");
+        queue.cancel_all();
+        wait_idle(&queue, "b-cancel");
+        let (topic, payload) = loop {
+            let (topic, payload) =
+                rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            if topic == "batch:complete" {
+                break (topic, payload);
+            }
+        };
+        assert_eq!(payload["batchId"], "b-cancel");
+        assert_eq!(
+            payload["cancelled"], true,
+            "cancel-all mid-batch must carry cancelled:true: {payload}"
+        );
     }
 
     #[tokio::test]

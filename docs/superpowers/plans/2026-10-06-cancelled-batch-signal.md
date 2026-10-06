@@ -48,11 +48,11 @@ Base spec: `docs/superpowers/specs/2026-09-27-file-size-optimizer-design.md`
 **Required Tests:**
 - `batch_complete_payload_carries_cancelled_flag` — JSON of the payload contains `"cancelled": false` for a finished batch; a cancelled-batch test asserts the emitted event carries `true`
 
-- [ ] **Step 1: Write failing Rust test** — in queue.rs tests, assert the `batch:complete` event JSON carries `cancelled` (false on natural end; reuse the `cancel_all_records_cancelled_files` harness to assert `true` mid-cancel).
-- [ ] **Step 2: Run `cargo test`. Expected: FAIL (field missing).**
-- [ ] **Step 3: Implement** — add `cancelled: bool` to `BatchCompletePayload`; in `finish_batch`, reuse the `cancelled` binding at :711 in the emit.
-- [ ] **Step 4: Run `cargo test`. Expected: PASS (all).**
-- [ ] **Step 5: Commit** `feat(queue): emit cancelled flag on batch complete`
+- [x] **Step 1: Write failing Rust test** — in queue.rs tests, assert the `batch:complete` event JSON carries `cancelled` (false on natural end; reuse the `cancel_all_records_cancelled_files` harness to assert `true` mid-cancel).
+- [x] **Step 2: Run `cargo test`. Expected: FAIL (field missing).**
+- [x] **Step 3: Implement** — add `cancelled: bool` to `BatchCompletePayload`; in `finish_batch`, reuse the `cancelled` binding at :711 in the emit.
+- [x] **Step 4: Run `cargo test`. Expected: PASS (all).**
+- [x] **Step 5: Commit** `feat(queue): emit cancelled flag on batch complete`
 
 ### Task 2: Frontend — consume `cancelled`, drop Complete-pill-on-cancelled
 
