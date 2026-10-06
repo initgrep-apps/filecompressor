@@ -2244,6 +2244,10 @@ mod tests {
         let ids = add_entries(&app, &[
             ("i1.jpg", crate::models::Category::Image, "/tmp/i1.jpg"),
             ("i2.jpg", crate::models::Category::Image, "/tmp/i2.jpg"),
+            ("p1.pdf", crate::models::Category::Pdf, "/tmp/p1.pdf"),
+            ("p2.pdf", crate::models::Category::Pdf, "/tmp/p2.pdf"),
+            ("v1.mp4", crate::models::Category::Video, "/tmp/v1.mp4"),
+            ("v2.mp4", crate::models::Category::Video, "/tmp/v2.mp4"),
         ]);
         let rx = events_of(&app.handle(), &["file:error", "batch:complete"]);
         QueueState::start_batch(queue.inner(), &app.handle(), "b-cancel".into(), ids);
@@ -2251,8 +2255,14 @@ mod tests {
         assert_eq!(topic, "file:error");
         queue.cancel_all();
         wait_idle(&queue, "b-cancel");
-        let (topic, payload) = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
-        assert_eq!(topic, "batch:complete");
+        let (topic, payload) = loop {
+            let (topic, payload) =
+                rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+            if topic == "batch:complete" {
+                break (topic, payload);
+            }
+        };
+        assert_eq!(payload["batchId"], "b-cancel");
         assert_eq!(
             payload["cancelled"], true,
             "cancel-all mid-batch must carry cancelled:true: {payload}"
