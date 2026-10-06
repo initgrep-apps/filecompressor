@@ -221,7 +221,7 @@ describe('CompressionProvider', () => {
     expect(screen.getByTestId('batch-number')).toHaveTextContent('1')
   })
 
-  it('startRun reseeds batch error and second startRun increments the counter', async () => {
+  it('startRun keeps the batch error until a terminal event clears it and second startRun increments the counter', async () => {
     vi.mocked(invoke).mockResolvedValue([entry()])
     render(
       <CompressionProvider>
@@ -237,14 +237,49 @@ describe('CompressionProvider', () => {
     await act(() => {
       screen.getByRole('button', { name: 'start run' }).click()
     })
+    expect(screen.getByTestId('batch-error')).toHaveTextContent('worker gone')
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 10,
+      compressedSize: 5,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0 })
     expect(screen.getByTestId('batch-error')).not.toHaveTextContent('worker gone')
     await act(() => {
       screen.getByRole('button', { name: 'end run' }).click()
+    })
+    // startRun no-ops with zero pending files, so the second run needs a fresh pending row.
+    await act(async () => {
+      await screen.getByRole('button', { name: 'add' }).click()
     })
     await act(() => {
       screen.getByRole('button', { name: 'start run' }).click()
     })
     expect(screen.getByTestId('batch-number')).toHaveTextContent('2')
+  })
+
+  it('startRun no-ops when there are no pending files', async () => {
+    vi.mocked(invoke).mockResolvedValue([
+      entry({ status: 'done', compressedSize: 10, outputPath: '/o/a.jpg' }),
+    ])
+    render(
+      <CompressionProvider>
+        <RunConsumer paths={['/t/a.jpg']} />
+      </CompressionProvider>
+    )
+    await flush()
+    await act(async () => {
+      await screen.getByRole('button', { name: 'add' }).click()
+    })
+    await act(() => {
+      screen.getByRole('button', { name: 'start run' }).click()
+    })
+    expect(screen.getByTestId('run-state')).toHaveTextContent('staging')
+    expect(screen.getByTestId('batch-number')).toHaveTextContent('0')
+    expect(invoke).not.toHaveBeenCalledWith('compress_all')
   })
 
   it('re-drop of same path keeps one row and a new path appends', async () => {

@@ -19,6 +19,7 @@ import { useFileList } from '@/hooks/useFileList'
 import { useCompression } from '@/hooks/useCompression'
 import { toast } from 'sonner'
 import { formatSize } from '@/components/FileList'
+import type { FileEntry } from '@/types'
 
 function formatSavedBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -36,14 +37,13 @@ interface CompressionContextValue {
   clearList: ReturnType<typeof useFileList>['clearList']
   isCompressing: ReturnType<typeof useCompression>['isCompressing']
   progressByFile: ReturnType<typeof useCompression>['progressByFile']
-  compressAll: ReturnType<typeof useCompression>['compressAll']
   cancelFile: ReturnType<typeof useCompression>['cancelFile']
   cancelAll: ReturnType<typeof useCompression>['cancelAll']
   revealInFolder: ReturnType<typeof useCompression>['revealInFolder']
   runScreen: RunScreen
   batchNumber: number
   batchError: string | null
-  roster: string[]
+  roster: Array<FileEntry['id']>
   startRun: () => void
   endRun: () => void
 }
@@ -67,22 +67,21 @@ export function CompressionProvider({ children }: { children: ReactNode }) {
 
   const filesRef = useRef(files)
   filesRef.current = files
-  const rosterRef = useRef<string[]>([])
   const [runScreen, setRunScreen] = useState<RunScreen>('staging')
   const [batchNumber, setBatchNumber] = useState(0)
   const [batchError, setBatchError] = useState<string | null>(null)
-  const [roster, setRoster] = useState<string[]>([])
+  const [roster, setRoster] = useState<Array<FileEntry['id']>>([])
 
   const startRun = useCallback(() => {
     const pendingIds = filesRef.current
       .filter((f) => f.status === 'pending')
       .map((f) => f.id)
-    rosterRef.current = pendingIds
+    if (pendingIds.length === 0) return
     setRoster(pendingIds)
     setBatchNumber((n) => n + 1)
-    setBatchError(null)
     setRunScreen('run')
-  }, [])
+    void compressAll()
+  }, [compressAll])
 
   const endRun = useCallback(() => {
     setRunScreen('staging')
@@ -97,7 +96,6 @@ export function CompressionProvider({ children }: { children: ReactNode }) {
     clearList,
     isCompressing,
     progressByFile,
-    compressAll,
     cancelFile,
     cancelAll,
     revealInFolder,

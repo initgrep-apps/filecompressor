@@ -9,6 +9,14 @@ import type { FileEntry } from '@/types'
 const eventListeners = new Map<string, (e: { payload: unknown }) => void>()
 
 let dragHandler: ((e: { payload: unknown }) => void) | undefined
+const getCurrentWebviewMock = vi.fn(() => ({
+  onDragDropEvent: (handler: (e: { payload: unknown }) => void) => {
+    dragHandler = handler
+    return Promise.resolve(() => {
+      if (dragHandler === handler) dragHandler = undefined
+    })
+  },
+}))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn((event: string, handler: (e: { payload: unknown }) => void) => {
@@ -21,14 +29,7 @@ vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }))
 vi.mock('@tauri-apps/api/webview', () => ({
-  getCurrentWebview: () => ({
-    onDragDropEvent: (handler: (e: { payload: unknown }) => void) => {
-      dragHandler = handler
-      return Promise.resolve(() => {
-        if (dragHandler === handler) dragHandler = undefined
-      })
-    },
-  }),
+  getCurrentWebview: (...args: unknown[]) => getCurrentWebviewMock(...(args as [])),
 }))
 
 import { CompressView } from '@/views/CompressView'
@@ -43,10 +44,23 @@ const emit = (event: string, payload: unknown) =>
     eventListeners.get(event)?.({ payload })
   })
 
+const LOCKED_DROP_FAILURE_MESSAGE =
+  'Drop notifications unavailable — restart the app to re-enable dragging'
+
+const defaultWebviewImplementation = () => ({
+  onDragDropEvent: (handler: (e: { payload: unknown }) => void) => {
+    dragHandler = handler
+    return Promise.resolve(() => {
+      if (dragHandler === handler) dragHandler = undefined
+    })
+  },
+})
+
 beforeEach(() => {
   vi.clearAllMocks()
   eventListeners.clear()
   dragHandler = undefined
+  getCurrentWebviewMock.mockImplementation(defaultWebviewImplementation)
   setupMotionStubs()
 })
 
@@ -183,6 +197,7 @@ describe('CompressView', () => {
     expect(screen.queryByText('Drop more files here')).not.toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /back/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Compress' })).not.toBeInTheDocument()
   })
 
   it('run screen toasts and ignores drop while running', async () => {
@@ -195,6 +210,57 @@ describe('CompressView', () => {
     })
     expect(toast.info).toHaveBeenCalledWith('Batch in progress — wait until it completes')
     expect(screen.queryByText('late.jpg')).not.toBeInTheDocument()
+  })
+
+  it('locked drop listener failure toasts and the run screen still renders', async () => {
+    getCurrentWebviewMock.mockImplementation(() => ({
+      onDragDropEvent: () => Promise.reject(new Error('no webview')),
+    }))
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderView()
+    await addFileInView()
+    await pressCompress()
+    expect(toast.error).toHaveBeenCalledWith(LOCKED_DROP_FAILURE_MESSAGE)
+    expect(screen.getByTestId('run-header')).toBeInTheDocument()
+    consoleSpy.mockRestore()
+  })
+
+  it('run screen renders when the webview listener setup fails', async () => {
+    getCurrentWebviewMock.mockImplementation(() => {
+      throw new Error('webview dead')
+    })
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    renderView()
+    await addFileInView()
+    await pressCompress()
+    expect(screen.getByTestId('run-header')).toBeInTheDocument()
+    expect(screen.getByTestId('status-pill')).toHaveTextContent('Compressing')
+    consoleSpy.mockRestore()
+  })
+
+  it('staging shows the batch error banner after returning from a failed batch', async () => {
+    renderView()
+    await addFileInView()
+    await pressCompress()
+    emit('batch:error', { batchId: 'b1', errorMessage: 'Output folder not writable' })
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('new-batch'))
+    await screen.findByRole('table')
+    expect(screen.getByRole('alert')).toHaveTextContent('Output folder not writable')
+    expect(toast.error).toHaveBeenCalledWith('Output folder not writable')
+  })
+
+  it('staging empty still shows the batch error banner after the list is cleared', async () => {
+    renderView()
+    await addFileInView()
+    await pressCompress()
+    emit('batch:error', { batchId: 'b1', errorMessage: 'Output folder not writable' })
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('new-batch'))
+    await screen.findByRole('table')
+    await user.click(screen.getByRole('button', { name: 'Clear List' }))
+    await screen.findByText('Drag and drop files here')
+    expect(screen.getByRole('alert')).toHaveTextContent('Output folder not writable')
   })
 
   it('batch:error event shows Failed pill and error line on run screen', async () => {

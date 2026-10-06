@@ -73,6 +73,7 @@ export function useCompression(
   const processedCountRef = useRef(0)
   const errorCountRef = useRef(0)
   const cancelledRef = useRef(false)
+  const activeBatchRef = useRef<string | null>(null)
 
   const filesRef = useRef(files)
   filesRef.current = files
@@ -178,7 +179,12 @@ export function useCompression(
       .then(done)
       .catch(reportListenFailure('file:cancelled'))
 
+    const staleBatchEvent = (batchId: string) =>
+      activeBatchRef.current !== null && batchId !== '' && batchId !== activeBatchRef.current
+
     listen<BatchCompletePayload>('batch:complete', (e) => {
+      if (staleBatchEvent(e.payload.batchId)) return
+      activeBatchRef.current = null
       setIsCompressing(false)
       const processed = processedCountRef.current
       const errors = errorCountRef.current
@@ -193,6 +199,8 @@ export function useCompression(
       .catch(reportListenFailure('batch:complete'))
 
     listen<BatchErrorPayload>('batch:error', (e) => {
+      if (staleBatchEvent(e.payload.batchId)) return
+      activeBatchRef.current = null
       setIsCompressing(false)
       processedCountRef.current = 0
       errorCountRef.current = 0
@@ -215,11 +223,13 @@ export function useCompression(
     cancelledRef.current = false
     try {
       const batchId = await invoke<string>('compress_all')
+      activeBatchRef.current = typeof batchId === 'string' && batchId !== '' ? batchId : null
       if (batchId === '') {
         setIsCompressing(false)
         callbacksRef.current?.onBatchError?.('No pending files')
       }
     } catch (err) {
+      activeBatchRef.current = null
       setIsCompressing(false)
       callbacksRef.current?.onBatchError?.(toMessage(err))
     }

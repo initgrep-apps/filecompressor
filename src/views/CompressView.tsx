@@ -53,6 +53,7 @@ function useBatchLockedDrops() {
       })
       .catch((err) => {
         console.error('Drag-drop listener registration failed', err)
+        toast.error('Drop notifications unavailable — restart the app to re-enable dragging')
       })
 
     return () => {
@@ -116,8 +117,8 @@ function StagingScreen() {
   const {
     files,
     error,
+    batchError,
     isCompressing,
-    compressAll,
     removeFile,
     clearList,
     addFiles,
@@ -126,27 +127,25 @@ function StagingScreen() {
     startRun,
   } = useCompressionContext()
 
+  const alert = (message: string) => (
+    <div
+      role="alert"
+      className="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+    >
+      {message}
+    </div>
+  )
+
   const compressible = files.filter((f) => f.status !== 'unsupported')
   const pendingCount = files.filter((f) => f.status === 'pending').length
   const canCompress = pendingCount > 0
   const totalSize = compressible.reduce((sum, f) => sum + f.originalSize, 0)
 
-  const handleCompress = () => {
-    startRun()
-    void compressAll()
-  }
-
   if (files.length === 0) {
     return (
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden p-5">
-        {error && (
-          <div
-            role="alert"
-            className="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-          >
-            {error}
-          </div>
-        )}
+        {error ? alert(error) : null}
+        {batchError ? alert(batchError) : null}
         <div className="flex min-h-0 flex-1 items-stretch">
           <DropZone onBrowse={browseFiles} onDrop={addFiles} className="min-h-0 flex-1" />
         </div>
@@ -156,14 +155,8 @@ function StagingScreen() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden p-5">
-      {error && (
-        <div
-          role="alert"
-          className="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-        >
-          {error}
-        </div>
-      )}
+      {error ? alert(error) : null}
+      {batchError ? alert(batchError) : null}
 
       <DropZone compact onBrowse={browseFiles} onDrop={addFiles} className="shrink-0" />
 
@@ -192,7 +185,7 @@ function StagingScreen() {
             >
               Clear List
             </Button>
-            <Button size="sm" onClick={handleCompress} disabled={!canCompress}>
+            <Button size="sm" onClick={startRun} disabled={!canCompress}>
               Compress
             </Button>
           </div>
