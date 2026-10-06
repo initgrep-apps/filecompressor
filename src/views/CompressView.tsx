@@ -14,59 +14,145 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import { useEffect, useState } from 'react'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { toast } from 'sonner'
 import { useCompressionContext } from '@/providers/CompressionProvider'
 import { DropZone } from '@/components/DropZone'
-import { FileList } from '@/components/FileList'
+import { FileList, formatSize } from '@/components/FileList'
+import { RunHeader } from '@/components/run/RunHeader'
+import { KanbanBoard } from '@/components/run/KanbanBoard'
+import { batchCounts, type StatusFilter } from '@/lib/grouping'
 import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
 import { Card, CardContent, CardFooter } from '@/components/ui/card'
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from '@/components/ui/empty'
-import { RiFileAddLine } from '@remixicon/react'
-import type { FileStatus } from '@/types'
 
-export function CompressView() {
+const BATCH_LOCKED_MESSAGE = 'Batch in progress — wait until it completes'
+
+function useBatchLockedDrops() {
+  useEffect(() => {
+    let cancelled = false
+    let unlisten: (() => void) | undefined
+
+    let subscription: Promise<() => void>
+    try {
+      subscription = getCurrentWebview().onDragDropEvent((event) => {
+        if (cancelled) return
+        const payload = event.payload
+        if (payload.type === 'drop' && payload.paths.length > 0) {
+          toast.info(BATCH_LOCKED_MESSAGE)
+        }
+      })
+    } catch (err) {
+      subscription = Promise.reject(err)
+    }
+
+    subscription
+      .then((fn) => {
+        if (cancelled) fn()
+        else unlisten = fn
+      })
+      .catch((err) => {
+        console.error('Drag-drop listener registration failed', err)
+      })
+
+    return () => {
+      cancelled = true
+      unlisten?.()
+    }
+  }, [])
+}
+
+function RunMonitor() {
   const {
     files,
-    error,
     isCompressing,
     progressByFile,
-    compressAll,
     cancelFile,
     cancelAll,
     revealInFolder,
     removeFile,
+    batchNumber,
+    roster,
+    batchError,
+    endRun,
+  } = useCompressionContext()
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  useBatchLockedDrops()
+
+  const rosterFiles = files.filter((f) => roster.includes(f.id))
+  const counts = batchCounts(rosterFiles)
+  const total = rosterFiles.length
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden p-5">
+      <RunHeader
+        batchNumber={batchNumber}
+        running={isCompressing}
+        batchError={batchError}
+        counts={counts}
+        total={total}
+        statusFilter={statusFilter}
+        onFilterChange={setStatusFilter}
+        onCancelAll={() => void cancelAll()}
+        onNewBatch={endRun}
+      />
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <KanbanBoard
+          roster={rosterFiles}
+          statusFilter={statusFilter}
+          onFilterChange={setStatusFilter}
+          progress={progressByFile}
+          onCancel={(fileId) => void cancelFile(fileId)}
+          onReveal={(outputPath) => void revealInFolder(outputPath)}
+          onRemove={(fileId) => void removeFile(fileId)}
+          removeDisabled={isCompressing}
+        />
+      </div>
+    </div>
+  )
+}
+
+function StagingScreen() {
+  const {
+    files,
+    error,
+    isCompressing,
+    compressAll,
+    removeFile,
     clearList,
     addFiles,
     browseFiles,
+    revealInFolder,
+    startRun,
   } = useCompressionContext()
 
-  const statusCount = (status: FileStatus) => files.filter((f) => f.status === status).length
-  const pendingCount = statusCount('pending')
-  const doneCount = statusCount('done') + statusCount('already_under_target')
-  const canCompress = pendingCount > 0 && !isCompressing
-  const hasFiles = files.length > 0
+  const compressible = files.filter((f) => f.status !== 'unsupported')
+  const pendingCount = files.filter((f) => f.status === 'pending').length
+  const canCompress = pendingCount > 0
+  const totalSize = compressible.reduce((sum, f) => sum + f.originalSize, 0)
 
-  const compressingCount = statusCount('compressing')
-  const bestEffortCount = statusCount('best_effort')
-  const unsupportedCount = statusCount('unsupported')
-  const failedCount = statusCount('failed')
-  const cancelledCount = statusCount('cancelled')
+  const handleCompress = () => {
+    startRun()
+    void compressAll()
+  }
 
-  const summarySegments: string[] = [`${files.length} files`]
-  if (doneCount > 0) summarySegments.push(`${doneCount} done`)
-  if (compressingCount > 0) summarySegments.push(`${compressingCount} compressing`)
-  if (pendingCount > 0) summarySegments.push(`${pendingCount} pending`)
-  if (bestEffortCount > 0) summarySegments.push(`${bestEffortCount} warning`)
-  if (unsupportedCount > 0) summarySegments.push(`${unsupportedCount} skipped`)
-  if (failedCount > 0) summarySegments.push(`${failedCount} failed`)
-  if (cancelledCount > 0) summarySegments.push(`${cancelledCount} cancelled`)
-  const summaryText = summarySegments.join(' · ')
+  if (files.length === 0) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden p-5">
+        {error && (
+          <div
+            role="alert"
+            className="shrink-0 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
+            {error}
+          </div>
+        )}
+        <div className="flex min-h-0 flex-1 items-stretch">
+          <DropZone onBrowse={browseFiles} onDrop={addFiles} className="min-h-0 flex-1" />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden p-5">
@@ -79,65 +165,44 @@ export function CompressView() {
         </div>
       )}
 
-      <DropZone onBrowse={browseFiles} onDrop={addFiles} className="shrink-0" />
+      <DropZone compact onBrowse={browseFiles} onDrop={addFiles} className="shrink-0" />
 
-      {hasFiles ? (
-        <Card className="flex min-h-0 flex-1 flex-col">
-          <CardContent className="min-h-0 flex-1">
-            <FileList
-              files={files}
-              onRemove={removeFile}
-              progress={progressByFile}
-              onReveal={revealInFolder}
-              onCancel={cancelFile}
-              removeDisabled={isCompressing}
-            />
-          </CardContent>
-          <CardFooter className="justify-between gap-2 border-t">
-            <div
-              data-testid="batch-summary"
-              className="text-xs text-muted-foreground tabular-nums"
+      <Card className="flex min-h-0 flex-1 flex-col">
+        <CardContent className="min-h-0 flex-1 overflow-hidden">
+          <FileList
+            files={files}
+            onRemove={removeFile}
+            onReveal={revealInFolder}
+            removeDisabled={isCompressing}
+          />
+        </CardContent>
+        <CardFooter className="justify-between gap-2 border-t">
+          <div
+            data-testid="batch-summary"
+            className="text-xs text-muted-foreground tabular-nums"
+          >
+            {compressible.length} files selected · Total size: ~{formatSize(totalSize)}
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => void clearList()}
+              disabled={isCompressing}
             >
-              {summaryText}
-            </div>
-            <div className="flex gap-2">
-              <Button size="sm" onClick={compressAll} disabled={!canCompress} aria-busy={isCompressing}>
-                {isCompressing && <Spinner data-icon="inline-start" />}
-                Compress
-              </Button>
-              {isCompressing && (
-                <Button size="sm" variant="destructive" onClick={cancelAll}>
-                  Cancel All
-                </Button>
-              )}
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={clearList}
-                disabled={isCompressing}
-              >
-                Clear List
-              </Button>
-            </div>
-          </CardFooter>
-        </Card>
-      ) : (
-        <Card className="flex flex-1 flex-col justify-center">
-          <CardContent>
-            <Empty className="border-0">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <RiFileAddLine />
-                </EmptyMedia>
-                <EmptyTitle>No files yet</EmptyTitle>
-                <EmptyDescription>
-                  Drop files above to get started.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          </CardContent>
-        </Card>
-      )}
+              Clear List
+            </Button>
+            <Button size="sm" onClick={handleCompress} disabled={!canCompress}>
+              Compress
+            </Button>
+          </div>
+        </CardFooter>
+      </Card>
     </div>
   )
+}
+
+export function CompressView() {
+  const { runScreen } = useCompressionContext()
+  return runScreen === 'run' ? <RunMonitor /> : <StagingScreen />
 }

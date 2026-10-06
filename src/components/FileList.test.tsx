@@ -110,40 +110,10 @@ describe('FileList', () => {
     expect(onRemove).toHaveBeenCalledWith('f1')
   })
 
-  it('renders progress bar from progressByFile while compressing', () => {
-    render(
-      <FileList
-        files={[entry({ status: 'compressing' })]}
-        onRemove={vi.fn()}
-        progress={{ f1: 45 }}
-      />
-    )
-    const bar = screen.getByRole('progressbar')
-    expect(bar).toHaveAttribute('aria-valuenow', '45')
-  })
-
-  it('progress bar defaults to zero when no progress entry', () => {
+  it('compressing rows render remove and no cancel control', () => {
     render(<FileList files={[entry({ status: 'compressing' })]} onRemove={vi.fn()} />)
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0')
-  })
-
-  it('compressing row shows cancel instead of remove', () => {
-    const onCancel = vi.fn()
-    render(
-      <FileList files={[entry({ status: 'compressing' })]} onRemove={vi.fn()} onCancel={onCancel} />
-    )
-    expect(screen.queryByRole('button', { name: /remove a\.jpg/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /cancel a\.jpg/i })).toBeInTheDocument()
-  })
-
-  it('per-file cancel button calls onCancel with id', async () => {
-    const user = userEvent.setup()
-    const onCancel = vi.fn()
-    render(
-      <FileList files={[entry({ status: 'compressing' })]} onRemove={vi.fn()} onCancel={onCancel} />
-    )
-    await user.click(screen.getByRole('button', { name: /cancel a\.jpg/i }))
-    expect(onCancel).toHaveBeenCalledWith('f1')
+    expect(screen.getByRole('button', { name: /remove a\.jpg/i })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /cancel a\.jpg/i })).not.toBeInTheDocument()
   })
 
   it('done row renders before-after sizes and percent reduction', () => {
