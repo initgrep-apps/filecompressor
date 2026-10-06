@@ -754,12 +754,11 @@ describe('useCompression terminal watchdog', () => {
     })
     expect(result.current.comp.isCompressing).toBe(false)
     expect(result.current.comp.progressByFile).toEqual({})
-    expect(toast.error).toHaveBeenCalledTimes(1)
-    expect(toast.error).toHaveBeenCalledWith(
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(onBatchError).toHaveBeenCalledTimes(1)
+    expect(onBatchError).toHaveBeenCalledWith(
       'Compression status lost — check History for results'
     )
-    expect(onBatchError).toHaveBeenCalledTimes(1)
-    expect(onBatchError).toHaveBeenCalledWith('Compression status lost')
   })
 
   it('second compressAll clears a pending watchdog', async () => {
@@ -774,8 +773,11 @@ describe('useCompression terminal watchdog', () => {
     act(() => {
       vi.advanceTimersByTime(WATCHDOG_MS + 1000)
     })
-    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.error).not.toHaveBeenCalled()
     expect(onBatchError).toHaveBeenCalledTimes(1)
+    expect(onBatchError).toHaveBeenCalledWith(
+      'Compression status lost — check History for results'
+    )
     expect(result.current.comp.isCompressing).toBe(false)
   })
 
@@ -808,7 +810,8 @@ describe('useCompression terminal watchdog', () => {
     act(() => {
       vi.advanceTimersByTime(WATCHDOG_MS + 1000)
     })
-    expect(toast.error).toHaveBeenCalledWith(
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(onBatchError).toHaveBeenCalledWith(
       'Compression status lost — check History for results'
     )
   })
@@ -842,12 +845,11 @@ describe('useCompression terminal watchdog', () => {
     act(() => {
       vi.advanceTimersByTime(WATCHDOG_MS + 1000)
     })
-    expect(toast.error).toHaveBeenCalledTimes(1)
-    expect(toast.error).toHaveBeenCalledWith(
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(onBatchError).toHaveBeenCalledTimes(1)
+    expect(onBatchError).toHaveBeenCalledWith(
       'Compression status lost — check History for results'
     )
-    expect(onBatchError).toHaveBeenCalledTimes(1)
-    expect(onBatchError).toHaveBeenCalledWith('Compression status lost')
     expect(result.current.comp.isCompressing).toBe(false)
     expect(result.current.comp.progressByFile).toEqual({})
   })

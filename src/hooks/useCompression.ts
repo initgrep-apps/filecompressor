@@ -107,8 +107,7 @@ export function useCompression(
       isCompressingRef.current = false
       setIsCompressing(false)
       setProgressByFile({})
-      toast.error('Compression status lost — check History for results')
-      callbacksRef.current?.onBatchError?.('Compression status lost')
+      callbacksRef.current?.onBatchError?.('Compression status lost — check History for results')
       activeBatchRef.current = null
     }, TERMINAL_WATCHDOG_MS)
   }, [clearWatchdog])
