@@ -39,7 +39,8 @@ import {
   presetSinceMs,
   type DatePreset,
 } from '@/lib/historyFormat'
-import { formatSize, RESULT_STATUSES } from '@/components/FileList'
+import { RESULT_STATUSES } from '@/components/FileList'
+import { formatSize } from '@/lib/sizeFormat'
 import { HistoryPagination } from '@/components/HistoryPagination'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'

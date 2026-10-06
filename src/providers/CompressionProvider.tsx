@@ -18,7 +18,7 @@ import { createContext, useCallback, useContext, useRef, useState, type ReactNod
 import { useFileList } from '@/hooks/useFileList'
 import { useCompression } from '@/hooks/useCompression'
 import { toast } from 'sonner'
-import { formatSize } from '@/components/FileList'
+import { formatSize } from '@/lib/sizeFormat'
 import type { FileEntry } from '@/types'
 
 function formatSavedBytes(bytes: number): string {

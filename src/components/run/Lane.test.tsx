@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { Lane } from '@/components/run/Lane'
-import { formatSize } from '@/components/FileList'
+import { formatSize } from '@/lib/sizeFormat'
 import { setupMotionStubs } from '@/test/motionStubs'
 import type { Category, FileEntry } from '@/types'
 

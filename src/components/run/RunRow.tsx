@@ -15,7 +15,8 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { motion } from 'motion/react'
-import { formatSize, RESULT_STATUSES } from '@/components/FileList'
+import { formatSize, reductionPercentOrNull } from '@/lib/sizeFormat'
+import { RESULT_STATUSES } from '@/components/FileList'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { strategyLabel } from '@/lib/strategyLabels'
@@ -46,14 +47,6 @@ const NAME_TONES: Partial<Record<FileStatus, string>> = {
   pending: 'text-muted-foreground',
 }
 
-function reductionPercent(file: FileEntry): number | null {
-  if (file.originalSize === 0 || file.compressedSize === null) return null
-  return Math.max(
-    0,
-    Math.round(((file.originalSize - file.compressedSize) / file.originalSize) * 100)
-  )
-}
-
 function safePercent(percent: number | undefined): number {
   return percent !== undefined && Number.isFinite(percent)
     ? Math.min(100, Math.max(0, percent))
@@ -64,7 +57,7 @@ function chipFor(file: FileEntry): { label: string; tone: ChipTone } | null {
   switch (file.status) {
     case 'done':
     case 'best_effort': {
-      const pct = reductionPercent(file)
+      const pct = reductionPercentOrNull(file)
       if (pct === null) return null
       return { label: `-${pct}%`, tone: file.status === 'done' ? 'primary' : 'amber' }
     }
