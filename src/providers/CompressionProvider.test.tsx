@@ -280,6 +280,7 @@ describe('CompressionProvider', () => {
     })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 0, cancelled: true })
     expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('true')
+    expect(toast.success).not.toHaveBeenCalled()
     await act(() => {
       screen.getByRole('button', { name: 'start run' }).click()
     })
@@ -294,6 +295,8 @@ describe('CompressionProvider', () => {
     })
     emit('batch:complete', { batchId: 'b2', totalSavedBytes: 5 })
     expect(screen.getByTestId('batch-cancelled')).toHaveTextContent('false')
+    expect(toast.success).toHaveBeenCalledTimes(1)
+    expect(toast.success).toHaveBeenCalledWith(expect.stringMatching(/Compressed 1 files/))
   })
 
   it('startRun no-ops when there are no pending files', async () => {
