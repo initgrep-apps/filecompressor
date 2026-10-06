@@ -192,14 +192,14 @@ Input classes the spec implies that component tests could miss — each is pinne
 - `compact variant reacts to drag hover the same way`
 - `listener setup failure is caught and the component still renders`
 
-- [ ] **Step 1: Write failing tests** (update sonner-irrelevant fixtures as needed; update the existing drag fixture to carry `paths`, and the exact-copy test at DropZone.test.tsx:155):
+- [x] **Step 1: Write failing tests** (update sonner-irrelevant fixtures as needed; update the existing drag fixture to carry `paths`, and the exact-copy test at DropZone.test.tsx:155):
   - empty variant: renders `Drag and drop files here`, `Browse your files` button, format pills (10 pills — JPEG, PNG, WebP, HEIC, MP4, MOV, PDF, DOCX, XLSX, PPTX) each with its category tint; surface has `role="button"`, `tabIndex=0`, aria-label; clicking the SURFACE (not the button) calls `onBrowse`; Enter/Space on surface calls `onBrowse`; Browse button click does not double-fire (`stopPropagation`).
   - compact variant: renders `Drop more files here`, `or`, `Browse` outline button, mono formats text line `JPEG, PNG, WebP, HEIC, MP4, MOV, PDF, DOCX, XLSX, PPTX`; no pills.
   - drag hover (mock the webview listener as existing tests do): enter event → text `Release to add files` and `3 files detected` visible.
-- [ ] **Step 2: Run `yarn test -- DropZone`. Expected: new tests FAIL.**
-- [ ] **Step 3: Implement** both variants in the one component (branch on `compact`). Keep whole-surface click/keyboard. Format pills: `const FORMATS: Array<{ ext: string; category: Category }>` with category-tinted pill classes (blue/violet/red/amber) + category icon svg (image/video/pdf/document glyphs — 11px, inline svg like FileList uses).
-- [ ] **Step 4: Run `yarn test -- DropZone`. Expected: PASS.**
-- [ ] **Step 5: Commit** `feat(compress): two-state DropZone with format pills and drag-hover count`
+- [x] **Step 2: Run `yarn test -- DropZone`. Expected: new tests FAIL.**
+- [x] **Step 3: Implement** both variants in the one component (branch on `compact`). Keep whole-surface click/keyboard. Format pills: `const FORMATS: Array<{ ext: string; category: Category }>` with category-tinted pill classes (blue/violet/red/amber) + category icon svg (image/video/pdf/document glyphs — 11px, inline svg like FileList uses).
+- [x] **Step 4: Run `yarn test -- DropZone`. Expected: PASS.**
+- [x] **Step 5: Commit** `feat(compress): two-state DropZone with format pills and drag-hover count`
 
 ### Task 5: `RunRow` + `Lane` — animated run-board rows
 
