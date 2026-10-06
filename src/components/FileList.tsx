@@ -21,9 +21,7 @@ import { Badge } from '@/components/ui/badge'
 interface FileListProps {
   files: FileEntry[]
   onRemove: (fileId: string) => void
-  progress?: Record<string, number>
   onReveal?: (outputPath: string) => void
-  onCancel?: (fileId: string) => void
   removeDisabled?: boolean
 }
 
@@ -103,7 +101,7 @@ function StatusBadge({ status }: { status: FileStatus }) {
   )
 }
 
-export function FileList({ files, onRemove, progress, onReveal, onCancel, removeDisabled }: FileListProps) {
+export function FileList({ files, onRemove, onReveal, removeDisabled }: FileListProps) {
   if (files.length === 0) return null
 
   return (
@@ -126,7 +124,6 @@ export function FileList({ files, onRemove, progress, onReveal, onCancel, remove
             const hasResult =
               RESULT_STATUSES.includes(file.status) && file.compressedSize !== null
             const canReveal = hasResult && !!onReveal && !!file.outputPath
-            const percent = progress?.[file.id] ?? 0
             return (
               <TableRow
                 key={file.id}
@@ -160,22 +157,6 @@ export function FileList({ files, onRemove, progress, onReveal, onCancel, remove
                 <TableCell>
                   <div className="flex flex-col gap-1.5">
                     <StatusBadge status={file.status} />
-                    {file.status === 'compressing' && (
-                      <div
-                        className="w-24"
-                        role="progressbar"
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={percent}
-                      >
-                        <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-primary transition-[width]"
-                            style={{ width: `${percent}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
                     {file.status === 'failed' && file.error && (
                       <div className="text-xs text-destructive max-w-[180px] truncate" title={file.error}>
                         {file.error}
@@ -197,31 +178,18 @@ export function FileList({ files, onRemove, progress, onReveal, onCancel, remove
                         </svg>
                       </button>
                     )}
-                    {file.status === 'compressing' && onCancel ? (
-                      <button
-                        onClick={() => onCancel(file.id)}
-                        aria-label={`Cancel ${file.name}`}
-                        title="Cancel"
-                        className="p-1 rounded text-muted-foreground hover:text-destructive hover:bg-muted transition-colors"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="6" y="6" width="12" height="12" rx="1" />
-                        </svg>
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => onRemove(file.id)}
-                        disabled={removeDisabled && file.status === 'pending'}
-                        aria-label={`Remove ${file.name}`}
-                        className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:bg-transparent"
-                        title="Remove from list"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      </button>
-                    )}
+                    <button
+                      onClick={() => onRemove(file.id)}
+                      disabled={removeDisabled && file.status === 'pending'}
+                      aria-label={`Remove ${file.name}`}
+                      className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-muted-foreground disabled:hover:bg-transparent"
+                      title="Remove from list"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
                   </div>
                 </TableCell>
               </TableRow>

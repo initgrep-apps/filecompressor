@@ -354,6 +354,36 @@ describe('useCompression event handling', () => {
   })
 })
 
+describe('useCompression batch isolation', () => {
+  it('batch events carrying a stale batchId are ignored while a run is active', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce('b2')
+    const onBatchError = vi.fn()
+    const onBatchComplete = vi.fn()
+    const { result } = setup([entry()], { onBatchError, onBatchComplete })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    expect(result.current.comp.isCompressing).toBe(true)
+    emit('batch:error', { batchId: 'b1', errorMessage: 'stale failure' })
+    expect(result.current.comp.isCompressing).toBe(true)
+    expect(onBatchError).not.toHaveBeenCalled()
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 99 })
+    expect(result.current.comp.isCompressing).toBe(true)
+    expect(onBatchComplete).not.toHaveBeenCalled()
+  })
+
+  it('batch events carrying the active batchId are processed normally', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce('b2')
+    const onBatchError = vi.fn()
+    const { result } = setup([entry()], { onBatchError })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('batch:error', { batchId: 'b1', errorMessage: 'stale failure' })
+    emit('batch:error', { batchId: 'b2', errorMessage: 'real failure' })
+    expect(result.current.comp.isCompressing).toBe(false)
+    expect(onBatchError).toHaveBeenCalledWith('real failure')
+  })
+})
+
 describe('useCompression commands', () => {
   it('compress_all invokes command when pending files exist', async () => {
     const { result } = setup([entry()])

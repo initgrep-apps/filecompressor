@@ -348,11 +348,11 @@ Install dependency first: `yarn add motion`.
 - `chips reflect full-roster counts while a filter is active` (spec §11 CompressView clause, integration)
 - FileList tests: progress-bar/cancel cases dropped; status/remove/reveal cases kept passing
 
-- [ ] **Step 1: Write failing provider tests**: `startRun captures pending roster and increments batch number` (fixture with done/unsupported/pending rows — pin pending-only capture), `endRun returns to staging`, Review Focus #3: start run → simulate unmount/remount of a consumer (rerender a fresh consumer component within same provider) → runScreen still 'run', roster intact.
-- [ ] **Step 2: Run `yarn test -- CompressionProvider`. Expected: FAIL.**
-- [ ] **Step 3: Implement provider run state** (`runScreen`, `batchNumber` ref/state, `rosterRef`, `startRun`, `endRun` in context value).
-- [ ] **Step 4: Run provider tests. Expected: PASS. Commit** `feat(compress): provider-owned run screen state`.
-- [ ] **Step 5: Write failing `CompressView.test.tsx` cases** (rewrite obsolete ones; fixtures gain the Task 1 strategy fields):
+- [x] **Step 1: Write failing provider tests**: `startRun captures pending roster and increments batch number` (fixture with done/unsupported/pending rows — pin pending-only capture), `endRun returns to staging`, Review Focus #3: start run → simulate unmount/remount of a consumer (rerender a fresh consumer component within same provider) → runScreen still 'run', roster intact.
+- [x] **Step 2: Run `yarn test -- CompressionProvider`. Expected: FAIL.**
+- [x] **Step 3: Implement provider run state** (`runScreen`, `batchNumber` ref/state, `rosterRef`, `startRun`, `endRun` in context value).
+- [x] **Step 4: Run provider tests. Expected: PASS. Commit** `feat(compress): provider-owned run screen state`.
+- [x] **Step 5: Write failing `CompressView.test.tsx` cases** (rewrite obsolete ones; fixtures gain the Task 1 strategy fields):
   - staging empty → only full-surface DropZone, no table, no `No files yet` card.
   - staging with files → compact hero + table + footer `N files selected · Total size: ~X MB` (sum of non-unsupported originalSize) + Compress disabled with 0 pending.
   - Compress press → calls `startRun` + `compressAll`, screen switches to run: `Batch #1` + `Compressing` pill + lanes render roster categories; NO DropZone, NO back button.
@@ -360,8 +360,8 @@ Install dependency first: `yarn add motion`.
   - Review Focus #1: while running, simulated webview drop (mock listener) → toast "Batch in progress — wait until it completes", files unchanged. Implement: run screen mounts a minimal `getCurrentWebview().onDragDropEvent` listener (same try/catch pattern as DropZone) that calls `toast.info` on drop and ignores paths.
   - batch:error event → header shows Failed pill + error (integration of Task 6 component).
   - batch number increments on second compress.
-- [ ] **Step 6: Run `yarn test -- CompressView FileList`. Expected: FAIL → implement view + FileList slim-down → PASS.**
-- [ ] **Step 7: Full gate: `yarn build && yarn test`. Expected: PASS. Commit** `feat(compress): two-screen compress flow with locked run monitor`
+- [x] **Step 6: Run `yarn test -- CompressView FileList`. Expected: FAIL → implement view + FileList slim-down → PASS.**
+- [x] **Step 7: Full gate: `yarn build && yarn test`. Expected: PASS. Commit** `feat(compress): two-screen compress flow with locked run monitor`
 
 ### Task 8: Sidebar Compress badge
 

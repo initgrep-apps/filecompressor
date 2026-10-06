@@ -56,17 +56,6 @@ const CHIP_ACTIVE_FAIL =
 const CHIP_COUNT = 'font-mono text-[10.5px] font-semibold tabular-nums'
 
 function statusPill(running: boolean, batchError: string | null) {
-  if (batchError) {
-    return (
-      <span
-        data-testid="status-pill"
-        data-state="failed"
-        className="inline-flex items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/10 px-[11px] py-1 text-[11px] font-semibold text-destructive"
-      >
-        Failed
-      </span>
-    )
-  }
   if (running) {
     return (
       <span
@@ -80,6 +69,17 @@ function statusPill(running: boolean, batchError: string | null) {
           className="size-1.5 animate-pulse rounded-full bg-primary"
         />
         Compressing
+      </span>
+    )
+  }
+  if (batchError) {
+    return (
+      <span
+        data-testid="status-pill"
+        data-state="failed"
+        className="inline-flex items-center gap-1.5 rounded-full border border-destructive/30 bg-destructive/10 px-[11px] py-1 text-[11px] font-semibold text-destructive"
+      >
+        Failed
       </span>
     )
   }
@@ -134,7 +134,7 @@ export function RunHeader({
           {statusPill(running, batchError)}
         </div>
         <div className="flex items-center gap-2">
-          {running && !batchError ? (
+          {running ? (
             <Button
               type="button"
               variant="outline"
@@ -152,7 +152,7 @@ export function RunHeader({
           )}
         </div>
       </div>
-      {batchError && (
+      {!running && batchError && (
         <p
           data-testid="batch-error"
           role="alert"
