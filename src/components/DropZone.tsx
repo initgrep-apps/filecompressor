@@ -16,7 +16,6 @@
 
 import type { MouseEvent, KeyboardEvent, ReactNode } from 'react'
 import { useState, useCallback, useEffect, useRef } from 'react'
-import type { DragDropEvent } from '@tauri-apps/api/webview'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Button } from '@/components/ui/button'
 import { RiUploadCloud2Line } from '@remixicon/react'
@@ -131,7 +130,7 @@ export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZ
 
     let subscription: Promise<() => void>
     try {
-      subscription = getCurrentWebview().onDragDropEvent((event: { payload: DragDropEvent }) => {
+      subscription = getCurrentWebview().onDragDropEvent((event) => {
         if (cancelled) return
         const payload = event.payload
         if (payload.type === 'enter' || payload.type === 'over') {
@@ -151,8 +150,7 @@ export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZ
         }
       })
     } catch (err) {
-      console.error('Drag-drop listener registration failed', err)
-      return () => {}
+      subscription = Promise.reject(err)
     }
 
     subscription
@@ -212,11 +210,9 @@ export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZ
         <span className="whitespace-nowrap text-[13px] font-semibold">
           {isDragging ? 'Release to add files' : 'Drop more files here'}
         </span>
-        {isDragging ? (
-          <span className="whitespace-nowrap text-xs text-muted-foreground">{filesDetected}</span>
-        ) : (
-          <span className="text-xs text-muted-foreground">or</span>
-        )}
+        <span className="whitespace-nowrap text-xs text-muted-foreground">
+          {isDragging ? filesDetected : 'or'}
+        </span>
         <Button variant="outline" size="sm" onClick={handleBrowseClick} onKeyDown={stopBrowseKey}>
           Browse
         </Button>
