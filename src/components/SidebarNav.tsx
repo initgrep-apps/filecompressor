@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import type { ReactNode } from "react"
 import {
   RiUploadCloud2Line,
   RiHistoryLine,
@@ -29,7 +30,7 @@ import { useCompressionContext } from "@/providers/CompressionProvider"
 
 export type ViewId = "compress" | "history" | "settings"
 
-export const navItems: { id: ViewId; label: string; icon: React.ReactNode }[] = [
+export const navItems: { id: ViewId; label: string; icon: ReactNode }[] = [
   {
     id: "compress",
     label: "Compress",
@@ -49,10 +50,10 @@ export const navItems: { id: ViewId; label: string; icon: React.ReactNode }[] = 
 
 interface SidebarNavProps {
   activeView: ViewId
-  setActiveView: (id: ViewId) => void
+  onViewChange: (id: ViewId) => void
 }
 
-export function SidebarNav({ activeView, setActiveView }: SidebarNavProps) {
+export function SidebarNav({ activeView, onViewChange }: SidebarNavProps) {
   const { files } = useCompressionContext()
 
   return (
@@ -62,7 +63,7 @@ export function SidebarNav({ activeView, setActiveView }: SidebarNavProps) {
           <SidebarMenuButton
             isActive={activeView === item.id}
             tooltip={item.label}
-            onClick={() => setActiveView(item.id)}
+            onClick={() => onViewChange(item.id)}
           >
             {item.icon}
             <span>{item.label}</span>

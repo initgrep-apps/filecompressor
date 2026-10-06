@@ -57,6 +57,21 @@ const menuItemFor = (label: string) => {
   return btn.closest('[data-slot="sidebar-menu-item"]') as HTMLElement
 }
 
+const stubFiveFiles = () => {
+  vi.mocked(invoke).mockImplementation((cmd: unknown) =>
+    cmd === 'add_files'
+      ? Promise.resolve([1, 2, 3, 4, 5].map(makeEntry))
+      : Promise.resolve(undefined)
+  )
+  vi.mocked(open).mockResolvedValueOnce([
+    '/t/f1.jpg',
+    '/t/f2.jpg',
+    '/t/f3.jpg',
+    '/t/f4.jpg',
+    '/t/f5.jpg',
+  ])
+}
+
 const emptyHistory = {
   sessions: [],
   page: 0,
@@ -126,60 +141,39 @@ describe('App shell', () => {
     const user = userEvent.setup()
     render(<App />)
     expect(
-      document.querySelector('[data-slot="sidebar-menu-badge"]')
-    ).toBeNull()
-    expect(
       menuItemFor('Compress').querySelector('[data-slot="sidebar-menu-badge"]')
     ).toBeNull()
 
-    vi.mocked(invoke).mockImplementation((cmd: unknown) =>
-      cmd === 'add_files'
-        ? Promise.resolve([1, 2, 3, 4, 5].map(makeEntry))
-        : Promise.resolve(undefined)
-    )
-    vi.mocked(open).mockResolvedValueOnce([
-      '/t/f1.jpg',
-      '/t/f2.jpg',
-      '/t/f3.jpg',
-      '/t/f4.jpg',
-      '/t/f5.jpg',
-    ])
+    stubFiveFiles()
     await user.click(screen.getByRole('button', { name: /drop files/i }))
     const badge = await screen.findByText('5')
     expect(badge.getAttribute('data-slot')).toBe('sidebar-menu-badge')
-    expect(
-      menuItemFor('Compress').contains(badge)
-    ).toBe(true)
+    expect(menuItemFor('Compress').contains(badge)).toBe(true)
   })
 
   it('badge count updates when files are added or removed', async () => {
     const user = userEvent.setup()
-    vi.mocked(invoke).mockImplementation((cmd: unknown) =>
-      cmd === 'add_files'
-        ? Promise.resolve([1, 2, 3, 4, 5].map(makeEntry))
-        : Promise.resolve(undefined)
-    )
-    vi.mocked(open).mockResolvedValueOnce([
-      '/t/f1.jpg',
-      '/t/f2.jpg',
-      '/t/f3.jpg',
-      '/t/f4.jpg',
-      '/t/f5.jpg',
-    ])
+    stubFiveFiles()
     render(<App />)
     await user.click(screen.getByRole('button', { name: /drop files/i }))
     expect(await screen.findByText('5')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Remove f1.jpg' }))
     expect(await screen.findByText('4')).toBeInTheDocument()
-    expect(screen.queryByText('5')).not.toBeInTheDocument()
+    for (const n of [2, 3, 4, 5]) {
+      await user.click(screen.getByRole('button', { name: `Remove f${n}.jpg` }))
+    }
+    expect(
+      document.querySelector('[data-slot="sidebar-menu-badge"]')
+    ).toBeNull()
+    expect(
+      menuItemFor('Compress').querySelector('[data-slot="sidebar-menu-badge"]')
+    ).toBeNull()
   })
 
   it('History nav item shows no badge', () => {
     render(<App />)
-    const historyItem = menuItemFor('History')
-    expect(historyItem).not.toBeNull()
     expect(
-      historyItem.querySelector('[data-slot="sidebar-menu-badge"]')
+      menuItemFor('History').querySelector('[data-slot="sidebar-menu-badge"]')
     ).toBeNull()
   })
 
@@ -193,22 +187,7 @@ describe('App shell', () => {
   it('file list survives navigating to Settings and back (Bug 2a)', async () => {
     const user = userEvent.setup()
     vi.mocked(open).mockResolvedValueOnce('/t/a.jpg')
-    vi.mocked(invoke).mockResolvedValueOnce([
-      {
-        id: 'f1',
-        name: 'a.jpg',
-        path: '/t/a.jpg',
-        category: 'image',
-        targetBytes: 204800,
-        originalSize: 1024,
-        status: 'pending',
-        compressedSize: null,
-        outputPath: null,
-        error: null,
-        strategyUsed: null,
-        qualityUsed: null,
-      },
-    ])
+    vi.mocked(invoke).mockResolvedValueOnce([{ ...makeEntry(1), name: 'a.jpg', path: '/t/a.jpg' }])
     render(<App />)
     await user.click(screen.getByRole('button', { name: /drop files/i }))
     expect(await screen.findByText('a.jpg')).toBeInTheDocument()

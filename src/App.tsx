@@ -81,7 +81,7 @@ function App() {
         <SidebarContent>
           <SidebarGroup>
             <SidebarGroupContent>
-              <SidebarNav activeView={activeView} setActiveView={setActiveView} />
+              <SidebarNav activeView={activeView} onViewChange={setActiveView} />
             </SidebarGroupContent>
           </SidebarGroup>
         </SidebarContent>
