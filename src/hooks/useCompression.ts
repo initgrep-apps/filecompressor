@@ -69,6 +69,8 @@ export interface CompressionCallbacks {
 const toMessage = (err: unknown): string =>
   err instanceof Error ? err.message : String(err)
 
+const TERMINAL_WATCHDOG_MS = 10 * 60 * 1000
+
 export function useCompression(
   files: FileEntry[],
   setFiles: Dispatch<SetStateAction<FileEntry[]>>,
@@ -81,11 +83,35 @@ export function useCompression(
   const cancelledRef = useRef(false)
   const activeBatchRef = useRef<string | null>(null)
   const lastTerminalRef = useRef<string | null>(null)
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const isCompressingRef = useRef(false)
 
   const filesRef = useRef(files)
   filesRef.current = files
   const callbacksRef = useRef(callbacks)
   callbacksRef.current = callbacks
+  isCompressingRef.current = isCompressing
+
+  const clearWatchdog = useCallback(() => {
+    if (watchdogRef.current !== null) {
+      clearTimeout(watchdogRef.current)
+      watchdogRef.current = null
+    }
+  }, [])
+
+  const armWatchdog = useCallback(() => {
+    clearWatchdog()
+    watchdogRef.current = setTimeout(() => {
+      watchdogRef.current = null
+      if (!isCompressingRef.current) return
+      isCompressingRef.current = false
+      setIsCompressing(false)
+      setProgressByFile({})
+      toast.error('Compression status lost — check History for results')
+      callbacksRef.current?.onBatchError?.('Compression status lost')
+      activeBatchRef.current = null
+    }, TERMINAL_WATCHDOG_MS)
+  }, [clearWatchdog])
 
   useEffect(() => {
     let disposed = false
@@ -197,7 +223,9 @@ export function useCompression(
       if (e.payload.batchId === lastTerminalRef.current) return
       lastTerminalRef.current = e.payload.batchId
       activeBatchRef.current = null
+      clearWatchdog()
       setIsCompressing(false)
+      isCompressingRef.current = false
       const processed = processedCountRef.current
       const errors = errorCountRef.current
       processedCountRef.current = 0
@@ -220,7 +248,9 @@ export function useCompression(
       if (e.payload.batchId === lastTerminalRef.current) return
       lastTerminalRef.current = e.payload.batchId
       activeBatchRef.current = null
+      clearWatchdog()
       setIsCompressing(false)
+      isCompressingRef.current = false
       processedCountRef.current = 0
       errorCountRef.current = 0
       clearCancelled()
@@ -231,30 +261,39 @@ export function useCompression(
 
     return () => {
       disposed = true
+      clearWatchdog()
       unlisteners.forEach((u) => u())
     }
-  }, [setFiles])
+  }, [setFiles, clearWatchdog])
 
   const compressAll = useCallback(async () => {
     const pendingCount = filesRef.current.filter((f) => f.status === 'pending').length
     if (pendingCount === 0) return
+    clearWatchdog()
     setIsCompressing(true)
+    isCompressingRef.current = true
     cancelledRef.current = false
     try {
       const batchId = await invoke<string>('compress_all')
       activeBatchRef.current = typeof batchId === 'string' && batchId !== '' ? batchId : null
       lastTerminalRef.current = null
+      if (typeof batchId === 'string' && batchId !== '') {
+        armWatchdog()
+      }
       if (batchId === '') {
         setIsCompressing(false)
+        isCompressingRef.current = false
         callbacksRef.current?.onBatchError?.('No pending files')
       }
     } catch (err) {
       activeBatchRef.current = null
       lastTerminalRef.current = null
+      clearWatchdog()
       setIsCompressing(false)
+      isCompressingRef.current = false
       callbacksRef.current?.onBatchError?.(toMessage(err))
     }
-  }, [])
+  }, [armWatchdog, clearWatchdog])
 
   const cancelFile = useCallback(async (fileId: string) => {
     try {

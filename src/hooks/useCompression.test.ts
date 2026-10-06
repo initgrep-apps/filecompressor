@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { StrictMode, useState } from 'react'
 
@@ -31,6 +31,8 @@ import { useCompression, type CompressionCallbacks } from '@/hooks/useCompressio
 import { invoke } from '@tauri-apps/api/core'
 import { toast } from 'sonner'
 import type { FileEntry } from '@/types'
+
+const WATCHDOG_MS = 10 * 60 * 1000
 
 const emit = (event: string, payload: unknown) =>
   act(() => {
@@ -695,5 +697,129 @@ describe('useCompression batch cancellation', () => {
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
     expect(toast.info).not.toHaveBeenCalled()
     expect(onBatchComplete).toHaveBeenCalledWith(5, 1, 0, false)
+  })
+})
+
+describe('useCompression terminal watchdog', () => {
+  const completePayload = {
+    fileId: 'f1',
+    outputPath: '/o/a.jpg',
+    originalSize: 10,
+    compressedSize: 5,
+    status: 'done',
+    metTarget: true,
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.mocked(invoke).mockReset()
+    vi.mocked(invoke).mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('watchdog does not fire while batch terminal arrives in time', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce('b1')
+    const onBatchComplete = vi.fn()
+    const onBatchError = vi.fn()
+    const { result } = setup([entry()], { onBatchComplete, onBatchError })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    expect(result.current.comp.isCompressing).toBe(true)
+    expect(vi.getTimerCount()).toBe(1)
+    emit('file:complete', completePayload)
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 5 })
+    expect(result.current.comp.isCompressing).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    act(() => {
+      vi.advanceTimersByTime(WATCHDOG_MS + 1000)
+    })
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(onBatchError).not.toHaveBeenCalled()
+    expect(onBatchComplete).toHaveBeenCalledTimes(1)
+  })
+
+  it('watchdog recovers run state when the terminal event never arrives', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce('b1')
+    const onBatchError = vi.fn()
+    const { result } = setup([entry()], { onBatchError })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('file:progress', { fileId: 'f1', percent: 40 })
+    expect(result.current.comp.progressByFile['f1']).toBe(40)
+    act(() => {
+      vi.advanceTimersByTime(WATCHDOG_MS + 1000)
+    })
+    expect(result.current.comp.isCompressing).toBe(false)
+    expect(result.current.comp.progressByFile).toEqual({})
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.error).toHaveBeenCalledWith(
+      'Compression status lost — check History for results'
+    )
+    expect(onBatchError).toHaveBeenCalledTimes(1)
+    expect(onBatchError).toHaveBeenCalledWith('Compression status lost')
+  })
+
+  it('second compressAll clears a pending watchdog', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce('b1').mockResolvedValueOnce('b2')
+    const onBatchError = vi.fn()
+    const { result } = setup([entry()], { onBatchError })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    expect(vi.getTimerCount()).toBe(1)
+    await act(() => result.current.comp.compressAll())
+    expect(vi.getTimerCount()).toBe(1)
+    act(() => {
+      vi.advanceTimersByTime(WATCHDOG_MS + 1000)
+    })
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(onBatchError).toHaveBeenCalledTimes(1)
+    expect(result.current.comp.isCompressing).toBe(false)
+  })
+
+  it('invoke rejection never arms the watchdog', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('worker dead'))
+    const onBatchError = vi.fn()
+    const { result } = setup([entry()], { onBatchError })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    expect(result.current.comp.isCompressing).toBe(false)
+    expect(onBatchError).toHaveBeenCalledWith('worker dead')
+    expect(vi.getTimerCount()).toBe(0)
+    act(() => {
+      vi.advanceTimersByTime(WATCHDOG_MS + 1000)
+    })
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(onBatchError).toHaveBeenCalledTimes(1)
+  })
+
+  it('stale terminal events do not disarm the active run watchdog', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce('b2')
+    const onBatchError = vi.fn()
+    const { result } = setup([entry()], { onBatchError })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 99 })
+    emit('batch:error', { batchId: 'b1', errorMessage: 'stale failure' })
+    expect(result.current.comp.isCompressing).toBe(true)
+    expect(vi.getTimerCount()).toBe(1)
+    act(() => {
+      vi.advanceTimersByTime(WATCHDOG_MS + 1000)
+    })
+    expect(toast.error).toHaveBeenCalledWith(
+      'Compression status lost — check History for results'
+    )
+  })
+
+  it('unmount clears a pending watchdog', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce('b1')
+    const { result, unmount } = setup([entry()])
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    expect(vi.getTimerCount()).toBe(1)
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
   })
 })
