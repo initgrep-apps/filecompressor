@@ -33,7 +33,11 @@ vi.mock('@tauri-apps/api/webview', () => ({
 }))
 
 import { CompressView } from '@/views/CompressView'
-import { CompressionProvider } from '@/providers/CompressionProvider'
+import {
+  CompressionProvider,
+  CompressionContext,
+  type CompressionContextValue,
+} from '@/providers/CompressionProvider'
 import { toast } from 'sonner'
 
 const renderView = (ui = <CompressView />) =>
@@ -173,6 +177,34 @@ describe('CompressView', () => {
     expect(screen.getByRole('button', { name: 'Compress' })).toBeDisabled()
   })
 
+  it('staging Compress is disabled while a run is in flight', () => {
+    const contextValue: CompressionContextValue = {
+      files: [entry()],
+      error: null,
+      addFiles: vi.fn(),
+      browseFiles: vi.fn(),
+      removeFile: vi.fn(),
+      clearList: vi.fn(),
+      isCompressing: true,
+      progressByFile: {},
+      cancelFile: vi.fn(),
+      cancelAll: vi.fn(),
+      revealInFolder: vi.fn(),
+      runScreen: 'staging',
+      batchNumber: 1,
+      batchError: null,
+      roster: [],
+      startRun: vi.fn(),
+      endRun: vi.fn(),
+    }
+    render(
+      <CompressionContext.Provider value={contextValue}>
+        <CompressView />
+      </CompressionContext.Provider>
+    )
+    expect(screen.getByRole('button', { name: 'Compress' })).toBeDisabled()
+  })
+
   it('compress button enabled with pending files and triggers compression', async () => {
     const user = userEvent.setup()
     renderView()
@@ -272,6 +304,38 @@ describe('CompressView', () => {
     expect(screen.getByTestId('batch-error')).toHaveTextContent('Output folder not writable')
     expect(screen.getByTestId('new-batch')).toBeInTheDocument()
     expect(screen.queryByTestId('cancel-all')).not.toBeInTheDocument()
+  })
+
+  it('a live run cannot be preempted: mid-run shows Cancel All only and compress_all fires once', async () => {
+    renderView()
+    await addFileInView()
+    vi.mocked(invoke).mockResolvedValueOnce('b1')
+    await pressCompress()
+    emit('batch:error', { batchId: 'b1', errorMessage: 'Output folder not writable' })
+    await waitFor(() =>
+      expect(screen.getByTestId('status-pill').getAttribute('data-state')).toBe('failed')
+    )
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('new-batch'))
+    await screen.findByRole('table')
+    await addViaBrowse([{ id: 'f2', name: 'b2.jpg', path: '/t/b2.jpg' }])
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise(() => {}))
+    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    await screen.findByTestId('run-header')
+    expect(screen.getByTestId('batch-pill')).toHaveTextContent('Batch #2')
+    const pill = screen.getByTestId('status-pill')
+    expect(pill).toHaveTextContent('Compressing')
+    expect(pill.getAttribute('data-state')).toBe('running')
+    expect(screen.getByTestId('cancel-all')).toBeInTheDocument()
+    expect(screen.queryByTestId('new-batch')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('batch-error')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Compress' })).not.toBeInTheDocument()
+    const compressCalls = vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'compress_all')
+    expect(compressCalls).toHaveLength(2)
+    await act(async () => {})
+    expect(
+      vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'compress_all')
+    ).toHaveLength(2)
   })
 
   it('Cancel All appears while compressing and New batch replaces it after completion', async () => {

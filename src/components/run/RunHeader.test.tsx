@@ -66,9 +66,8 @@ describe('RunHeader', () => {
     rerender(
       <RunHeader
         {...baseProps()}
-        running
         batchError="Ghostscript worker unavailable"
-        counts={countsOf(['compressing', 'compressing'])}
+        counts={countsOf(['done'])}
       />
     )
     const failedPill = screen.getByTestId('status-pill')
@@ -77,13 +76,29 @@ describe('RunHeader', () => {
     expect(screen.getByTestId('batch-error').textContent).toBe('Ghostscript worker unavailable')
   })
 
-  it('batch error shows Failed pill + error text and New batch available, no Cancel All', () => {
+  it('a persisted batch error does not masquerade as live-run state while running', () => {
     render(
       <RunHeader
         {...baseProps()}
         running
-        batchError="worker not reachable"
+        batchError="stale failure from the previous batch"
         counts={countsOf(['compressing'])}
+      />
+    )
+    const pill = screen.getByTestId('status-pill')
+    expect(pill.textContent).toBe('Compressing')
+    expect(pill.getAttribute('data-state')).toBe('running')
+    expect(screen.queryByTestId('batch-error')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cancel-all')).toBeInTheDocument()
+    expect(screen.queryByTestId('new-batch')).not.toBeInTheDocument()
+  })
+
+  it('batch error shows Failed pill + error text and New batch available, no Cancel All', () => {
+    render(
+      <RunHeader
+        {...baseProps()}
+        batchError="worker not reachable"
+        counts={countsOf(['failed'])}
       />
     )
     expect(screen.getByTestId('status-pill').textContent).toBe('Failed')

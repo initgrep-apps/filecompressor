@@ -185,7 +185,7 @@ function StagingScreen() {
             >
               Clear List
             </Button>
-            <Button size="sm" onClick={startRun} disabled={!canCompress}>
+            <Button size="sm" onClick={() => startRun()} disabled={!canCompress || isCompressing}>
               Compress
             </Button>
           </div>

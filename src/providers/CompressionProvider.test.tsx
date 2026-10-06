@@ -282,6 +282,33 @@ describe('CompressionProvider', () => {
     expect(invoke).not.toHaveBeenCalledWith('compress_all')
   })
 
+  it('startRun while a run is in flight does not start a second batch', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce([entry()])
+    render(
+      <CompressionProvider>
+        <RunConsumer paths={['/t/a.jpg']} />
+      </CompressionProvider>
+    )
+    await flush()
+    await act(async () => {
+      await screen.getByRole('button', { name: 'add' }).click()
+    })
+    vi.mocked(invoke).mockImplementationOnce(() => new Promise(() => {}))
+    await act(() => {
+      screen.getByRole('button', { name: 'start run' }).click()
+    })
+    expect(screen.getByTestId('run-state')).toHaveTextContent('run')
+    expect(screen.getByTestId('batch-number')).toHaveTextContent('1')
+    await act(() => {
+      screen.getByRole('button', { name: 'start run' }).click()
+    })
+    expect(screen.getByTestId('run-state')).toHaveTextContent('run')
+    expect(screen.getByTestId('batch-number')).toHaveTextContent('1')
+    expect(screen.getByTestId('roster')).toHaveTextContent('f1')
+    const compressCalls = vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === 'compress_all')
+    expect(compressCalls).toHaveLength(1)
+  })
+
   it('re-drop of same path keeps one row and a new path appends', async () => {
     // First drop: backend accepts a.jpg.
     vi.mocked(invoke).mockResolvedValueOnce([entry()])

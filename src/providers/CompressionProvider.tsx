@@ -28,7 +28,7 @@ function formatSavedBytes(bytes: number): string {
 
 export type RunScreen = 'staging' | 'run'
 
-interface CompressionContextValue {
+export interface CompressionContextValue {
   files: ReturnType<typeof useFileList>['files']
   error: ReturnType<typeof useFileList>['error']
   addFiles: ReturnType<typeof useFileList>['addFiles']
@@ -48,7 +48,7 @@ interface CompressionContextValue {
   endRun: () => void
 }
 
-const CompressionContext = createContext<CompressionContextValue | null>(null)
+export const CompressionContext = createContext<CompressionContextValue | null>(null)
 
 export function CompressionProvider({ children }: { children: ReactNode }) {
   const { files, error, addFiles, browseFiles, removeFile, clearList, setFiles } = useFileList()
@@ -73,6 +73,7 @@ export function CompressionProvider({ children }: { children: ReactNode }) {
   const [roster, setRoster] = useState<Array<FileEntry['id']>>([])
 
   const startRun = useCallback(() => {
+    if (isCompressing) return
     const pendingIds = filesRef.current
       .filter((f) => f.status === 'pending')
       .map((f) => f.id)
@@ -81,7 +82,7 @@ export function CompressionProvider({ children }: { children: ReactNode }) {
     setBatchNumber((n) => n + 1)
     setRunScreen('run')
     void compressAll()
-  }, [compressAll])
+  }, [compressAll, isCompressing])
 
   const endRun = useCallback(() => {
     setRunScreen('staging')
