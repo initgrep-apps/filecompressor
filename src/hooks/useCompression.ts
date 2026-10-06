@@ -113,6 +113,12 @@ export function useCompression(
     }, TERMINAL_WATCHDOG_MS)
   }, [clearWatchdog])
 
+  const kickWatchdog = useCallback(() => {
+    if (activeBatchRef.current !== null) {
+      armWatchdog()
+    }
+  }, [armWatchdog])
+
   useEffect(() => {
     let disposed = false
     const unlisteners: UnlistenFn[] = []
@@ -145,6 +151,7 @@ export function useCompression(
     }
 
     listen<ProgressPayload>('file:progress', (e) => {
+      kickWatchdog()
       const { fileId, percent } = e.payload
       const file = filesRef.current.find((f) => f.id === fileId)
       if (!file) return
@@ -160,6 +167,7 @@ export function useCompression(
       .catch(reportListenFailure('file:progress'))
 
     listen<CompletePayload>('file:complete', (e) => {
+      kickWatchdog()
       const {
         fileId,
         outputPath,
@@ -184,6 +192,7 @@ export function useCompression(
       .catch(reportListenFailure('file:complete'))
 
     listen<ErrorPayload>('file:error', (e) => {
+      kickWatchdog()
       const { fileId, errorMessage } = e.payload
       if (filesRef.current.some((f) => f.id === fileId)) {
         processedCountRef.current += 1
@@ -202,6 +211,7 @@ export function useCompression(
       .catch(reportListenFailure('file:error'))
 
     listen<CancelledPayload>('file:cancelled', (e) => {
+      kickWatchdog()
       const { fileId } = e.payload
       dropProgress(fileId)
       setFiles((prev) =>
@@ -264,14 +274,14 @@ export function useCompression(
       clearWatchdog()
       unlisteners.forEach((u) => u())
     }
-  }, [setFiles, clearWatchdog])
+  }, [setFiles, clearWatchdog, kickWatchdog])
 
   const compressAll = useCallback(async () => {
     const pendingCount = filesRef.current.filter((f) => f.status === 'pending').length
     if (pendingCount === 0) return
     clearWatchdog()
-    setIsCompressing(true)
     isCompressingRef.current = true
+    setIsCompressing(true)
     cancelledRef.current = false
     try {
       const batchId = await invoke<string>('compress_all')

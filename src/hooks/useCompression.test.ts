@@ -822,4 +822,33 @@ describe('useCompression terminal watchdog', () => {
     unmount()
     expect(vi.getTimerCount()).toBe(0)
   })
+
+  it('file progress events keep the watchdog alive past the timeout', async () => {
+    vi.mocked(invoke).mockResolvedValueOnce('b1')
+    const onBatchError = vi.fn()
+    const { result } = setup([entry()], { onBatchError })
+    await flush()
+    await act(() => result.current.comp.compressAll())
+    expect(result.current.comp.isCompressing).toBe(true)
+    for (let i = 0; i < 20; i++) {
+      emit('file:progress', { fileId: 'f1', percent: i * 5 })
+      act(() => {
+        vi.advanceTimersByTime(WATCHDOG_MS - 1000)
+      })
+    }
+    expect(result.current.comp.isCompressing).toBe(true)
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(onBatchError).not.toHaveBeenCalled()
+    act(() => {
+      vi.advanceTimersByTime(WATCHDOG_MS + 1000)
+    })
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.error).toHaveBeenCalledWith(
+      'Compression status lost — check History for results'
+    )
+    expect(onBatchError).toHaveBeenCalledTimes(1)
+    expect(onBatchError).toHaveBeenCalledWith('Compression status lost')
+    expect(result.current.comp.isCompressing).toBe(false)
+    expect(result.current.comp.progressByFile).toEqual({})
+  })
 })
