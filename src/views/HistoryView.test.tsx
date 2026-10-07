@@ -837,6 +837,29 @@ describe('HistoryView', () => {
         STATUS_TONES.done.text
       )
       expect(chip).not.toHaveClass('bg-secondary')
+      expect(chip.className).not.toContain('dark:bg-transparent')
+    })
+
+    it('all-zero outcome session renders no accent bar', async () => {
+      invokeMock.mockResolvedValue(
+        responseWith([
+          session({
+            files: [],
+            matchedFiles: null,
+            outcome: {
+              done: 0,
+              bestEffort: 0,
+              failed: 0,
+              cancelled: 0,
+              unsupported: 0,
+              alreadyUnderTarget: 0,
+            },
+          }),
+        ])
+      )
+      renderView()
+      await screen.findAllByRole('button', { name: 'Toggle session details' })
+      expect(screen.queryByTestId('session-accent')).not.toBeInTheDocument()
     })
 
     it('session card shows accent bar colored by dominant outcome', async () => {

@@ -246,7 +246,7 @@ function Chip({
   return (
     <Button
       type="button"
-      variant="outline"
+      variant={active ? 'secondary' : 'outline'}
       size="xs"
       aria-pressed={active}
       className={active ? `${tone.tint} ${tone.border} ${tone.text}` : undefined}
@@ -350,16 +350,19 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
             </div>
             <div className="flex flex-wrap gap-1.5">
               {OUTCOME_ENTRIES.filter(({ key }) => outcome[key] > 0).map(
-                ({ key, icon: Icon, label }) => (
-                  <Badge
-                    key={key}
-                    variant="secondary"
-                    className={`${OUTCOME_TONES[key].tint} ${OUTCOME_TONES[key].border} ${OUTCOME_TONES[key].text}`}
-                  >
-                    <Icon />
-                    {label} {outcome[key]}
-                  </Badge>
-                )
+                ({ key, icon: Icon, label }) => {
+                  const tone = OUTCOME_TONES[key]
+                  return (
+                    <Badge
+                      key={key}
+                      variant="secondary"
+                      className={`${tone.tint} ${tone.border} ${tone.text}`}
+                    >
+                      <Icon />
+                      {label} {outcome[key]}
+                    </Badge>
+                  )
+                }
               )}
             </div>
           </button>
@@ -387,78 +390,81 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {files.map((file) => (
-                  <TableRow key={`${file.path}:${file.completedAt}`} className="group align-top">
-                    <TableCell>
-                      <div className="max-w-[220px] truncate text-sm font-medium" title={file.path}>
-                        {file.name}
-                      </div>
-                      <div className="max-w-[220px] truncate text-xs text-muted-foreground" title={file.path}>
-                        {parentDir(file.path)}
-                      </div>
-                      {file.error !== null && (
-                        <div className="max-w-[220px] text-xs text-destructive">{file.error}</div>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="secondary"
-                        className={`${CATEGORY_TONES[file.category].tint} ${CATEGORY_TONES[file.category].border} ${CATEGORY_TONES[file.category].text}`}
-                      >
-                        {CATEGORY_LABELS[file.category]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <StatusMarker status={file.status} />
-                    </TableCell>
-                    <TableCell className="tabular-nums">{formatSize(file.targetBytes)}</TableCell>
-                    <TableCell className="tabular-nums" title={file.strategyUsed ?? undefined}>
-                      {fileResult(file)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-0.5">
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          aria-label="Reveal output"
-                          disabled={file.outputPath === null}
-                          onClick={() => {
-                            if (file.outputPath) void revealFile(file.outputPath)
-                          }}
+                {files.map((file) => {
+                  const tone = CATEGORY_TONES[file.category]
+                  return (
+                    <TableRow key={`${file.path}:${file.completedAt}`} className="group align-top">
+                      <TableCell>
+                        <div className="max-w-[220px] truncate text-sm font-medium" title={file.path}>
+                          {file.name}
+                        </div>
+                        <div className="max-w-[220px] truncate text-xs text-muted-foreground" title={file.path}>
+                          {parentDir(file.path)}
+                        </div>
+                        {file.error !== null && (
+                          <div className="max-w-[220px] text-xs text-destructive">{file.error}</div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="secondary"
+                          className={`${tone.tint} ${tone.border} ${tone.text}`}
                         >
-                          <RiFolderOpenLine />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          aria-label="Copy output path"
-                          disabled={file.outputPath === null}
-                          onClick={() =>
-                            file.outputPath && copyToClipboard(file.outputPath)
-                          }
-                        >
-                          <RiFileCopyLine />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          aria-label="Reveal source"
-                          onClick={() => void revealFile(file.path)}
-                        >
-                          <RiFolder3Line />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          aria-label="Copy source path"
-                          onClick={() => copyToClipboard(file.path)}
-                        >
-                          <RiFileCopy2Line />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          {CATEGORY_LABELS[file.category]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <StatusMarker status={file.status} />
+                      </TableCell>
+                      <TableCell className="tabular-nums">{formatSize(file.targetBytes)}</TableCell>
+                      <TableCell className="tabular-nums" title={file.strategyUsed ?? undefined}>
+                        {fileResult(file)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-0.5">
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="Reveal output"
+                            disabled={file.outputPath === null}
+                            onClick={() => {
+                              if (file.outputPath) void revealFile(file.outputPath)
+                            }}
+                          >
+                            <RiFolderOpenLine />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="Copy output path"
+                            disabled={file.outputPath === null}
+                            onClick={() =>
+                              file.outputPath && copyToClipboard(file.outputPath)
+                            }
+                          >
+                            <RiFileCopyLine />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="Reveal source"
+                            onClick={() => void revealFile(file.path)}
+                          >
+                            <RiFolder3Line />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="Copy source path"
+                            onClick={() => copyToClipboard(file.path)}
+                          >
+                            <RiFileCopy2Line />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           </div>
@@ -578,7 +584,7 @@ export function HistoryView() {
             <Select
               value={datePreset}
               onValueChange={(v) => {
-                if (v !== null) applyDatePreset(v as DatePreset)
+                if (v !== null) applyDatePreset(v)
               }}
             >
               <SelectTrigger aria-label="Date range" className="w-32">
