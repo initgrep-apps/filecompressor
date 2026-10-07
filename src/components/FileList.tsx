@@ -16,6 +16,7 @@
 
 import type { FileEntry, Category, FileStatus } from '@/types'
 import { formatSize, reductionPercentOrZero } from '@/lib/sizeFormat'
+import { CATEGORY_TONES, STATUS_TONES } from '@/lib/tokens'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 
@@ -28,14 +29,6 @@ interface FileListProps {
 
 export const RESULT_STATUSES: FileStatus[] = ['done', 'best_effort', 'already_under_target']
 
-const categoryVariant: Record<Category, string> = {
-  image: 'bg-secondary text-secondary-foreground',
-  video: 'bg-secondary text-secondary-foreground',
-  pdf: 'bg-secondary text-secondary-foreground',
-  document: 'bg-secondary text-secondary-foreground',
-  other: 'bg-muted text-muted-foreground',
-}
-
 const categoryLabel: Record<Category, string> = {
   image: 'Image',
   video: 'Video',
@@ -45,16 +38,6 @@ const categoryLabel: Record<Category, string> = {
 }
 
 function StatusBadge({ status }: { status: FileStatus }) {
-  const styles: Record<FileStatus, string> = {
-    pending: 'text-muted-foreground',
-    compressing: 'text-primary',
-    done: 'text-primary',
-    best_effort: 'text-destructive',
-    failed: 'text-destructive',
-    cancelled: 'text-muted-foreground',
-    unsupported: 'text-muted-foreground',
-    already_under_target: 'text-primary',
-  }
   const labels: Record<FileStatus, string> = {
     pending: 'Pending',
     compressing: 'Compressing',
@@ -65,19 +48,10 @@ function StatusBadge({ status }: { status: FileStatus }) {
     unsupported: 'Unsupported',
     already_under_target: 'Already under target',
   }
-  const dotColors: Record<FileStatus, string> = {
-    pending: 'bg-muted-foreground/50',
-    compressing: 'bg-primary',
-    done: 'bg-primary',
-    best_effort: 'bg-destructive',
-    failed: 'bg-destructive',
-    cancelled: 'bg-muted-foreground/50',
-    unsupported: 'bg-muted-foreground/30',
-    already_under_target: 'bg-primary',
-  }
+  const tone = STATUS_TONES[status]
   return (
-    <span className={`flex items-center gap-1.5 text-xs ${styles[status]}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${dotColors[status]}`} />
+    <span className={`flex items-center gap-1.5 text-xs ${tone.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${tone.accent}`} />
       {labels[status]}
     </span>
   )
@@ -106,6 +80,7 @@ export function FileList({ files, onRemove, onReveal, removeDisabled }: FileList
             const hasResult =
               RESULT_STATUSES.includes(file.status) && file.compressedSize !== null
             const canReveal = hasResult && !!onReveal && !!file.outputPath
+            const tone = CATEGORY_TONES[file.category]
             return (
               <TableRow
                 key={file.id}
@@ -116,7 +91,7 @@ export function FileList({ files, onRemove, onReveal, removeDisabled }: FileList
                   {hasResult ? (
                     <div
                       className={`text-xs mt-0.5 tabular-nums ${
-                        file.status === 'best_effort' ? 'text-destructive' : 'text-muted-foreground'
+                        file.status === 'best_effort' ? STATUS_TONES.best_effort.text : 'text-muted-foreground'
                       }`}
                     >
                       {formatSize(file.originalSize)} → {formatSize(file.compressedSize!)} ·{' '}
@@ -129,7 +104,10 @@ export function FileList({ files, onRemove, onReveal, removeDisabled }: FileList
                   )}
                 </TableCell>
                 <TableCell>
-                  <Badge variant="secondary" className={categoryVariant[file.category]}>
+                  <Badge
+                    variant="secondary"
+                    className={`${tone.border} ${tone.tint} ${tone.text}`}
+                  >
                     {categoryLabel[file.category]}
                   </Badge>
                 </TableCell>

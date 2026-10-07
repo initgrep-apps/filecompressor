@@ -483,7 +483,7 @@ it('failed card keeps red accent', () => {
 - `other category stays muted` (gap-fill, sev 3)
 - `best effort status renders amber in staging table` (gap-fill) — StatusBadge + result-line flip; reworks the `:136` pin
 
-- [ ] **Step 1: Write failing test** in `src/components/FileList.test.tsx`:
+- [x] **Step 1: Write failing test** in `src/components/FileList.test.tsx`:
 
 ```ts
 it('category badges use shared tones', () => {
@@ -493,10 +493,10 @@ it('category badges use shared tones', () => {
 })
 ```
 
-- [ ] **Step 2: Run to verify failure.** Run: `yarn vitest run src/components/FileList.test.tsx`. Expected: FAIL.
-- [ ] **Step 3: Implement** — replace `categoryVariant` map values with tone-module fields; flip StatusBadge local maps to `STATUS_TONES`; verify merged Badge className.
-- [ ] **Step 4: Run to verify pass.** Run: `yarn vitest run src/components/FileList.test.tsx`. Expected: PASS.
-- [ ] **Step 5: Commit** `git add src/components/FileList.tsx src/components/FileList.test.tsx && git commit -m "feat(ui): staging table category badges use shared tones"`
+- [x] **Step 2: Run to verify failure.** Run: `yarn vitest run src/components/FileList.test.tsx`. Expected: FAIL.
+- [x] **Step 3: Implement** — replace `categoryVariant` map values with tone-module fields; flip StatusBadge local maps to `STATUS_TONES`; verify merged Badge className.
+- [x] **Step 4: Run to verify pass.** Run: `yarn vitest run src/components/FileList.test.tsx`. Expected: PASS.
+- [x] **Step 5: Commit** `git add src/components/FileList.tsx src/components/FileList.test.tsx && git commit -m "feat(ui): staging table category badges use shared tones"`
 
 ### Task 10: HistoryView — tone-matched uniformity
 
