@@ -15,10 +15,19 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { useState, useEffect } from 'react'
+import {
+  RiEqualizerLine,
+  RiFlashlightLine,
+  RiFolderLine,
+  RiShieldCheckLine,
+  RiTimeLine,
+} from '@remixicon/react'
 import { useSettings } from '@/hooks/useSettings'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { NumberStepper } from '@/components/NumberStepper'
+import { CATEGORY_TONES } from '@/lib/tokens'
+import { cn } from '@/lib/utils'
 import {
   Card,
   CardContent,
@@ -41,6 +50,48 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { Settings, CategoryTarget, MaxConcurrent, PerformanceSettings } from '@/types'
+
+const ICON_TILES = {
+  folder: {
+    icon: RiFolderLine,
+    tint: 'bg-primary/12',
+    text: 'text-primary',
+  },
+  targets: {
+    icon: RiEqualizerLine,
+    tint: 'bg-blue-500/12',
+    text: 'text-blue-600',
+  },
+  performance: {
+    icon: RiFlashlightLine,
+    tint: 'bg-violet-500/12',
+    text: 'text-violet-600',
+  },
+  floors: {
+    icon: RiShieldCheckLine,
+    tint: 'bg-destructive/15',
+    text: 'text-destructive',
+  },
+  history: {
+    icon: RiTimeLine,
+    tint: 'bg-amber-500/12',
+    text: 'text-amber-600',
+  },
+} as const
+
+type IconTileKey = keyof typeof ICON_TILES
+
+function CardIcon({ tile }: { tile: IconTileKey }) {
+  const { icon: Icon, tint, text } = ICON_TILES[tile]
+  return (
+    <span
+      data-slot="card-icon"
+      className={cn('flex size-7 shrink-0 items-center justify-center rounded-lg', tint, text)}
+    >
+      <Icon size={16} aria-hidden="true" />
+    </span>
+  )
+}
 
 const categories = [
   { key: 'image', label: 'Images', badge: 'Image', formats: 'JPEG, PNG, WebP, HEIC' },
@@ -157,28 +208,20 @@ export function SettingsView() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Output Folder</CardTitle>
-            <CardDescription>
-              Compressed files are saved here. Originals are never modified.
-            </CardDescription>
+            <div className="flex items-center gap-2.5">
+              <CardIcon tile="folder" />
+              <div className="min-w-0">
+                <CardTitle className="text-sm">Output Folder</CardTitle>
+                <CardDescription>
+                  Compressed files are saved here. Originals are never modified.
+                </CardDescription>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <div className="flex items-center gap-2">
               <div className="flex h-9 flex-1 items-center gap-2 rounded-md border border-input bg-background/50 px-3 text-sm text-muted-foreground">
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="shrink-0"
-                  aria-hidden="true"
-                >
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                </svg>
+                <RiFolderLine size={14} className="shrink-0" aria-hidden="true" />
                 <span className="truncate">{draft.outputFolder}</span>
               </div>
               <Button variant="outline" size="sm" onClick={handleBrowse}>
@@ -190,10 +233,15 @@ export function SettingsView() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Category Targets</CardTitle>
-            <CardDescription>
-              Maximum file size per category. Applied to all files in that category.
-            </CardDescription>
+            <div className="flex items-center gap-2.5">
+              <CardIcon tile="targets" />
+              <div className="min-w-0">
+                <CardTitle className="text-sm">Category Targets</CardTitle>
+                <CardDescription>
+                  Maximum file size per category. Applied to all files in that category.
+                </CardDescription>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <FieldGroup>
@@ -203,7 +251,16 @@ export function SettingsView() {
                   <Field key={cat.key}>
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2.5">
-                        <Badge variant="secondary">{cat.badge}</Badge>
+                        <Badge
+                          variant="secondary"
+                          className={cn(
+                            CATEGORY_TONES[cat.key].tint,
+                            CATEGORY_TONES[cat.key].border,
+                            CATEGORY_TONES[cat.key].text,
+                          )}
+                        >
+                          {cat.badge}
+                        </Badge>
                         <FieldLabel htmlFor={`${cat.key}-size`} className="text-sm">
                           {cat.label}
                         </FieldLabel>
@@ -244,10 +301,15 @@ export function SettingsView() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Performance</CardTitle>
-            <CardDescription>
-              How many files compress at once. Auto adapts to your machine (CPU cores).
-            </CardDescription>
+            <div className="flex items-center gap-2.5">
+              <CardIcon tile="performance" />
+              <div className="min-w-0">
+                <CardTitle className="text-sm">Performance</CardTitle>
+                <CardDescription>
+                  How many files compress at once. Auto adapts to your machine (CPU cores).
+                </CardDescription>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <Field>
@@ -274,10 +336,15 @@ export function SettingsView() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Quality Floors</CardTitle>
-            <CardDescription>
-              Engine stops compressing below these values and reports best effort.
-            </CardDescription>
+            <div className="flex items-center gap-2.5">
+              <CardIcon tile="floors" />
+              <div className="min-w-0">
+                <CardTitle className="text-sm">Quality Floors</CardTitle>
+                <CardDescription>
+                  Engine stops compressing below these values and reports best effort.
+                </CardDescription>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <Accordion>
@@ -409,10 +476,15 @@ export function SettingsView() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">History</CardTitle>
-            <CardDescription>
-              Sessions older than this are removed automatically. Files on disk are never deleted.
-            </CardDescription>
+            <div className="flex items-center gap-2.5">
+              <CardIcon tile="history" />
+              <div className="min-w-0">
+                <CardTitle className="text-sm">History</CardTitle>
+                <CardDescription>
+                  Sessions older than this are removed automatically. Files on disk are never deleted.
+                </CardDescription>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             <Field>
