@@ -43,9 +43,7 @@ const CHIP_TONES: Record<ChipTone, string> = {
 const ICON_BUTTON =
   'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
 
-function cardAccentShadow(accent: string): string {
-  return `shadow-[inset_3px_0_0_var(--${accent.slice(3)})]`
-}
+const ACCENT_SHADOW_PRIMARY = 'shadow-[inset_3px_0_0_var(--primary)]'
 
 const NAME_TONES: Partial<Record<FileStatus, string>> = {
   compressing: 'text-primary font-semibold',
@@ -130,11 +128,11 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
           ? cn(
               STATUS_TONES.compressing.border,
               CATEGORY_TONES[file.category].tint,
-              cardAccentShadow(STATUS_TONES.compressing.accent)
+              ACCENT_SHADOW_PRIMARY
             )
           : 'bg-card',
         status === 'failed' && 'border-destructive/25 bg-destructive/5 shadow-[inset_3px_0_0_var(--destructive)]',
-        status === 'done' && cardAccentShadow(STATUS_TONES.done.accent),
+        status === 'done' && ACCENT_SHADOW_PRIMARY,
         status === 'pending' && 'border-dashed'
       )}
     >

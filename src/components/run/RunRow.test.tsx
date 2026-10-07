@@ -238,12 +238,14 @@ describe('RunRow card fidelity', () => {
   it('compressing card shows lane tint and primary border', () => {
     render(<RunRow file={makeFile({ status: 'compressing', category: 'image' })} percent={42} />)
     const card = screen.getByTestId('run-row-compressing')
-    expect(card.className).toContain('blue')
+    expect(card.className).toContain('bg-blue-500/12')
     expect(card.className).toContain('border-primary/30')
   })
 
   it('failed card keeps red accent', () => {
     render(<RunRow file={makeFile({ status: 'failed', error: 'boom' })} />)
-    expect(screen.getByTestId('run-row-failed').className).toContain('destructive')
+    expect(screen.getByTestId('run-row-failed').className).toContain(
+      'shadow-[inset_3px_0_0_var(--destructive)]'
+    )
   })
 })
