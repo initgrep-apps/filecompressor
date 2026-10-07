@@ -207,13 +207,15 @@ export function SettingsView() {
         </div>
 
         <Card>
-          <CardHeader className="flex flex-row items-center gap-2.5">
-            <CardIcon tile="folder" />
-            <div className="min-w-0">
-              <CardTitle className="text-sm">Output Folder</CardTitle>
-              <CardDescription>
-                Compressed files are saved here. Originals are never modified.
-              </CardDescription>
+          <CardHeader>
+            <div className="flex items-center gap-2.5">
+              <CardIcon tile="folder" />
+              <div className="min-w-0">
+                <CardTitle className="text-sm">Output Folder</CardTitle>
+                <CardDescription>
+                  Compressed files are saved here. Originals are never modified.
+                </CardDescription>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
@@ -230,13 +232,15 @@ export function SettingsView() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center gap-2.5">
-            <CardIcon tile="targets" />
-            <div className="min-w-0">
-              <CardTitle className="text-sm">Category Targets</CardTitle>
-              <CardDescription>
-              Maximum file size per category. Applied to all files in that category.
-              </CardDescription>
+          <CardHeader>
+            <div className="flex items-center gap-2.5">
+              <CardIcon tile="targets" />
+              <div className="min-w-0">
+                <CardTitle className="text-sm">Category Targets</CardTitle>
+                <CardDescription>
+                  Maximum file size per category. Applied to all files in that category.
+                </CardDescription>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
@@ -250,7 +254,6 @@ export function SettingsView() {
                         <Badge
                           variant="secondary"
                           className={cn(
-                            'border',
                             CATEGORY_TONES[cat.key].tint,
                             CATEGORY_TONES[cat.key].border,
                             CATEGORY_TONES[cat.key].text,
@@ -297,13 +300,15 @@ export function SettingsView() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center gap-2.5">
-            <CardIcon tile="performance" />
-            <div className="min-w-0">
-              <CardTitle className="text-sm">Performance</CardTitle>
-              <CardDescription>
-              How many files compress at once. Auto adapts to your machine (CPU cores).
-              </CardDescription>
+          <CardHeader>
+            <div className="flex items-center gap-2.5">
+              <CardIcon tile="performance" />
+              <div className="min-w-0">
+                <CardTitle className="text-sm">Performance</CardTitle>
+                <CardDescription>
+                  How many files compress at once. Auto adapts to your machine (CPU cores).
+                </CardDescription>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
@@ -330,13 +335,15 @@ export function SettingsView() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center gap-2.5">
-            <CardIcon tile="floors" />
-            <div className="min-w-0">
-              <CardTitle className="text-sm">Quality Floors</CardTitle>
-              <CardDescription>
-              Engine stops compressing below these values and reports best effort.
-              </CardDescription>
+          <CardHeader>
+            <div className="flex items-center gap-2.5">
+              <CardIcon tile="floors" />
+              <div className="min-w-0">
+                <CardTitle className="text-sm">Quality Floors</CardTitle>
+                <CardDescription>
+                  Engine stops compressing below these values and reports best effort.
+                </CardDescription>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
@@ -468,13 +475,15 @@ export function SettingsView() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center gap-2.5">
-            <CardIcon tile="history" />
-            <div className="min-w-0">
-              <CardTitle className="text-sm">History</CardTitle>
-              <CardDescription>
-              Sessions older than this are removed automatically. Files on disk are never deleted.
-              </CardDescription>
+          <CardHeader>
+            <div className="flex items-center gap-2.5">
+              <CardIcon tile="history" />
+              <div className="min-w-0">
+                <CardTitle className="text-sm">History</CardTitle>
+                <CardDescription>
+                  Sessions older than this are removed automatically. Files on disk are never deleted.
+                </CardDescription>
+              </div>
             </div>
           </CardHeader>
           <CardContent>

@@ -526,7 +526,7 @@ describe('SettingsView', () => {
       (c) => c.querySelector('[data-slot="card-title"]')?.textContent === title,
     )
     expect(card).toBeDefined()
-    const iconSquare = card!.querySelector('[data-slot="card-header"] > span')
+    const iconSquare = card!.querySelector('[data-slot="card-icon"]')
     expect(iconSquare?.className).toContain(tint)
     expect(iconSquare?.querySelector('svg')).toBeInTheDocument()
   })
