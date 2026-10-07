@@ -23,6 +23,19 @@ const ALL_EXTENSIONS = ['JPEG', 'PNG', 'WebP', 'HEIC', 'MP4', 'MOV', 'PDF', 'DOC
 
 const ALL_FORMATS = ALL_EXTENSIONS.join(', ')
 
+const GROUP_MEMBERSHIP: Record<string, string> = {
+  JPEG: 'images',
+  PNG: 'images',
+  WebP: 'images',
+  HEIC: 'images',
+  MP4: 'videos',
+  MOV: 'videos',
+  PDF: 'docs',
+  DOCX: 'docs',
+  XLSX: 'docs',
+  PPTX: 'docs',
+}
+
 function emit(evt: unknown) {
   act(() => {
     for (const h of handlers) h(evt)
@@ -194,24 +207,28 @@ describe('DropZone', () => {
 
   it('format pills live in their category group container and nowhere else', () => {
     render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    const groups: Record<string, HTMLElement> = {
+      images: screen.getByTestId('format-group-images'),
+      videos: screen.getByTestId('format-group-videos'),
+      docs: screen.getByTestId('format-group-docs'),
+    }
+    for (const ext of ALL_EXTENSIONS) {
+      const home = GROUP_MEMBERSHIP[ext]
+      expect(within(groups[home]).getByText(ext)).toBeInTheDocument()
+      for (const name of Object.keys(groups)) {
+        if (name === home) continue
+        expect(within(groups[name]).queryByText(ext)).not.toBeInTheDocument()
+      }
+    }
+  })
+
+  it('group containers render in IMAGES, VIDEOS, DOCS DOM order', () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
     const images = screen.getByTestId('format-group-images')
     const videos = screen.getByTestId('format-group-videos')
     const docs = screen.getByTestId('format-group-docs')
-    expect(within(images).getByText('JPEG')).toBeInTheDocument()
-    expect(within(images).getByText('PNG')).toBeInTheDocument()
-    expect(within(images).getByText('WebP')).toBeInTheDocument()
-    expect(within(images).getByText('HEIC')).toBeInTheDocument()
-    expect(within(images).queryByText('MP4')).not.toBeInTheDocument()
-    expect(within(images).queryByText('PDF')).not.toBeInTheDocument()
-    expect(within(videos).getByText('MP4')).toBeInTheDocument()
-    expect(within(videos).getByText('MOV')).toBeInTheDocument()
-    expect(within(videos).queryByText('JPEG')).not.toBeInTheDocument()
-    expect(within(videos).queryByText('PDF')).not.toBeInTheDocument()
-    expect(within(docs).getByText('PDF')).toBeInTheDocument()
-    expect(within(docs).getByText('DOCX')).toBeInTheDocument()
-    expect(within(docs).getByText('XLSX')).toBeInTheDocument()
-    expect(within(docs).getByText('PPTX')).toBeInTheDocument()
-    expect(within(docs).queryByText('JPEG')).not.toBeInTheDocument()
+    expect(images.compareDocumentPosition(videos) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(videos.compareDocumentPosition(docs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('group containers carry category border tones', () => {
