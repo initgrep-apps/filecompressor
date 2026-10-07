@@ -340,7 +340,7 @@ it('zone container is rounded (rounded-2xl class present)', () => {
 - `compact surface responds to Enter and Space` (gap-fill, sev 4) — keyboard users currently unstranded only by full variant test
 - `compact browse button does not double-fire with surface click` (gap-fill, sev 3) — full variant has this at `:177-190`, compact does not
 
-- [ ] **Step 1: Write failing tests** in `src/components/DropZone.test.tsx`:
+- [x] **Step 1: Write failing tests** in `src/components/DropZone.test.tsx`:
 
 ```ts
 it('compact bar has grouped mini pills row and no truncated mono string', () => {
@@ -353,10 +353,10 @@ it('compact drag state keeps same label slot — no layout-shifting text swap', 
 })
 ```
 
-- [ ] **Step 2: Run to verify failure.** Run: `yarn vitest run src/components/DropZone.test.tsx`. Expected: FAIL.
-- [ ] **Step 3: Implement.** Restructure compact markup; label/count as fixed-width slots (`min-w-` classes); drag feedback = border + tint classes only; keep Enter/Space browse behavior.
-- [ ] **Step 4: Run to verify pass.** Run: `yarn vitest run src/components/DropZone.test.tsx`. Expected: PASS.
-- [ ] **Step 5: Commit** `git add src/components/DropZone.tsx src/components/DropZone.test.tsx && git commit -m "fix(ui): compact drop bar two-row layout, no flicker"`
+- [x] **Step 2: Run to verify failure.** Run: `yarn vitest run src/components/DropZone.test.tsx`. Expected: FAIL.
+- [x] **Step 3: Implement.** Restructure compact markup; label/count as fixed-width slots (`min-w-` classes); drag feedback = border + tint classes only; keep Enter/Space browse behavior.
+- [x] **Step 4: Run to verify pass.** Run: `yarn vitest run src/components/DropZone.test.tsx`. Expected: PASS.
+- [x] **Step 5: Commit** `git add src/components/DropZone.tsx src/components/DropZone.test.tsx && git commit -m "fix(ui): compact drop bar two-row layout, no flicker"`
 
 ### Task 7: KanbanBoard — remove phantom shadow, fix scroll end
 
