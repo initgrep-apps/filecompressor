@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, act, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 
@@ -19,7 +19,22 @@ vi.mock('@tauri-apps/api/webview', () => ({
 
 import { DropZone } from '@/components/DropZone'
 
-const ALL_FORMATS = 'JPEG, PNG, WebP, HEIC, MP4, MOV, PDF, DOCX, XLSX, PPTX'
+const ALL_EXTENSIONS = ['JPEG', 'PNG', 'WebP', 'HEIC', 'MP4', 'MOV', 'PDF', 'DOCX', 'XLSX', 'PPTX']
+
+const ALL_FORMATS = ALL_EXTENSIONS.join(', ')
+
+const GROUP_MEMBERSHIP: Record<string, string> = {
+  JPEG: 'images',
+  PNG: 'images',
+  WebP: 'images',
+  HEIC: 'images',
+  MP4: 'videos',
+  MOV: 'videos',
+  PDF: 'docs',
+  DOCX: 'docs',
+  XLSX: 'docs',
+  PPTX: 'docs',
+}
 
 function emit(evt: unknown) {
   act(() => {
@@ -158,7 +173,7 @@ describe('DropZone', () => {
     expect(screen.getByText('Drag and drop files here')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Browse your files' })).toBeInTheDocument()
     expect(screen.getByText('…or click anywhere in this area')).toBeInTheDocument()
-    for (const ext of ['JPEG', 'PNG', 'WebP', 'HEIC', 'MP4', 'MOV', 'PDF', 'DOCX', 'XLSX', 'PPTX']) {
+    for (const ext of ALL_EXTENSIONS) {
       const pill = screen.getByText(ext)
       expect(pill).toBeInTheDocument()
       expect(pill.querySelector('svg')).not.toBeNull()
@@ -172,6 +187,58 @@ describe('DropZone', () => {
     expect(screen.getByText('XLSX').className).toContain('text-amber-600')
     const surface = screen.getByRole('button', { name: /drop files here or press/i })
     expect(surface).toHaveAttribute('tabindex', '0')
+  })
+
+  it('groups format pills under labeled containers IMAGES/VIDEOS/DOCS', () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    expect(screen.getByText('IMAGES:')).toBeInTheDocument()
+    expect(screen.getByText('VIDEOS:')).toBeInTheDocument()
+    expect(screen.getByText('DOCS:')).toBeInTheDocument()
+    for (const ext of ALL_EXTENSIONS) {
+      expect(screen.getByText(ext)).toBeInTheDocument()
+    }
+  })
+
+  it('zone container is rounded (rounded-2xl class present)', () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    const zone = screen.getByRole('button', { name: /drop files here or press/i })
+    expect(zone.className).toContain('rounded-2xl')
+  })
+
+  it('format pills live in their category group container and nowhere else', () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    const groups: Record<string, HTMLElement> = {
+      images: screen.getByTestId('format-group-images'),
+      videos: screen.getByTestId('format-group-videos'),
+      docs: screen.getByTestId('format-group-docs'),
+    }
+    for (const ext of ALL_EXTENSIONS) {
+      const home = GROUP_MEMBERSHIP[ext]
+      expect(within(groups[home]).getByText(ext)).toBeInTheDocument()
+      for (const name of Object.keys(groups)) {
+        if (name === home) continue
+        expect(within(groups[name]).queryByText(ext)).not.toBeInTheDocument()
+      }
+    }
+  })
+
+  it('group containers render in IMAGES, VIDEOS, DOCS DOM order', () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    const images = screen.getByTestId('format-group-images')
+    const videos = screen.getByTestId('format-group-videos')
+    const docs = screen.getByTestId('format-group-docs')
+    expect(images.compareDocumentPosition(videos) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(videos.compareDocumentPosition(docs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('group containers carry category border tones', () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    expect(screen.getByTestId('format-group-images').className).toContain('border-blue-500/30')
+    expect(screen.getByTestId('format-group-videos').className).toContain('border-violet-500/30')
+    expect(screen.getByTestId('format-group-docs').className).toContain('border-destructive/35')
+    const docs = screen.getByTestId('format-group-docs')
+    expect(within(docs).getByText('PDF').className).toContain('border-destructive/35')
+    expect(within(docs).getByText('DOCX').className).toContain('border-amber-500/30')
   })
 
   it('surface click, Enter, and Space each call onBrowse; browse button does not double-fire', async () => {

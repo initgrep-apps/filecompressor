@@ -292,7 +292,7 @@ it('footer shows version and license pills; collapsed shows dot + ring, no text'
 - `PDF pill lives inside the DOCS group container` (gap-fill, sev 4) — `within(DOCS container)` query; label-existence alone doesn't pin the mapping
 - `group containers carry category border tones` (gap-fill, sev 3) — IMAGES blue / VIDEOS violet / DOCS mixed borders
 
-- [ ] **Step 1: Write failing tests** in `src/components/DropZone.test.tsx`:
+- [x] **Step 1: Write failing tests** in `src/components/DropZone.test.tsx`:
 
 ```ts
 it('groups format pills under labeled containers IMAGES/VIDEOS/DOCS', () => {
@@ -307,10 +307,10 @@ it('zone container is rounded (rounded-2xl class present)', () => {
 })
 ```
 
-- [ ] **Step 2: Run to verify failure.** Run: `yarn vitest run src/components/DropZone.test.tsx`. Expected: FAIL.
-- [ ] **Step 3: Implement.** Group FORMATS by category into the three display groups (image→IMAGES:, video→VIDEOS:, pdf+document→DOCS:); render `FormatPill` inside group containers; add `rounded-2xl`; keep `isDragging` color-only transitions.
-- [ ] **Step 4: Run to verify pass.** Run: `yarn vitest run src/components/DropZone.test.tsx`. Expected: PASS.
-- [ ] **Step 5: Commit** `git add src/components/DropZone.tsx src/components/DropZone.test.tsx && git commit -m "feat(ui): rounded drop zone with grouped labeled format pills"`
+- [x] **Step 2: Run to verify failure.** Run: `yarn vitest run src/components/DropZone.test.tsx`. Expected: FAIL.
+- [x] **Step 3: Implement.** Group FORMATS by category into the three display groups (image→IMAGES:, video→VIDEOS:, pdf+document→DOCS:); render `FormatPill` inside group containers; add `rounded-2xl`; keep `isDragging` color-only transitions.
+- [x] **Step 4: Run to verify pass.** Run: `yarn vitest run src/components/DropZone.test.tsx`. Expected: PASS.
+- [x] **Step 5: Commit** `git add src/components/DropZone.tsx src/components/DropZone.test.tsx && git commit -m "feat(ui): rounded drop zone with grouped labeled format pills"`
 
 ### Task 6: DropZone compact variant — two rows, no flicker
 
