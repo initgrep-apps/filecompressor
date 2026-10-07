@@ -255,4 +255,14 @@ describe('KanbanBoard', () => {
     expect(onRemove).toHaveBeenCalledTimes(1)
     expect(onRemove).toHaveBeenCalledWith('f1')
   })
+
+  it('renders no right-edge fade overlay', () => {
+    render(boardFor([makeFile({ status: 'done' })]))
+    expect(document.querySelectorAll('[class*="to-card"]')).toHaveLength(0)
+  })
+
+  it('scroll container has right padding for scroll end', () => {
+    render(boardFor([makeFile({ status: 'done' })]))
+    expect(screen.getByTestId('kanban-board').className).toContain('pr-3')
+  })
 })
