@@ -91,8 +91,9 @@ export function CompressionProvider({ children }: { children: ReactNode }) {
   }, [compressAll, isCompressing])
 
   const endRun = useCallback(() => {
+    void clearList()
     setRunScreen('staging')
-  }, [])
+  }, [clearList])
 
   const value: CompressionContextValue = {
     files,
