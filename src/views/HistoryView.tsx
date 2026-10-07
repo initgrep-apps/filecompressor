@@ -39,6 +39,7 @@ import {
   presetSinceMs,
   type DatePreset,
 } from '@/lib/historyFormat'
+import { CATEGORY_TONES, STATUS_TONES } from '@/lib/tokens'
 import { RESULT_STATUSES } from '@/components/FileList'
 import { formatSize } from '@/lib/sizeFormat'
 import { HistoryPagination } from '@/components/HistoryPagination'
@@ -68,19 +69,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
-const STATUS_META: Record<FileStatus, { label: string; chip: string; dot: string }> = {
-  pending: { label: 'Pending', chip: 'text-muted-foreground', dot: 'bg-muted-foreground/50' },
-  compressing: { label: 'Compressing', chip: 'text-primary', dot: 'bg-primary' },
-  done: { label: 'Done', chip: 'text-primary', dot: 'bg-primary' },
-  best_effort: { label: 'Best effort', chip: 'text-destructive', dot: 'bg-destructive' },
-  failed: { label: 'Failed', chip: 'text-destructive', dot: 'bg-destructive' },
-  cancelled: { label: 'Cancelled', chip: 'text-muted-foreground', dot: 'bg-muted-foreground/50' },
-  unsupported: { label: 'Unsupported', chip: 'text-muted-foreground', dot: 'bg-muted-foreground/30' },
-  already_under_target: {
-    label: 'Already under target',
-    chip: 'text-primary',
-    dot: 'bg-primary',
-  },
+type Tone = (typeof STATUS_TONES)[FileStatus]
+
+const STATUS_LABELS: Record<FileStatus, string> = {
+  pending: 'Pending',
+  compressing: 'Compressing',
+  done: 'Done',
+  best_effort: 'Best effort',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  unsupported: 'Unsupported',
+  already_under_target: 'Already under target',
 }
 
 const CATEGORY_LABELS: Record<Category, string> = {
@@ -109,6 +108,36 @@ const OUTCOME_COUNT_KEYS: Partial<Record<FileStatus, keyof SessionOutcome>> = {
   cancelled: 'cancelled',
   unsupported: 'unsupported',
   already_under_target: 'alreadyUnderTarget',
+}
+
+const OUTCOME_TONES: Record<keyof SessionOutcome, Tone> = {
+  done: STATUS_TONES.done,
+  bestEffort: STATUS_TONES.best_effort,
+  failed: STATUS_TONES.failed,
+  cancelled: STATUS_TONES.cancelled,
+  unsupported: STATUS_TONES.unsupported,
+  alreadyUnderTarget: STATUS_TONES.already_under_target,
+}
+
+const OUTCOME_PRECEDENCE: (keyof SessionOutcome)[] = [
+  'failed',
+  'bestEffort',
+  'done',
+  'cancelled',
+  'alreadyUnderTarget',
+  'unsupported',
+]
+
+function dominantOutcome(outcome: SessionOutcome): keyof SessionOutcome | null {
+  let best: keyof SessionOutcome | null = null
+  let bestCount = 0
+  for (const key of OUTCOME_PRECEDENCE) {
+    if (outcome[key] > bestCount) {
+      best = key
+      bestCount = outcome[key]
+    }
+  }
+  return best
 }
 
 const DATE_PRESETS: { value: DatePreset; label: string }[] = [
@@ -188,11 +217,11 @@ function fileResult(file: HistoryFile): string {
 }
 
 function StatusMarker({ status }: { status: FileStatus }) {
-  const meta = STATUS_META[status]
+  const tone = STATUS_TONES[status]
   return (
-    <span className={`flex items-center gap-1.5 text-xs ${meta.chip}`}>
-      <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
-      {meta.label}
+    <span className={`flex items-center gap-1.5 text-xs ${tone.text}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${tone.accent}`} />
+      {STATUS_LABELS[status]}
     </span>
   )
 }
@@ -205,12 +234,12 @@ function nextFilterList<T>(current: T[] | undefined, value: T): T[] {
 
 function Chip({
   active,
-  dotColor,
+  tone,
   onClick,
   children,
 }: {
   active: boolean
-  dotColor: string
+  tone: Tone
   onClick: () => void
   children: string
 }) {
@@ -220,9 +249,10 @@ function Chip({
       variant={active ? 'secondary' : 'outline'}
       size="xs"
       aria-pressed={active}
+      className={active ? `${tone.tint} ${tone.border} ${tone.text}` : undefined}
       onClick={onClick}
     >
-      <span className={`h-1.5 w-1.5 rounded-full ${dotColor}`} />
+      <span className={`h-1.5 w-1.5 rounded-full ${tone.accent}`} />
       {children}
     </Button>
   )
@@ -269,156 +299,178 @@ function SessionRow({ session, expanded, onToggle }: SessionRowProps) {
   const outcome = matched ? countOutcome(files) : session.outcome
   const hasOutput = files.some((f) => f.outputPath !== null)
   const countLabel = matched ? matchLabel(matchedFiles) : fileCountLabel(session.fileCount)
+  const accentKey = dominantOutcome(outcome)
+  const accent = accentKey ? OUTCOME_TONES[accentKey].accent : null
 
   return (
-    <div className="rounded-2xl border bg-card">
-      <div className="flex items-start gap-1.5 p-2">
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-xl px-1.5 py-0.5 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
-          aria-expanded={expanded}
-          aria-controls={panelId}
-          aria-label="Toggle session details"
-          onClick={onToggle}
-        >
-          <div className="flex flex-wrap items-center gap-x-0.5 text-sm tabular-nums">
-            <span className="text-muted-foreground">{startedAtLabel}</span>
-            {matched && (
-              <>
-                {' · '}
-                <span>{countLabel}</span>
-              </>
-            )}
-            {' · '}
-            <span>
-              {!matched ? `${countLabel} · ` : ''}
-              {formatSize(sumOriginal)} → {formatSize(sumCompressed)} · {pct}% saved ·{' '}
-              {duration}
-            </span>
-            {session.interrupted && (
-              <Badge variant="secondary">
-                <RiErrorWarningLine />
-                Interrupted
-              </Badge>
-            )}
-            {session.cancelled && (
-              <Badge variant="secondary">
-                <RiPauseCircleLine />
-                Cancelled
-              </Badge>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {OUTCOME_ENTRIES.filter(({ key }) => outcome[key] > 0).map(
-              ({ key, icon: Icon, label }) => (
-                <Badge key={key} variant="secondary" className="[&_svg]:text-muted-foreground">
-                  <Icon />
-                  {label} {outcome[key]}
-                </Badge>
-              )
-            )}
-          </div>
-        </button>
-        <Button
-          variant="ghost"
-          size="icon"
-          aria-label="Open output folder"
-          disabled={!hasOutput}
-          onClick={() => void openSessionFolder(session.outputFolder)}
-        >
-          <RiFolderOpenLine />
-        </Button>
-      </div>
-      {expanded && (
-        <div id={panelId} className="border-t px-3 pb-3 pt-2">
-          <Table aria-label="Session files">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[36%]">File</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Target</TableHead>
-                <TableHead>Result</TableHead>
-                <TableHead className="w-28 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {files.map((file) => (
-                <TableRow key={`${file.path}:${file.completedAt}`} className="group align-top">
-                  <TableCell>
-                    <div className="max-w-[220px] truncate text-sm font-medium" title={file.path}>
-                      {file.name}
-                    </div>
-                    <div className="max-w-[220px] truncate text-xs text-muted-foreground" title={file.path}>
-                      {parentDir(file.path)}
-                    </div>
-                    {file.error !== null && (
-                      <div className="max-w-[220px] text-xs text-destructive">{file.error}</div>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={file.category === 'other' ? 'secondary' : 'outline'}
-                    >
-                      {CATEGORY_LABELS[file.category]}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <StatusMarker status={file.status} />
-                  </TableCell>
-                  <TableCell className="tabular-nums">{formatSize(file.targetBytes)}</TableCell>
-                  <TableCell className="tabular-nums" title={file.strategyUsed ?? undefined}>
-                    {fileResult(file)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-0.5">
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label="Reveal output"
-                        disabled={file.outputPath === null}
-                        onClick={() => {
-                          if (file.outputPath) void revealFile(file.outputPath)
-                        }}
-                      >
-                        <RiFolderOpenLine />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label="Copy output path"
-                        disabled={file.outputPath === null}
-                        onClick={() =>
-                          file.outputPath && copyToClipboard(file.outputPath)
-                        }
-                      >
-                        <RiFileCopyLine />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label="Reveal source"
-                        onClick={() => void revealFile(file.path)}
-                      >
-                        <RiFolder3Line />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label="Copy source path"
-                        onClick={() => copyToClipboard(file.path)}
-                      >
-                        <RiFileCopy2Line />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+    <div className="flex overflow-hidden rounded-2xl border bg-card">
+      {accent && (
+        <span
+          aria-hidden
+          data-testid="session-accent"
+          className={`w-1 shrink-0 ${accent}`}
+        />
       )}
-    </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start gap-1.5 p-2">
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 flex-col gap-1.5 rounded-xl px-1.5 py-0.5 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+            aria-expanded={expanded}
+            aria-controls={panelId}
+            aria-label="Toggle session details"
+            onClick={onToggle}
+          >
+            <div className="flex flex-wrap items-center gap-x-0.5 text-sm tabular-nums">
+              <span className="text-muted-foreground">{startedAtLabel}</span>
+              {matched && (
+                <>
+                  {' · '}
+                  <span>{countLabel}</span>
+                </>
+              )}
+              {' · '}
+              <span>
+                {!matched ? `${countLabel} · ` : ''}
+                {formatSize(sumOriginal)} → {formatSize(sumCompressed)} · {pct}% saved ·{' '}
+                {duration}
+              </span>
+              {session.interrupted && (
+                <Badge variant="secondary">
+                  <RiErrorWarningLine />
+                  Interrupted
+                </Badge>
+              )}
+              {session.cancelled && (
+                <Badge variant="secondary">
+                  <RiPauseCircleLine />
+                  Cancelled
+                </Badge>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {OUTCOME_ENTRIES.filter(({ key }) => outcome[key] > 0).map(
+                ({ key, icon: Icon, label }) => {
+                  const tone = OUTCOME_TONES[key]
+                  return (
+                    <Badge
+                      key={key}
+                      variant="secondary"
+                      className={`${tone.tint} ${tone.border} ${tone.text}`}
+                    >
+                      <Icon />
+                      {label} {outcome[key]}
+                    </Badge>
+                  )
+                }
+              )}
+            </div>
+          </button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Open output folder"
+            disabled={!hasOutput}
+            onClick={() => void openSessionFolder(session.outputFolder)}
+          >
+            <RiFolderOpenLine />
+          </Button>
+        </div>
+        {expanded && (
+          <div id={panelId} className="border-t px-3 pb-3 pt-2">
+            <Table aria-label="Session files">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[36%]">File</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Target</TableHead>
+                  <TableHead>Result</TableHead>
+                  <TableHead className="w-28 text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {files.map((file) => {
+                  const tone = CATEGORY_TONES[file.category]
+                  return (
+                    <TableRow key={`${file.path}:${file.completedAt}`} className="group align-top">
+                      <TableCell>
+                        <div className="max-w-[220px] truncate text-sm font-medium" title={file.path}>
+                          {file.name}
+                        </div>
+                        <div className="max-w-[220px] truncate text-xs text-muted-foreground" title={file.path}>
+                          {parentDir(file.path)}
+                        </div>
+                        {file.error !== null && (
+                          <div className="max-w-[220px] text-xs text-destructive">{file.error}</div>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="secondary"
+                          className={`${tone.tint} ${tone.border} ${tone.text}`}
+                        >
+                          {CATEGORY_LABELS[file.category]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <StatusMarker status={file.status} />
+                      </TableCell>
+                      <TableCell className="tabular-nums">{formatSize(file.targetBytes)}</TableCell>
+                      <TableCell className="tabular-nums" title={file.strategyUsed ?? undefined}>
+                        {fileResult(file)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-0.5">
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="Reveal output"
+                            disabled={file.outputPath === null}
+                            onClick={() => {
+                              if (file.outputPath) void revealFile(file.outputPath)
+                            }}
+                          >
+                            <RiFolderOpenLine />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="Copy output path"
+                            disabled={file.outputPath === null}
+                            onClick={() =>
+                              file.outputPath && copyToClipboard(file.outputPath)
+                            }
+                          >
+                            <RiFileCopyLine />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="Reveal source"
+                            onClick={() => void revealFile(file.path)}
+                          >
+                            <RiFolder3Line />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            aria-label="Copy source path"
+                            onClick={() => copyToClipboard(file.path)}
+                          >
+                            <RiFileCopy2Line />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+        </div>
+      </div>
   )
 }
 
@@ -532,7 +584,7 @@ export function HistoryView() {
             <Select
               value={datePreset}
               onValueChange={(v) => {
-                if (v !== null) applyDatePreset(v as DatePreset)
+                if (v !== null) applyDatePreset(v)
               }}
             >
               <SelectTrigger aria-label="Date range" className="w-32">
@@ -578,20 +630,20 @@ export function HistoryView() {
               <Chip
                 key={status}
                 active={filters.statuses?.includes(status) === true}
-                dotColor={STATUS_META[status].dot}
+                tone={STATUS_TONES[status]}
                 onClick={() => {
                   const next = nextFilterList(filters.statuses, status)
                   setFilters({ statuses: next.length > 0 ? next : undefined })
                 }}
               >
-                {STATUS_META[status].label}
+                {STATUS_LABELS[status]}
               </Chip>
             ))}
             {HISTORY_CATEGORIES.map((category) => (
               <Chip
                 key={category}
                 active={filters.categories?.includes(category) === true}
-                dotColor="bg-transparent"
+                tone={CATEGORY_TONES[category]}
                 onClick={() => {
                   const next = nextFilterList(filters.categories, category)
                   setFilters({ categories: next.length > 0 ? next : undefined })
