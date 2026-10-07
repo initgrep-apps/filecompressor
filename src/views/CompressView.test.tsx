@@ -441,6 +441,21 @@ describe('CompressView', () => {
     expect(screen.getByText('a.jpg')).toBeInTheDocument()
   })
 
+  it('footer Clear List failure path keeps the list and shows the error alert', async () => {
+    renderView()
+    await addFileInView()
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('backend offline'))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Clear List' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/^Could not clear list:/)
+    expect(alert).toHaveTextContent('backend offline')
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByTestId('batch-summary')).toBeInTheDocument()
+    expect(screen.getByText('a.jpg')).toBeInTheDocument()
+  })
+
   it('batch number increments on second compress and second roster holds only new pending files', async () => {
     renderView()
     await addFileInView()
