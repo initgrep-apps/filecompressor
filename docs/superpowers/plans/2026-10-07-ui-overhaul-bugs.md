@@ -429,7 +429,7 @@ it('scroll container has right padding for scroll end', () => {
 - `compressing card shows lane tint and primary border` (gap-fill, sev 4) — bg from `CATEGORY_TONES[category].tint`
 - `failed card keeps red accent` (gap-fill, sev 4) — non-regression pin against tone refactor
 
-- [ ] **Step 1: Write failing tests** in `src/components/run/RunRow.test.tsx`:
+- [x] **Step 1: Write failing tests** in `src/components/run/RunRow.test.tsx`:
 
 ```ts
 const GRADIENT_FILL = 'bg-[linear-gradient(90deg,var(--color-cyan-400),var(--color-primary))]'
@@ -454,10 +454,10 @@ it('failed card keeps red accent', () => {
 })
 ```
 
-- [ ] **Step 2: Run to verify failure.** Run: `yarn vitest run src/components/run/RunRow.test.tsx`. Expected: FAIL.
-- [ ] **Step 3: Implement.** Swap LANE_META/CHIP_TONES literals for tone-module values; progress fill class = `bg-[linear-gradient(90deg,var(--color-cyan-400),var(--color-primary))]` (Tailwind v4 palette vars — no hex in source); compressing accent uses `STATUS_TONES.compressing.accent`; done card gets `shadow-[inset_3px_0_0_var(--primary)]`.
-- [ ] **Step 4: Run to verify pass** — also run Lane tests (values changed). Run: `yarn vitest run src/components/run`. Expected: PASS.
-- [ ] **Step 5: Commit** `git add src/components/run && git commit -m "feat(ui): kanban card fidelity — gradient bars, tinted bg, done accent"`
+- [x] **Step 2: Run to verify failure.** Run: `yarn vitest run src/components/run/RunRow.test.tsx`. Expected: FAIL.
+- [x] **Step 3: Implement.** Swap LANE_META/CHIP_TONES literals for tone-module values; progress fill class = `bg-[linear-gradient(90deg,var(--color-cyan-400),var(--color-primary))]` (Tailwind v4 palette vars — no hex in source); compressing accent uses `STATUS_TONES.compressing.accent`; done card gets `shadow-[inset_3px_0_0_var(--primary)]`.
+- [x] **Step 4: Run to verify pass** — also run Lane tests (values changed). Run: `yarn vitest run src/components/run`. Expected: PASS.
+- [x] **Step 5: Commit** `git add src/components/run && git commit -m "feat(ui): kanban card fidelity — gradient bars, tinted bg, done accent"`
 
 ### Task 9: FileList — category tones in staging table
 

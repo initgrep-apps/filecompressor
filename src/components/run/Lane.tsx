@@ -17,6 +17,7 @@
 import type { ReactNode } from 'react'
 import { AnimatePresence } from 'motion/react'
 import { laneDonePill } from '@/lib/grouping'
+import { CATEGORY_TONES } from '@/lib/tokens'
 import { cn } from '@/lib/utils'
 import { RunRow, type RunRowProps } from '@/components/run/RunRow'
 import type { Category, FileEntry } from '@/types'
@@ -27,12 +28,12 @@ export interface LaneProps extends Pick<RunRowProps, 'onCancel' | 'onReveal' | '
   progress?: Record<string, number>
 }
 
-const LANE_META: Record<Category, { label: string; tint: string }> = {
-  image: { label: 'Image', tint: 'bg-blue-500/10 text-blue-600' },
-  video: { label: 'Video', tint: 'bg-violet-500/10 text-violet-600' },
-  pdf: { label: 'PDF', tint: 'bg-destructive/10 text-destructive' },
-  document: { label: 'Document', tint: 'bg-amber-500/10 text-amber-600' },
-  other: { label: 'Other', tint: 'bg-muted text-muted-foreground' },
+const LANE_LABELS: Record<Category, string> = {
+  image: 'Image',
+  video: 'Video',
+  pdf: 'PDF',
+  document: 'Document',
+  other: 'Other',
 }
 
 const DOC_GLYPH_PATHS = (
@@ -73,7 +74,7 @@ const GLYPHS: Record<Category, ReactNode> = {
 }
 
 export function Lane({ category, files, progress, onCancel, onReveal, onRemove }: LaneProps) {
-  const meta = LANE_META[category]
+  const tone = CATEGORY_TONES[category]
   const pill = laneDonePill(files)
   const live = files.some((file) => file.status === 'compressing')
 
@@ -83,7 +84,8 @@ export function Lane({ category, files, progress, onCancel, onReveal, onRemove }
         <div
           className={cn(
             'flex size-6 shrink-0 items-center justify-center rounded-md',
-            meta.tint
+            tone.tint,
+            tone.text
           )}
         >
           <svg
@@ -100,7 +102,7 @@ export function Lane({ category, files, progress, onCancel, onReveal, onRemove }
           </svg>
         </div>
         <span className="text-[12.5px] font-bold tracking-[0.01em] text-foreground">
-          {meta.label}
+          {LANE_LABELS[category]}
         </span>
         <span
           data-testid="lane-pill"
