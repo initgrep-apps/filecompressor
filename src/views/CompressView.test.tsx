@@ -667,4 +667,32 @@ describe('CompressView', () => {
     )
     expect(wrapperTargets).toEqual([])
   })
+
+  it('auto-collapse re-observes the kanban board after it unmounts and remounts', async () => {
+    const { CapturingResizeObserver, resetCapturedResizeObservers } = await import(
+      '@/test-setup'
+    )
+    resetCapturedResizeObservers()
+    renderView()
+    await addFileInView()
+    await pressCompress()
+    expect(
+      CapturingResizeObserver.instances.some((o) =>
+        o.observed.some((el) => el.getAttribute('data-testid') === 'kanban-board')
+      )
+    ).toBe(true)
+
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('chip-queued'))
+    emit('file:cancelled', { fileId: 'f1' })
+    await screen.findByTestId('board-empty')
+    expect(screen.queryByTestId('kanban-board')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('chip-all'))
+    await screen.findByTestId('kanban-board')
+    const board = screen.getByTestId('kanban-board')
+    expect(
+      CapturingResizeObserver.instances.some((o) => o.observed.includes(board))
+    ).toBe(true)
+  })
 })
