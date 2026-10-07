@@ -71,34 +71,28 @@ export function KanbanBoard({
             </button>
           </div>
         ) : (
-          <div className="relative">
-            <div
-              data-testid="kanban-board"
-              className="flex items-start gap-3 overflow-x-auto pb-3"
-            >
-              {lanes.map((lane) => (
-                <motion.div
-                  key={lane.category}
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ duration: 0.18, ease: 'easeOut' }}
-                  className="shrink-0 [&>*]:max-h-[533px]"
-                >
-                  <Lane
-                    category={lane.category}
-                    files={lane.files}
-                    progress={progress}
-                    onCancel={onCancel}
-                    onReveal={onReveal}
-                    onRemove={removeDisabled ? undefined : onRemove}
-                  />
-                </motion.div>
-              ))}
-            </div>
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-linear-to-r from-transparent to-card"
-            />
+          <div
+            data-testid="kanban-board"
+            className="flex items-start gap-3 overflow-x-auto pb-3 pr-3"
+          >
+            {lanes.map((lane) => (
+              <motion.div
+                key={lane.category}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="shrink-0 [&>*]:max-h-[533px]"
+              >
+                <Lane
+                  category={lane.category}
+                  files={lane.files}
+                  progress={progress}
+                  onCancel={onCancel}
+                  onReveal={onReveal}
+                  onRemove={removeDisabled ? undefined : onRemove}
+                />
+              </motion.div>
+            ))}
           </div>
         )}
       </LayoutGroup>
