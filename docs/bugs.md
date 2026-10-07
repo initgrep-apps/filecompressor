@@ -21,3 +21,8 @@
 9. Task 12: ref target label stale — RunMonitor wrapper is CompressView.tsx:103 (no `relative`); cramped-detection must observe kanban-board content element (spec §8). RO global stub needed in test-setup.ts or App/History/Settings suites crash at gate
 10. Spec conflict resolved: UI spec §4 best_effort=amber supersedes base spec §4 Status Colors (Best effort | destructive (red)) — base spec row not amended; FileList was split (status red, kanban chip amber), unified to amber in Task 9
 11. Base spec §4:258 "Compressing | primary (green, pulsing)" — no pulse exists in code and neither UI spec nor plan adds one; treated as dropped requirement
+
+## Live verification — Task 12 (2026-10-08, agent-browser at 900×588 Tauri-equivalent, mock `__TAURI_INTERNALS__` IPC)
+
+- **Kanban last lane clipped ~3px at full scroll (900px viewport).** Lanes are 318px + 12px gap; `pr-3` (12px) on the scroll container leaves the right-edge pill boxes (lane count pill right = 903 > 900) 3px past the viewport at max scroll; lane box extends 16px past. Card text/chips end at 895 (=visible); only pill padding + 1px border are cut — visible as a sliver in pixel zoom. No dimming/fade overlay (Task 10 fix holds). Fix candidate: bump scroll-container right padding to `pr-4`+ or add `mr-1` on lane pill. Belongs to Task 10 scope (KanbanBoard padding), filed here for triage.
+- Staging table fit, sidebar auto-collapse cycle (cramped→collapsed→grow→expanded), and compact-bar chip wrapping all verified live and passing; history/session cards and compressed-state kanban cards still need an interactive Tauri dev-build pass (mock IPC can't drive real runs) — deferred to user manual verification.
