@@ -634,6 +634,6 @@ it('category target rows use tinted badges', async () => {
 **Required Tests:**
 - Gate command itself; zero Rust source changes expected (only `tauri.conf.json`)
 
-- [ ] **Step 1: Run the gate.** Run: `yarn build && yarn test && cd src-tauri && cargo test`. Expected: all green; no Rust changes expected.
-- [ ] **Step 2: Fix any fallout** (test updates only; no scope creep).
-- [ ] **Step 3: Commit remaining fixes** if any: `git commit -m "fix(ui): address gate fallout"`.
+- [x] **Step 1: Run the gate.** Run: `yarn build && yarn test && cd src-tauri && cargo test`. Expected: all green; no Rust changes expected.
+- [x] **Step 2: Fix any fallout** (test updates only; no scope creep).
+- [x] **Step 3: Commit remaining fixes** if any: `git commit -m "fix(ui): address gate fallout"`.
