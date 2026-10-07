@@ -524,7 +524,7 @@ it('category badges use shared tones', () => {
 - `outcome badges are tinted` (gap-fill, sev 4)
 - `category badges tinted in session file table` (gap-fill, sev 4)
 
-- [ ] **Step 1: Write failing tests** in `src/views/HistoryView.test.tsx`:
+- [x] **Step 1: Write failing tests** in `src/views/HistoryView.test.tsx`:
 
 ```ts
 it('done filter chip is tone-matched, not gray', () => {
@@ -536,10 +536,10 @@ it('session card shows accent bar colored by dominant outcome', () => {
 })
 ```
 
-- [ ] **Step 2: Run to verify failure.** Run: `yarn vitest run src/views/HistoryView.test.tsx`. Expected: FAIL.
-- [ ] **Step 3: Implement** per contract; keep chip semantics (`aria-pressed`, toggle lists) unchanged.
-- [ ] **Step 4: Run to verify pass.** Run: `yarn vitest run src/views/HistoryView.test.tsx`. Expected: PASS.
-- [ ] **Step 5: Commit** `git add src/views/HistoryView.tsx src/views/HistoryView.test.tsx && git commit -m "feat(ui): history view tone-matched with kanban"`
+- [x] **Step 2: Run to verify failure.** Run: `yarn vitest run src/views/HistoryView.test.tsx`. Expected: FAIL.
+- [x] **Step 3: Implement** per contract; keep chip semantics (`aria-pressed`, toggle lists) unchanged.
+- [x] **Step 4: Run to verify pass.** Run: `yarn vitest run src/views/HistoryView.test.tsx`. Expected: PASS.
+- [x] **Step 5: Commit** `git add src/views/HistoryView.tsx src/views/HistoryView.test.tsx && git commit -m "feat(ui): history view tone-matched with kanban"`
 
 ### Task 11: SettingsView — tinted icons + badges
 
