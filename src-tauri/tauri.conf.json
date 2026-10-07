@@ -15,7 +15,7 @@
         "title": "File Size Optimizer",
         "width": 900,
         "height": 640,
-        "minWidth": 700,
+        "minWidth": 760,
         "minHeight": 500,
         "decorations": true,
         "resizable": true,

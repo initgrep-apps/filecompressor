@@ -16,12 +16,6 @@
 
 import { vi } from 'vitest'
 
-class ResizeObserverStub {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
-}
-
 const matchMediaStub = (query: string) => ({
   matches: false,
   media: query,
@@ -36,6 +30,5 @@ const matchMediaStub = (query: string) => ({
 })
 
 export function setupMotionStubs(): void {
-  vi.stubGlobal('ResizeObserver', ResizeObserverStub)
   vi.stubGlobal('matchMedia', matchMediaStub)
 }

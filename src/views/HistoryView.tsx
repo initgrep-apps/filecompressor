@@ -17,6 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { toast } from 'sonner'
+import { useAutoCollapse } from '@/hooks/useAutoCollapse'
 import {
   RiCheckLine,
   RiCloseCircleLine,
@@ -492,6 +493,8 @@ export function HistoryView() {
   const [datePreset, setDatePreset] = useState<DatePreset>('all')
   const [expandState, setExpandState] = useState<Record<string, boolean>>({})
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const cardRef = useRef<HTMLDivElement | null>(null)
+  useAutoCollapse(cardRef)
 
   useEffect(() => {
     setExpandState({})
@@ -568,7 +571,7 @@ export function HistoryView() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col p-6">
-      <Card className="flex min-h-0 flex-1 flex-col">
+      <Card ref={cardRef} className="flex min-h-0 flex-1 flex-col">
         <CardHeader className="gap-3 [.border-b]:pb-4">
           <div className="flex flex-wrap items-center gap-2">
             <Input

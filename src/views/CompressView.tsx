@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { toast } from 'sonner'
 import { useCompressionContext } from '@/providers/CompressionProvider'
@@ -23,6 +23,7 @@ import { FileList } from '@/components/FileList'
 import { formatSize } from '@/lib/sizeFormat'
 import { RunHeader } from '@/components/run/RunHeader'
 import { KanbanBoard } from '@/components/run/KanbanBoard'
+import { useAutoCollapse } from '@/hooks/useAutoCollapse'
 import { batchCounts, type StatusFilter } from '@/lib/grouping'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter } from '@/components/ui/card'
@@ -81,6 +82,8 @@ function RunMonitor() {
   } = useCompressionContext()
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   useBatchLockedDrops()
+  const boardRef = useRef<HTMLDivElement | null>(null)
+  useAutoCollapse(boardRef)
 
   const rosterFiles = files.filter((f) => roster.includes(f.id))
   const counts = batchCounts(rosterFiles)
@@ -110,9 +113,62 @@ function RunMonitor() {
           onReveal={(outputPath) => void revealInFolder(outputPath)}
           onRemove={(fileId) => void removeFile(fileId)}
           removeDisabled={isCompressing}
+          contentRef={boardRef}
         />
       </div>
     </div>
+  )
+}
+
+function StagingContentCard() {
+  const {
+    files,
+    isCompressing,
+    removeFile,
+    clearList,
+    revealInFolder,
+    startRun,
+  } = useCompressionContext()
+  const cardRef = useRef<HTMLDivElement | null>(null)
+  useAutoCollapse(cardRef)
+
+  const compressible = files.filter((f) => f.status !== 'unsupported')
+  const pendingCount = files.filter((f) => f.status === 'pending').length
+  const canCompress = pendingCount > 0
+  const totalSize = compressible.reduce((sum, f) => sum + f.originalSize, 0)
+
+  return (
+    <Card ref={cardRef} className="flex min-h-0 flex-1 flex-col">
+      <CardContent className="min-h-0 flex-1 overflow-hidden">
+        <FileList
+          files={files}
+          onRemove={removeFile}
+          onReveal={revealInFolder}
+          removeDisabled={isCompressing}
+        />
+      </CardContent>
+      <CardFooter className="justify-between gap-2 border-t">
+        <div
+          data-testid="batch-summary"
+          className="text-xs text-muted-foreground tabular-nums"
+        >
+          {compressible.length} files selected · Total size: ~{formatSize(totalSize)}
+        </div>
+        <div className="flex gap-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void clearList()}
+            disabled={isCompressing}
+          >
+            Clear List
+          </Button>
+          <Button size="sm" onClick={() => startRun()} disabled={!canCompress || isCompressing}>
+            Compress
+          </Button>
+        </div>
+      </CardFooter>
+    </Card>
   )
 }
 
@@ -121,13 +177,8 @@ function StagingScreen() {
     files,
     error,
     batchError,
-    isCompressing,
-    removeFile,
-    clearList,
     addFiles,
     browseFiles,
-    revealInFolder,
-    startRun,
   } = useCompressionContext()
 
   const alert = (message: string) => (
@@ -138,11 +189,6 @@ function StagingScreen() {
       {message}
     </div>
   )
-
-  const compressible = files.filter((f) => f.status !== 'unsupported')
-  const pendingCount = files.filter((f) => f.status === 'pending').length
-  const canCompress = pendingCount > 0
-  const totalSize = compressible.reduce((sum, f) => sum + f.originalSize, 0)
 
   if (files.length === 0) {
     return (
@@ -163,37 +209,7 @@ function StagingScreen() {
 
       <DropZone compact onBrowse={browseFiles} onDrop={addFiles} className="shrink-0" />
 
-      <Card className="flex min-h-0 flex-1 flex-col">
-        <CardContent className="min-h-0 flex-1 overflow-hidden">
-          <FileList
-            files={files}
-            onRemove={removeFile}
-            onReveal={revealInFolder}
-            removeDisabled={isCompressing}
-          />
-        </CardContent>
-        <CardFooter className="justify-between gap-2 border-t">
-          <div
-            data-testid="batch-summary"
-            className="text-xs text-muted-foreground tabular-nums"
-          >
-            {compressible.length} files selected · Total size: ~{formatSize(totalSize)}
-          </div>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => void clearList()}
-              disabled={isCompressing}
-            >
-              Clear List
-            </Button>
-            <Button size="sm" onClick={() => startRun()} disabled={!canCompress || isCompressing}>
-              Compress
-            </Button>
-          </div>
-        </CardFooter>
-      </Card>
+      <StagingContentCard />
     </div>
   )
 }
