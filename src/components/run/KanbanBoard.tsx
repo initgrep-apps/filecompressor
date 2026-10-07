@@ -77,7 +77,7 @@ export function KanbanBoard({
           <div
             ref={contentRef}
             data-testid="kanban-board"
-            className="flex items-start gap-3 overflow-x-auto pb-3 pr-3"
+            className="flex items-start gap-3 overflow-x-auto pb-3 pr-4"
           >
             {lanes.map((lane) => (
               <motion.div

@@ -263,6 +263,6 @@ describe('KanbanBoard', () => {
 
   it('scroll container has right padding for scroll end', () => {
     render(boardFor([makeFile({ status: 'done' })]))
-    expect(screen.getByTestId('kanban-board').className).toContain('pr-3')
+    expect(screen.getByTestId('kanban-board').className).toContain('pr-4')
   })
 })
