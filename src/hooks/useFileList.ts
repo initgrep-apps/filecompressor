@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { FileEntry } from '@/types'
@@ -25,6 +25,11 @@ const toMessage = (err: unknown): string =>
 export function useFileList() {
   const [files, setFiles] = useState<FileEntry[]>([])
   const [error, setError] = useState<string | null>(null)
+  const filesRef = useRef<FileEntry[]>([])
+
+  useEffect(() => {
+    filesRef.current = files
+  }, [files])
 
   const addFiles = useCallback(async (paths: string[]) => {
     try {
@@ -61,9 +66,10 @@ export function useFileList() {
   }, [])
 
   const clearList = useCallback(async () => {
+    const doomed = new Set(filesRef.current.map((f) => f.id))
     try {
       await invoke('clear_list')
-      setFiles([])
+      setFiles((prev) => prev.filter((f) => !doomed.has(f.id)))
       setError(null)
     } catch (err) {
       setError(`Could not clear list: ${toMessage(err)}`)

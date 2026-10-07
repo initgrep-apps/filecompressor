@@ -195,6 +195,66 @@ describe('CompressionProvider', () => {
     })
     expect(screen.getByTestId('run-state')).toHaveTextContent('staging')
     expect(screen.getByTestId('batch-number')).toHaveTextContent('1')
+    expect(invoke).toHaveBeenCalledWith('clear_list')
+    expect(invoke).toHaveBeenLastCalledWith('clear_list')
+  })
+
+  it('endRun defers backend clear — file added while clear is pending survives', async () => {
+    let clearResolve: (() => void) | undefined
+    let addCalls = 0
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === 'clear_list') {
+        return new Promise<void>((resolve) => {
+          clearResolve = resolve
+        })
+      }
+      if (cmd === 'add_files') {
+        addCalls += 1
+        return Promise.resolve(
+          addCalls === 1 ? [entry()] : [entry({ id: 'f2', name: 'b.jpg', path: '/t/b.jpg' })]
+        )
+      }
+      return Promise.resolve('b1')
+    })
+    render(
+      <CompressionProvider>
+        <RunConsumer paths={['/t/a.jpg']} />
+      </CompressionProvider>
+    )
+    await flush()
+    await act(async () => {
+      await screen.getByRole('button', { name: 'add' }).click()
+    })
+    expect(screen.getByText('a.jpg')).toBeInTheDocument()
+    await act(() => {
+      screen.getByRole('button', { name: 'start run' }).click()
+    })
+    expect(screen.getByTestId('run-state')).toHaveTextContent('run')
+    emit('file:complete', {
+      fileId: 'f1',
+      outputPath: '/o/a.jpg',
+      originalSize: 1024,
+      compressedSize: 512,
+      status: 'done',
+      metTarget: true,
+    })
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 512 })
+    await act(() => {
+      screen.getByRole('button', { name: 'end run' }).click()
+    })
+    expect(screen.getByTestId('run-state')).toHaveTextContent('staging')
+    expect(invoke).toHaveBeenCalledWith('clear_list')
+    await act(async () => {
+      await screen.getByRole('button', { name: 'add' }).click()
+    })
+    expect(screen.getByText('b.jpg')).toBeInTheDocument()
+    expect(screen.getByText('a.jpg (done)')).toBeInTheDocument()
+    await act(async () => {
+      clearResolve?.()
+    })
+    expect(screen.getByText('b.jpg')).toBeInTheDocument()
+    expect(screen.queryByText('a.jpg')).not.toBeInTheDocument()
+    expect(screen.getByTestId('run-state')).toHaveTextContent('staging')
   })
 
   it('run screen survives view switch (remount of a fresh consumer within the same provider)', async () => {

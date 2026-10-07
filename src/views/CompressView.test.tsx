@@ -102,7 +102,7 @@ async function addViaBrowse(entries: Array<Partial<FileEntry>>) {
   const user = userEvent.setup()
   vi.mocked(open).mockResolvedValueOnce('/t/a.jpg')
   vi.mocked(invoke).mockResolvedValueOnce(entries.map((o) => entry(o)))
-  await user.click(screen.getByRole('button', { name: 'Browse' }))
+  await user.click(screen.getByRole('button', { name: 'Browse your files' }))
   await screen.findByText(entries[0].name ?? 'a.jpg')
 }
 
@@ -282,29 +282,17 @@ describe('CompressView', () => {
     consoleSpy.mockRestore()
   })
 
-  it('staging shows the batch error banner after returning from a failed batch', async () => {
+  it('staging empty shows the batch error banner after returning from a failed batch', async () => {
     renderView()
     await addFileInView()
     await pressCompress()
     emit('batch:error', { batchId: 'b1', errorMessage: 'Output folder not writable' })
     const user = userEvent.setup()
     await user.click(screen.getByTestId('new-batch'))
-    await screen.findByRole('table')
-    expect(screen.getByRole('alert')).toHaveTextContent('Output folder not writable')
-    expect(toast.error).toHaveBeenCalledWith('Output folder not writable')
-  })
-
-  it('staging empty still shows the batch error banner after the list is cleared', async () => {
-    renderView()
-    await addFileInView()
-    await pressCompress()
-    emit('batch:error', { batchId: 'b1', errorMessage: 'Output folder not writable' })
-    const user = userEvent.setup()
-    await user.click(screen.getByTestId('new-batch'))
-    await screen.findByRole('table')
-    await user.click(screen.getByRole('button', { name: 'Clear List' }))
     await screen.findByText('Drag and drop files here')
     expect(screen.getByRole('alert')).toHaveTextContent('Output folder not writable')
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(toast.error).toHaveBeenCalledWith('Output folder not writable')
   })
 
   it('batch:error event shows Failed pill and error line on run screen', async () => {
@@ -329,7 +317,7 @@ describe('CompressView', () => {
     )
     const user = userEvent.setup()
     await user.click(screen.getByTestId('new-batch'))
-    await screen.findByRole('table')
+    await screen.findByText('Drag and drop files here')
     await addViaBrowse([{ id: 'f2', name: 'b2.jpg', path: '/t/b2.jpg' }])
     vi.mocked(invoke).mockImplementationOnce(() => new Promise(() => {}))
     await user.click(screen.getByRole('button', { name: 'Compress' }))
@@ -386,33 +374,86 @@ describe('CompressView', () => {
     expect(screen.getByText('p2.jpg')).toBeInTheDocument()
   })
 
-  it('New batch after completion returns to staging with final statuses still listed', async () => {
+  it('new batch clears the staging list — empty drop zone is shown', async () => {
     renderView()
-    await addFileInView({ originalSize: 1258291 })
-    vi.mocked(invoke).mockResolvedValueOnce('b1')
+    await addFileInView()
     await pressCompress()
-    emit('file:complete', {
-      fileId: 'f1',
-      outputPath: '/o/a.jpg',
-      originalSize: 1258291,
-      compressedSize: 184320,
-      status: 'done',
-      metTarget: true,
-    })
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 512 })
-    await waitFor(() => {
-      expect(screen.getByTestId('status-pill').getAttribute('data-state')).toBe('complete')
-    })
     const user = userEvent.setup()
     await user.click(screen.getByTestId('new-batch'))
-    await screen.findByRole('table')
-    expect(screen.queryByTestId('run-header')).not.toBeInTheDocument()
-    expect(screen.getByText('Drop more files here')).toBeInTheDocument()
+    expect(await screen.findByText('Drag and drop files here')).toBeInTheDocument()
+    expect(screen.queryByTestId('batch-summary')).not.toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('new batch invokes clear_list on the backend', async () => {
+    renderView()
+    await addFileInView()
+    await pressCompress()
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 512 })
+    expect(invoke).not.toHaveBeenCalledWith('clear_list')
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('new-batch'))
+    expect(invoke).toHaveBeenCalledWith('clear_list')
+  })
+
+  it('footer Clear List empties the staging list', async () => {
+    renderView()
+    await addFileInView()
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Clear List' }))
+    expect(await screen.findByText('Drag and drop files here')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('batch-summary')).not.toBeInTheDocument()
+  })
+
+  it('footer Clear List keeps the batch error banner', async () => {
+    renderView()
+    await addFileInView()
+    await pressCompress()
+    emit('batch:error', { batchId: 'b1', errorMessage: 'Output folder not writable' })
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('new-batch'))
+    await screen.findByText('Drag and drop files here')
+    await addViaBrowse([{ id: 'f2', name: 'b2.jpg', path: '/t/b2.jpg' }])
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Output folder not writable')
+    await user.click(screen.getByRole('button', { name: 'Clear List' }))
+    expect(await screen.findByText('Drag and drop files here')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Output folder not writable')
+  })
+
+  it('new batch failure path keeps the list and shows the error alert', async () => {
+    renderView()
+    await addFileInView()
+    await pressCompress()
+    emit('batch:complete', { batchId: 'b1', totalSavedBytes: 512 })
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('backend offline'))
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('new-batch'))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/^Could not clear list:/)
+    expect(alert).toHaveTextContent('backend offline')
+    expect(screen.getByTestId('batch-summary')).toBeInTheDocument()
     expect(screen.getByText('a.jpg')).toBeInTheDocument()
-    expect(screen.getByText('Done')).toBeInTheDocument()
-    expect(screen.getByTestId('batch-summary').textContent).toBe(
-      '1 files selected · Total size: ~1.2 MB'
-    )
+  })
+
+  it('footer Clear List failure path keeps the list and shows the error alert', async () => {
+    renderView()
+    await addFileInView()
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('backend offline'))
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Clear List' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/^Could not clear list:/)
+    expect(alert).toHaveTextContent('backend offline')
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByTestId('batch-summary')).toBeInTheDocument()
+    expect(screen.getByText('a.jpg')).toBeInTheDocument()
   })
 
   it('batch number increments on second compress and second roster holds only new pending files', async () => {
@@ -433,6 +474,7 @@ describe('CompressView', () => {
     })
     const user = userEvent.setup()
     await user.click(screen.getByTestId('new-batch'))
+    await screen.findByText('Drag and drop files here')
     await addViaBrowse([{ id: 'f2', name: 'b2.jpg', path: '/t/b2.jpg' }])
     await pressCompress()
     expect(screen.getByTestId('batch-pill')).toHaveTextContent('Batch #2')
