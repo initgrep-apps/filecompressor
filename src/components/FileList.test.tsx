@@ -110,13 +110,12 @@ describe('FileList', () => {
     other: 'Other',
   }
   it.each(
-    (Object.keys(CATEGORY_TONES) as Category[]).map((category) => [category, labels[category]])
+    (Object.keys(CATEGORY_TONES) as Category[]).map((category): [Category, string] => [category, labels[category]])
   )('category badges use shared tones — %s', (category, label) => {
-    const typed = category as Category
-    render(<FileList files={[entry({ category: typed })]} onRemove={vi.fn()} />)
-    const className = screen.getByText(label as string).className
+    render(<FileList files={[entry({ category })]} onRemove={vi.fn()} />)
+    const className = screen.getByText(label).className
     const tokens = className.split(/\s+/)
-    const tone = CATEGORY_TONES[typed]
+    const tone = CATEGORY_TONES[category]
     expect(className).toContain(tone.tint)
     expect(className).toContain(tone.text)
     expect(className).toContain(tone.border)

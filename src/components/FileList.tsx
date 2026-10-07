@@ -48,9 +48,10 @@ function StatusBadge({ status }: { status: FileStatus }) {
     unsupported: 'Unsupported',
     already_under_target: 'Already under target',
   }
+  const tone = STATUS_TONES[status]
   return (
-    <span className={`flex items-center gap-1.5 text-xs ${STATUS_TONES[status].text}`}>
-      <span className={`w-1.5 h-1.5 rounded-full ${STATUS_TONES[status].accent}`} />
+    <span className={`flex items-center gap-1.5 text-xs ${tone.text}`}>
+      <span className={`w-1.5 h-1.5 rounded-full ${tone.accent}`} />
       {labels[status]}
     </span>
   )
@@ -79,6 +80,7 @@ export function FileList({ files, onRemove, onReveal, removeDisabled }: FileList
             const hasResult =
               RESULT_STATUSES.includes(file.status) && file.compressedSize !== null
             const canReveal = hasResult && !!onReveal && !!file.outputPath
+            const tone = CATEGORY_TONES[file.category]
             return (
               <TableRow
                 key={file.id}
@@ -104,7 +106,7 @@ export function FileList({ files, onRemove, onReveal, removeDisabled }: FileList
                 <TableCell>
                   <Badge
                     variant="secondary"
-                    className={`${CATEGORY_TONES[file.category].border} ${CATEGORY_TONES[file.category].tint} ${CATEGORY_TONES[file.category].text}`}
+                    className={`${tone.border} ${tone.tint} ${tone.text}`}
                   >
                     {categoryLabel[file.category]}
                   </Badge>
