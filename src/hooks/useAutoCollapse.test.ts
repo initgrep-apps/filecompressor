@@ -68,8 +68,8 @@ class ResizeObserverStub {
     this.observed.push(target)
   }
 
-  trigger(target: Element) {
-    this.callback([{ target } as ResizeObserverEntry])
+  trigger(target: Element, entries?: ResizeObserverEntry[]) {
+    this.callback(entries ?? [{ target } as ResizeObserverEntry])
   }
 }
 
@@ -199,6 +199,36 @@ describe('useAutoCollapse', () => {
     expect(spy()).not.toHaveBeenCalled()
     act(() => {
       vi.advanceTimersByTime(2000)
+    })
+    expect(spy()).toHaveBeenCalledTimes(1)
+    expect(spy()).toHaveBeenLastCalledWith(false)
+  })
+
+  it('keeps grace window churn-free and converges at expiry', () => {
+    const { el, trigger, manual } = setup(700, 800)
+    manual(false)
+    expect(spy()).not.toHaveBeenCalled()
+    setWidths(el, 1000, 800)
+    trigger()
+    manual(true)
+    expect(spy()).not.toHaveBeenCalled()
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(spy()).toHaveBeenCalledTimes(1)
+    expect(spy()).toHaveBeenLastCalledWith(false)
+  })
+
+  it('evaluates the last entry when a batch is delivered', () => {
+    const { el } = setup(1000, 800)
+    const thin = document.createElement('div')
+    setWidths(thin, 700, 800)
+    const observer = ResizeObserverStub.instances[0]
+    act(() => {
+      observer.trigger(el, [
+        { target: thin } as unknown as ResizeObserverEntry,
+        { target: el } as unknown as ResizeObserverEntry,
+      ])
     })
     expect(spy()).toHaveBeenCalledTimes(1)
     expect(spy()).toHaveBeenLastCalledWith(false)

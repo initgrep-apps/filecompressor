@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useEffect, useRef, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react'
 import { useSidebar } from '@/components/ui/sidebar'
 
 const SUSPEND_MS = 3000
@@ -29,7 +29,7 @@ export function useAutoCollapse(contentRef: RefObject<HTMLElement | null>): void
   const lastSetRef = useRef<boolean | null>(null)
   const recheckRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     openRef.current = open
     setOpenRef.current = setOpen
   }, [open, setOpen])
