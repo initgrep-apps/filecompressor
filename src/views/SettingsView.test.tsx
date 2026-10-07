@@ -5,6 +5,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import type { Settings } from '@/types'
 
+import { CATEGORY_TONES } from '@/lib/tokens'
+
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
 
@@ -511,7 +513,15 @@ describe('SettingsView', () => {
 
   it('category target rows use tinted badges', async () => {
     await loadView()
-    expect(await screen.findByText('Image').then((el) => el.className)).toContain('blue')
+    const badge = await screen.findByText('Image')
+    const className = badge.className
+    const tokens = className.split(/\s+/)
+    const tone = CATEGORY_TONES.image
+    expect(className).toContain(tone.tint)
+    expect(className).toContain(tone.border)
+    expect(className).toContain(tone.text)
+    expect(tokens).not.toContain('bg-secondary')
+    expect(tokens).not.toContain('text-secondary-foreground')
   })
 
   it.each([
