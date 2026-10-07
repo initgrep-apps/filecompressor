@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { useState } from "react"
-import { RiFileReduceLine } from "@remixicon/react"
+import { RiFileShield2Line } from "@remixicon/react"
 import {
   Sidebar,
   SidebarContent,
@@ -64,7 +64,7 @@ function App() {
                 render={<div />}
               >
                 <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-                  <RiFileReduceLine size={18} />
+                  <RiFileShield2Line size={18} />
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-semibold text-sidebar-foreground">
@@ -86,8 +86,22 @@ function App() {
           </SidebarGroup>
         </SidebarContent>
         <SidebarFooter>
-          <div className="px-3 py-2 text-xs text-muted-foreground">
-            v1.0.0 · GPLv3
+          <div className="flex items-center justify-center px-3 py-2">
+            <div className="flex items-center gap-1.5 group-data-[collapsible=icon]:hidden">
+              <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 font-mono text-[10px] font-bold text-muted-foreground">
+                v1.0.0
+              </span>
+              <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-bold text-primary">
+                GPLv3
+              </span>
+            </div>
+            <div
+              data-testid="footer-collapsed"
+              className="hidden items-center gap-1 group-data-[collapsible=icon]:flex"
+            >
+              <span className="size-1.5 rounded-full bg-primary" />
+              <span className="h-2.5 w-5 rounded-full border border-primary/30" />
+            </div>
           </div>
         </SidebarFooter>
         <SidebarRail />

@@ -13,6 +13,11 @@ vi.mock('@tauri-apps/api/webview', () => ({
   getCurrentWebview: () => ({ onDragDropEvent: () => Promise.resolve(() => {}) }),
 }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
+vi.mock('@remixicon/react', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@remixicon/react')>()
+  const RiFileShield2Line = () => <svg data-glyph="file-shield" />
+  return { ...mod, RiFileShield2Line }
+})
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
   Toaster: () => null,
@@ -53,7 +58,9 @@ const makeEntry = (n: number): FileEntry => ({
 const menuItemFor = (label: string) => {
   const btn = Array.from(
     document.querySelectorAll('[data-slot="sidebar-menu-button"]')
-  ).find((b) => b.textContent?.trim() === label)!
+  ).find((b) =>
+    Array.from(b.querySelectorAll('span')).some((s) => s.textContent === label)
+  )!
   return btn.closest('[data-slot="sidebar-menu-item"]') as HTMLElement
 }
 
@@ -137,44 +144,130 @@ describe('App shell', () => {
     expect(within(headerEl()).getByText('Compress')).toBeInTheDocument()
   })
 
-  it('0 files show no Compress badge; 5 files show badge 5', async () => {
+  it('0 files show no Compress count pill; 5 files show pill 5', async () => {
     const user = userEvent.setup()
     render(<App />)
+    expect(menuItemFor('Compress').querySelector('[data-testid="nav-count"]')).toBeNull()
+
+    stubFiveFiles()
+    await user.click(screen.getByRole('button', { name: /drop files/i }))
+    const pill = await screen.findByTestId('nav-count')
+    expect(pill.textContent).toBe('5')
+    expect(menuItemFor('Compress').contains(pill)).toBe(true)
     expect(
       menuItemFor('Compress').querySelector('[data-slot="sidebar-menu-badge"]')
     ).toBeNull()
-
-    stubFiveFiles()
-    await user.click(screen.getByRole('button', { name: /drop files/i }))
-    const badge = await screen.findByText('5')
-    expect(badge.getAttribute('data-slot')).toBe('sidebar-menu-badge')
-    expect(menuItemFor('Compress').contains(badge)).toBe(true)
   })
 
-  it('badge count updates when files are added or removed', async () => {
+  it('count pill updates when files are added or removed', async () => {
     const user = userEvent.setup()
     stubFiveFiles()
     render(<App />)
     await user.click(screen.getByRole('button', { name: /drop files/i }))
-    expect(await screen.findByText('5')).toBeInTheDocument()
+    expect(await screen.findByTestId('nav-count')).toHaveTextContent('5')
     await user.click(screen.getByRole('button', { name: 'Remove f1.jpg' }))
-    expect(await screen.findByText('4')).toBeInTheDocument()
+    expect(await screen.findByTestId('nav-count')).toHaveTextContent('4')
     for (const n of [2, 3, 4, 5]) {
       await user.click(screen.getByRole('button', { name: `Remove f${n}.jpg` }))
     }
+    expect(screen.queryByTestId('nav-count')).toBeNull()
+    expect(menuItemFor('Compress').querySelector('[data-testid="nav-count"]')).toBeNull()
+  })
+
+  it('History nav item shows no count pill', async () => {
+    const user = userEvent.setup()
+    stubFiveFiles()
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: /drop files/i }))
+    expect(await screen.findByTestId('nav-count')).toHaveTextContent('5')
     expect(
-      document.querySelector('[data-slot="sidebar-menu-badge"]')
-    ).toBeNull()
-    expect(
-      menuItemFor('Compress').querySelector('[data-slot="sidebar-menu-badge"]')
+      menuItemFor('History').querySelector('[data-testid="nav-count"]')
     ).toBeNull()
   })
 
-  it('History nav item shows no badge', () => {
+  it('compress nav uses squeeze icon container and active border highlight', () => {
     render(<App />)
+    const compressBtn = document.querySelector(
+      '[data-testid="nav-compress"]'
+    ) as HTMLElement
+    expect(compressBtn).toBeTruthy()
+    expect(compressBtn.hasAttribute('data-active')).toBe(true)
+    expect(compressBtn.className).toContain('border-primary/30')
+    expect(compressBtn.className).toContain('bg-primary/10')
+    const iconContainer = compressBtn.firstElementChild as HTMLElement
+    expect(iconContainer.className).toContain('size-7')
+    expect(iconContainer.className).toContain('rounded-lg')
+    expect(iconContainer.className).toContain('bg-primary/15')
+    expect(iconContainer.className).toContain('text-primary')
+
+    const historyBtn = document.querySelector(
+      '[data-testid="nav-history"]'
+    ) as HTMLElement
+    expect(historyBtn.className).not.toContain('border-primary/30')
+    const historyIcon = historyBtn.firstElementChild as HTMLElement
+    expect(historyIcon.className).toContain('bg-muted')
+    const historyLabel = historyBtn.querySelector('span:not([class*="size-7"])')!
+    expect(historyLabel.className).toContain('text-muted-foreground')
+  })
+
+  it('count pill carries primary tint contract', async () => {
+    const user = userEvent.setup()
+    stubFiveFiles()
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: /drop files/i }))
+    const pill = await screen.findByTestId('nav-count')
+    expect(pill.className).toContain('rounded-full')
+    expect(pill.className).toContain('font-mono')
+    expect(pill.className).toContain('border-primary/30')
+    expect(pill.className).toContain('bg-primary/10')
+    expect(pill.className).toContain('text-primary')
+    expect(pill.className).toContain('px-2')
+  })
+
+  it('footer shows version and license pills; collapsed shows dot + ring, no text', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+    const versionPill = screen.getByText('v1.0.0')
+    const licensePill = screen.getByText('GPLv3')
+    expect(versionPill.className).toContain('rounded-full')
+    expect(versionPill.className).toContain('border-border')
+    expect(licensePill.className).toContain('rounded-full')
+    expect(licensePill.className).toContain('border-primary/30')
+    expect(licensePill.className).toContain('bg-primary/10')
+    expect(licensePill.className).toContain('text-primary')
+    const pillRow = versionPill.parentElement as HTMLElement
+    expect(pillRow.className).toContain('group-data-[collapsible=icon]:hidden')
+
+    const trigger = document.querySelector(
+      'button[data-slot="sidebar-trigger"]'
+    ) as HTMLElement
+    await user.click(trigger)
+    const sidebar = document.querySelector(
+      'div[data-collapsible="icon"]'
+    )
+    expect(sidebar).not.toBeNull()
+
+    const collapsedRow = versionPill.closest(
+      '[data-testid="footer-collapsed"]'
+    ) as HTMLElement | null
+    expect(collapsedRow).toBeNull()
+    const dot = document.querySelector('.size-1\\.5.rounded-full.bg-primary')
+    expect(dot).not.toBeNull()
+    const ring = document.querySelector('.h-2\\.5.w-5.rounded-full')
+    expect(ring).not.toBeNull()
+    expect(ring!.className).toContain('border-primary/30')
+    expect(dot!.parentElement!.textContent).toBe('')
+  })
+
+  it('app header icon is the shield glyph', () => {
+    render(<App />)
+    const headerButton = document.querySelector(
+      '[data-slot="sidebar-header"] [data-slot="sidebar-menu-button"]'
+    ) as HTMLElement
+    expect(headerButton).toBeTruthy()
     expect(
-      menuItemFor('History').querySelector('[data-slot="sidebar-menu-badge"]')
-    ).toBeNull()
+      headerButton.querySelector('[data-glyph="file-shield"]')
+    ).not.toBeNull()
   })
 
   it('clicking History still switches views (nav regression)', async () => {
@@ -192,7 +285,7 @@ describe('App shell', () => {
     await user.click(screen.getByRole('button', { name: /drop files/i }))
     expect(await screen.findByText('a.jpg')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Settings' }))
-    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    await user.click(screen.getByRole('button', { name: /Compress/ }))
     expect(await screen.findByText('a.jpg')).toBeInTheDocument()
   })
 
