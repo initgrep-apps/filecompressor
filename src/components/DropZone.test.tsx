@@ -19,7 +19,9 @@ vi.mock('@tauri-apps/api/webview', () => ({
 
 import { DropZone } from '@/components/DropZone'
 
-const ALL_FORMATS = 'JPEG, PNG, WebP, HEIC, MP4, MOV, PDF, DOCX, XLSX, PPTX'
+const ALL_EXTENSIONS = ['JPEG', 'PNG', 'WebP', 'HEIC', 'MP4', 'MOV', 'PDF', 'DOCX', 'XLSX', 'PPTX']
+
+const ALL_FORMATS = ALL_EXTENSIONS.join(', ')
 
 function emit(evt: unknown) {
   act(() => {
@@ -158,7 +160,7 @@ describe('DropZone', () => {
     expect(screen.getByText('Drag and drop files here')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Browse your files' })).toBeInTheDocument()
     expect(screen.getByText('…or click anywhere in this area')).toBeInTheDocument()
-    for (const ext of ['JPEG', 'PNG', 'WebP', 'HEIC', 'MP4', 'MOV', 'PDF', 'DOCX', 'XLSX', 'PPTX']) {
+    for (const ext of ALL_EXTENSIONS) {
       const pill = screen.getByText(ext)
       expect(pill).toBeInTheDocument()
       expect(pill.querySelector('svg')).not.toBeNull()
@@ -179,7 +181,7 @@ describe('DropZone', () => {
     expect(screen.getByText('IMAGES:')).toBeInTheDocument()
     expect(screen.getByText('VIDEOS:')).toBeInTheDocument()
     expect(screen.getByText('DOCS:')).toBeInTheDocument()
-    for (const ext of ['JPEG', 'PNG', 'WebP', 'HEIC', 'MP4', 'MOV', 'PDF', 'DOCX', 'XLSX', 'PPTX']) {
+    for (const ext of ALL_EXTENSIONS) {
       expect(screen.getByText(ext)).toBeInTheDocument()
     }
   })
@@ -190,23 +192,33 @@ describe('DropZone', () => {
     expect(zone.className).toContain('rounded-2xl')
   })
 
-  it('PDF pill lives inside the DOCS group container', () => {
+  it('format pills live in their category group container and nowhere else', () => {
     render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
     const images = screen.getByTestId('format-group-images')
     const videos = screen.getByTestId('format-group-videos')
     const docs = screen.getByTestId('format-group-docs')
+    expect(within(images).getByText('JPEG')).toBeInTheDocument()
+    expect(within(images).getByText('PNG')).toBeInTheDocument()
+    expect(within(images).getByText('WebP')).toBeInTheDocument()
+    expect(within(images).getByText('HEIC')).toBeInTheDocument()
+    expect(within(images).queryByText('MP4')).not.toBeInTheDocument()
+    expect(within(images).queryByText('PDF')).not.toBeInTheDocument()
+    expect(within(videos).getByText('MP4')).toBeInTheDocument()
+    expect(within(videos).getByText('MOV')).toBeInTheDocument()
+    expect(within(videos).queryByText('JPEG')).not.toBeInTheDocument()
+    expect(within(videos).queryByText('PDF')).not.toBeInTheDocument()
     expect(within(docs).getByText('PDF')).toBeInTheDocument()
     expect(within(docs).getByText('DOCX')).toBeInTheDocument()
     expect(within(docs).getByText('XLSX')).toBeInTheDocument()
     expect(within(docs).getByText('PPTX')).toBeInTheDocument()
-    expect(within(images).queryByText('PDF')).not.toBeInTheDocument()
-    expect(within(videos).queryByText('PDF')).not.toBeInTheDocument()
+    expect(within(docs).queryByText('JPEG')).not.toBeInTheDocument()
   })
 
   it('group containers carry category border tones', () => {
     render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
     expect(screen.getByTestId('format-group-images').className).toContain('border-blue-500/30')
     expect(screen.getByTestId('format-group-videos').className).toContain('border-violet-500/30')
+    expect(screen.getByTestId('format-group-docs').className).toContain('border-destructive/35')
     const docs = screen.getByTestId('format-group-docs')
     expect(within(docs).getByText('PDF').className).toContain('border-destructive/35')
     expect(within(docs).getByText('DOCX').className).toContain('border-amber-500/30')

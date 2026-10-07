@@ -65,6 +65,14 @@ const FORMAT_GROUPS: Array<{ label: string; testId: string; categories: Category
   },
 ]
 
+const GROUPED_CATEGORIES = new Set(FORMAT_GROUPS.flatMap((g) => g.categories))
+const UNGROUPED_FORMATS = FORMATS.filter((f) => !GROUPED_CATEGORIES.has(f.category))
+if (import.meta.env.DEV && UNGROUPED_FORMATS.length > 0) {
+  throw new Error(
+    `FORMAT_GROUPS missing categories for: ${UNGROUPED_FORMATS.map((f) => `${f.ext} (${f.category})`).join(', ')}`
+  )
+}
+
 const CATEGORY_GLYPHS: Record<Category, ReactNode> = {
   image: (
     <>
