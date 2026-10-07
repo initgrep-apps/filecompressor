@@ -185,6 +185,7 @@ describe('DropZone', () => {
     expect(screen.getByText('PDF').className).toContain('text-destructive')
     expect(screen.getByText('DOCX').className).toContain('text-amber-600')
     expect(screen.getByText('XLSX').className).toContain('text-amber-600')
+    expect(screen.getByText('JPEG').className).toContain('text-[10.5px]')
     const surface = screen.getByRole('button', { name: /drop files here or press/i })
     expect(surface).toHaveAttribute('tabindex', '0')
   })
@@ -321,6 +322,7 @@ describe('DropZone', () => {
     for (const ext of ALL_EXTENSIONS) {
       expect(screen.getByText(ext)).toBeInTheDocument()
     }
+    expect(screen.getByText('JPEG').className).toContain('text-[9.5px]')
     expect(screen.queryByText(/JPEG, PNG, WebP/)).not.toBeInTheDocument()
     expect(document.body.textContent).not.toContain(ALL_FORMATS)
     const label = screen.getByTestId('compact-label')
@@ -344,6 +346,8 @@ describe('DropZone', () => {
     })
     expect(screen.getByTestId('compact-label')).toBe(label)
     expect(label.textContent).toBe('Drop more files here')
+    expect(screen.queryByText(/files detected/i)).not.toBeInTheDocument()
+    expect(screen.getByText('or')).toBeInTheDocument()
     const surface = screen.getByRole('button', { name: /drop here or press/i })
     expect(surface.className).toContain('bg-primary/5')
     expect(surface.className).not.toContain('border-primary/35')
@@ -353,6 +357,8 @@ describe('DropZone', () => {
     expect(surfaceAfterLeave.className).not.toContain('bg-primary/5')
     expect(screen.getByTestId('compact-label')).toBe(label)
     expect(label.textContent).toBe('Drop more files here')
+    expect(screen.queryByText(/files detected/i)).not.toBeInTheDocument()
+    expect(screen.getByText('or')).toBeInTheDocument()
   })
 
   it('row 2 mini groups persist during drag state', async () => {
@@ -397,6 +403,46 @@ describe('DropZone', () => {
     await user.click(screen.getByRole('button', { name: 'Browse' }))
     expect(onBrowse).toHaveBeenCalledTimes(2)
     expect(onDrop).not.toHaveBeenCalled()
+  })
+
+  async function assertArbitraryKeyDoesNotBrowse(compact: boolean) {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={vi.fn()} compact={compact} />)
+    const surface = screen.getByRole('button', {
+      name: compact ? /drop here or press/i : /drop files here or press/i,
+    })
+    surface.focus()
+    await user.keyboard('{ArrowDown}')
+    expect(onBrowse).not.toHaveBeenCalled()
+  }
+
+  it('compact surface ignores arbitrary keys (ArrowDown does not browse) via shared keydown handler', async () => {
+    await assertArbitraryKeyDoesNotBrowse(true)
+  })
+
+  it('full surface ignores arbitrary keys (ArrowDown does not browse) via shared keydown handler', async () => {
+    await assertArbitraryKeyDoesNotBrowse(false)
+  })
+
+  it('compact surface resets drag classes on drop without a leave event', async () => {
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={vi.fn()} onDrop={onDrop} compact />)
+    await waitFor(() => expect(handlers.length).toBeGreaterThan(0))
+    emit({
+      payload: { type: 'enter', paths: ['/a.jpg'], position: { x: 0, y: 0 } },
+    })
+    const surface = screen.getByRole('button', { name: /drop here or press/i })
+    expect(surface.className).toContain('border-primary')
+    expect(surface.className).not.toContain('border-primary/35')
+    expect(surface.className).toContain('bg-primary/5')
+    emit({
+      payload: { type: 'drop', paths: ['/a.jpg'], position: { x: 0, y: 0 } },
+    })
+    expect(onDrop).toHaveBeenCalledTimes(1)
+    const surfaceAfterDrop = screen.getByRole('button', { name: /drop here or press/i })
+    expect(surfaceAfterDrop.className).toContain('border-primary/35')
+    expect(surfaceAfterDrop.className).not.toContain('bg-primary/5')
   })
 
   it('card click outside the button fires onBrowse exactly once', async () => {
