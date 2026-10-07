@@ -69,7 +69,7 @@ export function SidebarNav({ activeView, onViewChange }: SidebarNavProps) {
               data-testid={`nav-${item.id}`}
               className={
                 isActive
-                  ? "border border-primary/30 bg-primary/10"
+                  ? "border border-primary/30 [&[data-active]]:bg-primary/10"
                   : "border border-transparent"
               }
             >

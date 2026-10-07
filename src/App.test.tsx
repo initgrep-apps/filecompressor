@@ -16,7 +16,8 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
 vi.mock('@remixicon/react', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@remixicon/react')>()
   const RiFileShield2Line = () => <svg data-glyph="file-shield" />
-  return { ...mod, RiFileShield2Line }
+  const RiContractUpDownLine = () => <svg data-glyph="contract-up-down" />
+  return { ...mod, RiFileShield2Line, RiContractUpDownLine }
 })
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -92,7 +93,7 @@ const emptyHistory = {
 
 describe('App shell', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     vi.mocked(invoke).mockImplementation((cmd: unknown) =>
       cmd === 'get_history' ? Promise.resolve(emptyHistory) : Promise.resolve(undefined)
     )
@@ -199,6 +200,9 @@ describe('App shell', () => {
     expect(iconContainer.className).toContain('rounded-lg')
     expect(iconContainer.className).toContain('bg-primary/15')
     expect(iconContainer.className).toContain('text-primary')
+    expect(
+      compressBtn.querySelector('[data-glyph="contract-up-down"]')
+    ).not.toBeNull()
 
     const historyBtn = document.querySelector(
       '[data-testid="nav-history"]'
@@ -222,6 +226,7 @@ describe('App shell', () => {
     expect(pill.className).toContain('bg-primary/10')
     expect(pill.className).toContain('text-primary')
     expect(pill.className).toContain('px-2')
+    expect(pill.className).toContain('group-data-[collapsible=icon]:hidden')
   })
 
   it('footer shows version and license pills; collapsed shows dot + ring, no text', async () => {
@@ -257,6 +262,9 @@ describe('App shell', () => {
     expect(ring).not.toBeNull()
     expect(ring!.className).toContain('border-primary/30')
     expect(dot!.parentElement!.textContent).toBe('')
+    const dotRow = dot!.parentElement as HTMLElement
+    expect(dotRow.className).toContain('hidden')
+    expect(dotRow.className).toContain('group-data-[collapsible=icon]:flex')
   })
 
   it('app header icon is the shield glyph', () => {
