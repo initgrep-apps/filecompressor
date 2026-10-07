@@ -61,7 +61,7 @@ Most likely to bite a person using this software, most likely first — each pin
 - `maps done/already_under_target/compressing=primary, best_effort=amber, failed=destructive, cancelled/pending/unsupported=muted` — exact `text` class pins
 - `status tone non-text fields are asserted` (gap-fill) — assert `tint`/`border`/`accent` fields for `done`, `best_effort`, `failed` (accent feeds Task 8 done-card inset bar; currently untested)
 
-- [ ] **Step 1: Write the failing test** — `src/lib/tokens.test.ts````ts
+- [x] **Step 1: Write the failing test** — `src/lib/tokens.test.ts````ts
 import { describe, expect, it } from 'vitest'
 import { CATEGORY_TONES, STATUS_TONES } from './tokens'
 import type { Category, FileStatus } from '@/types'
@@ -108,10 +108,10 @@ describe('STATUS_TONES', () => {
 })
 ```
 
-- [ ] **Step 2: Run test to verify it fails.** Run: `yarn vitest run src/lib/tokens.test.ts`. Expected: FAIL, cannot import `./tokens`.
-- [ ] **Step 3: Implement `src/lib/tokens.ts`.** Two `Record`s with exact keys above; class strings using Tailwind palette (`blue`, `violet`, `amber`) at `/10`–`/15` opacities for tints, `/25`–`/35` for borders; `pdf`/`failed` use `destructive` token; `other`/muted use `muted`/`muted-foreground`. Exports only — no other symbols.
-- [ ] **Step 4: Run test to verify it passes.** Run: `yarn vitest run src/lib/tokens.test.ts`. Expected: PASS.
-- [ ] **Step 5: Commit** `git add src/lib/tokens.ts src/lib/tokens.test.ts && git commit -m "feat(ui): shared category and status tone module"`
+- [x] **Step 2: Run test to verify it fails.** Run: `yarn vitest run src/lib/tokens.test.ts`. Expected: FAIL, cannot import `./tokens`.
+- [x] **Step 3: Implement `src/lib/tokens.ts`.** Two `Record`s with exact keys above; class strings using Tailwind palette (`blue`, `violet`, `amber`) at `/10`–`/15` opacities for tints, `/25`–`/35` for borders; `pdf`/`failed` use `destructive` token; `other`/muted use `muted`/`muted-foreground`. Exports only — no other symbols.
+- [x] **Step 4: Run test to verify it passes.** Run: `yarn vitest run src/lib/tokens.test.ts`. Expected: PASS.
+- [x] **Step 5: Commit** `git add src/lib/tokens.ts src/lib/tokens.test.ts && git commit -m "feat(ui): shared category and status tone module"`
 
 ### Task 2: B1 — New Batch clears staging list
 
