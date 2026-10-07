@@ -668,7 +668,7 @@ describe('CompressView', () => {
     expect(wrapperTargets).toEqual([])
   })
 
-  it('auto-collapse re-observes the kanban board after it unmounts and remounts', async () => {
+  it('React node reuse keeps the ResizeObserver watching the same board node across board→empty→board swaps', async () => {
     const { CapturingResizeObserver, resetCapturedResizeObservers } = await import(
       '@/test-setup'
     )
@@ -691,8 +691,16 @@ describe('CompressView', () => {
     await user.click(screen.getByTestId('chip-all'))
     await screen.findByTestId('kanban-board')
     const board = screen.getByTestId('kanban-board')
-    expect(
-      CapturingResizeObserver.instances.some((o) => o.observed.includes(board))
-    ).toBe(true)
+
+    const watchers = CapturingResizeObserver.instances.filter((o) =>
+      o.observed.includes(board)
+    )
+    expect(watchers).toHaveLength(1)
+
+    const firstObserved = CapturingResizeObserver.instances.find((o) =>
+      o.observed.some((el) => el.getAttribute('data-testid') === 'kanban-board')
+    )?.observed.find((el) => el.getAttribute('data-testid') === 'kanban-board')
+    expect(firstObserved).toBeDefined()
+    expect(board).toBe(firstObserved)
   })
 })
