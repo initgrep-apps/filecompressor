@@ -72,7 +72,13 @@ describe('CATEGORY_TONES', () => {
 
 describe('STATUS_TONES', () => {
   it('covers every status', () => {
-    for (const s of ALL_STATUSES) expect(STATUS_TONES[s]).toBeDefined()
+    for (const s of ALL_STATUSES) {
+      expect(STATUS_TONES[s]).toBeDefined()
+      expect(STATUS_TONES[s].tint).toMatch(/^bg-/)
+      expect(STATUS_TONES[s].text).toMatch(/^text-/)
+      expect(STATUS_TONES[s].border).toMatch(/^border-/)
+      expect(STATUS_TONES[s].accent).toMatch(/^bg-/)
+    }
   })
   it('key set matches every FileStatus value', () => {
     expect(Object.keys(STATUS_TONES).sort()).toEqual(
@@ -104,6 +110,16 @@ describe('STATUS_TONES', () => {
     expect(STATUS_TONES.compressing.accent).toBe('bg-primary')
     expect(STATUS_TONES.already_under_target.accent).toBe('bg-primary')
     expect(STATUS_TONES.pending.accent).toBe('bg-muted-foreground')
+  })
+  it('pending/cancelled/unsupported carry expected tint, border and accent classes', () => {
+    expect(STATUS_TONES.pending.tint).toBe('bg-muted')
+    expect(STATUS_TONES.pending.border).toBe('border-border')
+    expect(STATUS_TONES.cancelled.tint).toBe('bg-muted')
+    expect(STATUS_TONES.cancelled.border).toBe('border-border')
+    expect(STATUS_TONES.cancelled.accent).toBe('bg-muted-foreground')
+    expect(STATUS_TONES.unsupported.tint).toBe('bg-muted')
+    expect(STATUS_TONES.unsupported.border).toBe('border-border')
+    expect(STATUS_TONES.unsupported.accent).toBe('bg-muted-foreground')
   })
 })
 
