@@ -195,7 +195,7 @@ const endRun = useCallback(() => {
 
 Behavior pinned by spec: cramped = `el.scrollWidth > el.clientWidth + 1`; cramped → `setOpen(false)` once; not-cramped → `setOpen(true)` only if the hook performed the collapse; manual `setOpen(false)` by user (state went closed without the hook) is respected — never auto-expanded, *including after the 3 s suspension expires*; manual open while cramped → **re-collapse immediately** (suspension does not delay the cramped→collapse direction); suspension blocks only the not-cramped→expand direction and repeat toggles; suspension **lifts** — after 3 s a cramped episode still collapses; restored state resets `autoCollapsedRef` so a later episode collapses again.
 
-- [ ] **Step 1: Write the failing tests.** Mock `useSidebar` to return a spy `setOpen` and controllable `open`; mock `ResizeObserver` globally with a **capturing stub** (store instances, synchronously invoke the stored callback with the real element); inject widths per case via `Object.defineProperty(el, 'scrollWidth'|'clientWidth', …)` — jsdom computes no layout:
+- [x] **Step 1: Write the failing tests.** Mock `useSidebar` to return a spy `setOpen` and controllable `open`; mock `ResizeObserver` globally with a **capturing stub** (store instances, synchronously invoke the stored callback with the real element); inject widths per case via `Object.defineProperty(el, 'scrollWidth'|'clientWidth', …)` — jsdom computes no layout:
 
 ```ts
 const cases = [
@@ -213,10 +213,10 @@ const cases = [
 
 Mechanism pin: the capturing stub must assert the hook read the real DOM element (not synthetic numbers) — helper passes the probe element to `trigger()`.
 
-- [ ] **Step 2: Run to verify failure.** Run: `yarn vitest run src/hooks/useAutoCollapse.test.ts`. Expected: FAIL, module not found.
-- [ ] **Step 3: Implement `useAutoCollapse`.** Per spec §3: `ResizeObserver` in effect; `cramped` boolean; `autoCollapsedRef: boolean`; `lastManualRef` timestamp vs 3 s suspension; cleanup `disconnect()`. No debounce beyond suspension.
-- [ ] **Step 4: Run to verify pass.** Run: `yarn vitest run src/hooks/useAutoCollapse.test.ts`. Expected: PASS.
-- [ ] **Step 5: Commit** `git add src/hooks/useAutoCollapse.ts src/hooks/useAutoCollapse.test.ts && git commit -m "feat(ui): content-driven sidebar auto-collapse hook"`
+- [x] **Step 2: Run to verify failure.** Run: `yarn vitest run src/hooks/useAutoCollapse.test.ts`. Expected: FAIL, module not found.
+- [x] **Step 3: Implement `useAutoCollapse`.** Per spec §3: `ResizeObserver` in effect; `cramped` boolean; `autoCollapsedRef: boolean`; `lastManualRef` timestamp vs 3 s suspension; cleanup `disconnect()`. No debounce beyond suspension.
+- [x] **Step 4: Run to verify pass.** Run: `yarn vitest run src/hooks/useAutoCollapse.test.ts`. Expected: PASS.
+- [x] **Step 5: Commit** `git add src/hooks/useAutoCollapse.ts src/hooks/useAutoCollapse.test.ts && git commit -m "feat(ui): content-driven sidebar auto-collapse hook"`
 
 ### Task 4: Sidebar redesign (expanded + collapsed)
 
