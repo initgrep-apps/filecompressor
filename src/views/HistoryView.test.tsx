@@ -38,6 +38,8 @@ import { HistoryView } from '@/views/HistoryView'
 import { invoke } from '@tauri-apps/api/core'
 import { toast } from 'sonner'
 import { CATEGORY_TONES, STATUS_TONES } from '@/lib/tokens'
+import { SidebarProvider } from '@/components/ui/sidebar'
+import { CapturingResizeObserver, resetCapturedResizeObservers } from '@/test-setup'
 
 const invokeMock = vi.mocked(invoke)
 
@@ -144,7 +146,12 @@ function responseWith(
   }
 }
 
-const renderView = () => render(<HistoryView />)
+const renderView = () =>
+  render(
+    <SidebarProvider>
+      <HistoryView />
+    </SidebarProvider>
+  )
 
 function pagedResponse(sessions: HistorySession[], totalSessions: number) {
   invokeMock.mockImplementation((_cmd: unknown, args: unknown) =>
@@ -962,5 +969,19 @@ describe('HistoryView', () => {
         CATEGORY_TONES.pdf.text
       )
     })
+  })
+
+  it('auto-collapse observes the history content card, not the clipped wrapper', async () => {
+    invokeMock.mockResolvedValue(emptyResponse)
+    resetCapturedResizeObservers()
+    renderView()
+    await screen.findByText('No history yet')
+    const targets = CapturingResizeObserver.instances.flatMap((o) => o.observed)
+    const card = targets.find((el) => el.getAttribute('data-slot') === 'card')
+    expect(card).toBeDefined()
+    const clipped = targets.filter(
+      (el) => el !== card && el.className.includes('overflow-hidden')
+    )
+    expect(clipped).toEqual([])
   })
 })

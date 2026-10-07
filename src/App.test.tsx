@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { FileEntry } from '@/types'
@@ -24,20 +24,8 @@ vi.mock('sonner', () => ({
   Toaster: () => null,
 }))
 
-beforeAll(() => {
-  window.matchMedia = (query: string) => ({
-    matches: false,
-    media: query,
-    onchange: null,
-    addListener: () => {},
-    removeListener: () => {},
-    addEventListener: () => {},
-    removeEventListener: () => {},
-    dispatchEvent: () => false,
-  }) as MediaQueryList
-})
-
 import App from '@/App'
+import { CapturingResizeObserver, resetCapturedResizeObservers } from '@/test-setup'
 
 const headerEl = () => document.querySelector('main')!.querySelector('header')!
 
@@ -312,5 +300,36 @@ describe('App shell', () => {
     expect(
       within(main).queryByRole('heading', { name: 'History' })
     ).not.toBeInTheDocument()
+  })
+
+  it('auto-collapse observes the content element, not the clipped wrapper', async () => {
+    const user = userEvent.setup()
+    resetCapturedResizeObservers()
+    vi.mocked(open).mockResolvedValueOnce('/t/a.jpg')
+    vi.mocked(invoke).mockResolvedValueOnce([{ ...makeEntry(1), name: 'a.jpg', path: '/t/a.jpg' }])
+    render(<App />)
+    await user.click(screen.getByRole('button', { name: /drop files/i }))
+    await screen.findByText('a.jpg')
+    const observed = CapturingResizeObserver.instances.flatMap((o) => o.observed)
+    const stagingCard = observed.find(
+      (el) => el.getAttribute('data-slot') === 'card' && el.contains(document.querySelector('[data-slot="table"]')!)
+    )
+    expect(stagingCard).toBeDefined()
+    expect(stagingCard!.getAttribute('data-slot')).toBe('card')
+    expect(stagingCard!.querySelector('[data-slot="table-container"]')).not.toBeNull()
+
+    const clippedWrappers = observed.filter(
+      (el) => el !== stagingCard && el.className.includes('overflow-hidden')
+    )
+    expect(clippedWrappers).toEqual([])
+
+    stubFiveFiles()
+    await user.click(screen.getByRole('button', { name: 'Compress' }))
+    await screen.findByTestId('kanban-board')
+    const lastObserver = CapturingResizeObserver.instances[CapturingResizeObserver.instances.length - 1]
+    expect(lastObserver.observed).toHaveLength(1)
+    const board = lastObserver.observed[0]
+    expect(board.getAttribute('data-testid')).toBe('kanban-board')
+    expect(board.className).toContain('overflow-x-auto')
   })
 })

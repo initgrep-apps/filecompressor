@@ -15,6 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { LayoutGroup, MotionConfig, motion } from 'motion/react'
+import type { RefObject } from 'react'
 import { Lane } from '@/components/run/Lane'
 import { filterFiles, groupByCategory, type StatusFilter } from '@/lib/grouping'
 import type { FileEntry } from '@/types'
@@ -28,6 +29,7 @@ export interface KanbanBoardProps {
   onReveal: (path: string) => void
   onRemove: (fileId: string) => void
   removeDisabled?: boolean
+  contentRef?: RefObject<HTMLDivElement | null>
 }
 
 const EMPTY_WORDS: Record<Exclude<StatusFilter, 'all'>, string> = {
@@ -47,6 +49,7 @@ export function KanbanBoard({
   onReveal,
   onRemove,
   removeDisabled,
+  contentRef,
 }: KanbanBoardProps) {
   const lanes = groupByCategory(filterFiles(roster, statusFilter))
 
@@ -72,8 +75,9 @@ export function KanbanBoard({
           </div>
         ) : (
           <div
+            ref={contentRef}
             data-testid="kanban-board"
-            className="flex items-start gap-3 overflow-x-auto pb-3 pr-3"
+            className="flex items-start gap-3 overflow-x-auto pb-3 pr-4"
           >
             {lanes.map((lane) => (
               <motion.div

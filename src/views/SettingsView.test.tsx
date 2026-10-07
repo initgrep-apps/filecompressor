@@ -11,6 +11,15 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
 
 import { SettingsView } from '@/views/SettingsView'
+import { SidebarProvider } from '@/components/ui/sidebar'
+import { CapturingResizeObserver, resetCapturedResizeObservers } from '@/test-setup'
+
+const renderSettings = () =>
+  render(
+    <SidebarProvider>
+      <SettingsView />
+    </SidebarProvider>
+  )
 
 const baseSettings: Settings = {
   outputFolder: '/Users/test/Documents/Compressed',
@@ -36,7 +45,7 @@ const resetDefaults: Settings = {
 }
 
 const loadView = async () => {
-  render(<SettingsView />)
+  renderSettings()
   await screen.findByLabelText('Images target size')
 }
 
@@ -58,7 +67,7 @@ beforeEach(() => {
 describe('SettingsView', () => {
   it('shows loading state while settings load', () => {
     vi.mocked(invoke).mockImplementation(() => new Promise(() => {}))
-    render(<SettingsView />)
+    renderSettings()
     expect(screen.getByText('Loading settings…')).toBeInTheDocument()
   })
 
@@ -310,7 +319,7 @@ describe('SettingsView', () => {
   })
 
   it('no native number inputs or select elements remain', async () => {
-    const { container } = render(<SettingsView />)
+    const { container } = renderSettings()
     await screen.findByLabelText('Images target size')
     expect(
       container.querySelectorAll('input[type="number"]:not([aria-hidden="true"]), select'),
@@ -539,5 +548,20 @@ describe('SettingsView', () => {
     const iconSquare = card!.querySelector('[data-slot="card-icon"]')
     expect(iconSquare?.className).toContain(tint)
     expect(iconSquare?.querySelector('svg')).toBeInTheDocument()
+  })
+
+  it('auto-collapse observes the settings scroll container, not a clipped wrapper', async () => {
+    resetCapturedResizeObservers()
+    renderSettings()
+    await screen.findByLabelText('Images target size')
+    const targets = CapturingResizeObserver.instances.flatMap((o) => o.observed)
+    const scroller = targets.find((el) =>
+      el.className.includes('overflow-y-auto')
+    )
+    expect(scroller).toBeDefined()
+    const clipped = targets.filter(
+      (el) => el !== scroller && el.className.includes('overflow-hidden')
+    )
+    expect(clipped).toEqual([])
   })
 })

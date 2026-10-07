@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, type ReactNode } from 'react'
 import {
   RiEqualizerLine,
   RiFlashlightLine,
@@ -50,6 +50,17 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { Settings, CategoryTarget, MaxConcurrent, PerformanceSettings } from '@/types'
+import { useAutoCollapse } from '@/hooks/useAutoCollapse'
+
+function SettingsScrollArea({ children }: { children: ReactNode }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  useAutoCollapse(scrollRef)
+  return (
+    <div ref={scrollRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
+      {children}
+    </div>
+  )
+}
 
 const ICON_TILES = {
   folder: {
@@ -194,7 +205,7 @@ export function SettingsView() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6">
+      <SettingsScrollArea>
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted-foreground">Preferences</h2>
           <button
@@ -505,7 +516,7 @@ export function SettingsView() {
             </Field>
           </CardContent>
         </Card>
-      </div>
+      </SettingsScrollArea>
 
       {error && (
         <div

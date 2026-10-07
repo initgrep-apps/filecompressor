@@ -605,17 +605,17 @@ it('category target rows use tinted badges', async () => {
 - `auto-collapse observes the content element, not the clipped wrapper` (gap-fill, sev 7) — capturing RO stub asserts `observe()` target per view
 - Manual live verification (layout specifics genuinely untestable in jsdom): staging table fits; history fits; kanban last lane visible no dimming; resize below ~860px collapses, grow expands; compact bar grouped chips no truncation (native drag deferred to dev build)
 
-- [ ] **Step 1: Wire refs.** One `useAutoCollapse` call per active view: staging `Card` (CompressView:166), kanban board element (RunMonitor → `data-testid="kanban-board"`), History `Card` (:519), Settings scroll container (:146).
-- [ ] **Step 1b: Test infra.** Add capturing `ResizeObserver` global stub to `src/test-setup.ts`; add observe-target assertions to App/History/Settings suites.
-- [ ] **Step 2: Automated pins run green.** Run: `yarn vitest run src/App.test.tsx src/views src/components`. Expected: PASS (3 formerly-crashing suites now safe).
-- [ ] **Step 2: Live verification.** Run: `yarn dev`, open browser at window size 900×640 (devtools). Verify and record:
+- [x] **Step 1: Wire refs.** One `useAutoCollapse` call per active view: staging `Card` (CompressView:166), kanban board element (RunMonitor → `data-testid="kanban-board"`), History `Card` (:519), Settings scroll container (:146).
+- [x] **Step 1b: Test infra.** Add capturing `ResizeObserver` global stub to `src/test-setup.ts`; add observe-target assertions to App/History/Settings suites.
+- [x] **Step 2: Automated pins run green.** Run: `yarn vitest run src/App.test.tsx src/views src/components`. Expected: PASS (3 formerly-crashing suites now safe).
+- [x] **Step 2: Live verification.** Run: `yarn dev`, open browser at window size 900×640 (devtools). Verify and record:
   1. Staging: add files → table fully visible; no clipping at default size.
   2. History: sessions render fully; no right-edge cut.
   3. Kanban: scroll right → last lane fully visible, no dimming.
   4. Resize below ~860px → sidebar collapses; grow back → expands.
   5. Compact bar shows grouped chips, no truncation, no flicker on drag (native drag cannot run in browser — verify state classes via `isDragging` simulation or defer to dev build check).
-- [ ] **Step 3: minWidth bump** in `tauri.conf.json` and confirm staging table still fits at min width.
-- [ ] **Step 4: Commit** `git add src/views src-tauri/tauri.conf.json && git commit -m "feat(ui): wire auto-collapse into views, raise window min width"`
+- [x] **Step 3: minWidth bump** in `tauri.conf.json` and confirm staging table still fits at min width.
+- [x] **Step 4: Commit** `git add src/views src-tauri/tauri.conf.json && git commit -m "feat(ui): wire auto-collapse into views, raise window min width"`
 
 ### Task 13: Full gate
 

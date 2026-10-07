@@ -54,7 +54,14 @@ export function useAutoCollapse(contentRef: RefObject<HTMLElement | null>): void
 
   useEffect(() => {
     const el = contentRef.current
-    if (!el || typeof ResizeObserver === 'undefined') return
+    if (!el || typeof ResizeObserver === 'undefined') {
+      if (import.meta.env.DEV && !el) {
+        console.warn(
+          'useAutoCollapse: contentRef.current was null at effect time — auto-collapse inactive'
+        )
+      }
+      return
+    }
     const evaluate = (target: Element) => {
       const now = Date.now()
       const elapsed = now - lastManualRef.current
