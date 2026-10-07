@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { FileEntry } from '@/types'
+import type { Category, FileEntry } from '@/types'
 import { FileList } from '@/components/FileList'
+import { CATEGORY_TONES } from '@/lib/tokens'
 
 function entry(overrides: Partial<FileEntry> = {}): FileEntry {
   return {
@@ -101,6 +102,38 @@ describe('FileList', () => {
     expect(row?.className).toContain('opacity-40')
   })
 
+  const labels: Record<Category, string> = {
+    image: 'Image',
+    video: 'Video',
+    pdf: 'PDF',
+    document: 'Document',
+    other: 'Other',
+  }
+  it.each(
+    (Object.keys(CATEGORY_TONES) as Category[]).map((category) => [category, labels[category]])
+  )('category badges use shared tones — %s', (category, label) => {
+    const typed = category as Category
+    render(<FileList files={[entry({ category: typed })]} onRemove={vi.fn()} />)
+    const className = screen.getByText(label as string).className
+    const tokens = className.split(/\s+/)
+    const tone = CATEGORY_TONES[typed]
+    expect(className).toContain(tone.tint)
+    expect(className).toContain(tone.text)
+    expect(className).toContain(tone.border)
+    expect(tokens).not.toContain('bg-secondary')
+    expect(tokens).not.toContain('text-secondary-foreground')
+  })
+
+  it('other category stays muted', () => {
+    render(<FileList files={[entry({ category: 'other' })]} onRemove={vi.fn()} />)
+    const className = screen.getByText('Other').className
+    expect(className).toContain('text-muted-foreground')
+    const tokens = className.split(/\s+/)
+    for (const token of tokens) {
+      expect(token).not.toMatch(/^(bg|text|border)-(blue|violet|amber|red)/)
+    }
+  })
+
   it('remove button calls onRemove with id and has aria-label', async () => {
     const user = userEvent.setup()
     const onRemove = vi.fn()
@@ -133,7 +166,7 @@ describe('FileList', () => {
     expect(screen.getByText('1.2 MB → 180 KB · 85% smaller')).toBeInTheDocument()
   })
 
-  it('best effort row renders sizes in destructive red', () => {
+  it('best effort status renders amber in staging table', () => {
     render(
       <FileList
         files={[
@@ -147,9 +180,13 @@ describe('FileList', () => {
         onRemove={vi.fn()}
       />
     )
+    const badge = screen.getByText('Best effort')
+    expect(badge.className).toContain('text-amber-600')
+    expect(badge.className).not.toContain('text-destructive')
+    expect(badge.firstElementChild?.className).toContain('bg-amber-500')
     const line = screen.getByText(/smaller$/)
-    expect(line.className).toContain('text-destructive')
-    expect(screen.getByText('Best effort')).toBeInTheDocument()
+    expect(line.className).toContain('text-amber-600')
+    expect(line.className).not.toContain('text-destructive')
   })
 
   it('already under target row renders status and result line', () => {
