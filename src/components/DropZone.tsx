@@ -20,6 +20,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Button } from '@/components/ui/button'
 import { RiUploadCloud2Line } from '@remixicon/react'
 import type { Category } from '@/types'
+import { CATEGORY_TONES } from '@/lib/tokens'
 
 interface DropZoneProps {
   onBrowse: () => void
@@ -43,13 +44,26 @@ const FORMATS: Array<{ ext: string; category: Category }> = [
 
 const MONO_FORMATS = FORMATS.map((f) => f.ext).join(', ')
 
-const CATEGORY_TINTS: Record<Category, string> = {
-  image: 'bg-blue-500/10 text-blue-600',
-  video: 'bg-violet-500/10 text-violet-600',
-  pdf: 'bg-destructive/10 text-destructive',
-  document: 'bg-amber-500/10 text-amber-600',
-  other: 'bg-muted text-muted-foreground',
-}
+const FORMAT_GROUPS: Array<{ label: string; testId: string; categories: Category[]; border: string }> = [
+  {
+    label: 'IMAGES:',
+    testId: 'format-group-images',
+    categories: ['image'],
+    border: CATEGORY_TONES.image.border,
+  },
+  {
+    label: 'VIDEOS:',
+    testId: 'format-group-videos',
+    categories: ['video'],
+    border: CATEGORY_TONES.video.border,
+  },
+  {
+    label: 'DOCS:',
+    testId: 'format-group-docs',
+    categories: ['pdf', 'document'],
+    border: CATEGORY_TONES.pdf.border,
+  },
+]
 
 const CATEGORY_GLYPHS: Record<Category, ReactNode> = {
   image: (
@@ -105,9 +119,10 @@ function CategoryIcon({ category }: { category: Category }) {
 }
 
 function FormatPill({ ext, category }: { ext: string; category: Category }) {
+  const tone = CATEGORY_TONES[category]
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-[3.5px] text-[10.5px] font-semibold tracking-[0.01em] ${CATEGORY_TINTS[category]}`}
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[3.5px] text-[10.5px] font-semibold tracking-[0.01em] ${tone.border} ${tone.tint} ${tone.text}`}
     >
       <CategoryIcon category={category} />
       {ext}
@@ -230,7 +245,7 @@ export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZ
       aria-label="Add files: drop files here or press Enter to browse"
       onClick={onBrowse}
       onKeyDown={handleKeyDown}
-      className={`flex w-full cursor-pointer flex-col items-center gap-3 px-6 py-12 text-center transition-colors ${
+      className={`flex w-full cursor-pointer flex-col items-center gap-3 rounded-2xl px-6 py-12 text-center transition-colors ${
         isDragging
           ? 'border border-dashed border-primary bg-primary/5'
           : 'border border-dashed border-input bg-muted/30 hover:bg-muted/50'
@@ -262,9 +277,20 @@ export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZ
       <p className={`text-[11px] ${isDragging ? 'font-semibold text-primary' : 'text-muted-foreground'}`}>
         {isDragging ? filesDetected : '…or click anywhere in this area'}
       </p>
-      <div className="mt-1.5 flex max-w-[560px] flex-wrap items-center justify-center gap-1.5">
-        {FORMATS.map((f) => (
-          <FormatPill key={f.ext} ext={f.ext} category={f.category} />
+      <div className="mt-1.5 flex max-w-[560px] flex-wrap items-center justify-center gap-2">
+        {FORMAT_GROUPS.map((group) => (
+          <div
+            key={group.testId}
+            data-testid={group.testId}
+            className={`flex flex-wrap items-center justify-center gap-1.5 rounded-xl border bg-background/50 px-2.5 py-1.5 ${group.border}`}
+          >
+            <span className="px-1 text-[10px] font-bold tracking-wider text-muted-foreground">
+              {group.label}
+            </span>
+            {FORMATS.filter((f) => group.categories.includes(f.category)).map((f) => (
+              <FormatPill key={f.ext} ext={f.ext} category={f.category} />
+            ))}
+          </div>
         ))}
       </div>
     </div>

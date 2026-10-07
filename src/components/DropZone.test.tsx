@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
+import { render, screen, waitFor, act, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 
@@ -172,6 +172,44 @@ describe('DropZone', () => {
     expect(screen.getByText('XLSX').className).toContain('text-amber-600')
     const surface = screen.getByRole('button', { name: /drop files here or press/i })
     expect(surface).toHaveAttribute('tabindex', '0')
+  })
+
+  it('groups format pills under labeled containers IMAGES/VIDEOS/DOCS', () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    expect(screen.getByText('IMAGES:')).toBeInTheDocument()
+    expect(screen.getByText('VIDEOS:')).toBeInTheDocument()
+    expect(screen.getByText('DOCS:')).toBeInTheDocument()
+    for (const ext of ['JPEG', 'PNG', 'WebP', 'HEIC', 'MP4', 'MOV', 'PDF', 'DOCX', 'XLSX', 'PPTX']) {
+      expect(screen.getByText(ext)).toBeInTheDocument()
+    }
+  })
+
+  it('zone container is rounded (rounded-2xl class present)', () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    const zone = screen.getByRole('button', { name: /drop files here or press/i })
+    expect(zone.className).toContain('rounded-2xl')
+  })
+
+  it('PDF pill lives inside the DOCS group container', () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    const images = screen.getByTestId('format-group-images')
+    const videos = screen.getByTestId('format-group-videos')
+    const docs = screen.getByTestId('format-group-docs')
+    expect(within(docs).getByText('PDF')).toBeInTheDocument()
+    expect(within(docs).getByText('DOCX')).toBeInTheDocument()
+    expect(within(docs).getByText('XLSX')).toBeInTheDocument()
+    expect(within(docs).getByText('PPTX')).toBeInTheDocument()
+    expect(within(images).queryByText('PDF')).not.toBeInTheDocument()
+    expect(within(videos).queryByText('PDF')).not.toBeInTheDocument()
+  })
+
+  it('group containers carry category border tones', () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
+    expect(screen.getByTestId('format-group-images').className).toContain('border-blue-500/30')
+    expect(screen.getByTestId('format-group-videos').className).toContain('border-violet-500/30')
+    const docs = screen.getByTestId('format-group-docs')
+    expect(within(docs).getByText('PDF').className).toContain('border-destructive/35')
+    expect(within(docs).getByText('DOCX').className).toContain('border-amber-500/30')
   })
 
   it('surface click, Enter, and Space each call onBrowse; browse button does not double-fire', async () => {
