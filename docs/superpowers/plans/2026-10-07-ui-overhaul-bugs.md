@@ -380,7 +380,7 @@ it('compact drag state keeps same label slot — no layout-shifting text swap', 
 - `renders no right-edge fade overlay` — assert absence by signature class, not `[aria-hidden]`
 - `scroll container has right padding for scroll end` (gap-fill, sev 5) — className contains `pr-3`
 
-- [ ] **Step 1: Write failing test** in `src/components/run/KanbanBoard.test.tsx`:
+- [x] **Step 1: Write failing test** in `src/components/run/KanbanBoard.test.tsx`:
 
 ```ts
 it('renders no right-edge fade overlay', () => {
@@ -393,10 +393,10 @@ it('scroll container has right padding for scroll end', () => {
 })
 ```
 
-- [ ] **Step 2: Run to verify failure.** Run: `yarn vitest run src/components/run/KanbanBoard.test.tsx`. Expected: FAIL (overlay exists).
-- [ ] **Step 3: Implement.** Delete overlay; add right padding inside `overflow-x-auto` container; drop `relative` wrapper if nothing else uses it.
-- [ ] **Step 4: Run to verify pass.** Run: `yarn vitest run src/components/run/KanbanBoard.test.tsx`. Expected: PASS.
-- [ ] **Step 5: Commit** `git add src/components/run/KanbanBoard.tsx src/components/run/KanbanBoard.test.tsx && git commit -m "fix(ui): remove kanban right-edge overlay, add scroll-end padding"`
+- [x] **Step 2: Run to verify failure.** Run: `yarn vitest run src/components/run/KanbanBoard.test.tsx`. Expected: FAIL (overlay exists).
+- [x] **Step 3: Implement.** Delete overlay; add right padding inside `overflow-x-auto` container; drop `relative` wrapper if nothing else uses it.
+- [x] **Step 4: Run to verify pass.** Run: `yarn vitest run src/components/run/KanbanBoard.test.tsx`. Expected: PASS.
+- [x] **Step 5: Commit** `git add src/components/run/KanbanBoard.tsx src/components/run/KanbanBoard.test.tsx && git commit -m "fix(ui): remove kanban right-edge overlay, add scroll-end padding"`
 
 ### Task 8: RunRow — gradient bar, tinted bg, done accent
 
