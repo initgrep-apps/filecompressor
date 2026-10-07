@@ -16,7 +16,7 @@
 
 import '@testing-library/jest-dom/vitest'
 
-export class CapturingResizeObserver {
+export class CapturingResizeObserver implements ResizeObserver {
   static instances: CapturingResizeObserver[] = []
 
   observed: Element[] = []
@@ -35,19 +35,18 @@ export class CapturingResizeObserver {
     this.observed = this.observed.filter((el) => el !== target)
   }
 
-  disconnect(): void {}
+  disconnect(): void {
+    const instances = CapturingResizeObserver.instances
+    const index = instances.indexOf(this)
+    if (index !== -1) instances.splice(index, 1)
+  }
 }
 
 export function resetCapturedResizeObservers(): void {
   CapturingResizeObserver.instances = []
 }
 
-export function capturedObserveTargets(): Element[] {
-  return CapturingResizeObserver.instances.flatMap((instance) => instance.observed)
-}
-
-globalThis.ResizeObserver =
-  CapturingResizeObserver as unknown as typeof ResizeObserver
+globalThis.ResizeObserver = CapturingResizeObserver
 
 const matchMediaStub = (query: string) =>
   ({
