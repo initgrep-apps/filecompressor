@@ -22,12 +22,17 @@ const SUSPEND_MS = 3000
 export function useAutoCollapse(contentRef: RefObject<HTMLElement | null>): void {
   const { open, setOpen } = useSidebar()
   const openRef = useRef(open)
+  const setOpenRef = useRef(setOpen)
   const crampedRef = useRef(false)
   const autoCollapsedRef = useRef(false)
   const lastManualRef = useRef(-Infinity)
   const lastSetRef = useRef<boolean | null>(null)
+  const recheckRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  openRef.current = open
+  useEffect(() => {
+    openRef.current = open
+    setOpenRef.current = setOpen
+  }, [open, setOpen])
 
   useEffect(() => {
     if (lastSetRef.current === null) {
@@ -38,47 +43,62 @@ export function useAutoCollapse(contentRef: RefObject<HTMLElement | null>): void
     const now = Date.now()
     const priorManual = lastManualRef.current
     lastManualRef.current = now
+    lastSetRef.current = open
     autoCollapsedRef.current = false
     if (open && crampedRef.current && now - priorManual >= SUSPEND_MS) {
-      setOpen(false)
       lastSetRef.current = false
+      setOpenRef.current(false)
       autoCollapsedRef.current = true
     }
-  }, [open, setOpen])
+  }, [open])
 
   useEffect(() => {
     const el = contentRef.current
-    if (!el) return
-    const evaluate = (entries: ResizeObserverEntry[]) => {
-      const last = entries[entries.length - 1]
-      if (!last) return
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const evaluate = (target: Element) => {
       const now = Date.now()
-      if (now - lastManualRef.current < SUSPEND_MS) return
-      const cramped = last.target.scrollWidth > last.target.clientWidth + 1
+      const elapsed = now - lastManualRef.current
+      if (elapsed < SUSPEND_MS) {
+        if (recheckRef.current !== null) clearTimeout(recheckRef.current)
+        recheckRef.current = setTimeout(() => {
+          recheckRef.current = null
+          evaluate(el)
+        }, SUSPEND_MS - elapsed)
+        return
+      }
+      const cramped = target.scrollWidth > target.clientWidth + 1
       if (cramped && !crampedRef.current) {
         if (openRef.current) {
-          setOpen(false)
           lastSetRef.current = false
+          setOpenRef.current(false)
           autoCollapsedRef.current = true
         }
         crampedRef.current = true
       } else if (cramped && crampedRef.current && openRef.current && !autoCollapsedRef.current) {
-        setOpen(false)
         lastSetRef.current = false
+        setOpenRef.current(false)
         autoCollapsedRef.current = true
       } else if (!cramped && crampedRef.current) {
         if (autoCollapsedRef.current && !openRef.current) {
-          setOpen(true)
           lastSetRef.current = true
+          setOpenRef.current(true)
         }
         autoCollapsedRef.current = false
         crampedRef.current = false
       }
     }
-    const observer = new ResizeObserver(evaluate)
+    const observer = new ResizeObserver((entries: ResizeObserverEntry[]) => {
+      const last = entries[entries.length - 1]
+      if (!last) return
+      evaluate(last.target)
+    })
     observer.observe(el)
     return () => {
+      if (recheckRef.current !== null) {
+        clearTimeout(recheckRef.current)
+        recheckRef.current = null
+      }
       observer.disconnect()
     }
-  }, [contentRef, setOpen])
+  }, [contentRef])
 }

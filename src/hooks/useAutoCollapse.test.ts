@@ -40,7 +40,9 @@ vi.mock('@/components/ui/sidebar', async () => {
       }
       return {
         open,
-        setOpen: registry.spy,
+        setOpen: (v: boolean) => {
+          registry.spy?.(v)
+        },
         openMobile: false,
         setOpenMobile: vi.fn(),
         isMobile: false,
@@ -81,7 +83,7 @@ const spy = () => registry.spy as Mock<(v: boolean) => void>
 function setup(scroll: number, client: number) {
   const el = document.createElement('div')
   setWidths(el, scroll, client)
-  const contentRef = { current: el } as RefObject<HTMLElement | null>
+  const contentRef: RefObject<HTMLElement | null> = { current: el }
   const hook = renderHook(() => useAutoCollapse(contentRef))
   const trigger = () => {
     const observer = ResizeObserverStub.instances[0]
@@ -118,6 +120,16 @@ describe('useAutoCollapse', () => {
     expect(observer.observed).toContain(el)
     trigger()
     expect(spy()).toHaveBeenCalledWith(false)
+  })
+
+  it('ignores one-pixel overflow', () => {
+    const { el, trigger } = setup(801, 800)
+    trigger()
+    expect(spy()).not.toHaveBeenCalled()
+    setWidths(el, 802, 800)
+    trigger()
+    expect(spy()).toHaveBeenCalledTimes(1)
+    expect(spy()).toHaveBeenLastCalledWith(false)
   })
 
   it('does not expand when collapse was manual', () => {
@@ -176,6 +188,22 @@ describe('useAutoCollapse', () => {
     expect(spy()).toHaveBeenLastCalledWith(false)
   })
 
+  it('re-checks suspended cramped state at expiry', () => {
+    const { el, trigger, manual } = setup(700, 800)
+    trigger()
+    manual(false)
+    manual(true)
+    vi.advanceTimersByTime(1000)
+    setWidths(el, 1000, 800)
+    trigger()
+    expect(spy()).not.toHaveBeenCalled()
+    act(() => {
+      vi.advanceTimersByTime(2000)
+    })
+    expect(spy()).toHaveBeenCalledTimes(1)
+    expect(spy()).toHaveBeenLastCalledWith(false)
+  })
+
   it('respected after suspension expiry', () => {
     const { el, trigger, manual } = setup(700, 800)
     trigger()
@@ -209,7 +237,24 @@ describe('useAutoCollapse', () => {
   })
 
   it('creates no observer when the ref is null', () => {
-    const contentRef = { current: null } as RefObject<HTMLElement | null>
+    const contentRef: RefObject<HTMLElement | null> = { current: null }
+    expect(() => renderHook(() => useAutoCollapse(contentRef))).not.toThrow()
+    expect(ResizeObserverStub.instances).toHaveLength(0)
+  })
+
+  it('does not re-observe when open changes', () => {
+    const { el, trigger, manual } = setup(700, 800)
+    trigger()
+    manual(false)
+    manual(true)
+    expect(ResizeObserverStub.instances).toHaveLength(1)
+    expect(ResizeObserverStub.instances[0].observed).toEqual([el])
+    expect(ResizeObserverStub.instances[0].disconnect).not.toHaveBeenCalled()
+  })
+
+  it('creates no observer when ResizeObserver is unavailable', () => {
+    vi.stubGlobal('ResizeObserver', undefined)
+    const contentRef: RefObject<HTMLElement | null> = { current: document.createElement('div') }
     expect(() => renderHook(() => useAutoCollapse(contentRef))).not.toThrow()
     expect(ResizeObserverStub.instances).toHaveLength(0)
   })
