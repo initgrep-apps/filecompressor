@@ -17,6 +17,7 @@
 import { motion } from 'motion/react'
 import { formatSize, reductionPercentOrNull } from '@/lib/sizeFormat'
 import { RESULT_STATUSES } from '@/components/FileList'
+import { CATEGORY_TONES, STATUS_TONES } from '@/lib/tokens'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { strategyLabel } from '@/lib/strategyLabels'
@@ -41,6 +42,10 @@ const CHIP_TONES: Record<ChipTone, string> = {
 
 const ICON_BUTTON =
   'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
+
+function cardAccentShadow(accent: string): string {
+  return `shadow-[inset_3px_0_0_var(--${accent.slice(3)})]`
+}
 
 const NAME_TONES: Partial<Record<FileStatus, string>> = {
   compressing: 'text-primary font-semibold',
@@ -120,9 +125,16 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
       exit={{ opacity: 0, scale: 0.98 }}
       transition={{ duration: 0.18, ease: 'easeOut' }}
       className={cn(
-        'relative rounded-[calc(var(--radius)+2px)] border bg-card px-2.5 py-[9px]',
-        status === 'compressing' && 'border-primary/30 bg-primary/5 shadow-[inset_3px_0_0_var(--primary)]',
+        'relative rounded-[calc(var(--radius)+2px)] border px-2.5 py-[9px]',
+        status === 'compressing'
+          ? cn(
+              STATUS_TONES.compressing.border,
+              CATEGORY_TONES[file.category].tint,
+              cardAccentShadow(STATUS_TONES.compressing.accent)
+            )
+          : 'bg-card',
         status === 'failed' && 'border-destructive/25 bg-destructive/5 shadow-[inset_3px_0_0_var(--destructive)]',
+        status === 'done' && cardAccentShadow(STATUS_TONES.done.accent),
         status === 'pending' && 'border-dashed'
       )}
     >
@@ -220,7 +232,7 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
           <div className="mt-[7px] h-1 overflow-hidden rounded-full bg-primary/15">
             <div
               data-testid="run-progress-fill"
-              className="h-full rounded-full bg-primary transition-[width]"
+              className="h-full rounded-full bg-[linear-gradient(90deg,var(--color-cyan-400),var(--color-primary))] transition-[width]"
               style={{ width: `${safePercent(percent)}%` }}
             />
           </div>

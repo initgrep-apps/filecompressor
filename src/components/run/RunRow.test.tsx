@@ -220,3 +220,30 @@ describe('RunRow', () => {
     expect(errorEl.getAttribute('title')).toBe(longError)
   })
 })
+
+describe('RunRow card fidelity', () => {
+  const GRADIENT_FILL = 'bg-[linear-gradient(90deg,var(--color-cyan-400),var(--color-primary))]'
+  const DONE_ACCENT = 'shadow-[inset_3px_0_0_var(--primary)]'
+
+  it('compressing card shows gradient progress fill', () => {
+    render(<RunRow file={makeFile({ status: 'compressing', category: 'image' })} percent={42} />)
+    expect(screen.getByTestId('run-progress-fill').className).toContain(GRADIENT_FILL)
+  })
+
+  it('done card carries green inset accent bar', () => {
+    render(<RunRow file={makeFile({ status: 'done' })} />)
+    expect(screen.getByTestId('run-row-done').className).toContain(DONE_ACCENT)
+  })
+
+  it('compressing card shows lane tint and primary border', () => {
+    render(<RunRow file={makeFile({ status: 'compressing', category: 'image' })} percent={42} />)
+    const card = screen.getByTestId('run-row-compressing')
+    expect(card.className).toContain('blue')
+    expect(card.className).toContain('border-primary/30')
+  })
+
+  it('failed card keeps red accent', () => {
+    render(<RunRow file={makeFile({ status: 'failed', error: 'boom' })} />)
+    expect(screen.getByTestId('run-row-failed').className).toContain('destructive')
+  })
+})
