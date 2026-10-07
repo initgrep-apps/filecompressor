@@ -137,7 +137,7 @@ describe('STATUS_TONES', () => {
 - `new batch invokes clear_list on the backend` (gap-fill, sev 8) — `expect(invoke).toHaveBeenCalledWith('clear_list')`; UI-only clear would silently desync the Rust-side list
 - `new batch failure path keeps the list and shows the error alert` — assert alert message prefix `Could not clear list:`
 
-- [ ] **Step 1: Write the failing tests** in the existing new-batch describe in `src/views/CompressView.test.tsx`:
+- [x] **Step 1: Write the failing tests** in the existing new-batch describe in `src/views/CompressView.test.tsx`:
 
 ```ts
 it('new batch clears the staging list — empty drop zone is shown', async () => {
@@ -155,8 +155,8 @@ it('new batch failure path keeps the list and shows the error alert', async () =
 })
 ```
 
-- [ ] **Step 2: Run tests to verify they fail.** Run: `yarn vitest run src/views/CompressView.test.tsx`. Expected: first test FAIL (old list still rendered), second FAIL (no alert today).
-- [ ] **Step 3: Implement** in `src/providers/CompressionProvider.tsx` — `clearList` already destructured (line 55); rewrite `endRun` only:
+- [x] **Step 2: Run tests to verify they fail.** Run: `yarn vitest run src/views/CompressView.test.tsx`. Expected: first test FAIL (old list still rendered), second FAIL (no alert today).
+- [x] **Step 3: Implement** in `src/providers/CompressionProvider.tsx` — `clearList` already destructured (line 55); rewrite `endRun` only:
 
 ```ts
 const endRun = useCallback(() => {
@@ -165,8 +165,8 @@ const endRun = useCallback(() => {
 }, [clearList])
 ```
 
-- [ ] **Step 4: Run all provider/view tests.** Run: `yarn vitest run src/views/CompressView.test.tsx src/providers`. Expected: PASS (fix any of the existing new-batch assertions that relied on the old list persisting).
-- [ ] **Step 5: Commit** `git add src/providers/CompressionProvider.tsx src/views/CompressView.test.tsx && git commit -m "fix(compression): new batch clears staging list"`
+- [x] **Step 4: Run all provider/view tests.** Run: `yarn vitest run src/views/CompressView.test.tsx src/providers`. Expected: PASS (fix any of the existing new-batch assertions that relied on the old list persisting).
+- [x] **Step 5: Commit** `git add src/providers/CompressionProvider.tsx src/views/CompressView.test.tsx && git commit -m "fix(compression): new batch clears staging list"`
 
 ### Task 3: `useAutoCollapse` hook
 
