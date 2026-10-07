@@ -39,6 +39,7 @@ import {
   CompressionContext,
   type CompressionContextValue,
 } from '@/providers/CompressionProvider'
+import { CapturingResizeObserver, resetCapturedResizeObservers } from '@/test-setup'
 import { toast } from 'sonner'
 
 const renderView = (ui = <CompressView />) =>
@@ -632,9 +633,6 @@ describe('CompressView', () => {
   })
 
   it('auto-collapse observes the staging content card, not the clipped wrapper', async () => {
-    const { CapturingResizeObserver, resetCapturedResizeObservers } = await import(
-      '@/test-setup'
-    )
     resetCapturedResizeObservers()
     renderView()
     await addFileInView()
@@ -643,15 +641,12 @@ describe('CompressView', () => {
     expect(card).toBeDefined()
     expect(card!.querySelector('[data-slot="table-container"]')).not.toBeNull()
     const clipped = targets.filter(
-      (el) => el !== card && (el.className as string).includes('overflow-hidden')
+      (el) => el !== card && el.className.includes('overflow-hidden')
     )
     expect(clipped).toEqual([])
   })
 
   it('auto-collapse observes the kanban board element on the run screen, not the clipped wrapper', async () => {
-    const { CapturingResizeObserver, resetCapturedResizeObservers } = await import(
-      '@/test-setup'
-    )
     resetCapturedResizeObservers()
     renderView()
     await addFileInView()
@@ -663,15 +658,12 @@ describe('CompressView', () => {
     const wrapperTargets = targets.filter(
       (el) =>
         el !== board &&
-        (el.className as string).includes('min-h-0 flex-1 overflow-hidden')
+        el.className.includes('min-h-0 flex-1 overflow-hidden')
     )
     expect(wrapperTargets).toEqual([])
   })
 
   it('React node reuse keeps the ResizeObserver watching the same board node across board→empty→board swaps', async () => {
-    const { CapturingResizeObserver, resetCapturedResizeObservers } = await import(
-      '@/test-setup'
-    )
     resetCapturedResizeObservers()
     renderView()
     await addFileInView()

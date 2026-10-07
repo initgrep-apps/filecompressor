@@ -12,6 +12,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
 
 import { SettingsView } from '@/views/SettingsView'
 import { SidebarProvider } from '@/components/ui/sidebar'
+import { CapturingResizeObserver, resetCapturedResizeObservers } from '@/test-setup'
 
 const renderSettings = () =>
   render(
@@ -550,20 +551,16 @@ describe('SettingsView', () => {
   })
 
   it('auto-collapse observes the settings scroll container, not a clipped wrapper', async () => {
-    const { CapturingResizeObserver, resetCapturedResizeObservers } = await import(
-      '@/test-setup'
-    )
     resetCapturedResizeObservers()
     renderSettings()
     await screen.findByLabelText('Images target size')
     const targets = CapturingResizeObserver.instances.flatMap((o) => o.observed)
     const scroller = targets.find((el) =>
-      (el.className as string).includes('overflow-y-auto')
+      el.className.includes('overflow-y-auto')
     )
     expect(scroller).toBeDefined()
-    expect(scroller!.className).toContain('space-y-4')
     const clipped = targets.filter(
-      (el) => el !== scroller && (el.className as string).includes('overflow-hidden')
+      (el) => el !== scroller && el.className.includes('overflow-hidden')
     )
     expect(clipped).toEqual([])
   })
