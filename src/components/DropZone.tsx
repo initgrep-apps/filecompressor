@@ -138,6 +138,39 @@ function FormatPill({ ext, category, mini = false }: { ext: string; category: Ca
   )
 }
 
+function FormatGroups({ mini = false }: { mini?: boolean }) {
+  return (
+    <div
+      className={
+        mini
+          ? 'flex min-w-0 flex-wrap items-center gap-1.5'
+          : 'mt-1.5 flex max-w-[560px] flex-wrap items-center justify-center gap-2'
+      }
+    >
+      {FORMAT_GROUPS.map((group) => (
+        <div
+          key={group.testId}
+          data-testid={group.testId}
+          className={`flex flex-wrap items-center border bg-background/50 ${
+            mini ? 'gap-1 rounded-lg px-2 py-1' : 'justify-center gap-1.5 rounded-xl px-2.5 py-1.5'
+          } ${group.border}`}
+        >
+          <span
+            className={`px-1 font-bold tracking-wider text-muted-foreground ${
+              mini ? 'text-[9px]' : 'text-[10px]'
+            }`}
+          >
+            {group.label}
+          </span>
+          {FORMATS.filter((f) => group.categories.includes(f.category)).map((f) => (
+            <FormatPill key={f.ext} ext={f.ext} category={f.category} mini={mini} />
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [dragCount, setDragCount] = useState(0)
@@ -238,22 +271,7 @@ export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZ
             Browse
           </Button>
         </div>
-        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          {FORMAT_GROUPS.map((group) => (
-            <div
-              key={group.testId}
-              data-testid={group.testId}
-              className={`flex flex-wrap items-center gap-1 rounded-lg border bg-background/50 px-2 py-1 ${group.border}`}
-            >
-              <span className="px-1 text-[9px] font-bold tracking-wider text-muted-foreground">
-                {group.label}
-              </span>
-              {FORMATS.filter((f) => group.categories.includes(f.category)).map((f) => (
-                <FormatPill key={f.ext} ext={f.ext} category={f.category} mini />
-              ))}
-            </div>
-          ))}
-        </div>
+        <FormatGroups mini />
       </div>
     )
   }
@@ -297,22 +315,7 @@ export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZ
       <p className={`text-[11px] ${isDragging ? 'font-semibold text-primary' : 'text-muted-foreground'}`}>
         {isDragging ? filesDetected : '…or click anywhere in this area'}
       </p>
-      <div className="mt-1.5 flex max-w-[560px] flex-wrap items-center justify-center gap-2">
-        {FORMAT_GROUPS.map((group) => (
-          <div
-            key={group.testId}
-            data-testid={group.testId}
-            className={`flex flex-wrap items-center justify-center gap-1.5 rounded-xl border bg-background/50 px-2.5 py-1.5 ${group.border}`}
-          >
-            <span className="px-1 text-[10px] font-bold tracking-wider text-muted-foreground">
-              {group.label}
-            </span>
-            {FORMATS.filter((f) => group.categories.includes(f.category)).map((f) => (
-              <FormatPill key={f.ext} ext={f.ext} category={f.category} />
-            ))}
-          </div>
-        ))}
-      </div>
+      <FormatGroups />
     </div>
   )
 }
