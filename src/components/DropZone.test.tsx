@@ -311,26 +311,51 @@ describe('DropZone', () => {
     expect(screen.getByText('Files detected')).toBeInTheDocument()
   })
 
-  it('compact variant renders hero bar with mono formats line and no pills; compact Browse click calls onBrowse', async () => {
-    const user = userEvent.setup()
+  it('compact bar has grouped mini pills row and no truncated mono string', () => {
     const onBrowse = vi.fn()
-    const onDrop = vi.fn()
-    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} compact />)
-    expect(screen.getByText('Drop more files here')).toBeInTheDocument()
+    render(<DropZone onBrowse={onBrowse} onDrop={vi.fn()} compact />)
+    expect(screen.getByText('IMAGES:')).toBeInTheDocument()
+    expect(screen.getByText('VIDEOS:')).toBeInTheDocument()
+    expect(screen.getByText('DOCS:')).toBeInTheDocument()
     expect(screen.getByText('or')).toBeInTheDocument()
-    expect(screen.getByText(ALL_FORMATS)).toBeInTheDocument()
-    expect(screen.queryByText('JPEG')).not.toBeInTheDocument()
-    expect(screen.queryByText('MP4')).not.toBeInTheDocument()
-    const surface = screen.getByRole('button', { name: /drop here or press/i })
-    expect(surface).toHaveAttribute('tabindex', '0')
-    await user.click(screen.getByRole('button', { name: 'Browse' }))
-    expect(onBrowse).toHaveBeenCalledTimes(1)
-    expect(onDrop).not.toHaveBeenCalled()
-    await user.click(surface)
-    expect(onBrowse).toHaveBeenCalledTimes(2)
+    for (const ext of ALL_EXTENSIONS) {
+      expect(screen.getByText(ext)).toBeInTheDocument()
+    }
+    expect(screen.queryByText(/JPEG, PNG, WebP/)).not.toBeInTheDocument()
+    expect(document.body.textContent).not.toContain(ALL_FORMATS)
+    const label = screen.getByTestId('compact-label')
+    expect(label.textContent).toBe('Drop more files here')
+    expect(label.className).toMatch(/min-w-/)
+    expect(screen.getByRole('button', { name: /drop here or press/i })).toHaveAttribute('tabindex', '0')
   })
 
-  it('compact variant reacts to drag hover the same way', async () => {
+  it('compact drag state keeps same label slot — no layout-shifting text swap', async () => {
+    render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} compact />)
+    await waitFor(() => expect(handlers.length).toBeGreaterThan(0))
+    const label = screen.getByTestId('compact-label')
+    expect(label.textContent).toBe('Drop more files here')
+    expect(label.className).toMatch(/min-w-/)
+    emit({
+      payload: {
+        type: 'enter',
+        paths: ['/a.jpg', '/b.mov'],
+        position: { x: 0, y: 0 },
+      },
+    })
+    expect(screen.getByTestId('compact-label')).toBe(label)
+    expect(label.textContent).toBe('Drop more files here')
+    const surface = screen.getByRole('button', { name: /drop here or press/i })
+    expect(surface.className).toContain('bg-primary/5')
+    expect(surface.className).not.toContain('border-primary/35')
+    emit({ payload: { type: 'leave' } })
+    const surfaceAfterLeave = screen.getByRole('button', { name: /drop here or press/i })
+    expect(surfaceAfterLeave.className).toContain('border-primary/35')
+    expect(surfaceAfterLeave.className).not.toContain('bg-primary/5')
+    expect(screen.getByTestId('compact-label')).toBe(label)
+    expect(label.textContent).toBe('Drop more files here')
+  })
+
+  it('row 2 mini groups persist during drag state', async () => {
     render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} compact />)
     await waitFor(() => expect(handlers.length).toBeGreaterThan(0))
     emit({
@@ -340,21 +365,38 @@ describe('DropZone', () => {
         position: { x: 0, y: 0 },
       },
     })
-    expect(screen.getByText('Release to add files')).toBeInTheDocument()
-    expect(screen.getByText('2 files detected')).toBeInTheDocument()
-    expect(screen.queryByText('Drop more files here')).not.toBeInTheDocument()
-    const surface = screen.getByRole('button', { name: /drop here or press/i })
-    expect(surface.className).toContain('bg-primary/5')
-    expect(surface.className).not.toContain('border-primary/35')
+    expect(screen.getByTestId('format-group-images')).toBeInTheDocument()
+    expect(screen.getByTestId('format-group-videos')).toBeInTheDocument()
+    expect(screen.getByTestId('format-group-docs')).toBeInTheDocument()
+    expect(within(screen.getByTestId('format-group-docs')).getByText('PDF')).toBeInTheDocument()
     emit({ payload: { type: 'leave' } })
-    const surfaceAfterLeave = screen.getByRole('button', { name: /drop here or press/i })
-    expect(surfaceAfterLeave.className).toContain('border-primary/35')
-    expect(surfaceAfterLeave.className).not.toContain('bg-primary/5')
-    expect(screen.getByText('Drop more files here')).toBeInTheDocument()
-    expect(screen.getByText('or')).toBeInTheDocument()
-    expect(screen.getByText(ALL_FORMATS)).toBeInTheDocument()
-    expect(screen.queryByText('Release to add files')).not.toBeInTheDocument()
-    expect(screen.queryByText('2 files detected')).not.toBeInTheDocument()
+    expect(screen.getByTestId('format-group-images')).toBeInTheDocument()
+    expect(screen.getByTestId('format-group-videos')).toBeInTheDocument()
+    expect(screen.getByTestId('format-group-docs')).toBeInTheDocument()
+  })
+
+  it('compact surface responds to Enter and Space', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={vi.fn()} compact />)
+    const surface = screen.getByRole('button', { name: /drop here or press/i })
+    surface.focus()
+    await user.keyboard('{Enter}')
+    await user.keyboard(' ')
+    expect(onBrowse).toHaveBeenCalledTimes(2)
+  })
+
+  it('compact browse button does not double-fire with surface click', async () => {
+    const user = userEvent.setup()
+    const onBrowse = vi.fn()
+    const onDrop = vi.fn()
+    render(<DropZone onBrowse={onBrowse} onDrop={onDrop} compact />)
+    const surface = screen.getByRole('button', { name: /drop here or press/i })
+    await user.click(surface)
+    expect(onBrowse).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Browse' }))
+    expect(onBrowse).toHaveBeenCalledTimes(2)
+    expect(onDrop).not.toHaveBeenCalled()
   })
 
   it('card click outside the button fires onBrowse exactly once', async () => {

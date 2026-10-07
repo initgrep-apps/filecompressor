@@ -42,8 +42,6 @@ const FORMATS: Array<{ ext: string; category: Category }> = [
   { ext: 'PPTX', category: 'document' },
 ]
 
-const MONO_FORMATS = FORMATS.map((f) => f.ext).join(', ')
-
 const FORMAT_GROUPS: Array<{ label: string; testId: string; categories: Category[]; border: string }> = [
   {
     label: 'IMAGES:',
@@ -126,11 +124,13 @@ function CategoryIcon({ category }: { category: Category }) {
   )
 }
 
-function FormatPill({ ext, category }: { ext: string; category: Category }) {
+function FormatPill({ ext, category, mini = false }: { ext: string; category: Category; mini?: boolean }) {
   const tone = CATEGORY_TONES[category]
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-[3.5px] text-[10.5px] font-semibold tracking-[0.01em] ${tone.border} ${tone.tint} ${tone.text}`}
+      className={`inline-flex items-center gap-1 rounded-full border font-semibold tracking-[0.01em] ${
+        mini ? 'px-2 py-[2px] text-[9.5px]' : 'px-2.5 py-[3.5px] text-[10.5px]'
+      } ${tone.border} ${tone.tint} ${tone.text}`}
     >
       <CategoryIcon category={category} />
       {ext}
@@ -217,31 +217,43 @@ export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZ
         aria-label="Add more files: drop here or press Enter to browse"
         onClick={onBrowse}
         onKeyDown={handleKeyDown}
-        className={`flex w-full cursor-pointer items-center gap-3 px-3.5 py-2.5 transition-colors ${
+        className={`flex w-full cursor-pointer flex-col gap-2 px-3.5 py-2.5 transition-colors ${
           isDragging
             ? 'border border-dashed border-primary bg-primary/5'
             : 'border border-dashed border-primary/35 bg-primary/3'
         } ${className ?? ''}`}
       >
-        <div
-          className={`flex size-[34px] shrink-0 items-center justify-center rounded-[9px] bg-primary text-primary-foreground transition-transform ${
-            isDragging ? 'scale-105' : ''
-          }`}
-        >
-          <RiUploadCloud2Line size={16} />
+        <div className="flex items-center gap-3">
+          <div className="flex size-[34px] shrink-0 items-center justify-center rounded-[9px] bg-primary text-primary-foreground">
+            <RiUploadCloud2Line size={16} />
+          </div>
+          <span
+            data-testid="compact-label"
+            className="min-w-[144px] whitespace-nowrap text-[13px] font-semibold"
+          >
+            Drop more files here
+          </span>
+          <span className="whitespace-nowrap text-xs text-muted-foreground">or</span>
+          <Button variant="outline" size="sm" onClick={handleBrowseClick} onKeyDown={stopBrowseKey}>
+            Browse
+          </Button>
         </div>
-        <span className="whitespace-nowrap text-[13px] font-semibold">
-          {isDragging ? 'Release to add files' : 'Drop more files here'}
-        </span>
-        <span className="whitespace-nowrap text-xs text-muted-foreground">
-          {isDragging ? filesDetected : 'or'}
-        </span>
-        <Button variant="outline" size="sm" onClick={handleBrowseClick} onKeyDown={stopBrowseKey}>
-          Browse
-        </Button>
-        <span className="ml-auto min-w-0 max-w-[300px] truncate font-mono text-[10px] text-muted-foreground">
-          {MONO_FORMATS}
-        </span>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          {FORMAT_GROUPS.map((group) => (
+            <div
+              key={group.testId}
+              data-testid={group.testId}
+              className={`flex flex-wrap items-center gap-1 rounded-lg border bg-background/50 px-2 py-1 ${group.border}`}
+            >
+              <span className="px-1 text-[9px] font-bold tracking-wider text-muted-foreground">
+                {group.label}
+              </span>
+              {FORMATS.filter((f) => group.categories.includes(f.category)).map((f) => (
+                <FormatPill key={f.ext} ext={f.ext} category={f.category} mini />
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
