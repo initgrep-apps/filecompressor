@@ -563,7 +563,7 @@ it('session card shows accent bar colored by dominant outcome', () => {
 - `category target rows use tinted badges`
 - `each card header icon carries its tone` (gap-fill, sev 4) — `it.each` over 5 cards; a build with identical gray icons otherwise passes
 
-- [ ] **Step 1: Write failing test** in `src/views/SettingsView.test.tsx`:
+- [x] **Step 1: Write failing test** in `src/views/SettingsView.test.tsx`:
 
 ```ts
 it('category target rows use tinted badges', async () => {
@@ -572,10 +572,10 @@ it('category target rows use tinted badges', async () => {
 })
 ```
 
-- [ ] **Step 2: Run to verify failure.** Run: `yarn vitest run src/views/SettingsView.test.tsx`. Expected: FAIL.
-- [ ] **Step 3: Implement** per contract (icons: `RiFolderLine`-family/`RiLineChartLine`/`RiFlashlightLine`/`RiTimeLine`/`RiShieldLine` — pick from installed remixicon exports, verify names by grep before use).
-- [ ] **Step 4: Run to verify pass.** Run: `yarn vitest run src/views/SettingsView.test.tsx`. Expected: PASS.
-- [ ] **Step 5: Commit** `git add src/views/SettingsView.tsx src/views/SettingsView.test.tsx && git commit -m "feat(ui): settings view tinted icons and badges"`
+- [x] **Step 2: Run to verify failure.** Run: `yarn vitest run src/views/SettingsView.test.tsx`. Expected: FAIL.
+- [x] **Step 3: Implement** per contract (icons: `RiFolderLine`-family/`RiLineChartLine`/`RiFlashlightLine`/`RiTimeLine`/`RiShieldLine` — pick from installed remixicon exports, verify names by grep before use).
+- [x] **Step 4: Run to verify pass.** Run: `yarn vitest run src/views/SettingsView.test.tsx`. Expected: PASS.
+- [x] **Step 5: Commit** `git add src/views/SettingsView.tsx src/views/SettingsView.test.tsx && git commit -m "feat(ui): settings view tinted icons and badges"`
 
 ### Task 12: Wire auto-collapse into views + window minWidth bump
 
