@@ -249,7 +249,7 @@ Mechanism pin: the capturing stub must assert the hook read the real DOM element
 - `app header icon is the shield glyph` (gap-fill) — assert `RiFileShield2Line` renders in header
 - `count pill carries primary tint contract` (gap-fill) — className contains `rounded-full`, `font-mono`, `primary/10`, replaces badge assertions from `:140-178`
 
-- [ ] **Step 1: Write failing tests** in `src/App.test.tsx`:
+- [x] **Step 1: Write failing tests** in `src/App.test.tsx`:
 
 ```ts
 it('compress nav uses squeeze icon container and active border highlight', () => {
@@ -262,10 +262,10 @@ it('footer shows version and license pills; collapsed shows dot + ring, no text'
 })
 ```
 
-- [ ] **Step 2: Run to verify failure.** Run: `yarn vitest run src/App.test.tsx`. Expected: FAIL.
-- [ ] **Step 3: Implement** SidebarNav item anatomy + App header/footer per Interfaces block. Inactive labels `text-muted-foreground`.
-- [ ] **Step 4: Run to verify pass** — `yarn vitest run src/App.test.tsx`. Expected: PASS.
-- [ ] **Step 5: Commit** `git add src/App.tsx src/components/SidebarNav.tsx src/App.test.tsx && git commit -m "feat(ui): sidebar redesign with icon containers and pill footer"`
+- [x] **Step 2: Run to verify failure.** Run: `yarn vitest run src/App.test.tsx`. Expected: FAIL.
+- [x] **Step 3: Implement** SidebarNav item anatomy + App header/footer per Interfaces block. Inactive labels `text-muted-foreground`.
+- [x] **Step 4: Run to verify pass** — `yarn vitest run src/App.test.tsx`. Expected: PASS.
+- [x] **Step 5: Commit** `git add src/App.tsx src/components/SidebarNav.tsx src/App.test.tsx && git commit -m "feat(ui): sidebar redesign with icon containers and pill footer"`
 
 ### Task 5: DropZone full variant — rounded + grouped labeled pills
 

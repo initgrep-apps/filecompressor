@@ -16,16 +16,16 @@
 
 import type { ReactNode } from "react"
 import {
-  RiUploadCloud2Line,
+  RiContractUpDownLine,
   RiHistoryLine,
   RiSettings3Line,
 } from "@remixicon/react"
 import {
   SidebarMenu,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/components/ui/sidebar"
+import { cn } from "@/lib/utils"
 import { useCompressionContext } from "@/providers/CompressionProvider"
 
 export type ViewId = "compress" | "history" | "settings"
@@ -34,7 +34,7 @@ export const navItems: { id: ViewId; label: string; icon: ReactNode }[] = [
   {
     id: "compress",
     label: "Compress",
-    icon: <RiUploadCloud2Line size={16} />,
+    icon: <RiContractUpDownLine size={16} />,
   },
   {
     id: "history",
@@ -58,21 +58,44 @@ export function SidebarNav({ activeView, onViewChange }: SidebarNavProps) {
 
   return (
     <SidebarMenu>
-      {navItems.map((item) => (
-        <SidebarMenuItem key={item.id}>
-          <SidebarMenuButton
-            isActive={activeView === item.id}
-            tooltip={item.label}
-            onClick={() => onViewChange(item.id)}
-          >
-            {item.icon}
-            <span>{item.label}</span>
-          </SidebarMenuButton>
-          {item.id === "compress" && files.length > 0 && (
-            <SidebarMenuBadge>{files.length}</SidebarMenuBadge>
-          )}
-        </SidebarMenuItem>
-      ))}
+      {navItems.map((item) => {
+        const isActive = activeView === item.id
+        return (
+          <SidebarMenuItem key={item.id}>
+            <SidebarMenuButton
+              isActive={isActive}
+              tooltip={item.label}
+              onClick={() => onViewChange(item.id)}
+              data-testid={`nav-${item.id}`}
+              className={
+                isActive
+                  ? "border border-primary/30 [&[data-active]]:bg-primary/10"
+                  : "border border-transparent"
+              }
+            >
+              <span
+                className={cn(
+                  "flex size-7 items-center justify-center rounded-lg",
+                  isActive ? "bg-primary/15 text-primary" : "bg-muted"
+                )}
+              >
+                {item.icon}
+              </span>
+              <span className={isActive ? undefined : "text-muted-foreground"}>
+                {item.label}
+              </span>
+              {item.id === "compress" && files.length > 0 && (
+                <span
+                  data-testid="nav-count"
+                  className="ml-auto inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-bold text-primary group-data-[collapsible=icon]:hidden"
+                >
+                  {files.length}
+                </span>
+              )}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )
+      })}
     </SidebarMenu>
   )
 }
