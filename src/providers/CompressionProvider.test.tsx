@@ -195,6 +195,8 @@ describe('CompressionProvider', () => {
     })
     expect(screen.getByTestId('run-state')).toHaveTextContent('staging')
     expect(screen.getByTestId('batch-number')).toHaveTextContent('1')
+    expect(invoke).toHaveBeenCalledWith('clear_list')
+    expect(invoke).toHaveBeenLastCalledWith('clear_list')
   })
 
   it('run screen survives view switch (remount of a fresh consumer within the same provider)', async () => {

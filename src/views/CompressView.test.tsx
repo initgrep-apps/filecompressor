@@ -392,9 +392,38 @@ describe('CompressView', () => {
     await addFileInView()
     await pressCompress()
     emit('batch:complete', { batchId: 'b1', totalSavedBytes: 512 })
+    expect(invoke).not.toHaveBeenCalledWith('clear_list')
     const user = userEvent.setup()
     await user.click(screen.getByTestId('new-batch'))
     expect(invoke).toHaveBeenCalledWith('clear_list')
+  })
+
+  it('footer Clear List empties the staging list', async () => {
+    renderView()
+    await addFileInView()
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Clear List' }))
+    expect(await screen.findByText('Drag and drop files here')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('batch-summary')).not.toBeInTheDocument()
+  })
+
+  it('footer Clear List keeps the batch error banner', async () => {
+    renderView()
+    await addFileInView()
+    await pressCompress()
+    emit('batch:error', { batchId: 'b1', errorMessage: 'Output folder not writable' })
+    const user = userEvent.setup()
+    await user.click(screen.getByTestId('new-batch'))
+    await screen.findByText('Drag and drop files here')
+    await addViaBrowse([{ id: 'f2', name: 'b2.jpg', path: '/t/b2.jpg' }])
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Output folder not writable')
+    await user.click(screen.getByRole('button', { name: 'Clear List' }))
+    expect(await screen.findByText('Drag and drop files here')).toBeInTheDocument()
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('Output folder not writable')
   })
 
   it('new batch failure path keeps the list and shows the error alert', async () => {

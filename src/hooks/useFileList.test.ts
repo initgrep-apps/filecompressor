@@ -136,6 +136,46 @@ describe('useFileList', () => {
     expect(result.current.error).toBeNull()
   })
 
+  it('clearList preserves files added while clear IPC is pending', async () => {
+    let clearResolve: (() => void) | undefined
+    let addCalls = 0
+    vi.mocked(invoke).mockImplementation((cmd: string) => {
+      if (cmd === 'clear_list') {
+        return new Promise<void>((resolve) => {
+          clearResolve = resolve
+        })
+      }
+      addCalls += 1
+      return Promise.resolve(
+        addCalls === 1 ? [mockEntry] : [{ ...mockEntry, id: 'u2', name: 'b2.jpg', path: '/t/b2.jpg' }]
+      )
+    })
+    const { result } = renderHook(() => useFileList())
+    await act(() => result.current.addFiles(['/t/a.jpg']))
+    expect(result.current.files).toHaveLength(1)
+    act(() => {
+      void result.current.clearList()
+    })
+    expect(result.current.files).toHaveLength(1)
+    await act(() => result.current.addFiles(['/t/b2.jpg']))
+    expect(result.current.files.map((f) => f.name)).toEqual(['a.jpg', 'b2.jpg'])
+    await act(async () => {
+      clearResolve?.()
+    })
+    expect(result.current.files.map((f) => f.name)).toEqual(['b2.jpg'])
+    expect(result.current.error).toBeNull()
+  })
+
+  it('clearList resolves when invoke throws synchronously', async () => {
+    vi.mocked(invoke).mockImplementation(() => {
+      throw new Error('sync boom')
+    })
+    const { result } = renderHook(() => useFileList())
+    await expect(act(() => result.current.clearList())).resolves.toBeUndefined()
+    expect(result.current.error).toContain('Could not clear list')
+    expect(result.current.error).toContain('sync boom')
+  })
+
   it('clearList failure keeps files', async () => {
     vi.mocked(invoke).mockResolvedValueOnce([mockEntry]).mockRejectedValueOnce(new Error('x'))
     const { result } = renderHook(() => useFileList())
