@@ -508,4 +508,26 @@ describe('SettingsView', () => {
     expect(screen.getByRole('button', { name: 'Save Changes' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled()
   })
+
+  it('category target rows use tinted badges', async () => {
+    await loadView()
+    expect(await screen.findByText('Image').then((el) => el.className)).toContain('blue')
+  })
+
+  it.each([
+    ['Output Folder', 'bg-primary/12'],
+    ['Category Targets', 'bg-blue-500/12'],
+    ['Performance', 'bg-violet-500/12'],
+    ['Quality Floors', 'bg-destructive/15'],
+    ['History', 'bg-amber-500/12'],
+  ])('%s header icon carries its tone', async (title, tint) => {
+    await loadView()
+    const card = Array.from(document.querySelectorAll('[data-slot="card"]')).find(
+      (c) => c.querySelector('[data-slot="card-title"]')?.textContent === title,
+    )
+    expect(card).toBeDefined()
+    const iconSquare = card!.querySelector('[data-slot="card-header"] > span')
+    expect(iconSquare?.className).toContain(tint)
+    expect(iconSquare?.querySelector('svg')).toBeInTheDocument()
+  })
 })
