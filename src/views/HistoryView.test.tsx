@@ -37,6 +37,7 @@ vi.mock('sonner', () => ({
 import { HistoryView } from '@/views/HistoryView'
 import { invoke } from '@tauri-apps/api/core'
 import { toast } from 'sonner'
+import { CATEGORY_TONES, STATUS_TONES } from '@/lib/tokens'
 
 const invokeMock = vi.mocked(invoke)
 
@@ -820,5 +821,123 @@ describe('HistoryView', () => {
     expect(
       await screen.findByText('Some history entries could not be read.')
     ).toBeInTheDocument()
+  })
+
+  describe('tone contract', () => {
+    it('done filter chip is tone-matched, not gray', async () => {
+      const user = userEvent.setup()
+      invokeMock.mockResolvedValue(emptyResponse)
+      renderView()
+      const chip = await screen.findByRole('button', { name: 'Done' })
+      await user.click(chip)
+      expect(chip).toHaveAttribute('aria-pressed', 'true')
+      expect(chip).toHaveClass(
+        STATUS_TONES.done.tint,
+        STATUS_TONES.done.border,
+        STATUS_TONES.done.text
+      )
+      expect(chip).not.toHaveClass('bg-secondary')
+    })
+
+    it('session card shows accent bar colored by dominant outcome', async () => {
+      invokeMock.mockResolvedValue(
+        responseWith([
+          session({
+            files: [
+              doneFile(),
+              doneFile({ name: 'b.jpg', path: '/in/b.jpg', outputPath: '/out/b.jpg' }),
+            ],
+            outcome: {
+              done: 2,
+              bestEffort: 0,
+              failed: 0,
+              cancelled: 0,
+              unsupported: 0,
+              alreadyUnderTarget: 0,
+            },
+          }),
+        ])
+      )
+      renderView()
+      const accent = await screen.findByTestId('session-accent')
+      expect(accent).toHaveClass(STATUS_TONES.done.accent)
+      expect(accent).not.toHaveClass(STATUS_TONES.failed.accent)
+    })
+
+    it('tie between outcomes resolves by safety precedence', async () => {
+      invokeMock.mockResolvedValue(responseWith([session()]))
+      renderView()
+      const accent = await screen.findByTestId('session-accent')
+      expect(accent).toHaveClass(STATUS_TONES.failed.accent)
+      expect(accent).not.toHaveClass(STATUS_TONES.done.accent)
+    })
+
+    it('best-effort dominant session shows amber accent', async () => {
+      invokeMock.mockResolvedValue(
+        responseWith([
+          session({
+            files: [
+              doneFile(),
+              doneFile({ name: 'b.jpg', path: '/in/b.jpg', outputPath: '/out/b.jpg', status: 'best_effort' }),
+              doneFile({ name: 'c.jpg', path: '/in/c.jpg', outputPath: '/out/c.jpg', status: 'best_effort' }),
+            ],
+            outcome: {
+              done: 1,
+              bestEffort: 2,
+              failed: 0,
+              cancelled: 0,
+              unsupported: 0,
+              alreadyUnderTarget: 0,
+            },
+          }),
+        ])
+      )
+      renderView()
+      const accent = await screen.findByTestId('session-accent')
+      expect(accent).toHaveClass(STATUS_TONES.best_effort.accent)
+      expect(accent).not.toHaveClass(STATUS_TONES.done.accent)
+    })
+
+    it('outcome badges are tinted', async () => {
+      invokeMock.mockResolvedValue(responseWith([session()]))
+      renderView()
+      const failedBadge = (await screen.findByText('Failed 1')).closest(
+        '[data-slot="badge"]'
+      )
+      expect(failedBadge).toHaveClass(
+        STATUS_TONES.failed.tint,
+        STATUS_TONES.failed.border,
+        STATUS_TONES.failed.text
+      )
+      const doneBadge = screen.getByText('Done 1').closest('[data-slot="badge"]')
+      expect(doneBadge).toHaveClass(
+        STATUS_TONES.done.tint,
+        STATUS_TONES.done.border,
+        STATUS_TONES.done.text
+      )
+    })
+
+    it('category badges tinted in session file table', async () => {
+      const user = userEvent.setup()
+      invokeMock.mockResolvedValue(responseWith([session()]))
+      renderView()
+      const toggle = (
+        await screen.findAllByRole('button', { name: 'Toggle session details' })
+      )[0]
+      await user.click(toggle)
+      const table = await screen.findByRole('table', { name: 'Session files' })
+      const imageBadge = within(table).getByText('Image').closest('[data-slot="badge"]')
+      expect(imageBadge).toHaveClass(
+        CATEGORY_TONES.image.tint,
+        CATEGORY_TONES.image.border,
+        CATEGORY_TONES.image.text
+      )
+      const pdfBadge = within(table).getByText('PDF').closest('[data-slot="badge"]')
+      expect(pdfBadge).toHaveClass(
+        CATEGORY_TONES.pdf.tint,
+        CATEGORY_TONES.pdf.border,
+        CATEGORY_TONES.pdf.text
+      )
+    })
   })
 })
