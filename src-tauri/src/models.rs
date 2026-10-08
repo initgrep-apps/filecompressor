@@ -91,6 +91,29 @@ impl FileEntry {
     }
 }
 
+fn exhaustive_status(status: FileStatus) -> FileStatus {
+    match status {
+        FileStatus::Pending => FileStatus::Pending,
+        FileStatus::Compressing => FileStatus::Compressing,
+        FileStatus::Done => FileStatus::Done,
+        FileStatus::BestEffort => FileStatus::BestEffort,
+        FileStatus::Failed => FileStatus::Failed,
+        FileStatus::Cancelled => FileStatus::Cancelled,
+        FileStatus::Unsupported => FileStatus::Unsupported,
+        FileStatus::AlreadyUnderTarget => FileStatus::AlreadyUnderTarget,
+    }
+}
+
+fn exhaustive_category(category: Category) -> Category {
+    match category {
+        Category::Image => Category::Image,
+        Category::Video => Category::Video,
+        Category::Pdf => Category::Pdf,
+        Category::Document => Category::Document,
+        Category::Other => Category::Other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,5 +277,55 @@ mod tests {
         let status = FileStatus::AlreadyUnderTarget;
         let json = serde_json::to_string(&status).unwrap();
         assert_eq!(json, "\"already_under_target\"");
+    }
+
+    #[test]
+    fn category_serde_matches_typescript_union() {
+        let serialized: [String; 5] = [
+            serde_json::to_string(&exhaustive_category(Category::Image)).unwrap(),
+            serde_json::to_string(&exhaustive_category(Category::Video)).unwrap(),
+            serde_json::to_string(&exhaustive_category(Category::Pdf)).unwrap(),
+            serde_json::to_string(&exhaustive_category(Category::Document)).unwrap(),
+            serde_json::to_string(&exhaustive_category(Category::Other)).unwrap(),
+        ];
+        let expected: [&str; 5] = [
+            "\"image\"", "\"video\"", "\"pdf\"", "\"document\"", "\"other\"",
+        ];
+        for (got, want) in serialized.iter().zip(expected.iter()) {
+            assert_eq!(
+                got, want,
+                "Category enum drift from src/types.ts Category union — update both in lockstep"
+            );
+        }
+    }
+
+    #[test]
+    fn file_status_serde_matches_typescript_union() {
+        let serialized: [String; 8] = [
+            serde_json::to_string(&exhaustive_status(FileStatus::Pending)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::Compressing)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::Done)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::BestEffort)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::Failed)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::Cancelled)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::Unsupported)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::AlreadyUnderTarget)).unwrap(),
+        ];
+        let expected: [&str; 8] = [
+            "\"pending\"",
+            "\"compressing\"",
+            "\"done\"",
+            "\"best_effort\"",
+            "\"failed\"",
+            "\"cancelled\"",
+            "\"unsupported\"",
+            "\"already_under_target\"",
+        ];
+        for (got, want) in serialized.iter().zip(expected.iter()) {
+            assert_eq!(
+                got, want,
+                "FileStatus enum drift from src/types.ts FileStatus union — update both in lockstep"
+            );
+        }
     }
 }
