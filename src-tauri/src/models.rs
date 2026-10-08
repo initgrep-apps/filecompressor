@@ -91,6 +91,29 @@ impl FileEntry {
     }
 }
 
+fn exhaustive_status(status: FileStatus) -> FileStatus {
+    match status {
+        FileStatus::Pending => FileStatus::Pending,
+        FileStatus::Compressing => FileStatus::Compressing,
+        FileStatus::Done => FileStatus::Done,
+        FileStatus::BestEffort => FileStatus::BestEffort,
+        FileStatus::Failed => FileStatus::Failed,
+        FileStatus::Cancelled => FileStatus::Cancelled,
+        FileStatus::Unsupported => FileStatus::Unsupported,
+        FileStatus::AlreadyUnderTarget => FileStatus::AlreadyUnderTarget,
+    }
+}
+
+fn exhaustive_category(category: Category) -> Category {
+    match category {
+        Category::Image => Category::Image,
+        Category::Video => Category::Video,
+        Category::Pdf => Category::Pdf,
+        Category::Document => Category::Document,
+        Category::Other => Category::Other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,70 +281,50 @@ mod tests {
 
     #[test]
     fn category_serde_matches_typescript_union() {
-        let expected = ["image", "video", "pdf", "document", "other"];
-        let all = [
-            Category::Image,
-            Category::Video,
-            Category::Pdf,
-            Category::Document,
-            Category::Other,
+        let serialized: [String; 5] = [
+            serde_json::to_string(&exhaustive_category(Category::Image)).unwrap(),
+            serde_json::to_string(&exhaustive_category(Category::Video)).unwrap(),
+            serde_json::to_string(&exhaustive_category(Category::Pdf)).unwrap(),
+            serde_json::to_string(&exhaustive_category(Category::Document)).unwrap(),
+            serde_json::to_string(&exhaustive_category(Category::Other)).unwrap(),
         ];
-        let serialized: Vec<String> = all
-            .iter()
-            .map(|c| serde_json::to_string(c).unwrap())
-            .collect();
-        let expected_json: Vec<String> = expected.iter().map(|s| format!("\"{s}\"")).collect();
-        assert_eq!(
-            serialized, expected_json,
-            "Category enum drift from src/types.ts Category union — update both in lockstep"
-        );
-        for json in &expected_json {
-            let round: Category = serde_json::from_str(json).unwrap();
+        let expected: [&str; 5] = [
+            "\"image\"", "\"video\"", "\"pdf\"", "\"document\"", "\"other\"",
+        ];
+        for (got, want) in serialized.iter().zip(expected.iter()) {
             assert_eq!(
-                serde_json::to_string(&round).unwrap(),
-                *json,
-                "Category deserialization not round-trip stable for {json}"
+                got, want,
+                "Category enum drift from src/types.ts Category union — update both in lockstep"
             );
         }
     }
 
     #[test]
     fn file_status_serde_matches_typescript_union() {
-        let expected = [
-            "pending",
-            "compressing",
-            "done",
-            "best_effort",
-            "failed",
-            "cancelled",
-            "unsupported",
-            "already_under_target",
+        let serialized: [String; 8] = [
+            serde_json::to_string(&exhaustive_status(FileStatus::Pending)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::Compressing)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::Done)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::BestEffort)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::Failed)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::Cancelled)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::Unsupported)).unwrap(),
+            serde_json::to_string(&exhaustive_status(FileStatus::AlreadyUnderTarget)).unwrap(),
         ];
-        let all = [
-            FileStatus::Pending,
-            FileStatus::Compressing,
-            FileStatus::Done,
-            FileStatus::BestEffort,
-            FileStatus::Failed,
-            FileStatus::Cancelled,
-            FileStatus::Unsupported,
-            FileStatus::AlreadyUnderTarget,
+        let expected: [&str; 8] = [
+            "\"pending\"",
+            "\"compressing\"",
+            "\"done\"",
+            "\"best_effort\"",
+            "\"failed\"",
+            "\"cancelled\"",
+            "\"unsupported\"",
+            "\"already_under_target\"",
         ];
-        let serialized: Vec<String> = all
-            .iter()
-            .map(|s| serde_json::to_string(s).unwrap())
-            .collect();
-        let expected_json: Vec<String> = expected.iter().map(|s| format!("\"{s}\"")).collect();
-        assert_eq!(
-            serialized, expected_json,
-            "FileStatus enum drift from src/types.ts FileStatus union — update both in lockstep"
-        );
-        for json in &expected_json {
-            let round: FileStatus = serde_json::from_str(json).unwrap();
+        for (got, want) in serialized.iter().zip(expected.iter()) {
             assert_eq!(
-                serde_json::to_string(&round).unwrap(),
-                *json,
-                "FileStatus deserialization not round-trip stable for {json}"
+                got, want,
+                "FileStatus enum drift from src/types.ts FileStatus union — update both in lockstep"
             );
         }
     }

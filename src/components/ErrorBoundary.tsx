@@ -41,11 +41,6 @@ export class ErrorBoundary extends React.Component<
 
   private readonly reset = () => {
     this.setState({ error: null })
-    try {
-      localStorage.removeItem('compression-settings')
-    } catch {
-      return
-    }
   }
 
   render(): React.ReactNode {
