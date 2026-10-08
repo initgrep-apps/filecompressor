@@ -135,8 +135,8 @@ export function RunHeader({
     total > 0 ? Math.min(100, Math.max(0, (counts.processed / total) * 100)) : 0
 
   return (
-    <section data-testid="run-header">
-      <div className="flex flex-wrap items-center justify-between gap-3.5">
+    <section data-testid="run-header" className="max-w-full overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3.5 max-w-full overflow-hidden">
         <div className="flex items-center gap-[9px]">
           <span
             data-testid="batch-pill"
