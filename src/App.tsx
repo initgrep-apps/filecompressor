@@ -86,7 +86,7 @@ function App() {
           </SidebarGroup>
         </SidebarContent>
         <SidebarFooter>
-          <div className="flex items-center justify-center px-3 py-2">
+          <div className="flex items-center justify-start px-3 py-2">
             <div className="flex items-center gap-1.5 group-data-[collapsible=icon]:hidden">
               <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 font-mono text-[10px] font-bold text-muted-foreground">
                 v1.0.0
