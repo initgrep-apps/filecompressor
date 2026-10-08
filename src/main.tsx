@@ -19,6 +19,7 @@ import "./index.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 const media = window.matchMedia("(prefers-color-scheme: dark)");
 const applyTheme = (dark: boolean) =>
@@ -32,6 +33,8 @@ if (!rootEl) {
 }
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>,
 );
