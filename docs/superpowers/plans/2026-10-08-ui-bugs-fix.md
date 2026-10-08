@@ -73,7 +73,7 @@
 
 ---
 
-## Task 4: Sidebar footer left-align
+## Task 4: Sidebar footer left-align ✅
 
 **Files:** `src/App.tsx`
 
