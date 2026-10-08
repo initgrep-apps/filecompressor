@@ -32,3 +32,17 @@
 
 - **CompressView wires TWO `useAutoCollapse` instances** (`RunMonitor` + `StagingContentCard`), mutually exclusive by `runScreen` — only one is mounted at any moment. A single shared hook instance is infeasible: the hook's effect reads the ref-object identity at mount, and a current-swap under one ref object is invisible to a one-shot effect. Plan AC "Each view wires one useAutoCollapse call" holds under the active-instance reading: exactly one instance is active per view state.
 - **KanbanBoard gained a `contentRef` prop** — plumbing for spec §8's pinned observe target (the `overflow-x-auto` board element, not the clipped `min-h-0 flex-1 overflow-hidden` wrapper).
+
+## Kanban flicker root-cause fix + active-card motion — 2026-10-08
+
+- **Flicker cause (kanban near default width; batch with one fewer lane than screenshot):** `useAutoCollapse` collapsed the sidebar on cramped lanes, then auto-restored it once lanes fit the wider collapsed layout — creating an open↔collapse loop across the ~190px window-width band where lanes fit collapsed but cramp expanded. Mid-transition ResizeObserver events flipped decisions inside the 200ms sidebar animation. Fix (PR-quality): restore only when lane content provably fits the expanded layout (`contentWidth ≤ collapsedClient − Δ + 1`, Δ measured from the collapse width delta), plus a settle guard deferring evaluation past the 200ms transition. Regression tests: `useAutoCollapse.test.ts` settles/defers, band-no-restore, restore-when-fits.
+- **Compressing card `animate-pulse` (whole-card opacity breathing) removed per design review** — card is solid `bg-card`, activity moves to a `run-shimmer` sweep inside the progress fill (1.5s linear, `prefers-reduced-motion`-gated), chosen from 6 mocked options.
+- **Flake:** gate run panicked in `queue::tests::n1_matches_legacy_sequential_order` (`Err(Timeout)`, queue.rs:1381); passed isolated rerun and full rerun (421 passed, 4 ignored) — frontend-only change, unrelated. Flag if it repeats.
+
+## Deferred: sidebar auto-collapse semantics — reported 2026-10-08
+
+User-reported (screenshots at identical window size, both 46-file batch, only filter differs — 2 lanes vs 3+ lanes):
+
+1. **Sidebar visibility varies with content, not user choice** — fewer kanban items → sidebar expanded; more items → auto-collapsed. At default 900px window the app loads with the sidebar already collapsed (with ≥2 lanes, expanded board ~600px always cramps).
+2. **Manual toggle gets reverted** — user opens the sidebar; the "re-collapse when cramped after manual open" rule (+3s suspend expiry) slams it shut again shortly after. Feels like the control fights the user.
+3. Root: the content-driven auto-collapse feature itself (PR #107, spec §8). Fix direction agreed to be decided later — options were (a) manual-only sidebar + horizontal kanban scroll (recommended), (b) auto-collapse once per run start with sticky manual toggles, (c) keep feature but never re-collapse after manual open. Sidebar state persistence (tauri-plugin-store vs cookies in Tauri) also open.

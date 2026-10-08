@@ -87,7 +87,7 @@
 
 ---
 
-## Task 5: Full gate
+## Task 5: Full gate ✅
 
 **Command:** `yarn build && yarn test && cd src-tauri && cargo test`
 
