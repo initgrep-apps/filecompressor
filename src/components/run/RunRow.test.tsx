@@ -235,13 +235,23 @@ describe('RunRow card fidelity', () => {
     expect(screen.getByTestId('run-row-done').className).toContain(DONE_ACCENT)
   })
 
-  it('compressing card shows primary ring with pulse animation', () => {
+  it('compressing card is solid with no pulse animation', () => {
     render(<RunRow file={makeFile({ status: 'compressing', category: 'image' })} percent={42} />)
     const card = screen.getByTestId('run-row-compressing')
-    expect(card.className).toContain('bg-primary/20')
-    expect(card.className).toContain('border-primary/30')
-    expect(card.className).toContain('shadow-[0_0_0_2px_var(--primary)]')
-    expect(card.className).toContain('animate-pulse')
+    expect(card.className).toContain('bg-card')
+    expect(card.className).not.toContain('animate-pulse')
+    expect(card.className).not.toContain('bg-primary/20')
+    expect(card.className).not.toContain('shadow-[0_0_0_2px_var(--primary)]')
+  })
+
+  it('compressing progress fill carries shimmer sweep', () => {
+    render(<RunRow file={makeFile({ status: 'compressing', category: 'image' })} percent={42} />)
+    expect(screen.getByTestId('run-progress-fill').className).toContain('run-shimmer')
+  })
+
+  it('non-compressing progress fill has no shimmer sweep', () => {
+    render(<RunRow file={makeFile({ status: 'done', category: 'image' })} percent={42} />)
+    expect(screen.queryByTestId('run-progress-fill')).not.toBeInTheDocument()
   })
 
   it('failed card keeps red accent', () => {

@@ -80,6 +80,21 @@ const setWidths = (el: HTMLElement, scrollWidth: number, clientWidth: number) =>
 
 const spy = () => registry.spy as Mock<(v: boolean) => void>
 
+function attachRectChild(el: HTMLElement, contentRight: number): HTMLElement {
+  const child = document.createElement('div')
+  el.appendChild(child)
+  vi.spyOn(child, 'getBoundingClientRect').mockReturnValue({
+    left: 0,
+    right: contentRight,
+    width: contentRight,
+    top: 0,
+    bottom: 0,
+    x: 0,
+    y: 0,
+  } as DOMRect)
+  return child
+}
+
 function setup(scroll: number, client: number) {
   const el = document.createElement('div')
   setWidths(el, scroll, client)
@@ -155,6 +170,9 @@ describe('useAutoCollapse', () => {
   it('restores when space returns', () => {
     const { el, trigger } = setup(1000, 800)
     trigger()
+    act(() => {
+      vi.advanceTimersByTime(300)
+    })
     setWidths(el, 700, 800)
     trigger()
     expect(spy().mock.calls.map((c) => c[0])).toEqual([false, true])
@@ -251,11 +269,64 @@ describe('useAutoCollapse', () => {
   it('collapses again after restore cycle', () => {
     const { el, trigger } = setup(1000, 800)
     trigger()
+    act(() => {
+      vi.advanceTimersByTime(300)
+    })
     setWidths(el, 700, 800)
     trigger()
+    act(() => {
+      vi.advanceTimersByTime(300)
+    })
     setWidths(el, 1000, 800)
     trigger()
     expect(spy().mock.calls.map((c) => c[0])).toEqual([false, true, false])
+  })
+
+  it('defers restore until the collapse transition settles', () => {
+    const { el, trigger } = setup(1000, 800)
+    trigger()
+    expect(spy()).toHaveBeenLastCalledWith(false)
+    setWidths(el, 700, 800)
+    trigger()
+    expect(spy()).toHaveBeenCalledTimes(1)
+    act(() => {
+      vi.advanceTimersByTime(300)
+    })
+    expect(spy()).toHaveBeenCalledTimes(2)
+    expect(spy()).toHaveBeenLastCalledWith(true)
+  })
+
+  it('does not restore while content would cramp the expanded sidebar', () => {
+    const { el, trigger } = setup(1002, 620)
+    attachRectChild(el, 1002)
+    trigger()
+    expect(spy()).toHaveBeenLastCalledWith(false)
+    setWidths(el, 1002, 990)
+    act(() => {
+      vi.advanceTimersByTime(300)
+    })
+    expect(spy()).toHaveBeenCalledTimes(1)
+    setWidths(el, 1002, 1150)
+    trigger()
+    expect(spy()).toHaveBeenCalledTimes(1)
+    setWidths(el, 1002, 990)
+    trigger()
+    setWidths(el, 1002, 1150)
+    trigger()
+    expect(spy()).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores only when content fits the expanded sidebar', () => {
+    const { el, trigger } = setup(1002, 620)
+    attachRectChild(el, 1002)
+    trigger()
+    setWidths(el, 1002, 990)
+    act(() => {
+      vi.advanceTimersByTime(300)
+    })
+    setWidths(el, 1002, 1400)
+    trigger()
+    expect(spy().mock.calls.map((c) => c[0])).toEqual([false, true])
   })
 
   it('disconnects on unmount', () => {

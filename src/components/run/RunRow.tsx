@@ -43,7 +43,6 @@ const ICON_BUTTON =
   'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
 
 const ACCENT_SHADOW_PRIMARY = 'shadow-[inset_3px_0_0_var(--primary)]'
-const COMPRESSING_RING = 'bg-primary/20 border-primary/30 shadow-[0_0_0_2px_var(--primary)] animate-pulse'
 
 const NAME_TONES: Partial<Record<FileStatus, string>> = {
   compressing: 'text-primary font-semibold',
@@ -123,10 +122,7 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
       exit={{ opacity: 0, scale: 0.98 }}
       transition={{ duration: 0.18, ease: 'easeOut' }}
       className={cn(
-        'relative rounded-[calc(var(--radius)+2px)] border px-2.5 py-[9px]',
-        status === 'compressing'
-          ? COMPRESSING_RING
-          : 'bg-card',
+        'relative rounded-[calc(var(--radius)+2px)] border bg-card px-2.5 py-[9px]',
         status === 'failed' && 'border-destructive/25 bg-destructive/5 shadow-[inset_3px_0_0_var(--destructive)]',
         status === 'done' && ACCENT_SHADOW_PRIMARY,
         status === 'pending' && 'border-dashed'
@@ -226,7 +222,7 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
           <div className="mt-[7px] h-1 overflow-hidden rounded-full bg-primary/15">
             <div
               data-testid="run-progress-fill"
-              className="h-full rounded-full bg-[linear-gradient(90deg,var(--color-cyan-400),var(--color-primary))] transition-[width]"
+              className="run-shimmer relative h-full overflow-hidden rounded-full bg-[linear-gradient(90deg,var(--color-cyan-400),var(--color-primary))] transition-[width]"
               style={{ width: `${safePercent(percent)}%` }}
             />
           </div>

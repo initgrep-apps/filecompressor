@@ -129,3 +129,25 @@
     @apply font-sans;
     }
 }
+
+@keyframes run-shimmer {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.run-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(100deg, transparent 10%, rgba(255, 255, 255, 0.55) 50%, transparent 90%);
+  animation: run-shimmer 1.5s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .run-shimmer::after {
+    animation: none;
+    display: none;
+  }
+}

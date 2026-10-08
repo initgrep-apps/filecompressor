@@ -18,6 +18,18 @@ import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react'
 import { useSidebar } from '@/components/ui/sidebar'
 
 const SUSPEND_MS = 3000
+const SIDEBAR_TRANSITION_MS = 200
+const SETTLE_MS = SIDEBAR_TRANSITION_MS + 60
+
+function contentWidthOf(el: HTMLElement): number {
+  const style = window.getComputedStyle(el)
+  const padding = (Number.parseFloat(style.paddingLeft) || 0) + (Number.parseFloat(style.paddingRight) || 0)
+  const children = el.children
+  if (children.length === 0) return padding
+  const first = children[0].getBoundingClientRect()
+  const last = children[children.length - 1].getBoundingClientRect()
+  return last.right - first.left + padding
+}
 
 export function useAutoCollapse(contentRef: RefObject<HTMLElement | null>): void {
   const { open, setOpen } = useSidebar()
@@ -28,6 +40,9 @@ export function useAutoCollapse(contentRef: RefObject<HTMLElement | null>): void
   const lastManualRef = useRef(-Infinity)
   const lastSetRef = useRef<boolean | null>(null)
   const recheckRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const openWidthRef = useRef<number | null>(null)
+  const openDeltaRef = useRef<number | null>(null)
+  const settleUntilRef = useRef(0)
 
   useLayoutEffect(() => {
     openRef.current = open
@@ -62,33 +77,60 @@ export function useAutoCollapse(contentRef: RefObject<HTMLElement | null>): void
       }
       return
     }
+    const scheduleRecheck = (delayMs: number) => {
+      if (delayMs <= 0) return
+      if (recheckRef.current !== null) clearTimeout(recheckRef.current)
+      recheckRef.current = setTimeout(() => {
+        recheckRef.current = null
+        evaluate(el)
+      }, delayMs)
+    }
+    const collapseWhileOpen = (now: number) => {
+      openWidthRef.current = el.clientWidth
+      openDeltaRef.current = null
+      autoCollapsedRef.current = true
+      lastSetRef.current = false
+      settleUntilRef.current = now + SETTLE_MS
+      setOpenRef.current(false)
+      scheduleRecheck(SETTLE_MS)
+    }
     const evaluate = (target: Element) => {
+      const el = target as HTMLElement
       const now = Date.now()
       const elapsed = now - lastManualRef.current
       if (elapsed < SUSPEND_MS) {
-        if (recheckRef.current !== null) clearTimeout(recheckRef.current)
-        recheckRef.current = setTimeout(() => {
-          recheckRef.current = null
-          evaluate(el)
-        }, SUSPEND_MS - elapsed)
+        scheduleRecheck(SUSPEND_MS - elapsed)
         return
+      }
+      if (now < settleUntilRef.current) {
+        scheduleRecheck(settleUntilRef.current - now)
+        return
+      }
+      if (!openRef.current && openWidthRef.current !== null && openDeltaRef.current === null) {
+        openDeltaRef.current = Math.max(0, el.clientWidth - openWidthRef.current)
       }
       const cramped = target.scrollWidth > target.clientWidth + 1
       if (cramped && !crampedRef.current) {
-        if (openRef.current) {
-          lastSetRef.current = false
-          setOpenRef.current(false)
-          autoCollapsedRef.current = true
-        }
+        if (openRef.current) collapseWhileOpen(now)
         crampedRef.current = true
-      } else if (cramped && crampedRef.current && openRef.current && !autoCollapsedRef.current) {
-        lastSetRef.current = false
-        setOpenRef.current(false)
-        autoCollapsedRef.current = true
-      } else if (!cramped && crampedRef.current) {
-        if (autoCollapsedRef.current && !openRef.current) {
-          lastSetRef.current = true
-          setOpenRef.current(true)
+        return
+      }
+      if (cramped && crampedRef.current && openRef.current && !autoCollapsedRef.current) {
+        collapseWhileOpen(now)
+        return
+      }
+      if (!cramped && crampedRef.current && !openRef.current) {
+        if (autoCollapsedRef.current) {
+          const delta = openDeltaRef.current ?? 0
+          if (contentWidthOf(el) <= el.clientWidth - delta + 1) {
+            autoCollapsedRef.current = false
+            crampedRef.current = false
+            lastSetRef.current = true
+            settleUntilRef.current = now + SETTLE_MS
+            setOpenRef.current(true)
+            scheduleRecheck(SETTLE_MS)
+          }
+          return
         }
         autoCollapsedRef.current = false
         crampedRef.current = false
