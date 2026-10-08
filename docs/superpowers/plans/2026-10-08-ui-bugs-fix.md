@@ -38,7 +38,7 @@
 
 ---
 
-## Task 3: Kanban responsive + scroll fixes
+## Task 3: Kanban responsive + scroll fixes ✅
 
 **Files:**
 - `src/components/run/RunHeader.tsx`
