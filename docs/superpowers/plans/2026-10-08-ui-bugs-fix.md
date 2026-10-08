@@ -18,7 +18,7 @@
 
 ---
 
-## Task 2: Kanban card active accent
+## Task 2: Kanban card active accent ✅
 
 **Files:** `src/components/run/RunRow.tsx`
 

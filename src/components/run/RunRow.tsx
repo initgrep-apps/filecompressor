@@ -17,7 +17,6 @@
 import { motion } from 'motion/react'
 import { formatSize, reductionPercentOrNull } from '@/lib/sizeFormat'
 import { RESULT_STATUSES } from '@/components/FileList'
-import { CATEGORY_TONES, STATUS_TONES } from '@/lib/tokens'
 import { Spinner } from '@/components/ui/spinner'
 import { cn } from '@/lib/utils'
 import { strategyLabel } from '@/lib/strategyLabels'
@@ -44,6 +43,7 @@ const ICON_BUTTON =
   'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
 
 const ACCENT_SHADOW_PRIMARY = 'shadow-[inset_3px_0_0_var(--primary)]'
+const COMPRESSING_RING = 'bg-primary/20 border-primary/30 shadow-[0_0_0_2px_var(--primary)] animate-pulse'
 
 const NAME_TONES: Partial<Record<FileStatus, string>> = {
   compressing: 'text-primary font-semibold',
@@ -125,11 +125,7 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
       className={cn(
         'relative rounded-[calc(var(--radius)+2px)] border px-2.5 py-[9px]',
         status === 'compressing'
-          ? cn(
-              STATUS_TONES.compressing.border,
-              CATEGORY_TONES[file.category].tint,
-              ACCENT_SHADOW_PRIMARY
-            )
+          ? COMPRESSING_RING
           : 'bg-card',
         status === 'failed' && 'border-destructive/25 bg-destructive/5 shadow-[inset_3px_0_0_var(--destructive)]',
         status === 'done' && ACCENT_SHADOW_PRIMARY,

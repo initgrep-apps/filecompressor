@@ -235,11 +235,13 @@ describe('RunRow card fidelity', () => {
     expect(screen.getByTestId('run-row-done').className).toContain(DONE_ACCENT)
   })
 
-  it('compressing card shows lane tint and primary border', () => {
+  it('compressing card shows primary ring with pulse animation', () => {
     render(<RunRow file={makeFile({ status: 'compressing', category: 'image' })} percent={42} />)
     const card = screen.getByTestId('run-row-compressing')
-    expect(card.className).toContain('bg-blue-500/12')
+    expect(card.className).toContain('bg-primary/20')
     expect(card.className).toContain('border-primary/30')
+    expect(card.className).toContain('shadow-[0_0_0_2px_var(--primary)]')
+    expect(card.className).toContain('animate-pulse')
   })
 
   it('failed card keeps red accent', () => {
