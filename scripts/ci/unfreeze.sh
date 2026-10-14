@@ -177,8 +177,8 @@ restore_from_backup() {
 }
 
 restore_and_report() {
-  ROLLBACK_DONE=1
   broken="$(restore_from_backup)"
+  ROLLBACK_DONE=1
   if [ -z "$broken" ]; then
     rm -rf "$BACKUP_DIR" || echo "unfreeze: WARN — could not remove the backup dir $BACKUP_DIR after the restore" >&2
     fail "failed to $1 the new sidecar tree${2:-} — src-tauri was restored byte-for-byte to its pre-swap state"
@@ -233,23 +233,26 @@ else
 
   raw_tags="$(gh release list "${gh_args[@]+"${gh_args[@]}"}" --limit 200 --json tagName)" || \
     fail "gh release list failed — cannot look up the sidecars-* release"
-  if [ -n "$raw_tags" ]; then
+  compact="$(printf '%s' "$raw_tags" | tr -d '[:space:]')"
+  tags=""
+  if [ -n "$compact" ] && [ "$compact" != "[]" ]; then
     tags="$(printf '%s\n' "$raw_tags" | grep -Eo '"tagName":"[^"]+"' | sed -e 's/^"tagName":"//' -e 's/"$//' || true)"
-    for candidate in $tags; do
-      case "$candidate" in
-        sidecars-*)
-          if [ -z "$newest" ] || [ "$candidate" \> "$newest" ]; then
-            newest="$candidate"
-          fi
-          ;;
-      esac
-    done
-    if [ -z "$newest" ]; then
-      preview="$(printf '%s' "$raw_tags" | tr '\n' ' ' | head -c 120)"
-      fail "gh release list returned unparseable output — starting with: $preview — check gh auth/quota/network"
+  fi
+  for candidate in $tags; do
+    case "$candidate" in
+      sidecars-*)
+        if [ -z "$newest" ] || [ "$candidate" \> "$newest" ]; then
+          newest="$candidate"
+        fi
+        ;;
+    esac
+  done
+  if [ -z "$newest" ]; then
+    if [ -n "$tags" ] || [ -z "$compact" ] || [ "$compact" = "[]" ]; then
+      fail "no sidecars-* release found — run freeze.yml before the release build (ADR 0001)"
     fi
-  else
-    fail "no sidecars-* release found — run freeze.yml before the release build (ADR 0001)"
+    preview="$(printf '%s' "$raw_tags" | tr '\n' ' ' | head -c 120)"
+    fail "gh release list returned unparseable output — starting with: $preview — check gh auth/quota/network"
   fi
 fi
 

@@ -201,6 +201,26 @@ const TERM_MV_SHIM = [
   'exec /bin/mv "$@"',
 ].join("\n");
 
+const ROLLBACK_TERM_MV_SHIM = [
+  "#!/bin/sh",
+  "set -eu",
+  'if [ -n "${INSTALL_FAIL_DEST:-}" ] && [ -n "${INSTALL_FAIL_STATE:-}" ] && [ "$2" = "$INSTALL_FAIL_DEST" ] && [ ! -e "$INSTALL_FAIL_STATE" ]; then',
+  '  echo staged > "$INSTALL_FAIL_STATE"',
+  '  echo "shim mv: refusing to move into $2" >&2',
+  "  exit 1",
+  "fi",
+  'case "$1" in',
+  '  */unfreeze-backup.*)',
+  '    if [ -n "${RESTORE_TERM_STATE:-}" ] && [ ! -e "$RESTORE_TERM_STATE" ]; then',
+  '      echo staged > "$RESTORE_TERM_STATE"',
+  '      kill -TERM "$PPID" 2>/dev/null || true',
+  "      exit 1",
+  "    fi",
+  "    ;;",
+  "esac",
+  'exec /bin/mv "$@"',
+].join("\n");
+
 async function withMvShim(shimSource, extraEnv, body) {
   const shimDir = await mkdtemp(join(tmpdir(), "mv-shim-"));
   await writeFile(join(shimDir, "mv"), shimSource, { mode: 0o755 });
@@ -728,6 +748,45 @@ describe("unfreeze.sh", () => {
     });
   });
 
+  it("keeps_recovery_and_named_backup_messaging_when_a_signal_lands_mid_rollback", async () => {
+    await withFrozenSource(async (srcRoot) => {
+      await withRoot(async (destRoot) => {
+        await stageStaleTree(destRoot);
+        const result = await withMvShim(
+          ROLLBACK_TERM_MV_SHIM,
+          {
+            INSTALL_FAIL_DEST: join(destRoot, "src-tauri", "binaries"),
+            INSTALL_FAIL_STATE: join(destRoot, "stub-install-state"),
+            RESTORE_TERM_STATE: join(destRoot, "stub-restore-state"),
+          },
+          (env) =>
+            runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot], {
+              env,
+            }),
+        );
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(143);
+        expect(result.stderr, "the interrupted rollback must be named, not silent").toMatch(/interrupted mid-swap/);
+        const leftovers = await readdir(freezeDir(destRoot));
+        expect(leftovers.length).toBe(1);
+        expect(leftovers[0]).toMatch(/^unfreeze-backup\./);
+        expect(
+          result.stderr,
+          "the named backup path must appear in the failure messaging",
+        ).toContain(join(destRoot, "src-tauri", ".freeze", leftovers[0]));
+        expect(
+          result.stderr,
+          "the restore continuation must finish with the full byte-for-byte message",
+        ).toMatch(/restored byte-for-byte to its pre-swap state/);
+        expect(
+          existsSync(join(freezeDir(destRoot), "freeze.lock")),
+          "no lock may survive a signal fired during the rollback itself",
+        ).toBe(false);
+        await expectStalePreSwapTree(destRoot);
+      });
+    });
+  });
+
   it("recovers_a_stale_lock_left_by_a_dead_predecessor_older_than_an_hour", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
@@ -816,14 +875,34 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("keeps_the_adr_message_when_the_gh_list_output_is_genuinely_empty", async () => {
+  it("keeps_the_adr_message_when_the_repo_has_zero_releases", async () => {
     await withBareDest(async (destRoot) => {
-      const stubbed = await stubEnv(destRoot, { ghList: "" });
+      const stubbed = await stubEnv(destRoot, { ghList: "[]" });
       try {
         const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--root", destRoot], { env: stubbed.env });
 
         expect(result.code).toBe(1);
         expect(result.stderr).toMatch(/no sidecars-.* release found — run freeze\.yml before the release build/);
+        expect(result.stderr).not.toMatch(/unparseable/);
+        expect(existsSync(join(destRoot, "src-tauri", "binaries"))).toBe(false);
+      } finally {
+        await stubbed.cleanup();
+      }
+    });
+  });
+
+  it("keeps_the_adr_message_when_releases_exist_but_no_sidecars_tag", async () => {
+    await withBareDest(async (destRoot) => {
+      const stubbed = await stubEnv(destRoot, { ghList: '[{"tagName":"v1.2.3"}]' });
+      try {
+        const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--root", destRoot], { env: stubbed.env });
+
+        expect(result.code).toBe(1);
+        expect(result.stderr).toMatch(/no sidecars-.* release found — run freeze\.yml before the release build/);
+        expect(
+          result.stderr,
+          "real releases with no sidecars tag are a freeze-gap, not an unparseable-output bug",
+        ).not.toMatch(/unparseable/);
         expect(existsSync(join(destRoot, "src-tauri", "binaries"))).toBe(false);
       } finally {
         await stubbed.cleanup();
