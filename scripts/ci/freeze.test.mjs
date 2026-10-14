@@ -1,0 +1,163 @@
+// @vitest-environment node
+import { describe, expect, it } from "vitest";
+
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const FREEZE = join(HERE, "freeze.sh");
+
+const ENGINES = ["ffmpeg", "ffprobe", "qpdf", "vips", "gs"];
+const MAC_TRIPLE = "aarch64-apple-darwin";
+
+function runScript(script, args, options = {}) {
+  return new Promise((resolvePromise) => {
+    execFile("bash", [script, ...args], { encoding: "utf8", timeout: 60_000, ...options }, (error, stdout, stderr) => {
+      const code = error?.code ?? (error?.signal ? 255 : 0);
+      resolvePromise({ code, stdout, stderr, signal: error?.signal ?? null });
+    });
+  });
+}
+
+function runTool(tool, args) {
+  return new Promise((resolvePromise, reject) => {
+    execFile(tool, args, { encoding: "utf8" }, (error, stdout, stderr) => {
+      if (error) {
+        error.stdout = stdout;
+        error.stderr = stderr;
+        reject(error);
+        return;
+      }
+      resolvePromise({ stdout, stderr });
+    });
+  });
+}
+
+async function withRoot(body) {
+  const root = await mkdtemp(join(tmpdir(), "freeze-test-"));
+  try {
+    return await body(root);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+function payloadFor(engine, triple) {
+  return `payload for ${engine} on ${triple}\n`;
+}
+
+async function stageTree(root, triple) {
+  const bin = join(root, "src-tauri", "binaries");
+  await mkdir(bin, { recursive: true });
+  for (const engine of ENGINES) {
+    await writeFile(join(bin, `${engine}-${triple}`), payloadFor(engine, triple));
+  }
+  const frameworks = join(root, "src-tauri", "frameworks");
+  await mkdir(frameworks, { recursive: true });
+  await writeFile(join(frameworks, "libvips-test.42.dylib"), "libvips dylib payload\n");
+  const init = join(root, "src-tauri", "gs-resources", "Resource", "Init");
+  await mkdir(init, { recursive: true });
+  await writeFile(join(init, "gs_init.ps"), "ghostscript init payload\n");
+}
+
+function bundlePath(root, triple) {
+  return join(root, "src-tauri", ".freeze", `sidecar-bundle-${triple}.tar.gz`);
+}
+
+describe("freeze.sh", () => {
+  it("packages_the_five_engines_frameworks_and_gs_resources_with_paths_rooted_for_src_tauri", async () => {
+    await withRoot(async (root) => {
+      await stageTree(root, MAC_TRIPLE);
+
+      const result = await runScript(FREEZE, ["--triple", MAC_TRIPLE, "--root", root]);
+
+      expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+      expect(existsSync(bundlePath(root, MAC_TRIPLE)), result.stderr).toBe(true);
+
+      const listed = await runTool("tar", ["-tzf", bundlePath(root, MAC_TRIPLE)]);
+      const entries = listed.stdout.split("\n").filter(Boolean);
+      for (const engine of ENGINES) {
+        expect(entries).toContain(`binaries/${engine}-${MAC_TRIPLE}`);
+      }
+      expect(
+        entries.every((entry) => /^(binaries|frameworks|gs-resources)\//.test(entry)),
+        `every entry must extract directly into src-tauri, got:\n${entries.join("\n")}`,
+      ).toBe(true);
+      expect(entries.some((entry) => /^frameworks\/.+/.test(entry)), "frozen dylibs are inside the bundle").toBe(true);
+      expect(entries).toContain("gs-resources/Resource/Init/gs_init.ps");
+
+      const shaFile = `${bundlePath(root, MAC_TRIPLE)}.sha256`;
+      expect(existsSync(shaFile)).toBe(true);
+      const shaLine = (await readFile(shaFile, "utf8")).trim();
+      expect(shaLine, "the sibling .sha256 artifact is '<digest>  <filename>'").toMatch(/^[0-9a-f]{64}  /);
+      const digest = createHash("sha256").update(await readFile(bundlePath(root, MAC_TRIPLE))).digest("hex");
+      expect(
+        shaLine.startsWith(digest),
+        "freeze.sh computes the digest with shasum -a 256 over the written tarball",
+      ).toBe(true);
+    });
+  });
+
+  it("refuses_windows_triples_before_touching_the_tree", async () => {
+    await withRoot(async (root) => {
+      await stageTree(root, MAC_TRIPLE);
+
+      const result = await runScript(FREEZE, [
+        "--triple",
+        "x86_64-pc-windows-msvc",
+        "--root",
+        root,
+      ]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("x86_64-pc-windows-msvc");
+      expect(existsSync(join(root, "src-tauri", ".freeze")), "a refused freeze must not even create the output dir").toBe(
+        false,
+      );
+    });
+  });
+
+  it("refuses_when_an_engine_binary_is_missing_from_the_staged_tree", async () => {
+    await withRoot(async (root) => {
+      await stageTree(root, MAC_TRIPLE);
+      await unlink(join(root, "src-tauri", "binaries", `vips-${MAC_TRIPLE}`));
+
+      const result = await runScript(FREEZE, ["--triple", MAC_TRIPLE, "--root", root]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(`binaries/vips-${MAC_TRIPLE}`);
+      expect(existsSync(bundlePath(root, MAC_TRIPLE)), "refuse without writing a partial bundle").toBe(false);
+    });
+  });
+
+  it("refuses_when_frameworks_is_empty", async () => {
+    await withRoot(async (root) => {
+      await stageTree(root, MAC_TRIPLE);
+      await rm(join(root, "src-tauri", "frameworks", "libvips-test.42.dylib"));
+
+      const result = await runScript(FREEZE, ["--triple", MAC_TRIPLE, "--root", root]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("frameworks");
+      expect(existsSync(bundlePath(root, MAC_TRIPLE))).toBe(false);
+    });
+  });
+
+  it("refuses_when_the_gs_init_marker_is_missing", async () => {
+    await withRoot(async (root) => {
+      await stageTree(root, MAC_TRIPLE);
+      await unlink(join(root, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"));
+
+      const result = await runScript(FREEZE, ["--triple", MAC_TRIPLE, "--root", root]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("gs_init.ps");
+      expect(existsSync(bundlePath(root, MAC_TRIPLE))).toBe(false);
+    });
+  });
+});
