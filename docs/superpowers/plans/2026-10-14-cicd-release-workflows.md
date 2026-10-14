@@ -57,17 +57,17 @@ Failure modes the workflows imply but no happy-path test exercises:
 - Unfreeze fails closed: missing archive, sha mismatch, missing marker → nonzero exit, no partial extraction visible to subsequent steps (extract to temp, then swap).
 - Tests build fixture trees (plain files suffice — freeze checks presence, not arch; arch is audit's job) and exercise: happy path + sha round-trip, missing engine refuse, empty frameworks refuse, unfreeze sha mismatch refuse, missing archive refuse.
 
-- [ ] **Step 1: Write failing tests** — `scripts/ci/freeze.test.mjs` + `scripts/ci/unfreeze.test.mjs` covering the cases above (spawn `bash`, fixture trees under a temp root; follow the spawn-and-assert style of `scripts/binaries/refresh.test.mjs`).
+- [x] **Step 1: Write failing tests** — `scripts/ci/freeze.test.mjs` + `scripts/ci/unfreeze.test.mjs` covering the cases above (spawn `bash`, fixture trees under a temp root; follow the spawn-and-assert style of `scripts/binaries/refresh.test.mjs`).
 
-- [ ] **Step 2: Run** `yarn test -- scripts/ci/freeze.test.mjs scripts/ci/unfreeze.test.mjs` — expect FAIL (scripts don't exist).
+- [x] **Step 2: Run** `yarn test -- scripts/ci/freeze.test.mjs scripts/ci/unfreeze.test.mjs` — expect FAIL (scripts don't exist).
 
-- [ ] **Step 3: Implement freeze.sh + unfreeze.sh** to the interfaces above (tar.gz via `tar -czf`; sha256 via `shasum -a 256`; mac triple check with the same two literals as `scripts/binaries/lib.mjs` arch helpers).
+- [x] **Step 3: Implement freeze.sh + unfreeze.sh** to the interfaces above (tar.gz via `tar -czf`; sha256 via `shasum -a 256`; mac triple check with the same two literals as `scripts/binaries/lib.mjs` arch helpers).
 
-- [ ] **Step 4: Run** the two test files — expect PASS. Then run the full gate: `yarn build && yarn test && cd src-tauri && cargo test` — expect green.
+- [x] **Step 4: Run** the two test files — expect PASS. Then run the full gate: `yarn build && yarn test && cd src-tauri && cargo test` — expect green.
 
-- [ ] **Step 5: Local smoke (real staged tree)** — `bash scripts/ci/freeze.sh --triple aarch64-apple-darwin` on this machine (staged aarch64 tree exists) → tarball + sha written; `bash scripts/ci/unfreeze.sh --triple aarch64-apple-darwin --archive <that tarball>` → PASS against the live tree.
+- [x] **Step 5: Local smoke (real staged tree)** — `bash scripts/ci/freeze.sh --triple aarch64-apple-darwin` on this machine (staged aarch64 tree exists) → tarball + sha written; `bash scripts/ci/unfreeze.sh --triple aarch64-apple-darwin --archive <that tarball>` → PASS against the live tree.
 
-- [ ] **Step 6: Commit** — `ci: add sidecar freeze/unfreeze scripts`
+- [x] **Step 6: Commit** — `ci: add sidecar freeze/unfreeze scripts`
 
 ---
 
