@@ -1,0 +1,58 @@
+name: Freeze mac sidecars
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  freeze:
+    name: freeze (${{ matrix.triple }})
+    strategy:
+      matrix:
+        include:
+          - triple: aarch64-apple-darwin
+            os: macos-15
+          - triple: x86_64-apple-darwin
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: checkout (v7.0.1)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: setup-node (v4)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: yarn
+      - name: install dependencies
+        run: yarn install --frozen-lockfile
+      - name: rust toolchain (dtolnay/rust-toolchain stable)
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+      - name: stage sidecar engines (${{ matrix.triple }})
+        run: node scripts/binaries/all.mjs --target ${{ matrix.triple }}
+      - name: freeze bundle (${{ matrix.triple }})
+        run: bash scripts/ci/freeze.sh --triple ${{ matrix.triple }}
+      - name: upload bundle (v4)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: sidecar-bundle-${{ matrix.triple }}
+          path: |
+            src-tauri/.freeze/sidecar-bundle-${{ matrix.triple }}.tar.gz
+            src-tauri/.freeze/sidecar-bundle-${{ matrix.triple }}.tar.gz.sha256
+
+  finalize:
+    name: publish sidecars release
+    needs: [freeze]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: download bundles (v4)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: sidecar-bundle-*
+          merge-multiple: true
+          path: release-assets
+      - name: create sidecars release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "sidecars-$(date -u +%Y%m%d)" release-assets/*
