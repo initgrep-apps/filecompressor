@@ -2,7 +2,9 @@
 # freeze.sh — package the staged macOS sidecar engines into a release bundle
 # (ADR 0001): binaries/, frameworks/, gs-resources/ are tarred with paths rooted
 # for src-tauri/ into src-tauri/.freeze/sidecar-bundle-<triple>.tar.gz plus a
-# sibling .sha256. Refuses non-mac triples and incomplete staged trees.
+# sibling .sha256. The bundle is built under a temp name and published only
+# after tar and shasum both succeed, so a failed freeze keeps the previous
+# bundle and its digest intact. Refuses non-mac triples and incomplete trees.
 # Usage: bash scripts/ci/freeze.sh --triple <mac-triple> [--root <repo-root>]
 set -euo pipefail
 
@@ -54,13 +56,26 @@ done
 FREEZE_DIR="$SRC/.freeze"
 mkdir -p "$FREEZE_DIR"
 BUNDLE="$FREEZE_DIR/sidecar-bundle-${TRIPLE}.tar.gz"
+TMP_NAME=".sidecar-bundle-${TRIPLE}.tmp$$"
+TMP_BUNDLE="$FREEZE_DIR/$TMP_NAME"
+TMP_SHA="${TMP_BUNDLE}.sha256"
+
+cleanup() {
+  if [ -e "$TMP_BUNDLE" ] || [ -e "$TMP_SHA" ]; then
+    rm -f "$TMP_BUNDLE" "$TMP_SHA" || echo "freeze: WARN — could not remove temp artifacts $TMP_BUNDLE" >&2
+  fi
+}
+trap cleanup EXIT
+trap 'exit 143' HUP INT TERM
 
 tar_args=()
 for engine in $ENGINES; do
   tar_args+=("binaries/${engine}-${TRIPLE}")
 done
-tar -czf "$BUNDLE" -C "$SRC" "${tar_args[@]}" frameworks gs-resources
 
-(cd "$FREEZE_DIR" && shasum -a 256 "sidecar-bundle-${TRIPLE}.tar.gz" > "sidecar-bundle-${TRIPLE}.tar.gz.sha256")
+tar -czf "$TMP_BUNDLE" -C "$SRC" "${tar_args[@]}" frameworks gs-resources
+(cd "$FREEZE_DIR" && shasum -a 256 "$TMP_NAME" > "${TMP_NAME}.sha256")
+mv -f "$TMP_BUNDLE" "$BUNDLE"
+mv -f "$TMP_SHA" "$BUNDLE.sha256"
 
 info "$TRIPLE bundle → src-tauri/.freeze/sidecar-bundle-${TRIPLE}.tar.gz (+ .sha256)"

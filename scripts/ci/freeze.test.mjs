@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,6 +69,10 @@ function bundlePath(root, triple) {
   return join(root, "src-tauri", ".freeze", `sidecar-bundle-${triple}.tar.gz`);
 }
 
+async function readSha(root, bundle) {
+  return readFile(`${bundle}.sha256`, "utf8");
+}
+
 describe("freeze.sh", () => {
   it("packages_the_five_engines_frameworks_and_gs_resources_with_paths_rooted_for_src_tauri", async () => {
     await withRoot(async (root) => {
@@ -100,6 +104,65 @@ describe("freeze.sh", () => {
         shaLine.startsWith(digest),
         "freeze.sh computes the digest with shasum -a 256 over the written tarball",
       ).toBe(true);
+    });
+  });
+
+  it("republishes_a_bundle_over_an_existing_one_without_temp_litter", async () => {
+    await withRoot(async (root) => {
+      await stageTree(root, MAC_TRIPLE);
+      const first = await runScript(FREEZE, ["--triple", MAC_TRIPLE, "--root", root]);
+      expect(first.code, first.stderr).toBe(0);
+
+      await writeFile(join(root, "src-tauri", "frameworks", "libvips-test.42.dylib"), "libvips dylib payload v2\n");
+      const second = await runScript(FREEZE, ["--triple", MAC_TRIPLE, "--root", root]);
+      expect(second.code, second.stderr).toBe(0);
+
+      const bundle = bundlePath(root, MAC_TRIPLE);
+      const extract = join(root, "extract");
+      await mkdir(extract, { recursive: true });
+      await runTool("tar", ["-xzf", bundle, "-C", extract]);
+      expect(await readFile(join(extract, "frameworks", "libvips-test.42.dylib"), "utf8")).toBe("libvips dylib payload v2\n");
+      const shaLine = await readSha(root, bundle);
+      expect(
+        shaLine.split(/\s+/)[0],
+        "the sibling .sha256 must describe the newly published bundle",
+      ).toBe(createHash("sha256").update(await readFile(bundle)).digest("hex"));
+      expect(
+        (await readdir(join(root, "src-tauri", ".freeze"))).length,
+        "only the bundle and its .sha256 remain",
+      ).toBe(2);
+    });
+  });
+
+  it("keeps_the_previous_bundle_and_sha_when_the_tar_step_fails", async () => {
+    await withRoot(async (root) => {
+      await stageTree(root, MAC_TRIPLE);
+      const first = await runScript(FREEZE, ["--triple", MAC_TRIPLE, "--root", root]);
+      expect(first.code, first.stderr).toBe(0);
+
+      const bundle = bundlePath(root, MAC_TRIPLE);
+      const bundleBefore = await readFile(bundle);
+      const shaBefore = await readFile(`${bundle}.sha256`, "utf8");
+      await chmod(join(root, "src-tauri", "binaries", `vips-${MAC_TRIPLE}`), 0o000);
+      try {
+        const result = await runScript(FREEZE, ["--triple", MAC_TRIPLE, "--root", root]);
+
+        expect(result.code).toBe(1);
+        expect(
+          await readFile(bundle),
+          "a failed freeze must not clobber the previous good bundle",
+        ).toEqual(bundleBefore);
+        expect(
+          await readFile(`${bundle}.sha256`, "utf8"),
+          "the stale .sha256 must stay paired with the surviving bundle",
+        ).toBe(shaBefore);
+        expect(
+          (await readdir(join(root, "src-tauri", ".freeze"))).length,
+          "temp artifacts from the failed run must not linger",
+        ).toBe(2);
+      } finally {
+        await chmod(join(root, "src-tauri", "binaries", `vips-${MAC_TRIPLE}`), 0o644);
+      }
     });
   });
 
