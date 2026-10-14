@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile, chmod } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -120,19 +120,101 @@ async function withBareDest(body) {
 
 const freezeDir = (root) => join(root, "src-tauri", ".freeze");
 const frozenBundle = (root) => join(freezeDir(root), `sidecar-bundle-${MAC_TRIPLE}.tar.gz`);
+const freezeLockDir = (root) => join(freezeDir(root), "freeze.lock");
 const restoredBinary = (root, engine) =>
   readFile(join(root, "src-tauri", "binaries", `${engine}-${MAC_TRIPLE}`), "utf8");
 const restoredInit = (root) => readFile(join(root, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"), "utf8");
 const restoredDylib = (root) => readFile(join(root, "src-tauri", "frameworks", "libvips-test.42.dylib"), "utf8");
 
 async function expectCleanFreezeDir(destRoot) {
-  const entries = await readdir(join(destRoot, "src-tauri", ".freeze"));
+  const dir = join(destRoot, "src-tauri", ".freeze");
+  const entries = existsSync(dir) ? await readdir(dir) : [];
   expect(entries, "work and lock dirs must be cleaned up after the run").toEqual([]);
+}
+
+const STALE_PAYLOADS = Object.fromEntries(
+  ENGINES.map((engine) => [engine, `stale payload for ${engine} from the pre-swap tree\n`]),
+);
+const STALE_DYLIB = "stale dylib bytes\n";
+const STALE_INIT = "stale gs init bytes\n";
+
+async function stageStaleTree(destRoot) {
+  const base = join(destRoot, "src-tauri");
+  await mkdir(base, { recursive: true });
+  await stageSidecarTree(base, STALE_PAYLOADS);
+  await writeFile(join(base, "frameworks", "libvips-test.42.dylib"), STALE_DYLIB);
+  await writeFile(join(base, "gs-resources", "Resource", "Init", "gs_init.ps"), STALE_INIT);
+}
+
+async function expectStalePreSwapTree(destRoot) {
+  for (const engine of ENGINES) {
+    expect(
+      await readFile(join(destRoot, "src-tauri", "binaries", `${engine}-${MAC_TRIPLE}`), "utf8"),
+      `the pre-swap ${engine} binary must survive byte-for-byte`,
+    ).toBe(STALE_PAYLOADS[engine]);
+  }
+  expect(await readFile(join(destRoot, "src-tauri", "frameworks", "libvips-test.42.dylib"), "utf8")).toBe(STALE_DYLIB);
+  expect(await readFile(join(destRoot, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"), "utf8")).toBe(
+    STALE_INIT,
+  );
+  const entries = await readdir(join(destRoot, "src-tauri"));
+  expect(new Set(entries), "no swapped-in payload or temp litter may remain in src-tauri").toEqual(
+    new Set(["binaries", "frameworks", "gs-resources", ".freeze"]),
+  );
+}
+
+const FAIL_DEST_MV_SHIM = [
+  "#!/bin/sh",
+  "set -eu",
+  'if [ -n "${FAIL_MV_STATE_FILE:-}" ] && [ -n "${FAIL_MV_DEST:-}" ] && [ "$2" = "$FAIL_MV_DEST" ] && [ ! -e "$FAIL_MV_STATE_FILE" ]; then',
+  '  echo once > "$FAIL_MV_STATE_FILE"',
+  '  echo "shim mv: refusing to move into $2" >&2',
+  "  exit 1",
+  "fi",
+  'exec /bin/mv "$@"',
+].join("\n");
+
+const BACKUP_FAIL_MV_SHIM = [
+  "#!/bin/sh",
+  "set -eu",
+  'prefix="${FAIL_BACKUP_DEST_PREFIX-}"',
+  'if [ -n "$prefix" ]; then',
+  '  case "$2" in',
+  '    "$prefix"*)',
+  '      base="${2##*/}"',
+  '      case " ${FAIL_BACKUP_NAMES-} " in',
+  '        *" $base "*)',
+  '          echo "shim mv: refusing to move $base into the backup" >&2',
+  "          exit 1",
+  "          ;;",
+  "      esac",
+  "      ;;",
+  "  esac",
+  "fi",
+  'exec /bin/mv "$@"',
+].join("\n");
+
+const TERM_MV_SHIM = [
+  "#!/bin/sh",
+  "set -eu",
+  'kill -TERM "$PPID" 2>/dev/null || true',
+  'exec /bin/mv "$@"',
+].join("\n");
+
+async function withMvShim(shimSource, extraEnv, body) {
+  const shimDir = await mkdtemp(join(tmpdir(), "mv-shim-"));
+  await writeFile(join(shimDir, "mv"), shimSource, { mode: 0o755 });
+  const env = { ...process.env, PATH: `${shimDir}:${process.env.PATH ?? ""}`, ...extraEnv };
+  try {
+    return await body(env);
+  } finally {
+    await rm(shimDir, { recursive: true, force: true });
+  }
 }
 
 const GH_LIST = `[{"tagName":"v1.2.3"},{"tagName":"sidecars-20260101"},{"tagName":"sidecars-20261010"}]`;
 
-async function stubEnv(destRoot, { mode } = {}) {
+async function stubEnv(destRoot, { mode, ghList, repo } = {}) {
   const payload = await mkdtemp(join(tmpdir(), "gh-stub-payload-"));
   await stageSidecarTree(payload, GH_STUB_PAYLOADS);
   const stubDir = await mkdtemp(join(tmpdir(), "gh-stub-"));
@@ -140,13 +222,22 @@ async function stubEnv(destRoot, { mode } = {}) {
   const script = [
     "#!/bin/sh",
     "set -eu",
+    "record_args() {",
+    '  marker="$1"',
+    "  shift",
+    '  : > "$marker"',
+    '  for a in "$@"; do',
+    '    printf \'%s\\n\' "$a" >> "$marker"',
+    "  done",
+    "}",
     'case "$1 $2" in',
     '  "release list")',
+    '    record_args "$GH_STUB_LIST_MARKER" "$@"',
     '    printf \'%s\' "$GH_STUB_LIST"',
-    '    printf \'%s\' "$GH_STUB_LIST" > "$GH_STUB_LIST_MARKER"',
     "    ;;",
     '  "release download")',
-    '    shift 2',
+    '    record_args "$GH_STUB_DOWNLOAD_MARKER" "$@"',
+    "    shift 2",
     '    tag=""',
     '    prev=""',
     '    for arg in "$@"; do',
@@ -156,7 +247,7 @@ async function stubEnv(destRoot, { mode } = {}) {
     '        *) if [ -z "$tag" ]; then tag="$arg"; fi ;;',
     '      esac',
     '    done',
-    '    printf \'%s\' "$tag" > "$GH_STUB_DOWNLOAD_MARKER"',
+    '    printf \'%s\' "$tag" > "$GH_STUB_TAG_MARKER"',
     '    if [ "${GH_STUB_MODE-}" = "no-assets" ]; then',
     "      exit 0",
     "    fi",
@@ -178,11 +269,13 @@ async function stubEnv(destRoot, { mode } = {}) {
     ...process.env,
     PATH: `${stubDir}:${process.env.PATH ?? ""}`,
     GH_TOKEN: "stub-token",
-    GH_STUB_LIST: GH_LIST,
+    GH_STUB_LIST: ghList ?? GH_LIST,
     GH_STUB_LIST_MARKER: markerList,
     GH_STUB_DOWNLOAD_MARKER: markerDownload,
+    GH_STUB_TAG_MARKER: join(destRoot, "stub-tag.txt"),
     GH_STUB_PAYLOAD: payload,
     GH_STUB_TRIPLE: MAC_TRIPLE,
+    ...(repo ? { GITHUB_REPOSITORY: repo } : {}),
     ...(mode ? { GH_STUB_MODE: mode } : {}),
   };
   return {
@@ -345,23 +438,27 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("refuses_to_run_while_another_unfreeze_holds_the_lock", async () => {
+  it("refuses_to_run_while_another_freeze_or_unfreeze_holds_the_lock", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await mkdir(join(destRoot, "src-tauri"));
         await stageSidecarTree(join(destRoot, "src-tauri"), ENGINE_PAYLOADS);
         await writeFile(join(destRoot, "src-tauri", "binaries", `ffmpeg-${MAC_TRIPLE}`), "stale ffmpeg\n");
-        await mkdir(join(destRoot, "src-tauri", ".freeze", "unfreeze.lock"), { recursive: true });
+        await mkdir(freezeLockDir(destRoot), { recursive: true });
 
         const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot]);
 
         expect(result.code).toBe(1);
         expect(result.stderr).toMatch(/lock/);
         expect(
+          result.stderr,
+          "the refusal must include the stale-lock remediation",
+        ).toContain(`remove ${freezeLockDir(destRoot)} and retry`);
+        expect(
           await readFile(join(destRoot, "src-tauri", "binaries", `ffmpeg-${MAC_TRIPLE}`), "utf8"),
           "a locked run must not touch the destination tree",
         ).toBe("stale ffmpeg\n");
-        await rm(join(destRoot, "src-tauri", ".freeze", "unfreeze.lock"), { recursive: true });
+        await rm(freezeLockDir(destRoot), { recursive: true });
       });
     });
   });
@@ -406,11 +503,14 @@ describe("unfreeze.sh", () => {
         const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--root", destRoot], { env: stubbed.env });
 
         expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
-        expect(await readFile(stubbed.markers.list, "utf8"), "the stub gh publishes the tag list JSON").toBe(GH_LIST);
+        const ghListArgs = (await readFile(stubbed.markers.list, "utf8")).split("\n").filter(Boolean);
+        expect(ghListArgs, "the tag list is requested with a bounded JSON query").toContain("--json");
+        expect(ghListArgs[ghListArgs.indexOf("--json") + 1]).toBe("tagName");
+        const ghDownloadArgs = (await readFile(stubbed.markers.download, "utf8")).split("\n").filter(Boolean);
         expect(
-          await readFile(stubbed.markers.download, "utf8"),
+          ghDownloadArgs,
           "the claimed tag must be the newest sidecars-*, decoy v1.2.3 ignored",
-        ).toBe("sidecars-20261010");
+        ).toContain("sidecars-20261010");
         for (const engine of ENGINES) {
           expect(await restoredBinary(destRoot, engine), "the gh-path payload lands byte-for-byte").toBe(GH_STUB_PAYLOADS[engine]);
         }
@@ -546,6 +646,224 @@ describe("unfreeze.sh", () => {
           await chmod(join(destRoot, "src-tauri"), 0o755);
         }
       });
+    });
+  });
+
+  it.each(["binaries", "frameworks", "gs-resources"])(
+    "rolls_back_to_the_pre_swap_tree_when_the_install_fails_moving_%s",
+    async (failDest) => {
+      await withFrozenSource(async (srcRoot) => {
+        await withRoot(async (destRoot) => {
+          await stageStaleTree(destRoot);
+          const result = await withMvShim(
+            FAIL_DEST_MV_SHIM,
+            {
+              FAIL_MV_DEST: join(destRoot, "src-tauri", failDest),
+              FAIL_MV_STATE_FILE: join(destRoot, "stub-mv-state"),
+            },
+            (env) =>
+              runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot], {
+                env,
+              }),
+          );
+
+          expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(1);
+          expect(result.stderr).toMatch(/failed to install the new sidecar tree/);
+          expect(
+            result.stderr,
+            "the rollback must not claim success over un-rolled-back names",
+          ).toMatch(/restored byte-for-byte to its pre-swap state/);
+          await expectStalePreSwapTree(destRoot);
+          await expectCleanFreezeDir(destRoot);
+        });
+      });
+    },
+  );
+
+  it("restores_the_pre_swap_tree_when_a_backup_set_aside_move_fails_midway", async () => {
+    await withFrozenSource(async (srcRoot) => {
+      await withRoot(async (destRoot) => {
+        await stageStaleTree(destRoot);
+        const result = await withMvShim(
+          BACKUP_FAIL_MV_SHIM,
+          {
+            FAIL_BACKUP_DEST_PREFIX: join(destRoot, "src-tauri", ".freeze", "unfreeze-backup."),
+            FAIL_BACKUP_NAMES: "frameworks",
+          },
+          (env) =>
+            runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot], {
+              env,
+            }),
+        );
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(1);
+        expect(result.stderr).toMatch(/failed to swap in the new sidecar tree/);
+        expect(result.stderr).toMatch(/restored byte-for-byte to its pre-swap state/);
+        await expectStalePreSwapTree(destRoot);
+        await expectCleanFreezeDir(destRoot);
+      });
+    });
+  });
+
+  it("preserves_the_named_backup_and_the_pre_swap_tree_when_a_signal_interrupts_the_swap", async () => {
+    await withFrozenSource(async (srcRoot) => {
+      await withRoot(async (destRoot) => {
+        await stageStaleTree(destRoot);
+        const result = await withMvShim(TERM_MV_SHIM, {}, (env) =>
+          runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot], {
+            env,
+          }),
+        );
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(143);
+        await expectStalePreSwapTree(destRoot);
+        const leftovers = await readdir(freezeDir(destRoot));
+        expect(leftovers.length).toBe(1);
+        expect(leftovers[0]).toMatch(/^unfreeze-backup\./);
+        expect(existsSync(join(freezeDir(destRoot), "freeze.lock")), "no lock may survive the interrupted run").toBe(
+          false,
+        );
+        expect(result.stderr).toContain(leftovers[0]);
+      });
+    });
+  });
+
+  it("recovers_a_stale_lock_left_by_a_dead_predecessor_older_than_an_hour", async () => {
+    await withFrozenSource(async (srcRoot) => {
+      await withRoot(async (destRoot) => {
+        await mkdir(join(destRoot, "src-tauri"));
+        const lockDir = freezeLockDir(destRoot);
+        await mkdir(lockDir, { recursive: true });
+        await writeFile(join(lockDir, "pid"), "999999\n");
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        await utimes(lockDir, twoHoursAgo, twoHoursAgo);
+
+        const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot]);
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+        expect(result.stdout).toMatch(/removed stale lock from dead pid/);
+        for (const engine of ENGINES) {
+          expect(await restoredBinary(destRoot, engine)).toBe(ENGINE_PAYLOADS[engine]);
+        }
+        await expectCleanFreezeDir(destRoot);
+      });
+    });
+  });
+
+  it("refuses_a_lock_held_by_a_live_pid_even_when_the_stamp_is_old", async () => {
+    await withFrozenSource(async (srcRoot) => {
+      await withRoot(async (destRoot) => {
+        await mkdir(join(destRoot, "src-tauri"));
+        await stageSidecarTree(join(destRoot, "src-tauri"), ENGINE_PAYLOADS);
+        await writeFile(join(destRoot, "src-tauri", "binaries", `ffmpeg-${MAC_TRIPLE}`), "stale ffmpeg\n");
+        const lockDir = freezeLockDir(destRoot);
+        await mkdir(lockDir, { recursive: true });
+        await writeFile(join(lockDir, "pid"), `${process.pid}\n`);
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        await utimes(lockDir, twoHoursAgo, twoHoursAgo);
+
+        const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot]);
+
+        expect(result.code).toBe(1);
+        expect(result.stderr).toMatch(/holds the lock/);
+        expect(
+          await readFile(join(destRoot, "src-tauri", "binaries", `ffmpeg-${MAC_TRIPLE}`), "utf8"),
+          "a live-pid lock holds the run off no matter the stamp",
+        ).toBe("stale ffmpeg\n");
+      });
+    });
+  });
+
+  it("refuses_a_fresh_dead_pid_lock_and_advises_the_stale_lock_remediation", async () => {
+    await withFrozenSource(async (srcRoot) => {
+      await withRoot(async (destRoot) => {
+        await mkdir(join(destRoot, "src-tauri"));
+        await stageSidecarTree(join(destRoot, "src-tauri"), ENGINE_PAYLOADS);
+        await writeFile(join(destRoot, "src-tauri", "binaries", `ffmpeg-${MAC_TRIPLE}`), "stale ffmpeg\n");
+        const lockDir = freezeLockDir(destRoot);
+        await mkdir(lockDir, { recursive: true });
+        await writeFile(join(lockDir, "pid"), "999999\n");
+
+        const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot]);
+
+        expect(result.code).toBe(1);
+        expect(result.stderr).toMatch(/holds the lock/);
+        expect(result.stderr, "the refusal must include the stale-lock remediation").toContain(
+          `remove ${lockDir} and retry`,
+        );
+        expect(
+          await readFile(join(destRoot, "src-tauri", "binaries", `ffmpeg-${MAC_TRIPLE}`), "utf8"),
+          "the pre-swap tree must survive a refused restore",
+        ).toBe("stale ffmpeg\n");
+      });
+    });
+  });
+
+  it("fails_loudly_when_the_gh_list_output_is_unparseable", async () => {
+    await withBareDest(async (destRoot) => {
+      const stubbed = await stubEnv(destRoot, { ghList: "fatal: quota exceeded while listing releases" });
+      try {
+        const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--root", destRoot], { env: stubbed.env });
+
+        expect(result.code).toBe(1);
+        expect(result.stderr).toMatch(/gh release list returned unparseable output/);
+        expect(result.stderr).toContain("fatal: quota exceeded while listing releases".slice(0, 120));
+        expect(existsSync(join(destRoot, "src-tauri", "binaries"))).toBe(false);
+        await expectCleanFreezeDir(destRoot);
+      } finally {
+        await stubbed.cleanup();
+      }
+    });
+  });
+
+  it("keeps_the_adr_message_when_the_gh_list_output_is_genuinely_empty", async () => {
+    await withBareDest(async (destRoot) => {
+      const stubbed = await stubEnv(destRoot, { ghList: "" });
+      try {
+        const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--root", destRoot], { env: stubbed.env });
+
+        expect(result.code).toBe(1);
+        expect(result.stderr).toMatch(/no sidecars-.* release found — run freeze\.yml before the release build/);
+        expect(existsSync(join(destRoot, "src-tauri", "binaries"))).toBe(false);
+      } finally {
+        await stubbed.cleanup();
+      }
+    });
+  });
+
+  it("records_the_gh_arg_contract_including_the_ci_repo_flag", async () => {
+    await withBareDest(async (destRoot) => {
+      const stubbed = await stubEnv(destRoot, { repo: "initgrep-apps/filecompressor" });
+      try {
+        const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--root", destRoot], { env: stubbed.env });
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+        for (const engine of ENGINES) {
+          expect(await restoredBinary(destRoot, engine)).toBe(GH_STUB_PAYLOADS[engine]);
+        }
+        const listArgs = (await readFile(stubbed.markers.list, "utf8")).split("\n").filter(Boolean);
+        expect(listArgs.slice(0, 2), "the gh stub records full argument vectors").toEqual(["release", "list"]);
+        expect(listArgs).toContain("--repo");
+        expect(listArgs).toContain("initgrep-apps/filecompressor");
+        expect(listArgs).toContain("--limit");
+        expect(listArgs[listArgs.indexOf("--limit") + 1]).toBe("200");
+        expect(listArgs).toContain("--json");
+        expect(listArgs[listArgs.indexOf("--json") + 1]).toBe("tagName");
+        const downloadArgs = (await readFile(stubbed.markers.download, "utf8")).split("\n").filter(Boolean);
+        expect(downloadArgs.slice(0, 2)).toEqual(["release", "download"]);
+        expect(downloadArgs).toContain("--repo");
+        expect(downloadArgs).toContain("initgrep-apps/filecompressor");
+        expect(
+          downloadArgs.filter((arg) => arg === "--pattern").length,
+          "both the bundle and its .sha256 are requested",
+        ).toBe(2);
+        expect(downloadArgs).toContain(`sidecar-bundle-${MAC_TRIPLE}.tar.gz`);
+        expect(downloadArgs).toContain(`sidecar-bundle-${MAC_TRIPLE}.tar.gz.sha256`);
+        expect(downloadArgs).toContain("--clobber");
+        expect(downloadArgs).toContain("sidecars-20261010");
+      } finally {
+        await stubbed.cleanup();
+      }
     });
   });
 });

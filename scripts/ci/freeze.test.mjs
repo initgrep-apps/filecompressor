@@ -223,4 +223,37 @@ describe("freeze.sh", () => {
       expect(existsSync(bundlePath(root, MAC_TRIPLE))).toBe(false);
     });
   });
+
+  it("refuses_loudly_when_the_output_dir_cannot_be_created", async () => {
+    await withRoot(async (root) => {
+      await stageTree(root, MAC_TRIPLE);
+      await chmod(join(root, "src-tauri"), 0o555);
+      try {
+        const result = await runScript(FREEZE, ["--triple", MAC_TRIPLE, "--root", root]);
+
+        expect(result.code).toBe(1);
+        expect(result.stderr).toMatch(/cannot create .*src-tauri\/\.freeze/);
+        expect(existsSync(bundlePath(root, MAC_TRIPLE))).toBe(false);
+      } finally {
+        await chmod(join(root, "src-tauri"), 0o755);
+      }
+    });
+  });
+
+  it("refuses_while_another_freeze_or_unfreeze_holds_the_shared_lock", async () => {
+    await withRoot(async (root) => {
+      await stageTree(root, MAC_TRIPLE);
+      const lockDir = join(root, "src-tauri", ".freeze", "freeze.lock");
+      await mkdir(lockDir, { recursive: true });
+      try {
+        const result = await runScript(FREEZE, ["--triple", MAC_TRIPLE, "--root", root]);
+
+        expect(result.code).toBe(1);
+        expect(result.stderr).toMatch(/lock/);
+        expect(existsSync(bundlePath(root, MAC_TRIPLE))).toBe(false);
+      } finally {
+        await rm(lockDir, { recursive: true, force: true });
+      }
+    });
+  });
 });

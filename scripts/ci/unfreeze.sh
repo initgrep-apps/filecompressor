@@ -2,10 +2,12 @@
 # unfreeze.sh — restore a frozen macOS sidecar bundle (ADR 0001) into src-tauri/.
 # With --archive <tarball>: verify the sibling .sha256, then extract. Without it:
 # select and download the newest sidecars-* release bundle for the triple via gh
-# (requires GH_TOKEN). The bundle verifies and validates in a temp dir while the
-# current tree is backed up next to it; only a fully validated payload is
-# swapped in, and any failed install rolls src-tauri back — a failed unfreeze
-# never leaves a half-restored tree or temp litter.
+# (requires GH_TOKEN). The bundle verifies and validates in a temp workspace
+# while the current tree is backed up OUTSIDE that workspace, so workspace
+# cleanup can never destroy the only copy; every interrupted or failed install
+# restores the pre-swap tree, and signals mid-swap always leave the original
+# tree bytes recoverable at a named backup path. Only a fully validated payload
+# is swapped in.
 # Usage: bash scripts/ci/unfreeze.sh --triple <triple> [--archive <tarball>] [--root <repo-root>]
 set -euo pipefail
 
@@ -53,14 +55,72 @@ SRC="$ROOT/src-tauri"
 
 WORK=""
 LOCK_DIR=""
-OWN_LOCK=""
+OWN_LOCK=0
+BACKUP_DIR=""
+MID_SWAP=0
+INSTALL_OK=0
+ROLLBACK_DONE=0
+
+lock_age_seconds() {
+  mtime=""
+  if command -v stat >/dev/null 2>&1; then
+    mtime="$(stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || true)"
+  fi
+  if [ -z "$mtime" ]; then
+    mtime="$(python3 -c 'import os,sys;print(int(os.stat(sys.argv[1]).st_mtime))' "$1" 2>/dev/null || true)"
+  fi
+  [ -n "$mtime" ] || return 1
+  echo $(( $(date +%s) - mtime ))
+}
+
+acquire_lock() {
+  LOCK_DIR="$SRC/.freeze/freeze.lock"
+  if mkdir "$LOCK_DIR" 2>/dev/null; then
+    OWN_LOCK=1
+    echo "$$" > "$LOCK_DIR/pid" || fail "cannot write the lock pid into $LOCK_DIR — remove $LOCK_DIR and retry"
+    return 0
+  fi
+  lock_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  lock_pid_alive=0
+  case "$lock_pid" in
+    ''|*[!0-9]*) ;;
+    *) if kill -0 "$lock_pid" 2>/dev/null; then lock_pid_alive=1; fi ;;
+  esac
+  if [ "$lock_pid_alive" = 1 ]; then
+    fail "another freeze or unfreeze (pid $lock_pid) holds the lock at $LOCK_DIR — rerun after it finishes; if none is running, remove $LOCK_DIR and retry"
+  fi
+  lock_age="$(lock_age_seconds "$LOCK_DIR" 2>/dev/null || true)"
+  if [ -n "$lock_age" ] && [ "$lock_age" -ge 3600 ]; then
+    rm -rf "$LOCK_DIR" 2>/dev/null || fail "the previous holder left a stale lock at $LOCK_DIR and it cannot be removed — remove $LOCK_DIR and retry"
+    info "removed stale lock from dead pid ${lock_pid:-unknown}"
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+      OWN_LOCK=1
+      echo "$$" > "$LOCK_DIR/pid" || fail "cannot write the lock pid into $LOCK_DIR — remove $LOCK_DIR and retry"
+      return 0
+    fi
+  fi
+  fail "another freeze or unfreeze holds the lock at $LOCK_DIR — rerun after it finishes; if none is running, remove $LOCK_DIR and retry"
+}
+
 cleanup() {
+  status=$?
+  trap '' HUP INT TERM
+  if [ "$MID_SWAP" = 1 ] && [ "$INSTALL_OK" = 0 ] && [ "$ROLLBACK_DONE" = 0 ] && [ -n "$BACKUP_DIR" ]; then
+    echo "unfreeze: FAIL — interrupted mid-swap; the pre-swap tree copy is preserved at $BACKUP_DIR" >&2
+    broken="$(restore_from_backup)"
+    if [ -z "$broken" ]; then
+      echo "unfreeze: FAIL — interrupted after src-tauri was restored byte-for-byte to its pre-swap state; the safety copy remains at $BACKUP_DIR — verify the tree, then remove that directory" >&2
+    else
+      echo "unfreeze: FAIL — interrupted mid-swap; the rollback could not complete for:$broken — the original tree is preserved at $BACKUP_DIR; restore it with 'mv $BACKUP_DIR/<name> src-tauri/<name>' for each name listed" >&2
+    fi
+  fi
   if [ -n "$WORK" ]; then
     rm -rf "$WORK" || echo "unfreeze: WARN — could not remove temp dir $WORK" >&2
   fi
-  if [ -n "$OWN_LOCK" ] && [ -d "$LOCK_DIR" ]; then
-    rmdir "$LOCK_DIR" 2>/dev/null || echo "unfreeze: WARN — could not remove lock dir $LOCK_DIR" >&2
+  if [ "$OWN_LOCK" = 1 ] && [ -d "$LOCK_DIR" ]; then
+    rm -rf "$LOCK_DIR" || echo "unfreeze: WARN — could not remove lock dir $LOCK_DIR" >&2
   fi
+  exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 143' HUP INT TERM
@@ -96,47 +156,66 @@ validate_payload() {
     fail "bundle has an empty or missing frameworks/ after extraction — refusing to swap in a partial bundle"
 }
 
-rollback_tree() {
-  installed="$1"
+restore_from_backup() {
+  broken=""
   for name in $DIR_NAMES; do
-    [ "$installed" -gt 0 ] || break
-    rm -rf "$SRC/$name" || true
-    installed=$((installed - 1))
-  done
-  for name in $DIR_NAMES; do
-    if [ -e "$WORK/backup/$name" ]; then
-      mv "$WORK/backup/$name" "$SRC/$name" || \
-        echo "unfreeze: WARN — could not roll back src-tauri/$name from the pre-swap backup" >&2
+    backup_item="$BACKUP_DIR/$name"
+    [ -e "$backup_item" ] || [ -L "$backup_item" ] || continue
+    if [ -e "$SRC/$name" ] || [ -L "$SRC/$name" ]; then
+      if ! rm -rf "$SRC/$name"; then
+        echo "unfreeze: could not remove the leftover src-tauri/$name before restoring its backup copy" >&2
+        broken="$broken $name"
+        continue
+      fi
+    fi
+    if ! mv "$backup_item" "$SRC/$name"; then
+      echo "unfreeze: could not restore src-tauri/$name from the backup copy" >&2
+      broken="$broken $name"
     fi
   done
-  fail "failed to install the new sidecar tree — src-tauri was rolled back to its pre-swap state"
+  printf '%s' "${broken# }"
 }
 
-install_tree() {
-  mkdir -p "$WORK/backup"
-  kept=0
+restore_and_report() {
+  ROLLBACK_DONE=1
+  broken="$(restore_from_backup)"
+  if [ -z "$broken" ]; then
+    rm -rf "$BACKUP_DIR" || echo "unfreeze: WARN — could not remove the backup dir $BACKUP_DIR after the restore" >&2
+    fail "failed to $1 the new sidecar tree${2:-} — src-tauri was restored byte-for-byte to its pre-swap state"
+  fi
+  fail "failed to $1 the new sidecar tree${2:-} — rollback incomplete for:$broken — the original tree is preserved at $BACKUP_DIR; restore it with 'mv $BACKUP_DIR/<name> src-tauri/<name>' for each name listed"
+}
+
+set_aside_existing() {
+  BACKUP_DIR="$SRC/.freeze/unfreeze-backup.$$"
+  mkdir -p "$BACKUP_DIR" || fail "cannot create the pre-swap backup dir $BACKUP_DIR — make src-tauri/.freeze writable; the tree is untouched"
+  MID_SWAP=1
   for name in $DIR_NAMES; do
     if [ -e "$SRC/$name" ] || [ -L "$SRC/$name" ]; then
-      mv "$SRC/$name" "$WORK/backup/$name" || \
-        fail "could not set aside the existing src-tauri/$name — destination not writable, the tree is untouched"
-      kept=$((kept + 1))
+      if ! mv "$SRC/$name" "$BACKUP_DIR/$name"; then
+        restore_and_report "swap in" "while setting aside src-tauri/$name — the destination is not writable"
+      fi
     fi
   done
-  installed=0
+}
+
+install_payload() {
   for name in $DIR_NAMES; do
     if ! mv "$WORK/root/$name" "$SRC/$name"; then
-      rollback_tree "$installed"
+      restore_and_report "install"
     fi
-    installed=$((installed + 1))
   done
 }
 
 extract_and_restore() {
   archive="$1"
-  mkdir -p "$WORK/root"
+  mkdir -p "$WORK/root" || fail "cannot create the extraction dir $WORK/root — check free disk space"
   tar -xzf "$archive" -C "$WORK/root" || fail "tar extraction failed for '$archive' — the bundle may be corrupt"
   validate_payload "$WORK/root"
-  install_tree
+  set_aside_existing
+  install_payload
+  INSTALL_OK=1
+  rm -rf "$BACKUP_DIR" || echo "unfreeze: WARN — could not remove the backup dir $BACKUP_DIR after the successful install" >&2
 }
 
 gh_args=()
@@ -154,32 +233,34 @@ else
 
   raw_tags="$(gh release list "${gh_args[@]+"${gh_args[@]}"}" --limit 200 --json tagName)" || \
     fail "gh release list failed — cannot look up the sidecars-* release"
-  tags="$(printf '%s\n' "$raw_tags" | grep -Eo '"tagName":"[^"]+"' | sed -e 's/^"tagName":"//' -e 's/"$//')" || true
-  for candidate in $tags; do
-    case "$candidate" in
-      sidecars-*)
-        if [ -z "$newest" ] || [ "$candidate" \> "$newest" ]; then
-          newest="$candidate"
-        fi
-        ;;
-    esac
-  done
-  [ -n "$newest" ] || fail "no sidecars-* release found — run freeze.yml before the release build (ADR 0001)"
+  if [ -n "$raw_tags" ]; then
+    tags="$(printf '%s\n' "$raw_tags" | grep -Eo '"tagName":"[^"]+"' | sed -e 's/^"tagName":"//' -e 's/"$//' || true)"
+    for candidate in $tags; do
+      case "$candidate" in
+        sidecars-*)
+          if [ -z "$newest" ] || [ "$candidate" \> "$newest" ]; then
+            newest="$candidate"
+          fi
+          ;;
+      esac
+    done
+    if [ -z "$newest" ]; then
+      preview="$(printf '%s' "$raw_tags" | tr '\n' ' ' | head -c 120)"
+      fail "gh release list returned unparseable output — starting with: $preview — check gh auth/quota/network"
+    fi
+  else
+    fail "no sidecars-* release found — run freeze.yml before the release build (ADR 0001)"
+  fi
 fi
 
-mkdir -p "$SRC/.freeze"
-LOCK_DIR="$SRC/.freeze/unfreeze.lock"
-if mkdir "$LOCK_DIR" 2>/dev/null; then
-  OWN_LOCK=1
-else
-  fail "another unfreeze holds the lock at $LOCK_DIR — a concurrent restore would interleave swaps, rerun after it finishes"
-fi
-WORK="$(mktemp -d "$SRC/.freeze/unfreeze.XXXXXX")"
+mkdir -p "$SRC/.freeze" || fail "cannot create $SRC/.freeze — make src-tauri writable and check free disk space"
+acquire_lock
+WORK="$(mktemp -d "$SRC/.freeze/unfreeze.XXXXXX")" || fail "cannot create the temp workspace under $SRC/.freeze — check free disk space and permissions"
 
 if [ -n "$ARCHIVE" ]; then
   source_archive="$ARCHIVE"
 else
-  mkdir -p "$WORK/dl"
+  mkdir -p "$WORK/dl" || fail "cannot create the download dir $WORK/dl — check free disk space"
   gh release download "${gh_args[@]+"${gh_args[@]}"}" "$newest" \
     --pattern "sidecar-bundle-${TRIPLE}.tar.gz" \
     --pattern "sidecar-bundle-${TRIPLE}.tar.gz.sha256" \
