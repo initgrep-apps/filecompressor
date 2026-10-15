@@ -89,17 +89,17 @@ Failure modes the workflows imply but no happy-path test exercises:
 - Finalize job (`needs: [freeze]`): `actions/download-artifact@v4` → create the published release via `gh release create "sidecars-$(date -u +%Y%m%d)"` with the bundle assets.
 - `workflows.test.mjs`: parses every `.github/workflows/*.yml` with the `yaml` package and asserts: freeze.yml has workflow_dispatch + the exact 2-row matrix + a `scripts/ci/freeze.sh` step; **no workflow file anywhere contains a `-latest` runner label** (Review Focus #5); every `on:` section parses to valid triggers.
 
-- [ ] **Step 1: Add `yaml` devDep** — `yarn add -D yaml` (lockfile v1 updates `yarn.lock`).
+- [x] **Step 1: Add `yaml` devDep** — `yarn add -D yaml` (lockfile v1 updates `yarn.lock`).
 
-- [ ] **Step 2: Write failing `workflows.test.mjs`** with the assertions above (and a `README`-style array of the three expected workflow files so Task 3/4 extend it).
+- [x] **Step 2: Write failing `workflows.test.mjs`** with the assertions above (and a `README`-style array of the three expected workflow files so Task 3/4 extend it).
 
-- [ ] **Step 3: Run** `yarn test -- scripts/ci/workflows.test.mjs` — expect FAIL (freeze.yml missing).
+- [x] **Step 3: Run** `yarn test -- scripts/ci/workflows.test.mjs` — expect FAIL (freeze.yml missing).
 
-- [ ] **Step 4: Write `.github/workflows/freeze.yml`** per acceptance criteria. Add `src-tauri/.freeze/` to `.gitignore`.
+- [x] **Step 4: Write `.github/workflows/freeze.yml`** per acceptance criteria. Add `src-tauri/.freeze/` to `.gitignore`.
 
-- [ ] **Step 5: Run** the validation test + full gate — expect green.
+- [x] **Step 5: Run** the validation test + full gate — expect green.
 
-- [ ] **Step 6: Commit** — `ci: add freeze workflow for mac sidecar bundles`
+- [x] **Step 6: Commit** — `ci: add freeze workflow for mac sidecar bundles`
 
 - [ ] **Step 7: Manual first freeze** — push branch, merge to main, run `freeze.yml` from the Actions UI once; confirm a published `sidecars-<date>` release with 4 assets (2 tarballs + 2 sha files). This unblocks Task 3.
 
