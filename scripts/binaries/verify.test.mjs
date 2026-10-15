@@ -56,6 +56,22 @@ esac
   return dir;
 }
 
+async function makeStubBrewNoKegDir() {
+  const dir = await mkdtemp(`${tmpdir()}/verify-stub-brew-nokeg-`);
+  await writeFile(
+    join(dir, "brew"),
+    `#!/bin/sh
+case "$1" in
+  --version) echo ok ;;
+  list) echo "Error: No such keg: $3" >&2; exit 1 ;;
+  *) exit 1 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  return dir;
+}
+
 const TOOL_PATH = "/usr/bin:/bin";
 
 function compileFixture(arch, outPath, versionOutput) {
@@ -399,6 +415,108 @@ describe("verify.mjs", () => {
     expect(result.stdout).toContain("verify: PASS");
     await rm(root, { recursive: true, force: true });
     await rm(emptyBin, { recursive: true, force: true });
+  });
+
+  it("fails when the formula is not installed on a brew-present host without the allowance", async () => {
+    const root = await makeRoot({
+      targets: {
+        "aarch64-apple-darwin": {
+          gs: {
+            source: "brew",
+            formula: "ghostscript",
+            binary: "gs",
+            dest: "gs",
+            expectVersion: "10.08.0",
+          },
+        },
+      },
+    });
+    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    await stageGsResources(root);
+    const stubBrew = await makeStubBrewDir("");
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubBrew}:${process.env.PATH}`,
+    });
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("the formula is not installed");
+    expect(result.stderr).toContain("brew install ghostscript");
+    expect(result.stdout).not.toContain("verify: PASS");
+    await rm(root, { recursive: true, force: true });
+    await rm(stubBrew, { recursive: true, force: true });
+  });
+
+  it("proceeds with a stated INACTIVE note when brew is present but the formula is not installed and the allowance is set", async () => {
+    const root = await makeRoot({
+      targets: {
+        "aarch64-apple-darwin": {
+          gs: {
+            source: "brew",
+            formula: "ghostscript",
+            binary: "gs",
+            dest: "gs",
+            expectVersion: "10.08.0",
+          },
+        },
+      },
+    });
+    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    await stageGsResources(root);
+    const stubBrew = await makeStubBrewDir("");
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubBrew}:${process.env.PATH}`,
+      BINARIES_ALLOW_INACTIVE_BREW: "1",
+    });
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("INACTIVE");
+    expect(result.stdout).toContain("the formula is not installed");
+    expect(result.stdout).toContain("BINARIES_ALLOW_INACTIVE_BREW=1");
+    expect(result.stdout).toContain("verify: PASS");
+    await rm(root, { recursive: true, force: true });
+    await rm(stubBrew, { recursive: true, force: true });
+  });
+
+  it("treats a No-such-keg brew failure as a missing formula gate", async () => {
+    const root = await makeRoot({
+      targets: {
+        "aarch64-apple-darwin": {
+          gs: {
+            source: "brew",
+            formula: "ghostscript",
+            binary: "gs",
+            dest: "gs",
+            expectVersion: "10.08.0",
+          },
+        },
+      },
+    });
+    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    await stageGsResources(root);
+    const stubNoKeg = await makeStubBrewNoKegDir();
+
+    const allowed = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubNoKeg}:${process.env.PATH}`,
+      BINARIES_ALLOW_INACTIVE_BREW: "1",
+    });
+    expect(allowed.code).toBe(0);
+    expect(allowed.stdout).toContain("INACTIVE");
+    expect(allowed.stdout).toContain("No such keg");
+    expect(allowed.stdout).toContain("verify: PASS");
+
+    const rejected = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubNoKeg}:${process.env.PATH}`,
+    });
+    expect(rejected.code).toBe(1);
+    expect(rejected.stderr).toContain("the formula is not installed");
+    expect(rejected.stderr).toContain("brew install ghostscript");
+
+    await rm(root, { recursive: true, force: true });
+    await rm(stubNoKeg, { recursive: true, force: true });
   });
 
   it("fails when a staged gs acceptance sentinel is missing", async () => {
