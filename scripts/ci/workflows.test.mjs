@@ -431,7 +431,7 @@ describe("release.yml release workflow", () => {
     }
   });
 
-  it("gate jobs fail fast on a workflow_dispatch missing the tag input", async () => {
+  it("gate job steps: cheap version + sidecars + draft checks, ordered before the matrix", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const steps = stepsOf(jobsOf(doc).gate);
     const checkoutIdx = steps.findIndex((s) => stepUses(s).startsWith("actions/checkout@"));
@@ -462,6 +462,10 @@ describe("release.yml release workflow", () => {
     expect(run).toContain("set -euo pipefail");
     expect(run).toContain("gh release list --limit 200 --json tagName");
     expect(run).toContain('startswith("sidecars-")');
+    expect(
+      run,
+      "a failed release list must fail closed with its own annotation, not collapse into 'no sidecars release'",
+    ).toContain("::error::sidecars-availability preflight could not list releases (auth/scopes/rate limit/network)");
     expect(run).toContain("::error::no sidecars-* release found — run the Freeze mac sidecars workflow before building the release (ADR 0001), then re-run the release");
     for (const triple of ["aarch64-apple-darwin", "x86_64-apple-darwin"]) {
       expect(run).toContain(triple);

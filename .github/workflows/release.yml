@@ -51,12 +51,22 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |-
           set -euo pipefail
-          newest="$(gh release list --limit 200 --json tagName --jq 'map(select(.tagName | startswith("sidecars-"))) | sort_by(.tagName) | last | .tagName // empty' 2>/dev/null || true)"
+          rc=0
+          newest="$(gh release list --limit 200 --json tagName --jq 'map(select(.tagName | startswith("sidecars-"))) | sort_by(.tagName) | last | .tagName // empty' 2>/dev/null)" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::sidecars-availability preflight could not list releases (auth/scopes/rate limit/network) — cannot verify the freeze publish; confirm GH_TOKEN scopes and re-run the release"
+            exit 1
+          fi
           if [ -z "$newest" ]; then
             echo "::error::no sidecars-* release found — run the Freeze mac sidecars workflow before building the release (ADR 0001), then re-run the release"
             exit 1
           fi
-          names="$(gh release view "$newest" --json assets --jq '[.assets[].name] | join(",")')"
+          rc=0
+          names="$(gh release view "$newest" --json assets --jq '[.assets[].name] | join(",")' 2>/dev/null)" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::sidecars-availability preflight could not read the assets of '$newest' (auth/scopes/rate limit/network) — cannot verify the freeze publish"
+            exit 1
+          fi
           for triple in aarch64-apple-darwin x86_64-apple-darwin; do
             for asset in "sidecar-bundle-${triple}.tar.gz" "sidecar-bundle-${triple}.tar.gz.sha256"; do
               case ",$names," in
