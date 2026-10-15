@@ -18,13 +18,30 @@ export function resolveVersion(tag, confVersion) {
   return { version: confVersion, prerelease: match[2] !== undefined };
 }
 
-export async function main(argv, { confPath = DEFAULT_CONF, envFile = process.env.GITHUB_ENV } = {}) {
-  if (!envFile) {
-    throw new Error("GITHUB_ENV is not set — run this script from a workflow step");
+export function resolveTagFromEnv(env = process.env) {
+  const eventName = env.GITHUB_EVENT_NAME ?? "";
+  if (eventName === "workflow_dispatch") {
+    const tag = env.DISPATCH_TAG ?? "";
+    if (!tag) {
+      throw new Error("workflow_dispatch requires the 'tag' input (e.g. v0.1.0)");
+    }
+    return tag;
   }
-  const [tag = ""] = argv;
+  const refName = env.GITHUB_REF_NAME ?? "";
+  if (!refName) {
+    throw new Error("cannot resolve a release tag — this helper expects a v* tag push or a workflow_dispatch with a 'tag' input");
+  }
+  return refName;
+}
+
+export async function main(argv = [], { confPath = DEFAULT_CONF, envFile = process.env.GITHUB_ENV, env = process.env } = {}) {
+  const tag = argv[0] ?? resolveTagFromEnv(env);
   const confVersion = JSON.parse(readFileSync(confPath, "utf8")).version;
   const resolved = resolveVersion(tag, confVersion);
+  if (!envFile) {
+    console.log(`release-version-check (validate-only): tag=${tag} version=${resolved.version} prerelease=${resolved.prerelease}`);
+    return resolved;
+  }
   appendFileSync(envFile, `RELEASE_TAG=${tag}\nAPP_VERSION=${resolved.version}\nPRERELEASE=${resolved.prerelease}\n`);
   console.log(`release-version-check: tag=${tag} version=${resolved.version} prerelease=${resolved.prerelease}`);
   return resolved;
@@ -32,7 +49,10 @@ export async function main(argv, { confPath = DEFAULT_CONF, envFile = process.en
 
 if (isMain(import.meta.url)) {
   try {
-    await main(process.argv.slice(2));
+    const argv = process.argv.slice(2);
+    const validateOnly = argv.includes("--validate-only");
+    const positional = argv.filter((arg) => arg !== "--validate-only");
+    await main(positional, { envFile: validateOnly ? undefined : process.env.GITHUB_ENV, env: process.env });
   } catch (error) {
     console.error(`::error::release-version-check: ${error.message}`);
     process.exit(1);
