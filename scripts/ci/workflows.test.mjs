@@ -820,7 +820,9 @@ describe("ci.yml PR gate workflow", () => {
       stepRuns(s).includes("bash scripts/ci/unfreeze.sh --triple"),
     );
     expect(unfreezeStep, "unfreeze step must exist for the freeze-stage row").toBeDefined();
-    expect(unfreezeStep.run).toContain('--triple "$TRIPLE"');
+    expect(unfreezeStep.run.trim(), "unfreeze run must stay exactly the unfreeze invocation (no || true, no pipes)").toBe(
+      'bash scripts/ci/unfreeze.sh --triple "$TRIPLE"',
+    );
     expect(unfreezeStep["if"]).toBe("matrix.stage == 'freeze'");
     expect(unfreezeStep.env?.TRIPLE).toBe("${{ matrix.triple }}");
     expect(unfreezeStep.env?.GH_TOKEN).toBe("${{ github.token }}");
