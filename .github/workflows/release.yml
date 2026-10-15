@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: release tag to build (e.g. v0.1.0)
+        required: false
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: release (${{ matrix.triple }})
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - triple: aarch64-apple-darwin
+            os: macos-15
+            stage: freeze
+          - triple: x86_64-apple-darwin
+            os: macos-15-intel
+            stage: freeze
+          - triple: x86_64-pc-windows-msvc
+            os: windows-2025
+            stage: manifest
+          - triple: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            stage: manifest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: checkout (v7.0.1)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: version sync + prerelease resolution
+        run: |-
+          set -euo pipefail
+          node scripts/ci/release-version-check.mjs "${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"
+        shell: bash
+      - name: setup-node (v4)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: yarn
+      - name: install dependencies
+        run: yarn install --frozen-lockfile
+        shell: bash
+      - name: rust toolchain (dtolnay/rust-toolchain stable)
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+      - name: rustup target add aarch64-pc-windows-msvc
+        if: matrix.triple == 'aarch64-pc-windows-msvc'
+        run: rustup target add aarch64-pc-windows-msvc
+        shell: bash
+      - name: rust cache (Swatinem/rust-cache v2.9.2)
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: ${{ matrix.triple }}
+          workspaces: src-tauri
+      - name: restore frozen engines (${{ matrix.triple }})
+        if: matrix.stage == 'freeze'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/ci/unfreeze.sh --triple ${{ matrix.triple }}
+        shell: bash
+      - name: clean-room audit of frozen engines
+        if: matrix.stage == 'freeze'
+        run: yarn binaries:audit
+        shell: bash
+      - name: stage engines from manifest (${{ matrix.triple }})
+        if: matrix.stage == 'manifest'
+        run: node scripts/binaries/all.mjs --target ${{ matrix.triple }}
+        shell: bash
+      - name: gate (build + tests + cargo tests)
+        run: yarn build && yarn test && cd src-tauri && cargo test
+        shell: bash
+      - name: build app + upsert draft release (tauri-action a6e90dd)
+        uses: tauri-apps/tauri-action@a6e90ddc4ba4721f294e52b856d3d50e645edc07
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          tagName: v__VERSION__
+          releaseName: File Size Optimizer v__VERSION__
+          releaseBody: See the assets to download this version and install.
+          releaseDraft: true
+          prerelease: ${{ env.PRERELEASE }}
+          args: --target ${{ matrix.triple }}
+      - name: upload sbom + third-party notices
+        if: matrix.triple == 'aarch64-apple-darwin'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |-
+          set -euo pipefail
+          yarn sbom
+          gh release upload "$RELEASE_TAG" sbom.json THIRD_PARTY_LICENSES.md --clobber
+        shell: bash
