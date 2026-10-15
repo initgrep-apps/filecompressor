@@ -61,6 +61,9 @@ jobs:
       - name: install dependencies
         run: yarn install --frozen-lockfile
         shell: bash
+      - name: refresh Homebrew index
+        run: brew update
+        shell: bash
       - name: install brew formulas for the drift gate (${{ matrix.triple }})
         run: brew install vips ghostscript
         shell: bash
