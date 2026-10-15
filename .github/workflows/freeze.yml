@@ -61,6 +61,9 @@ jobs:
       - name: install dependencies
         run: yarn install --frozen-lockfile
         shell: bash
+      - name: install brew formulas for the drift gate (${{ matrix.triple }})
+        run: brew install vips ghostscript
+        shell: bash
       - name: rust toolchain (dtolnay/rust-toolchain stable)
         uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
       - name: stage sidecar engines (${{ matrix.triple }})

@@ -1,0 +1,253 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: release tag to build (e.g. v0.1.0)
+        required: false
+        type: string
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: resolve tag + pre-create draft
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+      release_tag: ${{ steps.draft.outputs.release_tag }}
+      app_version: ${{ steps.draft.outputs.app_version }}
+      prerelease: ${{ steps.draft.outputs.prerelease }}
+    steps:
+      - name: checkout (v7.0.1)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: setup-node (v4)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: version sync + prerelease resolution
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |-
+          set -euo pipefail
+          node scripts/ci/release-version-check.mjs
+        shell: bash
+      - name: sidecars-availability preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |-
+          set -euo pipefail
+          rc=0
+          newest="$(gh release list --limit 200 --json tagName --jq 'map(select(.tagName | startswith("sidecars-"))) | sort_by(.tagName) | last | .tagName // empty' 2>/dev/null)" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::sidecars-availability preflight could not list releases (auth/scopes/rate limit/network) — cannot verify the freeze publish; confirm GH_TOKEN scopes and re-run the release"
+            exit 1
+          fi
+          if [ -z "$newest" ]; then
+            echo "::error::no sidecars-* release found — run the Freeze mac sidecars workflow before building the release (ADR 0001), then re-run the release"
+            exit 1
+          fi
+          rc=0
+          names="$(gh release view "$newest" --json assets --jq '[.assets[].name] | join(",")' 2>/dev/null)" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::sidecars-availability preflight could not read the assets of '$newest' (auth/scopes/rate limit/network) — cannot verify the freeze publish"
+            exit 1
+          fi
+          for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+            for asset in "sidecar-bundle-${triple}.tar.gz" "sidecar-bundle-${triple}.tar.gz.sha256"; do
+              case ",$names," in
+                *",$asset,"*) ;;
+                *)
+                  echo "::error::sidecars release '$newest' is missing asset '$asset' — freeze builds publish all four bundle assets; re-run the Freeze mac sidecars workflow, then re-run the release"
+                  exit 1
+                  ;;
+              esac
+            done
+          done
+          echo "sidecars-availability: all four bundle assets present on $newest"
+        shell: bash
+      - name: pre-create the draft release
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |-
+          set -euo pipefail
+          rc=0
+          err="$(gh release view "$RELEASE_TAG" 2>&1 >/dev/null)" || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::release $RELEASE_TAG already exists — recovery: run 'gh release delete $RELEASE_TAG --cleanup-tag --yes', then re-run the release"
+            exit 1
+          fi
+          if ! echo "$err" | grep -qiE 'not found|no release'; then
+            echo "::error::draft pre-creation could not verify tag absence (auth/scopes/rate limit/network): $err"
+            exit 1
+          fi
+          draft_flags=(--draft --target "$GITHUB_SHA" --title "File Size Optimizer $RELEASE_TAG")
+          if [ "$PRERELEASE" = "true" ]; then
+            draft_flags+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" "${draft_flags[@]}" >/dev/null
+          release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq '.databaseId')"
+          case "$release_id" in
+            ''|*[!0-9]*)
+              echo "::error::gate resolved a non-numeric release id ('$release_id') — tauri-action needs the numeric REST id (databaseId); re-run the release"
+              exit 1
+              ;;
+          esac
+          {
+            echo "release_id=$release_id"
+            echo "release_tag=$RELEASE_TAG"
+            echo "app_version=$APP_VERSION"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "gate: draft release $RELEASE_TAG (id $release_id, prerelease=$PRERELEASE) created"
+        shell: bash
+
+  release:
+    name: release (${{ matrix.triple }})
+    needs: [gate]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - triple: aarch64-apple-darwin
+            os: macos-15
+            stage: freeze
+          - triple: x86_64-apple-darwin
+            os: macos-15-intel
+            stage: freeze
+          - triple: x86_64-pc-windows-msvc
+            os: windows-2025
+            stage: manifest
+          - triple: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            stage: manifest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: checkout (v7.0.1)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: version sync check (validate only)
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |-
+          set -euo pipefail
+          node scripts/ci/release-version-check.mjs --validate-only
+        shell: bash
+      - name: setup-node (v4)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: yarn
+      - name: install dependencies
+        run: yarn install --frozen-lockfile
+        shell: bash
+      - name: rust toolchain (dtolnay/rust-toolchain stable)
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+      - name: rustup target add aarch64-pc-windows-msvc
+        if: matrix.triple == 'aarch64-pc-windows-msvc'
+        run: rustup target add aarch64-pc-windows-msvc
+        shell: bash
+      - name: rust cache (Swatinem/rust-cache v2.9.2)
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: ${{ matrix.triple }}
+          workspaces: src-tauri
+      - name: restore frozen engines (${{ matrix.triple }})
+        if: matrix.stage == 'freeze'
+        env:
+          TRIPLE: ${{ matrix.triple }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/ci/unfreeze.sh --triple "$TRIPLE"
+        shell: bash
+      - name: clean-room audit of frozen engines
+        if: matrix.stage == 'freeze'
+        env:
+          BINARIES_ALLOW_INACTIVE_BREW: "1"
+        run: yarn binaries:audit
+        shell: bash
+      - name: stage engines from manifest (${{ matrix.triple }})
+        if: matrix.stage == 'manifest'
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: node scripts/binaries/all.mjs --target "$TRIPLE"
+        shell: bash
+      - name: gate (build + tests + cargo tests)
+        run: yarn build && yarn test && cd src-tauri && cargo test
+        shell: bash
+      - name: build app + upload assets to the gated draft (tauri-action a6e90dd)
+        uses: tauri-apps/tauri-action@a6e90ddc4ba4721f294e52b856d3d50e645edc07
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          releaseId: ${{ needs.gate.outputs.release_id }}
+          releaseDraft: true
+          args: --target ${{ matrix.triple }}
+      - name: fail-closed app-asset check for this triple
+        env:
+          RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}
+          TRIPLE: ${{ matrix.triple }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |-
+          set -euo pipefail
+          case "$TRIPLE" in
+            aarch64-apple-darwin) pattern='aarch64\.' ;;
+            x86_64-apple-darwin) pattern='x64\.' ;;
+            x86_64-pc-windows-msvc) pattern='x64[-_]' ;;
+            aarch64-pc-windows-msvc) pattern='arm64' ;;
+            *)
+              echo "::error::no app-asset pattern implemented for triple '$TRIPLE' — extend the mapping table in the release workflow"
+              exit 1
+              ;;
+          esac
+          rc=0
+          names="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::app-asset check could not read the draft assets of $RELEASE_TAG (auth/scopes/rate limit/network)"
+            exit 1
+          fi
+          count="$(printf '%s\n' "$names" | grep -Eic -- "$pattern" || true)"
+          count="${count:-0}"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::draft release $RELEASE_TAG carries no app artifacts for $TRIPLE (pattern $pattern) — tauri-action may have skipped uploads; check the tauri-action logs, then re-run the release"
+            exit 1
+          fi
+          echo "app-asset check verified: $count asset(s) matching '$pattern' for $TRIPLE on $RELEASE_TAG"
+        shell: bash
+      - name: upload sbom + third-party notices + verify upload
+        if: matrix.triple == 'aarch64-apple-darwin'
+        env:
+          RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |-
+          set -euo pipefail
+          yarn sbom
+          gh release upload "$RELEASE_TAG" sbom.json THIRD_PARTY_LICENSES.md --clobber
+          n="$(gh release view "$RELEASE_TAG" --json assets --jq '[.assets[] | select(.name == "sbom.json" or .name == "THIRD_PARTY_LICENSES.md")] | length')"
+          if [ "$n" -ne 2 ]; then
+            echo "::error::release $RELEASE_TAG carries $n/2 of the expected sbom assets (sbom.json, THIRD_PARTY_LICENSES.md) — check the yarn sbom output above"
+            exit 1
+          fi
+          echo "sbom upload verified: $n/2 sbom assets on $RELEASE_TAG"
+        shell: bash

@@ -12,8 +12,24 @@ const WORKFLOWS_DIR = join(HERE, "..", "..", ".github", "workflows");
 
 const EXPECTED_WORKFLOWS = [
   { file: "freeze.yml", status: "current" },
-  { file: "release.yml", status: "planned" },
+  { file: "release.yml", status: "current" },
   { file: "ci.yml", status: "planned" },
+];
+
+const RELEASE_MATRIX_ROWS = [
+  { triple: "aarch64-apple-darwin", os: "macos-15", stage: "freeze" },
+  { triple: "x86_64-apple-darwin", os: "macos-15-intel", stage: "freeze" },
+  { triple: "x86_64-pc-windows-msvc", os: "windows-2025", stage: "manifest" },
+  { triple: "aarch64-pc-windows-msvc", os: "windows-11-arm", stage: "manifest" },
+];
+
+const GATE_COMMAND = "yarn build && yarn test && cd src-tauri && cargo test";
+
+const APP_ASSET_PATTERNS = [
+  { triple: "aarch64-apple-darwin", pattern: "aarch64\\." },
+  { triple: "x86_64-apple-darwin", pattern: "x64\\." },
+  { triple: "x86_64-pc-windows-msvc", pattern: "x64[-_]" },
+  { triple: "aarch64-pc-windows-msvc", pattern: "arm64" },
 ];
 
 const VALID_TRIGGERS = new Set([
@@ -162,16 +178,28 @@ describe("freeze.yml freeze workflow", () => {
     const toolchainIdx = uses.findIndex((u) => u.startsWith("dtolnay/rust-toolchain@"));
     const uploadIdx = uses.findIndex((u) => u.startsWith("actions/upload-artifact@"));
     const installIdx = runIndexesByText(freeze, "yarn install --frozen-lockfile")[0];
+    const brewIdx = runIndexesByText(freeze, "brew install vips ghostscript")[0];
     const allIdx = runIndexesByText(freeze, "node scripts/binaries/all.mjs --target")[0];
     const freezeIdx = runIndexesByText(freeze, "bash scripts/ci/freeze.sh --triple")[0];
 
-    const observed = [checkoutIdx, setupNodeIdx, installIdx, toolchainIdx, allIdx, freezeIdx, uploadIdx];
+    const observed = [checkoutIdx, setupNodeIdx, installIdx, brewIdx, toolchainIdx, allIdx, freezeIdx, uploadIdx];
     for (const [i, idx] of observed.entries()) {
-      expect(idx, `step group #"${i}" (checkout/setup-node/install/toolchain/binaries/freeze/upload) is present`).toBeGreaterThanOrEqual(0);
+      expect(idx, `step group #"${i}" (checkout/setup-node/install/brew/toolchain/binaries/freeze/upload) is present`).toBeGreaterThanOrEqual(0);
     }
     for (let i = 1; i < observed.length; i++) {
       expect(observed[i], `step group ${i} out of acceptance-criteria order`).toBeGreaterThan(observed[i - 1]);
     }
+  });
+
+  it("installs the brew formulas before staging so a runner-side drift fails loudly in prep", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const brew = stepsOf(jobsOf(doc).freeze).find((s) => stepRuns(s).includes("brew install vips ghostscript"));
+    expect(brew, "brew install step must exist (drift gate needs the active keg)").toBeDefined();
+    expect(
+      brew.run,
+      "the formula install must be naked — drift handling belongs to prep/verify, not to a version flag here",
+    ).not.toContain("@");
+    expect(brew.shell).toBe("bash");
   });
 
   it("setup-node pins node 22 with yarn cache", async () => {
@@ -328,6 +356,406 @@ describe("freeze.yml freeze workflow", () => {
     }
     for (let i = 1; i < order.length; i++) {
       expect(order[i], `draft-first stage ${i} out of order`).toBeGreaterThan(order[i - 1]);
+    }
+  });
+});
+
+describe("release.yml release workflow", () => {
+  const FILENAME = "release.yml";
+
+  it("has a self-check status of current", () => {
+    expect(EXPECTED_WORKFLOWS.find((wf) => wf.file === FILENAME)?.status).toBe("current");
+  });
+
+  it("triggers on push of v* tags and workflow_dispatch with a tag input", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    expect(doc.on.push.tags).toEqual(["v*"]);
+    expect(doc.on.push.branches).toBeUndefined();
+    const dispatch = doc.on.workflow_dispatch;
+    expect(dispatch, "workflow_dispatch must be configured").toBeTypeOf("object");
+    expect(dispatch.inputs?.tag?.type, "dispatch must carry a string tag input").toBe("string");
+  });
+
+  it("queues concurrent runs per computed release tag (concurrency, cancel-in-progress: false)", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    expect(doc.concurrency.group).toBe(
+      "release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}",
+    );
+    expect(doc.concurrency["cancel-in-progress"]).toBe(false);
+  });
+
+  it("scopes permissions: workflow reads, gate writes only for the draft, rows write contents", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    expect(doc.permissions).toEqual({ contents: "read" });
+    expect(
+      jobsOf(doc).gate.permissions,
+      "creating the draft is the gate's single write op — a contents:read token 403s on gh release create",
+    ).toEqual({ contents: "write" });
+    for (const [jobName, job] of Object.entries(jobsOf(doc))) {
+      if (jobName === "gate") continue;
+      expect(job.permissions, `job ${jobName} must hold job-scoped contents: write`).toEqual({
+        contents: "write",
+      });
+    }
+  });
+
+  it("has exactly the four-triple / four-runner matrix with stages", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const release = jobsOf(doc).release;
+    expect(release).toBeDefined();
+    expect(release.strategy["fail-fast"]).toBe(false);
+    expect(release.strategy.matrix.include).toEqual(RELEASE_MATRIX_ROWS);
+  });
+
+  it("version-sync uses trigger-context env instead of run-string interpolation", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const sync = stepsOf(jobsOf(doc).gate).find((s) =>
+      stepRuns(s).includes("node scripts/ci/release-version-check.mjs"),
+    );
+    expect(sync, "gate version-sync step must exist").toBeDefined();
+    expect(sync.env?.GITHUB_EVENT_NAME).toBe("${{ github.event_name }}");
+    expect(sync.env?.GITHUB_REF_NAME).toBe("${{ github.ref_name }}");
+    expect(sync.env?.DISPATCH_TAG).toBe("${{ inputs.tag }}");
+    expect(sync.run).toContain("node scripts/ci/release-version-check.mjs");
+    expect(sync.run, "untrusted fragments must enter through env, not the script text").not.toContain(
+      "${{",
+    );
+    expect(sync.shell).toBe("bash");
+
+    const checkoutIdx = stepsOf(jobsOf(doc).gate).findIndex((s) => stepUses(s).startsWith("actions/checkout@"));
+    const syncIdx = stepsOf(jobsOf(doc).gate).findIndex((s) => stepRuns(s).includes("node scripts/ci/release-version-check.mjs"));
+    expect(checkoutIdx, "checkout must precede version-sync").toBeLessThan(syncIdx);
+  });
+
+  it("no run: step in any job interpolates raw ${{ }} templates", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    for (const [jobName, job] of Object.entries(jobsOf(doc))) {
+      for (const step of stepsOf(job)) {
+        const runText = stepRuns(step);
+        if (!runText) continue;
+        expect(
+          runText.includes("${{"),
+          `job ${jobName} step "${step.name}": run scripts must not embed raw templates — pass context through step env`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("gate job steps: cheap version + sidecars + draft checks, ordered before the matrix", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const steps = stepsOf(jobsOf(doc).gate);
+    const checkoutIdx = steps.findIndex((s) => stepUses(s).startsWith("actions/checkout@"));
+    const setupNodeIdx = steps.findIndex((s) => stepUses(s).startsWith("actions/setup-node@"));
+    const syncIdx = steps.findIndex((s) => stepRuns(s).includes("node scripts/ci/release-version-check.mjs"));
+    const preflightIdx = steps.findIndex((s) => stepRuns(s).includes("sidecars-availability"));
+    const draftIdx = steps.findIndex((s) => stepRuns(s).includes('gh release create "$RELEASE_TAG"'));
+
+    expect(checkoutIdx).toBeGreaterThanOrEqual(0);
+    expect(setupNodeIdx, "node must be set up before the helper runs").toBeGreaterThanOrEqual(0);
+    expect(syncIdx, "version-sync step must exist").toBeGreaterThanOrEqual(0);
+    expect(preflightIdx, "sidecars-availability preflight must be a real step").toBeGreaterThanOrEqual(0);
+    expect(draftIdx, "draft pre-creation step must exist").toBeGreaterThanOrEqual(0);
+    for (let i = 1; i < [checkoutIdx, setupNodeIdx, syncIdx, preflightIdx, draftIdx].length; i++) {
+      const idx = [checkoutIdx, setupNodeIdx, syncIdx, preflightIdx, draftIdx][i];
+      expect(idx, `gate step group ${i} out of order (cheap fail-fast before the 30-min matrix)`).toBeGreaterThan(
+        [checkoutIdx, setupNodeIdx, syncIdx, preflightIdx, draftIdx][i - 1],
+      );
+    }
+    expect(setupNodeIdx).toBeLessThan(syncIdx);
+  });
+
+  it("gate preflights sidecars availability for both mac triples with all four bundle assets", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const preflight = stepsOf(jobsOf(doc).gate).find((s) => stepRuns(s).includes("sidecars-"));
+    expect(preflight, "sidecars-availability preflight must exist").toBeDefined();
+    const run = preflight.run;
+    expect(run).toContain("set -euo pipefail");
+    expect(run).toContain("gh release list --limit 200 --json tagName");
+    expect(run).toContain('startswith("sidecars-")');
+    expect(
+      run,
+      "a failed release list must fail closed with its own annotation, not collapse into 'no sidecars release'",
+    ).toContain("::error::sidecars-availability preflight could not list releases (auth/scopes/rate limit/network)");
+    expect(run).toContain("::error::no sidecars-* release found — run the Freeze mac sidecars workflow before building the release (ADR 0001), then re-run the release");
+    for (const triple of ["aarch64-apple-darwin", "x86_64-apple-darwin"]) {
+      expect(run).toContain(triple);
+    }
+    for (const pattern of ["sidecar-bundle-${triple}.tar.gz", "sidecar-bundle-${triple}.tar.gz.sha256"]) {
+      expect(run).toContain(pattern);
+    }
+    expect(run).toContain("::error::sidecars release '$newest' is missing asset");
+    expect(preflight.env?.GH_TOKEN).toBe("${{ github.token }}");
+    expect(preflight.env?.GH_REPO).toBe("${{ github.repository }}");
+    expect(preflight.shell).toBe("bash");
+  });
+
+  it("gate pre-creates the draft release fail-closed and exports job outputs", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const gate = jobsOf(doc).gate;
+    expect(gate.outputs).toEqual({
+      release_id: "${{ steps.draft.outputs.release_id }}",
+      release_tag: "${{ steps.draft.outputs.release_tag }}",
+      app_version: "${{ steps.draft.outputs.app_version }}",
+      prerelease: "${{ steps.draft.outputs.prerelease }}",
+    });
+
+    const draft = stepsOf(gate).find((s) => stepRuns(s).includes('gh release create "$RELEASE_TAG"'));
+    expect(draft, "draft creation must live in the gate job").toBeDefined();
+    expect(draft.id).toBe("draft");
+    const run = draft.run;
+
+    expect(run).toContain("set -euo pipefail");
+    expect(run, "leftover drafts or published releases must fail the gate loudly").toContain(
+      "::error::release $RELEASE_TAG already exists — recovery: run 'gh release delete $RELEASE_TAG --cleanup-tag --yes', then re-run the release",
+    );
+    expect(run).toContain('err="$(gh release view "$RELEASE_TAG" 2>&1 >/dev/null)" || rc=$?');
+    expect(run, "stderr must be captured and classified (fail-closed)").toMatch(/not found\|no release/i);
+
+    expect(run).toContain('gh release create "$RELEASE_TAG" "${draft_flags[@]}" >/dev/null');
+    expect(run).toContain("draft_flags=(--draft --target \"$GITHUB_SHA\" --title \"File Size Optimizer $RELEASE_TAG\")");
+    expect(run, "the prerelease flag must be decided from the helper env, not recomputed").toContain(
+      '[ "$PRERELEASE" = "true" ]',
+    );
+    expect(run).toContain("draft_flags+=(--prerelease)");
+    expect(run).toContain('release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq \'.databaseId\')"');
+    expect(
+      run,
+      "the id must be verified numeric before it reaches tauri-action — Number('R_...') is NaN and NaN is falsy, so a node-id would silently skip every upload",
+    ).toContain('case "$release_id" in');
+    expect(run).toContain(
+      "::error::gate resolved a non-numeric release id ('$release_id') — tauri-action needs the numeric REST id (databaseId); re-run the release",
+    );
+    const guardIdx = run.indexOf('case "$release_id" in');
+    const outputIdx = run.indexOf(">> \"$GITHUB_OUTPUT\"");
+    expect(guardIdx, "the numeric guard must hold before the release id is exported to rows").toBeGreaterThanOrEqual(0);
+    expect(outputIdx).toBeGreaterThanOrEqual(0);
+    expect(guardIdx).toBeLessThan(outputIdx);
+    for (const output of ["release_id", "release_tag", "app_version", "prerelease"]) {
+      expect(run).toContain(`echo "${output}=`);
+    }
+    expect(draft.env?.GH_TOKEN).toBe("${{ github.token }}");
+    expect(draft.env?.GH_REPO).toBe("${{ github.repository }}");
+    expect(draft.shell).toBe("bash");
+  });
+
+  it("rows re-run the version check validate-only before engine work", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const steps = stepsOf(jobsOf(doc).release);
+    const checkoutIdx = steps.findIndex((s) => stepUses(s).startsWith("actions/checkout@"));
+    const syncIdx = steps.findIndex((s) => stepRuns(s).includes("--validate-only"));
+    expect(syncIdx, "row validate-only version check must exist").toBeGreaterThanOrEqual(0);
+    expect(checkoutIdx, "checkout must precede the row version check").toBeLessThan(syncIdx);
+    const sync = steps[syncIdx];
+    expect(sync.run).toContain("node scripts/ci/release-version-check.mjs --validate-only");
+    expect(sync.env?.GITHUB_EVENT_NAME).toBe("${{ github.event_name }}");
+    expect(sync.env?.DISPATCH_TAG).toBe("${{ inputs.tag }}");
+    expect(sync.shell).toBe("bash");
+  });
+
+  it("runs the gate command verbatim after engine staging", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const release = jobsOf(doc).release;
+    const gateIdx = runIndexesByText(release, GATE_COMMAND)[0];
+    expect(gateIdx, "gate command must appear verbatim").toBeGreaterThanOrEqual(0);
+    const steps = stepsOf(release);
+    const auditIdx = steps.findIndex((s) =>
+      stepRuns(s).includes("yarn binaries:audit") || stepRuns(s).includes("node scripts/binaries/all.mjs --target"),
+    );
+    expect(auditIdx, "engine staging/audit must precede the gate").toBeLessThan(gateIdx);
+  });
+
+  it("mac rows allow the inactive brew version-drift gate on the frozen-engine audit", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const audit = stepsOf(jobsOf(doc).release).find((s) => stepRuns(s).includes("yarn binaries:audit"));
+    expect(audit, "frozen-engine audit step must exist").toBeDefined();
+    expect(audit["if"]).toBe("matrix.stage == 'freeze'");
+    expect(
+      audit.env?.BINARIES_ALLOW_INACTIVE_BREW,
+      "runner brew has no vips/ghostscript kegs — the inactive allowance is what keeps the audit from dying on brew-present/formula-missing hosts",
+    ).toBe("1");
+  });
+
+  it("mac rows unfreeze + audit, windows rows stage fresh via all.mjs", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const release = jobsOf(doc).release;
+    const steps = stepsOf(release);
+
+    const unfreezeStep = steps.find((s) => stepRuns(s).includes("bash scripts/ci/unfreeze.sh --triple"));
+    expect(unfreezeStep, "unfreeze step must exist for the freeze stage rows").toBeDefined();
+    expect(unfreezeStep.run).toContain('--triple "$TRIPLE"');
+    expect(unfreezeStep.env?.TRIPLE).toBe("${{ matrix.triple }}");
+    expect(unfreezeStep["if"]).toBe("matrix.stage == 'freeze'");
+    expect(unfreezeStep.env?.GH_TOKEN).toBe("${{ github.token }}");
+    expect(unfreezeStep.env?.GH_REPO).toBe("${{ github.repository }}");
+
+    const unfreezeIdx = steps.findIndex((s) => s === unfreezeStep);
+    const auditIdx = steps.findIndex((s) => stepRuns(s).includes("yarn binaries:audit"));
+    expect(auditIdx, "mac clean-room audit step must exist").toBeGreaterThanOrEqual(0);
+    expect(auditIdx, "audit must run after unfreeze").toBeGreaterThan(unfreezeIdx);
+    expect(steps[auditIdx]["if"]).toBe("matrix.stage == 'freeze'");
+
+    const stageStep = steps.find((s) => stepRuns(s).includes('node scripts/binaries/all.mjs --target "$TRIPLE"'));
+    expect(stageStep, "windows manifest staging step must exist").toBeDefined();
+    expect(stageStep["if"]).toBe("matrix.stage == 'manifest'");
+    expect(stageStep.env?.TRIPLE).toBe("${{ matrix.triple }}");
+
+    const runsText = steps.map((s) => stepRuns(s)).join("\n");
+    for (const row of RELEASE_MATRIX_ROWS) {
+      const usesAllMjs = row.stage === "manifest";
+      const expectedNeedle = usesAllMjs ? 'node scripts/binaries/all.mjs --target "$TRIPLE"' : 'bash scripts/ci/unfreeze.sh --triple "$TRIPLE"';
+      expect(runsText.includes(expectedNeedle), `row ${row.triple}: ${expectedNeedle} must be invoked`).toBe(true);
+    }
+  });
+
+  it("arm windows row adds its rustup target after toolchain setup", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const steps = stepsOf(jobsOf(doc).release);
+    const toolchainIdx = steps.findIndex((s) => stepUses(s).startsWith("dtolnay/rust-toolchain@"));
+    const rustupIdx = steps.findIndex((s) => stepRuns(s).includes("rustup target add aarch64-pc-windows-msvc"));
+    expect(toolchainIdx).toBeGreaterThanOrEqual(0);
+    expect(rustupIdx, "rustup target add step must exist").toBeGreaterThanOrEqual(0);
+    expect(rustupIdx).toBeGreaterThan(toolchainIdx);
+    const rustup = steps[rustupIdx];
+    expect(rustup["if"]).toContain("aarch64-pc-windows-msvc");
+    expect(rustup.shell).toBe("bash");
+  });
+
+  it("uses rust-cache keyed per triple over the src-tauri workspace", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const cache = stepsOf(jobsOf(doc).release).find((s) =>
+      /swatinem\/rust-cache@/i.test(stepUses(s)),
+    );
+    expect(cache, "rust-cache step must exist").toBeDefined();
+    expect(cache.with.key).toContain("${{ matrix.triple }}");
+    expect(cache.with.workspaces).toBe("src-tauri");
+  });
+
+  it("every run: step pins shell: bash", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    for (const [jobName, job] of Object.entries(jobsOf(doc))) {
+      for (const step of stepsOf(job)) {
+        if (!stepRuns(step)) continue;
+        expect(step.shell, `job ${jobName} step "${step.name}": run steps must set shell: bash`).toBe("bash");
+      }
+    }
+  });
+
+  it("tauri-action uploads into the gated draft by releaseId, with no tag/name/prerelease inputs", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const action = stepsOf(jobsOf(doc).release).find((s) =>
+      stepUses(s).startsWith("tauri-apps/tauri-action@"),
+    );
+    expect(action, "tauri-action step must exist").toBeDefined();
+    expect(stepUses(action)).toMatch(/^tauri-apps\/tauri-action@[0-9a-f]{40}$/);
+    expect(action.env?.GITHUB_TOKEN).toBe("${{ github.token }}");
+
+    const withBlock = action.with ?? {};
+    expect(withBlock.releaseId, "per tauri-action semantics at a6e90dd: releaseId wins, tagName/releaseName are ignored").toBe(
+      "${{ needs.gate.outputs.release_id }}",
+    );
+    for (const dropped of ["tagName", "releaseName", "releaseBody", "prerelease"]) {
+      expect(
+        withBlock[dropped],
+        `tauri-action input '${dropped}' must not be set — release creation is the gate's job and duplicate drafts were the known tauri-action race`,
+      ).toBeUndefined();
+    }
+    expect(withBlock.releaseDraft).toBe(true);
+    expect(withBlock.args).toBe("--target ${{ matrix.triple }}");
+  });
+
+  it("fail-closes each row when the gated draft carries no app artifacts for its triple after tauri-action", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const steps = stepsOf(jobsOf(doc).release);
+    const actionIdx = steps.findIndex((s) => stepUses(s).startsWith("tauri-apps/tauri-action@"));
+    const check = steps.find((s) => stepRuns(s).includes('grep -Eic -- "$pattern"'));
+    expect(check, "per-row app-asset post-upload check must exist").toBeDefined();
+    const checkIdx = steps.findIndex((s) => s === check);
+    expect(checkIdx, "the app-asset check must run after tauri-action").toBeGreaterThan(actionIdx);
+    expect(check["if"], "the app-asset check must run on every matrix row").toBeUndefined();
+
+    const run = check.run;
+    expect(run).toContain("set -euo pipefail");
+    for (const { triple, pattern } of APP_ASSET_PATTERNS) {
+      expect(run, `${triple} must map to the tauri-bundler asset-name pattern '${pattern}'`).toContain(
+        `${triple}) pattern='${pattern}' ;;`,
+      );
+    }
+    expect(
+      run,
+      "an unmapped triple must fail loudly instead of passing the row",
+    ).toContain("::error::no app-asset pattern implemented for triple '$TRIPLE' — extend the mapping table in the release workflow");
+    expect(run).toContain('names="$(gh release view "$RELEASE_TAG" --json assets --jq \'.assets[].name\')"');
+    expect(
+      run,
+      "a failed asset read must be classified fail-closed before the count runs",
+    ).toContain("::error::app-asset check could not read the draft assets of $RELEASE_TAG (auth/scopes/rate limit/network)");
+    expect(
+      run,
+      "grep exits 1 on no match under pipefail — the count must default to 0 so an empty catch cannot read as success",
+    ).toContain('count="$(printf \'%s\\n\' "$names" | grep -Eic -- "$pattern" || true)"');
+    expect(run).toContain('count="${count:-0}"');
+    expect(run).toContain('[ "$count" -lt 1 ]');
+    expect(run).toContain(
+      "::error::draft release $RELEASE_TAG carries no app artifacts for $TRIPLE (pattern $pattern) — tauri-action may have skipped uploads; check the tauri-action logs, then re-run the release",
+    );
+    expect(check.env?.RELEASE_TAG).toBe("${{ needs.gate.outputs.release_tag }}");
+    expect(check.env?.TRIPLE).toBe("${{ matrix.triple }}");
+    expect(check.env?.GH_TOKEN).toBe("${{ github.token }}");
+    expect(check.env?.GH_REPO).toBe("${{ github.repository }}");
+  });
+
+  it("has no finalize job (the gate pre-creates the draft, matrix rows upload into it)", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    expect(Object.keys(jobsOf(doc))).toContain("release");
+    expect(Object.keys(jobsOf(doc))).not.toContain("finalize");
+  });
+
+  it("uploads sbom + third-party notices from the arm64 mac job after tauri-action and verifies the upload took", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const steps = stepsOf(jobsOf(doc).release);
+    const sbomIdx = steps.findIndex((s) => stepRuns(s).includes("yarn sbom"));
+    const actionIdx = steps.findIndex((s) => stepUses(s).startsWith("tauri-apps/tauri-action@"));
+    expect(sbomIdx, "sbom step must exist").toBeGreaterThanOrEqual(0);
+    expect(sbomIdx).toBeGreaterThan(actionIdx);
+
+    const sbom = steps[sbomIdx];
+    expect(sbom["if"]).toContain("aarch64-apple-darwin");
+    expect(sbom.run).toContain('gh release upload "$RELEASE_TAG" sbom.json THIRD_PARTY_LICENSES.md --clobber');
+    expect(
+      sbom.env?.RELEASE_TAG,
+      "RELEASE_TAG must come from the gate outputs, not from this row's own env",
+    ).toBe("${{ needs.gate.outputs.release_tag }}");
+    expect(sbom.run).toContain('gh release view "$RELEASE_TAG" --json assets --jq');
+    expect(sbom.run, "post-upload verify counts the two expected asset names by default").toContain(
+      '[ "$n" -ne 2 ]',
+    );
+    expect(sbom.run).toContain(
+      "::error::release $RELEASE_TAG carries $n/2 of the expected sbom assets (sbom.json, THIRD_PARTY_LICENSES.md)",
+    );
+    expect(sbom.env?.GH_TOKEN).toBe("${{ github.token }}");
+    expect(sbom.env?.GH_REPO).toBe("${{ github.repository }}");
+  });
+
+  it("prerelease flag is applied at gate draft creation from the helper-provided env", async () => {
+    const { doc, text } = await loadWorkflow(FILENAME);
+    const draft = stepsOf(jobsOf(doc).gate).find((s) => stepRuns(s).includes('gh release create "$RELEASE_TAG"'));
+    expect(draft.run).toContain('[ "$PRERELEASE" = "true" ]');
+    expect(draft.run).toContain("draft_flags+=(--prerelease)");
+    expect(
+      text.includes("${{ env.PRERELEASE }}"),
+      "PRERELEASE must flow from the helper's GITHUB_ENV, not be rewritten per job",
+    ).toBe(false);
+    for (const [jobName, job] of Object.entries(jobsOf(doc))) {
+      for (const step of stepsOf(job)) {
+        if (stepRuns(step)) {
+          expect(step.run, "no step may decide prerelease itself — the gate draft is authoritative").not.toContain(
+            "-rc",
+          );
+          for (const [envName] of Object.entries(step.env ?? {})) {
+            expect(envName).not.toBe("PRERELEASE");
+          }
+        }
+      }
     }
   });
 });

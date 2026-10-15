@@ -160,25 +160,47 @@ export async function checkBrewVersion(name, entry, problems) {
     return;
   }
   let installed;
+  let notInstalled = null;
   try {
     const { stdout } = await run("brew", ["list", "--versions", entry.formula]);
     const fields = stdout.trim().split(/\s+/).filter(Boolean);
     installed = fields[fields.length - 1];
     if (!installed) {
+      notInstalled = `'brew list --versions ${entry.formula}' printed '${stdout.trim()}' — the formula is not installed`;
+    }
+  } catch (error) {
+    const detail = `${error.stdout ?? ""}${error.stderr ?? ""}${error.message ?? error}`.trim();
+    if (/no such keg|not installed/i.test(detail)) {
+      notInstalled = `'brew list --versions ${entry.formula}' failed: ${detail} — the formula is not installed`;
+    } else {
       problems.push(
-        `${name}: 'brew list --versions ${entry.formula}' printed '${stdout.trim()}' — the formula is not installed; run 'brew install ${entry.formula}' then re-run 'yarn binaries:prep'`,
+        `${name}: 'brew list --versions ${entry.formula}' failed: ${error.message ?? error} — run 'brew install ${entry.formula}' then re-run 'yarn binaries:prep'`,
       );
       return;
     }
-  } catch (error) {
+  }
+  if (notInstalled) {
+    if (process.env[ALLOW_INACTIVE_BREW] === "1") {
+      console.log(
+        `note: brew version-drift gate INACTIVE for ${name} (formula ${entry.formula}) — ${notInstalled}; ${ALLOW_INACTIVE_BREW}=1 allows the audit to proceed without the formula installed on this host, so a drifted build would pass this run`,
+      );
+      return;
+    }
     problems.push(
-      `${name}: 'brew list --versions ${entry.formula}' failed: ${error.message ?? error} — run 'brew install ${entry.formula}' then re-run 'yarn binaries:prep'`,
+      `${name}: ${notInstalled}; run 'brew install ${entry.formula}' then re-run 'yarn binaries:prep'`,
     );
     return;
   }
   if (installed !== entry.expectVersion) {
+    const driftDetail = `formula ${entry.formula} is ${installed} but scripts/binaries.manifest.json pins ${entry.expectVersion}`;
+    if (process.env[ALLOW_INACTIVE_BREW] === "1") {
+      console.log(
+        `note: brew version-drift gate INACTIVE for ${name} (formula ${entry.formula}) — ${driftDetail}; ${ALLOW_INACTIVE_BREW}=1 allows the audit to proceed with a drifted brew formula (the brew lifecycle is inert on a frozen payload), so a drifted build would pass this run`,
+      );
+      return;
+    }
     problems.push(
-      `${name}: brew version drift — formula ${entry.formula} is ${installed} but scripts/binaries.manifest.json pins ${entry.expectVersion}. Re-pin expectVersion to ${installed} in the manifest (or reinstall the pinned formula), then re-run 'yarn binaries:all'`,
+      `${name}: brew version drift — ${driftDetail}. Re-pin expectVersion to ${installed} in the manifest (or reinstall the pinned formula), then re-run 'yarn binaries:all'`,
     );
   }
 }

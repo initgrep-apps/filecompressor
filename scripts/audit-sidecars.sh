@@ -269,7 +269,16 @@ if [ -d "$FRAMEWORKS_DIR" ]; then
   done
 fi
 
-if [ -f "$CONF" ]; then
+CONF_CHECK_TARGET="$TARGET"
+case "$CONF_CHECK_TARGET" in
+  *pc-windows*)
+    printf 'note: tauri.conf.json dylib cross-check skipped for windows target %s — windows staging (PE32) never creates src-tauri/frameworks, so the macOS frameworks cross-check is meaningless there\n' "$TARGET"
+    CONF_CHECK_TARGET=""
+    ;;
+  *) ;;
+esac
+
+if [ -n "$CONF_CHECK_TARGET" ] && [ -f "$CONF" ]; then
   listed=""
   if ! listed="$(grep -o '"frameworks/[^"]*\.dylib"' "$CONF" | tr -d '"' | sort -u)"; then
     printf 'FAIL could not read %s — the dylib cross-check would be wrong; fix the read error, then re-run the audit\n' "$CONF" >&2
