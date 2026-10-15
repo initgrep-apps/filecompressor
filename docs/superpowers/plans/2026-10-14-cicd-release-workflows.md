@@ -130,15 +130,15 @@ Failure modes the workflows imply but no happy-path test exercises:
 - `workflows.test.mjs` (Task 2) extended: release.yml has the exact 4-row matrix, a version-sync step, an audit invocation (`binaries:audit` or `all.mjs`) per job, the gate, a `tauri-apps/tauri-action` step with `releaseDraft: true`, no finalize job, and no `-latest` labels.
 - Contingency (decide on first CI run, document in commit message if applied): if MSI/WiX bundling fails on `windows-11-arm`, constrain that job's build to NSIS via workflow-specific `tauri.conf` arg `--bundles nsis`; if the `windows-11-arm` runner itself misbehaves (toolchain/billing/availability), drop win-arm → x64-only matrix and revisit.
 
-- [ ] **Step 1: Extend failing `workflows.test.mjs`** with the release.yml assertions.
+- [x] **Step 1: Extend failing `workflows.test.mjs`** with the release.yml assertions.
 
-- [ ] **Step 2: Run** `yarn test -- scripts/ci/workflows.test.mjs` — expect FAIL (release.yml missing).
+- [x] **Step 2: Run** `yarn test -- scripts/ci/workflows.test.mjs` — expect FAIL (release.yml missing).
 
-- [ ] **Step 3: Write `.github/workflows/release.yml`** per acceptance criteria.
+- [x] **Step 3: Write `.github/workflows/release.yml`** per acceptance criteria.
 
-- [ ] **Step 4: Run** validation test + full gate — expect green.
+- [x] **Step 4: Run** validation test + full gate — expect green.
 
-- [ ] **Step 5: Commit** — `ci: add release workflow for 4-triple draft releases`
+- [x] **Step 5: Commit** — `ci: add release workflow for 4-triple draft releases`
 
 - [ ] **Step 6: Manual verify** — push, then `workflow_dispatch` release.yml (input `v0.1.0`); confirm all 4 jobs green and a draft release with ≥6 assets (4 bundles + sbom + notices); delete the test draft release.
 
