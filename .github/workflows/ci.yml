@@ -1,0 +1,72 @@
+name: PR gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate (${{ matrix.triple }})
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - triple: aarch64-apple-darwin
+            os: macos-15
+            stage: freeze
+          - triple: x86_64-pc-windows-msvc
+            os: windows-2025
+            stage: manifest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: checkout (v7.0.1)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: setup-node (v4)
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: yarn
+      - name: install dependencies
+        run: yarn install --frozen-lockfile
+        shell: bash
+      - name: rust toolchain (dtolnay/rust-toolchain stable)
+        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
+      - name: rust cache (Swatinem/rust-cache v2.9.2)
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: ${{ matrix.os }}
+          workspaces: src-tauri
+      - name: restore frozen engines (${{ matrix.triple }})
+        if: matrix.stage == 'freeze'
+        env:
+          TRIPLE: ${{ matrix.triple }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: bash scripts/ci/unfreeze.sh --triple "$TRIPLE"
+        shell: bash
+      - name: clean-room audit of restored engines
+        if: matrix.stage == 'freeze'
+        env:
+          BINARIES_ALLOW_INACTIVE_BREW: "1"
+        run: yarn binaries:audit
+        shell: bash
+      - name: stage engines from manifest (${{ matrix.triple }})
+        if: matrix.stage == 'manifest'
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: node scripts/binaries/all.mjs --target "$TRIPLE"
+        shell: bash
+      - name: gate (build + tests + cargo tests)
+        run: yarn build && yarn test && cd src-tauri && cargo test
+        shell: bash

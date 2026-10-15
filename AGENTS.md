@@ -41,6 +41,13 @@ See tech spec (link above) for full architecture, tech stack, and module boundar
 
 Scaffolded via `yarn create tauri-app` (React + TS + Vite). shadcn/ui via `yarn dlx shadcn@latest init --preset bNRvlrmDx --template vite`. Package manager: yarn.
 
+## CI/CD
+
+- `ci.yml` — PR/push-to-main gate: 2-row matrix (macos-15 unfreezes from the latest `sidecars-*` release; windows-2025 stages from the manifest) → verbatim `yarn build && yarn test && cd src-tauri && cargo test`. Staging is required because tauri-build validates `externalBin` at build-script time. No ubuntu / win-arm rows.
+- `freeze.yml` — manual dispatch; stages + freezes mac engines into a published `sidecars-<date>` release (ADR 0001).
+- `release.yml` — `v*` tags (or dispatch); unfreezes mac / stages windows engines, 4-triple builds upload into a draft release.
+- Freeze-before-tag rule (ADR 0001): bumping a mac engine version requires running `freeze.yml` before tagging a release.
+
 ## Skills & AI Docs
 
 When working with a library, use its official AI docs/skill if available. Fetch via Context7 MCP or llms.txt URLs below.

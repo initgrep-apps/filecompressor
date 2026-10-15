@@ -4,7 +4,7 @@
 
 **Goal:** GitHub Actions CI/CD: PR gate (no sidecar staging), manual freeze of macOS engines into `sidecars-*` release bundles, and a 4-triple release build (mac arm/x86, win x64/arm) publishing a draft GitHub Release on `v*` tags.
 
-**Architecture:** Three workflows (`freeze.yml`, `release.yml`, `ci.yml`) + two bash scripts (`scripts/ci/freeze.sh`, `scripts/ci/unfreeze.sh`). macOS engines are nondeterministic to stage (Homebrew `vips`/`gs` with exact `expectVersion` pins), so they are frozen once per manifest bump into per-triple tarballs on a `sidecars-*` release (ADR 0001); release jobs unfreeze instead of running brew. Windows engines are URL+sha256-pinned in the manifest and staged fresh via `yarn binaries:all --target <triple>`. The gate (`yarn build && yarn test && cd src-tauri && cargo test`) needs no staged binaries — the enforcing test is `#[ignore]`d — so PR CI runs it bare.
+**Architecture:** Three workflows (`freeze.yml`, `release.yml`, `ci.yml`) + two bash scripts (`scripts/ci/freeze.sh`, `scripts/ci/unfreeze.sh`). macOS engines are nondeterministic to stage (Homebrew `vips`/`gs` with exact `expectVersion` pins), so they are frozen once per manifest bump into per-triple tarballs on a `sidecars-*` release (ADR 0001); release jobs unfreeze instead of running brew. Windows engines are URL+sha256-pinned in the manifest and staged fresh via `yarn binaries:all --target <triple>`. **Ruling (2026-10-15):** the gate (`yarn build && yarn test && cd src-tauri && cargo test`) must stage binaries first — tauri-build validates `externalBin` at build-script time (proven empirically) — so PR CI runs the same staging + verbatim gate (`ci.yml`: mac freeze row + windows manifest row, no ubuntu, win-arm tag-only).
 
 **Tech Stack:** GitHub Actions, official `tauri-apps/tauri-action@v1` (release builds: app build + draft release + asset upload), actions/setup-node@v4 (Node 22), dtolnay/rust-toolchain@stable, Swatinem/rust-cache@v2, `yaml` devDep for workflow validation tests, vitest for script tests (existing pattern: `scripts/binaries/*.test.mjs`).
 
@@ -152,26 +152,28 @@ Failure modes the workflows imply but no happy-path test exercises:
 - Modify: `docs/superpowers/plans/2026-09-27-slice-9-devops-cicd-hardening.md` (supersede banner under `## Task 1`)
 
 **Interfaces:**
-- Consumes: nothing staged — the gate runs bare (sidecar-enforcing test is `#[ignore]`d).
+- Consumes: staged engines per row (Ruling, user-approved 2026-10-15: `cargo test` fails on a clean checkout because tauri-build validates `externalBin` at build-script time — two implementers confirmed empirically — so the gate stages binaries; the old "gate runs bare / `#[ignore]`d test" claim is dead).
 - Produces: PR/push gate feedback; docs pointing future contributors at the freeze flow.
 
 **Acceptance Criteria:**
-- `ci.yml`: triggers `pull_request` + `push` to main; `concurrency` group per ref, `cancel-in-progress: true`; matrix `{os: ubuntu-24.04}` + `{os: windows-2025}` (cheap billers — private repo bills mac at 10×, gate stays off mac); the ubuntu row adds a Linux system-deps step (`sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils`); steps: checkout → setup-node (22, cache yarn) → yarn install → dtolnay stable → gate only. **No sidecar staging, no `tauri build`, no freeze downloads.** Linux-gate fallback: if the ubuntu row proves cursed after deps iteration, revert its runner to `macos-15` and accept the minutes.
-- `workflows.test.mjs` extended: ci.yml present, has both matrix rows, contains the gate command verbatim, contains no `tauri build` / `binaries:all` / unfreeze steps, no `-latest` labels.
-- AGENTS.md `## CI/CD` section (≤10 lines): the three workflows, what triggers them, and the freeze-before-tag rule from ADR 0001.
+- **Ruling (user-approved after the cargo-build fact, supersedes the draft bullet below):** gate matrix = `{os: macos-15, stage: freeze}` + `{os: windows-2025, stage: manifest}` **with staging** — ubuntu cannot run the full gate (no Linux engines exist to stage); win-arm stays tag-only. Mac row: unfreeze (newest `sidecars-*` release, GH_TOKEN/GH_REPO) → `BINARIES_ALLOW_INACTIVE_BREW=1 yarn binaries:audit` → gate; windows row: `node scripts/binaries/all.mjs --target x86_64-pc-windows-msvc` → gate. Gate command verbatim, kept as ONE run string: `yarn build && yarn test && cd src-tauri && cargo test`.
+  - <s>Superseded draft bullet:</s> matrix `{os: ubuntu-24.04}` + `{os: windows-2025}` + ubuntu system-deps step + bare gate — dead because the gate compiles the Rust core, which now validates `externalBin` at build-script time.
+- Triggers `pull_request` (all branches) + `push` to main; concurrency group per ref, `cancel-in-progress: true`; permissions `contents: read` only; every `uses:` SHA-pinned (mirror freeze.yml/release.yml pins); no `tauri build`/tauri-action, no upload-artifact; `Swatinem/rust-cache@v2` keyed per os over `src-tauri`.
+- `workflows.test.mjs` extended: ci.yml present and flipped to `current`; 2-row matrix exactly (macos-15 freeze + windows-2025 manifest — no ubuntu, no windows-11-arm, proof via `toEqual` + conjunction); staging steps present (unfreeze on the mac row, all.mjs on the windows row); gate command verbatim as one run string; no app-bundle build; no upload steps; cancel-in-progress true; contents:read only; SHA pins; no `-latest`; no raw `${{ }}` in run strings.
+- AGENTS.md `## CI/CD` section (≤10 lines): the three workflows, what triggers them, and the freeze-before-tag rule from ADR 0001, plus the note that PR gate stages binaries because tauri-build validates `externalBin` at build time.
 - Slice-9 plan Task 1 gets a one-line banner: superseded by this plan.
 
-- [ ] **Step 1: Extend failing `workflows.test.mjs`** with the ci.yml assertions.
+- [x] **Step 1: Extend failing `workflows.test.mjs`** with the ci.yml assertions.
 
-- [ ] **Step 2: Run** `yarn test -- scripts/ci/workflows.test.mjs` — expect FAIL.
+- [x] **Step 2: Run** `yarn test -- scripts/ci/workflows.test.mjs` — expect FAIL.
 
-- [ ] **Step 3: Write `.github/workflows/ci.yml`** per acceptance criteria.
+- [x] **Step 3: Write `.github/workflows/ci.yml`** per acceptance criteria.
 
-- [ ] **Step 4: Update docs** — AGENTS.md CI/CD section + slice-9 Task 1 supersede banner.
+- [x] **Step 4: Update docs** — AGENTS.md CI/CD section + slice-9 Task 1 supersede banner.
 
-- [ ] **Step 5: Run** validation test + full gate — expect green.
+- [x] **Step 5: Run** validation test + full gate — expect green.
 
-- [ ] **Step 6: Commit** — `ci: add PR gate workflow and document CI/CD`
+- [x] **Step 6: Commit** — `ci: add PR gate workflow and document CI/CD`
 
 ---
 

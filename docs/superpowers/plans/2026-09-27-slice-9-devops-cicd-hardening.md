@@ -72,6 +72,8 @@ file-compressor/
 
 ## Task 1: GitHub Actions CI Matrix (Cross-Platform Builds)
 
+> **Superseded** by `docs/superpowers/plans/2026-10-14-cicd-release-workflows.md` (Tasks 1–4) — see that plan's ADR 0001 freeze flow and the ruled 2-row PR gate.
+
 **Files:**
 - Create: `.github/workflows/ci.yml`
 
