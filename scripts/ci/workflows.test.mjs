@@ -29,12 +29,14 @@ const VALID_TRIGGERS = new Set([
 const ARM_ROW = { triple: "aarch64-apple-darwin", os: "macos-15" };
 const X64_ROW = { triple: "x86_64-apple-darwin", os: "macos-15-intel" };
 
+function isWorkflowFile(file) {
+  return file.endsWith(".yml") || file.endsWith(".yaml");
+}
+
 function state() {
   const existing = existsSync(WORKFLOWS_DIR) ? readdirSync(WORKFLOWS_DIR) : [];
-  const plannedAbsent = EXPECTED_WORKFLOWS.filter(
-    (wf) => wf.status === "planned" && !existing.includes(wf.file),
-  );
-  return { existing, plannedAbsent };
+  const files = existing.filter(isWorkflowFile);
+  return { existing, files };
 }
 
 async function loadWorkflow(file) {
@@ -67,9 +69,8 @@ function runIndexesByText(job, needle) {
 }
 
 describe("workflows validation (all files)", () => {
-  it("every .github/workflows/*.yml parses and declares valid on: triggers", async () => {
-    const { existing } = state();
-    const files = existing.filter((f) => f.endsWith(".yml"));
+  it("every .github/workflows/*.{yml,yaml} parses and declares valid on: triggers", async () => {
+    const { files } = state();
     expect(files.length, "at least one workflow file exists").toBeGreaterThan(0);
     for (const file of files) {
       const { doc } = await loadWorkflow(file);
@@ -83,8 +84,7 @@ describe("workflows validation (all files)", () => {
   });
 
   it("no workflow file anywhere contains a -latest runner label (Review Focus #5)", async () => {
-    const { existing } = state();
-    const files = existing.filter((f) => f.endsWith(".yml"));
+    const { files } = state();
     for (const file of files) {
       const { text } = await loadWorkflow(file);
       expect(text.includes("-latest"), `${file}: found a -latest label`).toBe(false);
@@ -92,8 +92,8 @@ describe("workflows validation (all files)", () => {
   });
 
   it("every third-party action is pinned to a full commit SHA", async () => {
-    const { existing } = state();
-    for (const file of existing.filter((f) => f.endsWith(".yml"))) {
+    const { files } = state();
+    for (const file of files) {
       const { doc } = await loadWorkflow(file);
       for (const [jobName, job] of Object.entries(jobsOf(doc))) {
         for (const step of stepsOf(job)) {
@@ -108,11 +108,15 @@ describe("workflows validation (all files)", () => {
     }
   });
 
-  it("self-check: every workflow file is accounted for in EXPECTED_WORKFLOWS", () => {
-    const { existing } = state();
+  it("self-check: every workflow file is listed and every current EXPECTED_WORKFLOWS entry exists on disk", () => {
+    const { files } = state();
     const known = new Set(EXPECTED_WORKFLOWS.map((wf) => wf.file));
-    for (const file of existing.filter((f) => f.endsWith(".yml"))) {
+    for (const file of files) {
       expect(known.has(file), `${file} not listed in EXPECTED_WORKFLOWS`).toBe(true);
+    }
+    for (const wf of EXPECTED_WORKFLOWS) {
+      if (wf.status !== "current") continue;
+      expect(files.includes(wf.file), `${wf.file} marked current but missing from .github/workflows`).toBe(true);
     }
     expect(EXPECTED_WORKFLOWS.find((wf) => wf.file === "freeze.yml")?.status).toBe("current");
   });
@@ -127,9 +131,11 @@ describe("freeze.yml freeze workflow", () => {
     expect(Object.keys(doc.on ?? {})).toEqual(["workflow_dispatch"]);
   });
 
-  it("declares workflow-level permissions contents: write", async () => {
+  it("scopes permissions: read default, freeze reads, finalize writes", async () => {
     const { doc } = await loadWorkflow(FILENAME);
-    expect(doc.permissions).toEqual({ contents: "write" });
+    expect(doc.permissions).toEqual({ contents: "read" });
+    expect(jobsOf(doc).freeze.permissions).toEqual({ contents: "read" });
+    expect(jobsOf(doc).finalize.permissions).toEqual({ contents: "write" });
   });
 
   it("freeze job matrix includes exactly the two mac rows", async () => {
@@ -182,7 +188,7 @@ describe("freeze.yml freeze workflow", () => {
     expect(freezeStep.run).toContain("${{ matrix.triple }}");
   });
 
-  it("upload-artifact carries the bundle + sha256 for this matrix row", async () => {
+  it("upload-artifact carries the bundle + sha256 for this matrix row and errors on no files", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const upload = stepsOf(jobsOf(doc).freeze).find((s) => stepUses(s).startsWith("actions/upload-artifact@"));
     const withBlock = JSON.stringify(upload.with ?? {});
@@ -190,6 +196,17 @@ describe("freeze.yml freeze workflow", () => {
     expect(withBlock).toContain(".tar.gz");
     expect(withBlock).toContain(".sha256");
     expect(upload["with"].name).toContain("${{ matrix.triple }}");
+    expect(upload["with"]["if-no-files-found"]).toBe("error");
+  });
+
+  it("every run: step pins shell: bash", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    for (const [jobName, job] of Object.entries(jobsOf(doc))) {
+      for (const step of stepsOf(job)) {
+        if (!stepRuns(step)) continue;
+        expect(step.shell, `job ${jobName} step "${step.name}": run steps must set shell: bash`).toBe("bash");
+      }
+    }
   });
 
   it("finalize job needs freeze and publishes the sidecars release with every artifact", async () => {
@@ -204,5 +221,54 @@ describe("freeze.yml freeze workflow", () => {
     const createStep = steps.find((s) => stepRuns(s).includes('gh release create "sidecars-$(date -u +%Y%m%d)"'));
     expect(createStep).toBeDefined();
     expect(JSON.stringify(createStep?.env ?? {})).toContain("github.token");
+  });
+
+  it("finalize downloads artifacts with the sidecar-bundle pattern, merged into release-assets", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const download = stepsOf(jobsOf(doc).finalize).find((s) =>
+      stepUses(s).startsWith("actions/download-artifact@"),
+    );
+    expect(download.with.pattern).toBe("sidecar-bundle-*");
+    expect(download.with["merge-multiple"]).toBe(true);
+    expect(download.with.path).toBe("release-assets");
+  });
+
+  it("finalize preflight requires exactly 4 assets and fails loudly on a same-day tag collision", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const steps = stepsOf(jobsOf(doc).finalize);
+
+    const downloadIdx = steps.findIndex((s) => stepUses(s).startsWith("actions/download-artifact@"));
+    const countIdx = steps.findIndex((s) => stepRuns(s).includes("expected 4 bundle assets (2 tarballs + 2 .sha256)"));
+    const collisionIdx = steps.findIndex((s) => stepRuns(s).includes('gh release view "sidecars-$(date -u +%Y%m%d)"'));
+    const createIdx = steps.findIndex((s) => stepRuns(s).includes('gh release create "sidecars-$(date -u +%Y%m%d)"'));
+
+    expect(countIdx, "asset-count preflight step must exist").toBeGreaterThanOrEqual(0);
+    expect(collisionIdx, "tag-collision preflight step must exist").toBeGreaterThanOrEqual(0);
+    expect(countIdx, "count preflight must run after download").toBeGreaterThan(downloadIdx);
+    expect(createIdx, "release must only be created after both preflights").toBeGreaterThan(countIdx);
+    expect(createIdx).toBeGreaterThan(collisionIdx);
+
+    const countStep = steps[countIdx];
+    expect(countStep.run).toContain("set -euo pipefail");
+    expect(countStep.shell).toBe("bash");
+
+    const collisionStep = steps[collisionIdx];
+    expect(collisionStep.run).toContain("set -euo pipefail");
+    expect(collisionStep.run).toContain("gh release delete");
+    expect(collisionStep.run).toContain("--cleanup-tag");
+    expect(collisionStep.run).toContain("re-run");
+    expect(collisionStep.env?.GH_REPO).toBe("${{ github.repository }}");
+    expect(collisionStep.env?.GH_TOKEN).toBe("${{ github.token }}");
+  });
+
+  it("finalize creates the release pinned to the exact frozen commit", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const createStep = stepsOf(jobsOf(doc).finalize).find((s) =>
+      stepRuns(s).includes('gh release create "sidecars-$(date -u +%Y%m%d)"'),
+    );
+    expect(createStep.run).toContain("release-assets/*");
+    expect(createStep.run).toContain('--target "$GITHUB_SHA"');
+    expect(createStep.env?.GH_REPO).toBe("${{ github.repository }}");
+    expect(createStep.env?.GH_TOKEN).toBe("${{ github.token }}");
   });
 });
