@@ -1332,3 +1332,56 @@ describe("cross-target audit passthrough", () => {
     expect(crossed.stdout + crossed.stderr).toMatch(/ffprobe/);
   });
 });
+
+describe("tauri.conf.json dylib cross-check scoping", () => {
+  const WIN = "x86_64-pc-windows-msvc";
+
+  async function makeConfRoot() {
+    const root = await makeRoot();
+    await writeFile(
+      `${root}/scripts/binaries.manifest.json`,
+      JSON.stringify({
+        targets: {
+          "aarch64-apple-darwin": { ffmpeg: manifestEntry() },
+          [WIN]: { ffmpeg: { ...manifestEntry(), dest: "ffmpeg" } },
+        },
+      }),
+    );
+    await writeFile(
+      `${root}/src-tauri/tauri.conf.json`,
+      JSON.stringify({ bundle: { frameworks: ["frameworks/libz.1.dylib", "frameworks/ghost.dylib"] } }),
+    );
+    await mkdir(`${root}/src-tauri/frameworks`, { recursive: true });
+    await writeFileSync(`${root}/src-tauri/frameworks/libz.1.dylib`, "macho");
+    return root;
+  }
+
+  it("skips the tauri.conf.json dylib cross-check for a windows target", async () => {
+    const root = await makeConfRoot();
+
+    const result = await runAuditArgs(root, ["--target", WIN]);
+
+    expect(result.code).toBe(1);
+    const output = result.stdout + result.stderr;
+    expect(output, "windows rows must not pay a macOS frameworks double-check").not.toContain(
+      "references src-tauri/frameworks/",
+    );
+    expect(output).not.toContain("tauri.conf.json lists missing dylib");
+    expect(output).not.toContain("tauri.conf.json missing bundled dylib");
+    expect(
+      output,
+      "the skip must be visible, not vacuous — windows staging (PE32) never builds src-tauri/frameworks",
+    ).toContain(`note: tauri.conf.json dylib cross-check skipped for windows target ${WIN}`);
+  });
+
+  it("keeps the tauri.conf.json dylib cross-check active for a mac target", async () => {
+    const root = await makeConfRoot();
+
+    const result = await runAuditArgs(root, ["--target", "aarch64-apple-darwin"]);
+
+    expect(result.code).toBe(1);
+    const output = result.stdout + result.stderr;
+    expect(output).toContain("tauri.conf.json lists missing dylib");
+    await rm(root, { recursive: true, force: true });
+  });
+});
