@@ -54,6 +54,8 @@
           "frameworks/libaec.0.dylib",
           "frameworks/libarchive.13.dylib",
           "frameworks/libb2.1.dylib",
+          "frameworks/libbrotlicommon.1.dylib",
+          "frameworks/libbrotlidec.1.dylib",
           "frameworks/libcairo-gobject.2.dylib",
           "frameworks/libcairo.2.dylib",
           "frameworks/libcfitsio.10.dylib",
