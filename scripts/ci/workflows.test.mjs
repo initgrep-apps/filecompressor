@@ -171,16 +171,28 @@ describe("freeze.yml freeze workflow", () => {
     const toolchainIdx = uses.findIndex((u) => u.startsWith("dtolnay/rust-toolchain@"));
     const uploadIdx = uses.findIndex((u) => u.startsWith("actions/upload-artifact@"));
     const installIdx = runIndexesByText(freeze, "yarn install --frozen-lockfile")[0];
+    const brewIdx = runIndexesByText(freeze, "brew install vips ghostscript")[0];
     const allIdx = runIndexesByText(freeze, "node scripts/binaries/all.mjs --target")[0];
     const freezeIdx = runIndexesByText(freeze, "bash scripts/ci/freeze.sh --triple")[0];
 
-    const observed = [checkoutIdx, setupNodeIdx, installIdx, toolchainIdx, allIdx, freezeIdx, uploadIdx];
+    const observed = [checkoutIdx, setupNodeIdx, installIdx, brewIdx, toolchainIdx, allIdx, freezeIdx, uploadIdx];
     for (const [i, idx] of observed.entries()) {
-      expect(idx, `step group #"${i}" (checkout/setup-node/install/toolchain/binaries/freeze/upload) is present`).toBeGreaterThanOrEqual(0);
+      expect(idx, `step group #"${i}" (checkout/setup-node/install/brew/toolchain/binaries/freeze/upload) is present`).toBeGreaterThanOrEqual(0);
     }
     for (let i = 1; i < observed.length; i++) {
       expect(observed[i], `step group ${i} out of acceptance-criteria order`).toBeGreaterThan(observed[i - 1]);
     }
+  });
+
+  it("installs the brew formulas before staging so a runner-side drift fails loudly in prep", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const brew = stepsOf(jobsOf(doc).freeze).find((s) => stepRuns(s).includes("brew install vips ghostscript"));
+    expect(brew, "brew install step must exist (drift gate needs the active keg)").toBeDefined();
+    expect(
+      brew.run,
+      "the formula install must be naked — drift handling belongs to prep/verify, not to a version flag here",
+    ).not.toContain("@");
+    expect(brew.shell).toBe("bash");
   });
 
   it("setup-node pins node 22 with yarn cache", async () => {
@@ -408,6 +420,17 @@ describe("release.yml release workflow", () => {
       stepRuns(s).includes("yarn binaries:audit") || stepRuns(s).includes("node scripts/binaries/all.mjs --target"),
     );
     expect(auditIdx, "engine staging/audit must precede the gate").toBeLessThan(gateIdx);
+  });
+
+  it("mac rows allow the inactive brew version-drift gate on the frozen-engine audit", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const audit = stepsOf(jobsOf(doc).release).find((s) => stepRuns(s).includes("yarn binaries:audit"));
+    expect(audit, "frozen-engine audit step must exist").toBeDefined();
+    expect(audit["if"]).toBe("matrix.stage == 'freeze'");
+    expect(
+      audit.env?.BINARIES_ALLOW_INACTIVE_BREW,
+      "runner brew has no vips/ghostscript kegs — the inactive allowance is what keeps the audit from dying on brew-present/formula-missing hosts",
+    ).toBe("1");
   });
 
   it("mac rows unfreeze + audit, windows rows stage fresh via all.mjs", async () => {

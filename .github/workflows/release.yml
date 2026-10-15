@@ -76,6 +76,8 @@ jobs:
         shell: bash
       - name: clean-room audit of frozen engines
         if: matrix.stage == 'freeze'
+        env:
+          BINARIES_ALLOW_INACTIVE_BREW: "1"
         run: yarn binaries:audit
         shell: bash
       - name: stage engines from manifest (${{ matrix.triple }})
