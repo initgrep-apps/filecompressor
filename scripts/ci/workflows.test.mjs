@@ -25,6 +25,13 @@ const RELEASE_MATRIX_ROWS = [
 
 const GATE_COMMAND = "yarn build && yarn test && cd src-tauri && cargo test";
 
+const APP_ASSET_PATTERNS = [
+  { triple: "aarch64-apple-darwin", pattern: "aarch64\\." },
+  { triple: "x86_64-apple-darwin", pattern: "x64\\." },
+  { triple: "x86_64-pc-windows-msvc", pattern: "x64[-_]" },
+  { triple: "aarch64-pc-windows-msvc", pattern: "arm64" },
+];
+
 const VALID_TRIGGERS = new Set([
   "workflow_dispatch",
   "push",
@@ -377,10 +384,13 @@ describe("release.yml release workflow", () => {
     expect(doc.concurrency["cancel-in-progress"]).toBe(false);
   });
 
-  it("scopes permissions: workflow reads, gate reads, release rows write contents", async () => {
+  it("scopes permissions: workflow reads, gate writes only for the draft, rows write contents", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     expect(doc.permissions).toEqual({ contents: "read" });
-    expect(jobsOf(doc).gate.permissions).toEqual({ contents: "read" });
+    expect(
+      jobsOf(doc).gate.permissions,
+      "creating the draft is the gate's single write op — a contents:read token 403s on gh release create",
+    ).toEqual({ contents: "write" });
     for (const [jobName, job] of Object.entries(jobsOf(doc))) {
       if (jobName === "gate") continue;
       expect(job.permissions, `job ${jobName} must hold job-scoped contents: write`).toEqual({
@@ -507,7 +517,19 @@ describe("release.yml release workflow", () => {
       '[ "$PRERELEASE" = "true" ]',
     );
     expect(run).toContain("draft_flags+=(--prerelease)");
-    expect(run).toContain('release_id="$(gh release view "$RELEASE_TAG" --json id --jq \'.id\')"');
+    expect(run).toContain('release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq \'.databaseId\')"');
+    expect(
+      run,
+      "the id must be verified numeric before it reaches tauri-action — Number('R_...') is NaN and NaN is falsy, so a node-id would silently skip every upload",
+    ).toContain('case "$release_id" in');
+    expect(run).toContain(
+      "::error::gate resolved a non-numeric release id ('$release_id') — tauri-action needs the numeric REST id (databaseId); re-run the release",
+    );
+    const guardIdx = run.indexOf('case "$release_id" in');
+    const outputIdx = run.indexOf(">> \"$GITHUB_OUTPUT\"");
+    expect(guardIdx, "the numeric guard must hold before the release id is exported to rows").toBeGreaterThanOrEqual(0);
+    expect(outputIdx).toBeGreaterThanOrEqual(0);
+    expect(guardIdx).toBeLessThan(outputIdx);
     for (const output of ["release_id", "release_tag", "app_version", "prerelease"]) {
       expect(run).toContain(`echo "${output}=`);
     }
@@ -639,6 +661,47 @@ describe("release.yml release workflow", () => {
     }
     expect(withBlock.releaseDraft).toBe(true);
     expect(withBlock.args).toBe("--target ${{ matrix.triple }}");
+  });
+
+  it("fail-closes each row when the gated draft carries no app artifacts for its triple after tauri-action", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const steps = stepsOf(jobsOf(doc).release);
+    const actionIdx = steps.findIndex((s) => stepUses(s).startsWith("tauri-apps/tauri-action@"));
+    const check = steps.find((s) => stepRuns(s).includes('grep -Eic -- "$pattern"'));
+    expect(check, "per-row app-asset post-upload check must exist").toBeDefined();
+    const checkIdx = steps.findIndex((s) => s === check);
+    expect(checkIdx, "the app-asset check must run after tauri-action").toBeGreaterThan(actionIdx);
+    expect(check["if"], "the app-asset check must run on every matrix row").toBeUndefined();
+
+    const run = check.run;
+    expect(run).toContain("set -euo pipefail");
+    for (const { triple, pattern } of APP_ASSET_PATTERNS) {
+      expect(run, `${triple} must map to the tauri-bundler asset-name pattern '${pattern}'`).toContain(
+        `${triple}) pattern='${pattern}' ;;`,
+      );
+    }
+    expect(
+      run,
+      "an unmapped triple must fail loudly instead of passing the row",
+    ).toContain("::error::no app-asset pattern implemented for triple '$TRIPLE' — extend the mapping table in the release workflow");
+    expect(run).toContain('names="$(gh release view "$RELEASE_TAG" --json assets --jq \'.assets[].name\')"');
+    expect(
+      run,
+      "a failed asset read must be classified fail-closed before the count runs",
+    ).toContain("::error::app-asset check could not read the draft assets of $RELEASE_TAG (auth/scopes/rate limit/network)");
+    expect(
+      run,
+      "grep exits 1 on no match under pipefail — the count must default to 0 so an empty catch cannot read as success",
+    ).toContain('count="$(printf \'%s\\n\' "$names" | grep -Eic -- "$pattern" || true)"');
+    expect(run).toContain('count="${count:-0}"');
+    expect(run).toContain('[ "$count" -lt 1 ]');
+    expect(run).toContain(
+      "::error::draft release $RELEASE_TAG carries no app artifacts for $TRIPLE (pattern $pattern) — tauri-action may have skipped uploads; check the tauri-action logs, then re-run the release",
+    );
+    expect(check.env?.RELEASE_TAG).toBe("${{ needs.gate.outputs.release_tag }}");
+    expect(check.env?.TRIPLE).toBe("${{ matrix.triple }}");
+    expect(check.env?.GH_TOKEN).toBe("${{ github.token }}");
+    expect(check.env?.GH_REPO).toBe("${{ github.repository }}");
   });
 
   it("has no finalize job (the gate pre-creates the draft, matrix rows upload into it)", async () => {

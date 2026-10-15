@@ -479,6 +479,78 @@ describe("verify.mjs", () => {
     await rm(stubBrew, { recursive: true, force: true });
   });
 
+  it("proceeds with a stated INACTIVE note when the installed brewed formula drifted and the allowance is set", async () => {
+    const root = await makeRoot({
+      targets: {
+        "aarch64-apple-darwin": {
+          gs: {
+            source: "brew",
+            formula: "ghostscript",
+            binary: "gs",
+            dest: "gs",
+            expectVersion: "10.08.0",
+          },
+        },
+      },
+    });
+    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    await stageGsResources(root);
+    const stagedSha256 = await sha256File(
+      `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`,
+    );
+    await writeFile(
+      `${root}/scripts/binaries.lock.json`,
+      JSON.stringify({
+        generated: new Date().toISOString(),
+        targets: {
+          "aarch64-apple-darwin": {
+            gs: {
+              source: "brew",
+              formula: "ghostscript",
+              version: "10.08.0",
+              stagedSha256,
+              date: new Date().toISOString(),
+            },
+          },
+        },
+      }),
+    );
+    const stubDir = await makeStubBrewDir("ghostscript 10.08.1");
+
+    const allowed = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubDir}:${process.env.PATH}`,
+      BINARIES_ALLOW_INACTIVE_BREW: "1",
+    });
+    expect(
+      allowed.code,
+      "on frozen-payload verification the brew lifecycle is inert: a runner keg drifting above the pin must not kill the audit when the allowance is set",
+    ).toBe(0);
+    expect(allowed.stderr).not.toContain("brew version drift");
+    expect(
+      allowed.stdout,
+      "the note must state both the drifted keg version and the manifest pin",
+    ).toContain("formula ghostscript is 10.08.1 but scripts/binaries.manifest.json pins 10.08.0");
+    expect(allowed.stdout).toContain("INACTIVE");
+    expect(allowed.stdout).toContain("BINARIES_ALLOW_INACTIVE_BREW=1");
+    expect(allowed.stdout).toContain("verify: PASS");
+
+    const denied = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubDir}:${process.env.PATH}`,
+    });
+    expect(
+      denied.code,
+      "without the allowance the installed-but-drifted keg stays a hard failure",
+    ).toBe(1);
+    expect(denied.stderr).toContain("brew version drift");
+    expect(denied.stderr).toContain("ghostscript is 10.08.1");
+    expect(denied.stderr).toContain("binaries.manifest.json pins 10.08.0");
+
+    await rm(root, { recursive: true, force: true });
+    await rm(stubDir, { recursive: true, force: true });
+  });
+
   it("treats a No-such-keg brew failure as a missing formula gate", async () => {
     const root = await makeRoot({
       targets: {

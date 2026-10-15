@@ -23,7 +23,7 @@ jobs:
     name: resolve tag + pre-create draft
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
     outputs:
       release_id: ${{ steps.draft.outputs.release_id }}
       release_tag: ${{ steps.draft.outputs.release_tag }}
@@ -102,7 +102,13 @@ jobs:
             draft_flags+=(--prerelease)
           fi
           gh release create "$RELEASE_TAG" "${draft_flags[@]}" >/dev/null
-          release_id="$(gh release view "$RELEASE_TAG" --json id --jq '.id')"
+          release_id="$(gh release view "$RELEASE_TAG" --json databaseId --jq '.databaseId')"
+          case "$release_id" in
+            ''|*[!0-9]*)
+              echo "::error::gate resolved a non-numeric release id ('$release_id') — tauri-action needs the numeric REST id (databaseId); re-run the release"
+              exit 1
+              ;;
+          esac
           {
             echo "release_id=$release_id"
             echo "release_tag=$RELEASE_TAG"
@@ -196,6 +202,38 @@ jobs:
           releaseId: ${{ needs.gate.outputs.release_id }}
           releaseDraft: true
           args: --target ${{ matrix.triple }}
+      - name: fail-closed app-asset check for this triple
+        env:
+          RELEASE_TAG: ${{ needs.gate.outputs.release_tag }}
+          TRIPLE: ${{ matrix.triple }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |-
+          set -euo pipefail
+          case "$TRIPLE" in
+            aarch64-apple-darwin) pattern='aarch64\.' ;;
+            x86_64-apple-darwin) pattern='x64\.' ;;
+            x86_64-pc-windows-msvc) pattern='x64[-_]' ;;
+            aarch64-pc-windows-msvc) pattern='arm64' ;;
+            *)
+              echo "::error::no app-asset pattern implemented for triple '$TRIPLE' — extend the mapping table in the release workflow"
+              exit 1
+              ;;
+          esac
+          rc=0
+          names="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::app-asset check could not read the draft assets of $RELEASE_TAG (auth/scopes/rate limit/network)"
+            exit 1
+          fi
+          count="$(printf '%s\n' "$names" | grep -Eic -- "$pattern" || true)"
+          count="${count:-0}"
+          if [ "$count" -lt 1 ]; then
+            echo "::error::draft release $RELEASE_TAG carries no app artifacts for $TRIPLE (pattern $pattern) — tauri-action may have skipped uploads; check the tauri-action logs, then re-run the release"
+            exit 1
+          fi
+          echo "app-asset check verified: $count asset(s) matching '$pattern' for $TRIPLE on $RELEASE_TAG"
+        shell: bash
       - name: upload sbom + third-party notices + verify upload
         if: matrix.triple == 'aarch64-apple-darwin'
         env:
