@@ -178,13 +178,14 @@ describe("freeze.yml freeze workflow", () => {
     const toolchainIdx = uses.findIndex((u) => u.startsWith("dtolnay/rust-toolchain@"));
     const uploadIdx = uses.findIndex((u) => u.startsWith("actions/upload-artifact@"));
     const installIdx = runIndexesByText(freeze, "yarn install --frozen-lockfile")[0];
+    const brewUpdateIdx = runIndexesByText(freeze, "brew update")[0];
     const brewIdx = runIndexesByText(freeze, "brew install vips ghostscript")[0];
     const allIdx = runIndexesByText(freeze, "node scripts/binaries/all.mjs --target")[0];
     const freezeIdx = runIndexesByText(freeze, "bash scripts/ci/freeze.sh --triple")[0];
 
-    const observed = [checkoutIdx, setupNodeIdx, installIdx, brewIdx, toolchainIdx, allIdx, freezeIdx, uploadIdx];
+    const observed = [checkoutIdx, setupNodeIdx, installIdx, brewUpdateIdx, brewIdx, toolchainIdx, allIdx, freezeIdx, uploadIdx];
     for (const [i, idx] of observed.entries()) {
-      expect(idx, `step group #"${i}" (checkout/setup-node/install/brew/toolchain/binaries/freeze/upload) is present`).toBeGreaterThanOrEqual(0);
+      expect(idx, `step group #"${i}" (checkout/setup-node/install/brew-update/brew/toolchain/binaries/freeze/upload) is present`).toBeGreaterThanOrEqual(0);
     }
     for (let i = 1; i < observed.length; i++) {
       expect(observed[i], `step group ${i} out of acceptance-criteria order`).toBeGreaterThan(observed[i - 1]);
@@ -200,6 +201,25 @@ describe("freeze.yml freeze workflow", () => {
       "the formula install must be naked — drift handling belongs to prep/verify, not to a version flag here",
     ).not.toContain("@");
     expect(brew.shell).toBe("bash");
+  });
+
+  it("refreshes the Homebrew index before installing the formulas for every freeze row", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const freeze = jobsOf(doc).freeze;
+    expect(freeze.strategy.matrix.include.length, "both freeze rows share this job's step order").toBe(2);
+
+    const steps = stepsOf(freeze);
+    const update = steps.find((s) => stepRuns(s).includes("brew update"));
+    expect(update, "a brew update step must refresh the stale image formula index").toBeDefined();
+    expect(update.name).toBe("refresh Homebrew index");
+    expect(update.run, "the refresh must be a bare brew update — no flags, no version logic").toBe("brew update");
+    expect(update.shell).toBe("bash");
+
+    const installIdx = runIndexesByText(freeze, "yarn install --frozen-lockfile")[0];
+    const updateIdx = steps.findIndex((s) => s === update);
+    const brewIdx = runIndexesByText(freeze, "brew install vips ghostscript")[0];
+    expect(updateIdx, "index refresh must run after the yarn install step").toBeGreaterThan(installIdx);
+    expect(updateIdx, "index refresh must run before brew install installs off a stale index").toBeLessThan(brewIdx);
   });
 
   it("setup-node pins node 22 with yarn cache", async () => {
