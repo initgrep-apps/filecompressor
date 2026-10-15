@@ -3,12 +3,43 @@ name: Freeze mac sidecars
 on:
   workflow_dispatch:
 
+concurrency:
+  group: freeze-${{ github.repository }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
+  gate:
+    name: tag-collision gate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: report same-day sidecars release collision with remediation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |-
+          set -euo pipefail
+          tag="sidecars-$(date -u +%Y%m%d)"
+          rc=0
+          err="$(gh release view "$tag" 2>&1 >/dev/null)" || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::release $tag already exists — recovery: delete any leftover draft release, run 'gh release delete $tag --cleanup-tag --yes', then re-run the failed freeze jobs"
+            exit 1
+          fi
+          if ! echo "$err" | grep -qiE 'not found|no release'; then
+            echo "::error::collision preflight could not verify tag absence (auth/scopes/rate limit/network): $err"
+            exit 1
+          fi
+          echo "gate passed — no same-day sidecars release"
+        shell: bash
+
   freeze:
     name: freeze (${{ matrix.triple }})
+    needs: [gate]
     permissions:
       contents: read
     strategy:
@@ -63,27 +94,29 @@ jobs:
       - name: preflight — require exactly 4 bundle assets
         run: |-
           set -euo pipefail
+          if [ ! -d release-assets ]; then
+            echo "::error::release-assets directory missing — download-artifact step produced nothing"
+            exit 1
+          fi
           count="$(find release-assets -type f | wc -l | tr -d ' ')"
           if [ "$count" -ne 4 ]; then
             echo "::error::expected 4 bundle assets (2 tarballs + 2 .sha256), found $count"
             exit 1
           fi
         shell: bash
-      - name: preflight — fail on same-day sidecars release (delete release + drafts + tag, then re-run)
+      - name: publish sidecars release (draft → upload → verify → publish)
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |-
           set -euo pipefail
           tag="sidecars-$(date -u +%Y%m%d)"
-          if gh release view "sidecars-$(date -u +%Y%m%d)" >/dev/null 2>&1; then
-            echo "::error::release $tag already exists — recovery: delete any leftover draft release, run 'gh release delete $tag --cleanup-tag --yes', then re-run the failed freeze jobs"
+          gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag"
+          gh release upload "$tag" release-assets/* --clobber
+          n="$(gh release view "$tag" --json assets --jq 'length')"
+          if [ "$n" -ne 4 ]; then
+            echo "::error::$tag has $n/4 assets — draft left in place, not published; recovery: 'gh release delete $tag --cleanup-tag --yes' to discard the draft, then re-run finalize"
             exit 1
           fi
-        shell: bash
-      - name: create sidecars release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: gh release create "sidecars-$(date -u +%Y%m%d)" release-assets/* --target "$GITHUB_SHA"
+          gh release edit "$tag" --draft=false
         shell: bash

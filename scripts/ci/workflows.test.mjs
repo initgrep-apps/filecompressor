@@ -131,11 +131,18 @@ describe("freeze.yml freeze workflow", () => {
     expect(Object.keys(doc.on ?? {})).toEqual(["workflow_dispatch"]);
   });
 
-  it("scopes permissions: read default, freeze reads, finalize writes", async () => {
+  it("scopes permissions: read default, gate reads, freeze reads, finalize writes", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     expect(doc.permissions).toEqual({ contents: "read" });
+    expect(jobsOf(doc).gate.permissions).toEqual({ contents: "read" });
     expect(jobsOf(doc).freeze.permissions).toEqual({ contents: "read" });
     expect(jobsOf(doc).finalize.permissions).toEqual({ contents: "write" });
+  });
+
+  it("queues concurrent dispatches (workflow-level concurrency, cancel-in-progress: false)", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    expect(doc.concurrency.group).toBe("freeze-${{ github.repository }}");
+    expect(doc.concurrency["cancel-in-progress"]).toBe(false);
   });
 
   it("freeze job matrix includes exactly the two mac rows", async () => {
@@ -209,7 +216,43 @@ describe("freeze.yml freeze workflow", () => {
     }
   });
 
-  it("finalize job needs freeze and publishes the sidecars release with every artifact", async () => {
+  it("gate job runs a fail-closed tag-collision preflight before the expensive freeze matrix", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const gate = jobsOf(doc).gate;
+    expect(gate, "gate job must exist").toBeDefined();
+    expect(gate.needs).toBeUndefined();
+    expect(gate["runs-on"]).toBe("ubuntu-24.04");
+    expect(jobsOf(doc).freeze.needs).toEqual(["gate"]);
+    expect(
+      stepsOf(jobsOf(doc).finalize).find((s) => stepRuns(s).includes("collision")),
+      "collision preflight must live only in the gate job",
+    ).toBeUndefined();
+    expect(
+      stepsOf(jobsOf(doc).finalize).find((s) => stepRuns(s).includes("2>&1 >/dev/null)\" || rc=$?")),
+      "stderr-classified collision probe must not run in finalize",
+    ).toBeUndefined();
+
+    const collision = stepsOf(gate).find((s) => stepRuns(s).includes('gh release view "$tag"'));
+    expect(collision, "collision preflight must query gh release view").toBeDefined();
+    expect(collision.name).toBe("report same-day sidecars release collision with remediation");
+    expect(collision.run).toContain("set -euo pipefail");
+    expect(collision.run).toContain('tag="sidecars-$(date -u +%Y%m%d)"');
+    expect(collision.run, "tag must not be recomputed inline").not.toContain('gh release view "sidecars-');
+    expect(collision.run, "stderr must be captured and classified (fail-closed)").toContain(
+      'err="$(gh release view "$tag" 2>&1 >/dev/null)" || rc=$?',
+    );
+    expect(collision.run).toContain(
+      "::error::collision preflight could not verify tag absence (auth/scopes/rate limit/network): $err",
+    );
+    expect(collision.run, "only genuine 'not found' stderr may pass the gate").toMatch(/not found\|no release/i);
+    expect(collision.run).toContain(
+      "release $tag already exists — recovery: delete any leftover draft release, run 'gh release delete $tag --cleanup-tag --yes', then re-run the failed freeze jobs",
+    );
+    expect(collision.env?.GH_REPO).toBe("${{ github.repository }}");
+    expect(collision.env?.GH_TOKEN).toBe("${{ github.token }}");
+  });
+
+  it("finalize job needs freeze and downloads bundles", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const finalize = jobsOf(doc).finalize;
     expect(finalize).toBeDefined();
@@ -218,9 +261,6 @@ describe("freeze.yml freeze workflow", () => {
     const steps = stepsOf(finalize);
     const downloadIdx = steps.findIndex((s) => stepUses(s).startsWith("actions/download-artifact@"));
     expect(downloadIdx, "finalize must download artifacts").toBeGreaterThanOrEqual(0);
-    const createStep = steps.find((s) => stepRuns(s).includes('gh release create "sidecars-$(date -u +%Y%m%d)"'));
-    expect(createStep).toBeDefined();
-    expect(JSON.stringify(createStep?.env ?? {})).toContain("github.token");
   });
 
   it("finalize downloads artifacts with the sidecar-bundle pattern, merged into release-assets", async () => {
@@ -233,42 +273,61 @@ describe("freeze.yml freeze workflow", () => {
     expect(download.with.path).toBe("release-assets");
   });
 
-  it("finalize preflight requires exactly 4 assets and fails loudly on a same-day tag collision", async () => {
+  it("finalize count preflight annotates a missing release-assets dir and runs before create", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const steps = stepsOf(jobsOf(doc).finalize);
 
     const downloadIdx = steps.findIndex((s) => stepUses(s).startsWith("actions/download-artifact@"));
     const countIdx = steps.findIndex((s) => stepRuns(s).includes("expected 4 bundle assets (2 tarballs + 2 .sha256)"));
-    const collisionIdx = steps.findIndex((s) => stepRuns(s).includes('gh release view "sidecars-$(date -u +%Y%m%d)"'));
-    const createIdx = steps.findIndex((s) => stepRuns(s).includes('gh release create "sidecars-$(date -u +%Y%m%d)"'));
+    const createIdx = steps.findIndex((s) => stepRuns(s).includes('gh release create "$tag"'));
 
     expect(countIdx, "asset-count preflight step must exist").toBeGreaterThanOrEqual(0);
-    expect(collisionIdx, "tag-collision preflight step must exist").toBeGreaterThanOrEqual(0);
+    expect(createIdx, "publish step must exist").toBeGreaterThanOrEqual(0);
     expect(countIdx, "count preflight must run after download").toBeGreaterThan(downloadIdx);
-    expect(createIdx, "release must only be created after both preflights").toBeGreaterThan(countIdx);
-    expect(createIdx).toBeGreaterThan(collisionIdx);
+    expect(createIdx, "release must only be created after the count preflight").toBeGreaterThan(countIdx);
 
     const countStep = steps[countIdx];
     expect(countStep.run).toContain("set -euo pipefail");
+    expect(countStep.run, "missing dir must fail loudly before find runs").toContain("[ ! -d release-assets ]");
+    expect(countStep.run).toContain(
+      "::error::release-assets directory missing — download-artifact step produced nothing",
+    );
     expect(countStep.shell).toBe("bash");
-
-    const collisionStep = steps[collisionIdx];
-    expect(collisionStep.run).toContain("set -euo pipefail");
-    expect(collisionStep.run).toContain("gh release delete");
-    expect(collisionStep.run).toContain("--cleanup-tag");
-    expect(collisionStep.run).toContain("re-run");
-    expect(collisionStep.env?.GH_REPO).toBe("${{ github.repository }}");
-    expect(collisionStep.env?.GH_TOKEN).toBe("${{ github.token }}");
   });
 
-  it("finalize creates the release pinned to the exact frozen commit", async () => {
+  it("finalize publishes draft-first (draft → upload → verify 4 assets → publish) in one step", async () => {
     const { doc } = await loadWorkflow(FILENAME);
-    const createStep = stepsOf(jobsOf(doc).finalize).find((s) =>
-      stepRuns(s).includes('gh release create "sidecars-$(date -u +%Y%m%d)"'),
+    const publish = stepsOf(jobsOf(doc).finalize).find((s) => stepRuns(s).includes('gh release create "$tag"'));
+    expect(publish, "publish step must exist").toBeDefined();
+    const run = publish.run;
+
+    expect(run).toContain("set -euo pipefail");
+    expect(run).toContain('tag="sidecars-$(date -u +%Y%m%d)"');
+    expect(run, "tag must not be recomputed inline").not.toContain('gh release create "sidecars-');
+    expect(run).toContain('gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag"');
+    expect(run, "assets must not be uploaded as part of create (torn-publish risk)").not.toContain(
+      'gh release create "$tag" release-assets',
     );
-    expect(createStep.run).toContain("release-assets/*");
-    expect(createStep.run).toContain('--target "$GITHUB_SHA"');
-    expect(createStep.env?.GH_REPO).toBe("${{ github.repository }}");
-    expect(createStep.env?.GH_TOKEN).toBe("${{ github.token }}");
+    expect(run).toContain('gh release upload "$tag" release-assets/* --clobber');
+    expect(run).toContain("n=\"$(gh release view \"$tag\" --json assets --jq 'length')\"");
+    expect(run).toContain('[ "$n" -ne 4 ]');
+    expect(run).toContain("::error::$tag has $n/4 assets — draft left in place, not published");
+    expect(run).toContain("gh release delete $tag --cleanup-tag --yes");
+    expect(run).toContain('gh release edit "$tag" --draft=false');
+    expect(publish.env?.GH_REPO).toBe("${{ github.repository }}");
+    expect(publish.env?.GH_TOKEN).toBe("${{ github.token }}");
+
+    const order = [
+      run.indexOf('gh release create "$tag" --draft'),
+      run.indexOf('gh release upload "$tag" release-assets/* --clobber'),
+      run.indexOf("--json assets --jq 'length'"),
+      run.indexOf('gh release edit "$tag" --draft=false'),
+    ];
+    for (const [i, idx] of order.entries()) {
+      expect(idx, `draft-first stage #${i} (create/upload/verify/publish) missing`).toBeGreaterThanOrEqual(0);
+    }
+    for (let i = 1; i < order.length; i++) {
+      expect(order[i], `draft-first stage ${i} out of order`).toBeGreaterThan(order[i - 1]);
+    }
   });
 });
