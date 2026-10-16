@@ -5,11 +5,10 @@
 
 
 ## Improvements:
-- UI - 
+- UI -
 
 ## Refinement Drift — 2026-10-07-ui-overhaul-bugs
 **Date:** 2026-10-07 | **Plan:** docs/superpowers/plans/2026-10-07-ui-overhaul-bugs.md
-
 1. Task 2: plan says "add clearList to destructure" — already destructured at src/providers/CompressionProvider.tsx:55; only endRun body changes
 2. Task 2: 5 existing CompressView tests break on B1 — :285-295, :297-308 (consolidate), :321-351 + :418-441 (empty-staging nav plumbing), :389-416 pins the buggy behavior in its title ("returns with final statuses still listed") — delete/rewrite
 3. Task 4: App.test.tsx:140-178 asserts data-slot="sidebar-menu-badge" — SidebarMenuBadge removed; rewrite against count-pill contract
@@ -40,9 +39,14 @@
 - **Flake:** gate run panicked in `queue::tests::n1_matches_legacy_sequential_order` (`Err(Timeout)`, queue.rs:1381); passed isolated rerun and full rerun (421 passed, 4 ignored) — frontend-only change, unrelated. Flag if it repeats.
 
 ## Deferred: sidebar auto-collapse semantics — reported 2026-10-08
-
 User-reported (screenshots at identical window size, both 46-file batch, only filter differs — 2 lanes vs 3+ lanes):
 
 1. **Sidebar visibility varies with content, not user choice** — fewer kanban items → sidebar expanded; more items → auto-collapsed. At default 900px window the app loads with the sidebar already collapsed (with ≥2 lanes, expanded board ~600px always cramps).
 2. **Manual toggle gets reverted** — user opens the sidebar; the "re-collapse when cramped after manual open" rule (+3s suspend expiry) slams it shut again shortly after. Feels like the control fights the user.
 3. Root: the content-driven auto-collapse feature itself (PR #107, spec §8). Fix direction agreed to be decided later — options were (a) manual-only sidebar + horizontal kanban scroll (recommended), (b) auto-collapse once per run start with sticky manual toggles, (c) keep feature but never re-collapse after manual open. Sidebar state persistence (tauri-plugin-store vs cookies in Tauri) also open.
+
+## Runner brew nondeterminism class in CI freezes — resolved by homebrew-core pin (2026-10-16)
+
+- **Stale runner index** — macos-15 images ship an old homebrew-core checkout; a freeze without `brew update` resolved old formula versions (vips 8.18.6 / gs 10.07.x era) against a manifest pinning 8.18.7 / 10.08.0, and the drift gate killed the run. The naive `brew update` fix pulled HEAD core instead, whose formula/bottle state nobody tied to the manifest. Resolved: CI never refreshes brew — freeze.yml checks out homebrew-core at the commit in `scripts/ci/homebrew-core.sha` and installs off that pinned tap.
+- **Missing-bottles source builds** — homebrew-core stopped publishing x86_64 (sonoma-tier) macOS bottles between 2026-09-10 and 2026-09-11 (harfbuzz 14.4.0 bottle `f2fac97b51f2` still carries `sonoma` digests; ghostscript 10.08.0 a day later does not). Fresh-core x86_64 freezes therefore sent the vips/ghostscript closure into hours-long source builds (llvm included); one run hung 6h / ~3600 billed minutes. Resolved for arm64 by the pin (`cb5b5e2230fd` carries fresh arm64_sequoia bottles for both formulas and their closure); the x86_64 facts and options live in ADR 0001 (no commit can supply vips 8.18.7 x86_64 bottles — vips 8.18.7 postdates the tier death by 16 days). Freeze matrix rows are now bounded at 40 min so this class fails loudly and cheaply instead of hanging.
+- **Bootstrap red period** — the first 8 workflow runs under the brew-staging model recorded here (oct 2026) ended 0-for-8: two freezes lost to the brew nondeterminism above, the rest failed downstream of the missing/garbled sidecars release. They are the reason the freeze design moved to the pinned-tap + all-triple model in ADR 0001's 2026-10-16 ruling.
