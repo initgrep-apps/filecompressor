@@ -35,7 +35,10 @@ Every artifact is sha256-verified twice: at freeze publish (bundle ↔ sibling d
 **Monthly / version bump**
 
 1. Bump engine pins: for URL engines run `yarn binaries:refresh` (rewrites `scripts/binaries.manifest.json` + `scripts/binaries.lock.json`; `--dry-run` only reports); for brew engines install the new build locally (`brew install vips ghostscript`), then hand-edit `expectVersion`, or follow `binaries:refresh` drift output.
-2. Update `scripts/ci/homebrew-core.sha` **only if a manifest `expectVersion` bumped**: pick the newest homebrew-core commit carrying the target formula versions with `arm64_sequoia` bottles for the full closure (see ADR 0001 criterion). One line, hex40, nothing else.
+2. Update the per-arch pins in `scripts/ci/homebrew-core-pins.json` **only if a manifest `expectVersion` bumped** (ADR 0001 criterion; each mac triple resolves its own sha, and the two pins move independently):
+   - `aarch64-apple-darwin`: pick the newest homebrew-core commit carrying the new formula versions with `arm64_sequoia` bottles for the full closure.
+   - `x86_64-apple-darwin`: leave frozen at the last pre-cutoff pin (`8f15b0f1b965`, vips 8.18.6 / gs 10.07.1). **Never bump the Intel engines unless a human re-verifies that the new versions and their whole closure carry `sonoma` x86_64 bottles** — homebrew-core stopped publishing x86_64 bottles on 2026-09-10/11, so nothing bottled after that date can ever be staged from brew on Intel. A new Intel engine source replaces this pin wholesale; it does not move forward.
+   Values are hex40 sha strings, plain JSON, no comments and no extra keys.
 3. `yarn build && yarn test && cd src-tauri && cargo test` locally, commit, merge.
 4. Click **Freeze sidecar engines** (workflow_dispatch). Expect 4 green rows + finalize publishing `sidecars-<date>` with 8 assets.
 5. Tag `v<version>` (or dispatch release.yml). Expect 4 green rows building into the draft, preflight requiring all 8 bundle assets.
@@ -52,7 +55,7 @@ Every artifact is sha256-verified twice: at freeze publish (bundle ↔ sibling d
 | Symptom | Meaning | Remedy |
 | --- | --- | --- |
 | freeze mac row: drift gate FAIL | pin's formulas no longer match manifest `expectVersion` | operator: refresh the pin (new commit) or fix the manifest — never hide the drift |
-| freeze mac row: brew install slow/hanging | pin lacks bottles for this closure; Intel rows source-build (x86_64 bottles died 2026-09-10/11) | bounded by 40-min timeout; check ADR 0001 limitation note |
+| freeze mac row: brew install slow/hanging | pin lacks bottles for this closure | bounded by 40-min timeout. arm rows: re-pin (newest commit with `arm64_sequoia` bottles). Intel rows: pin regressed past the 2026-09-10/11 x86_64 bottle cutoff — restore the pre-cutoff pin `8f15b0f1b965`; never push Intel engines forward without human bottle re-verification (ADR 0001) |
 | freeze finalize: found N/8 | a matrix row failed quietly or artifacts dropped | re-run failed rows; no partial-sidecars publishes exist |
 | consumer: unfreeze FAIL / no sidecars-* | freeze never ran, or wrong newest release | run freeze.yml first (release preflight catches this earlier) |
 | consumer: sha256 mismatch | torn or tampered publish | delete + re-run freeze finalize |
