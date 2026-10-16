@@ -16,18 +16,25 @@ const EXPECTED_WORKFLOWS = [
   { file: "ci.yml", status: "current" },
 ];
 
+const FREEZE_MATRIX_ROWS = [
+  { triple: "aarch64-apple-darwin", os: "macos-15", platform: "mac" },
+  { triple: "x86_64-apple-darwin", os: "macos-15-intel", platform: "mac" },
+  { triple: "x86_64-pc-windows-msvc", os: "windows-2025", platform: "windows" },
+  { triple: "aarch64-pc-windows-msvc", os: "windows-11-arm", platform: "windows" },
+];
+
 const RELEASE_MATRIX_ROWS = [
-  { triple: "aarch64-apple-darwin", os: "macos-15", stage: "freeze" },
-  { triple: "x86_64-apple-darwin", os: "macos-15-intel", stage: "freeze" },
-  { triple: "x86_64-pc-windows-msvc", os: "windows-2025", stage: "manifest" },
-  { triple: "aarch64-pc-windows-msvc", os: "windows-11-arm", stage: "manifest" },
+  { triple: "aarch64-apple-darwin", os: "macos-15" },
+  { triple: "x86_64-apple-darwin", os: "macos-15-intel" },
+  { triple: "x86_64-pc-windows-msvc", os: "windows-2025" },
+  { triple: "aarch64-pc-windows-msvc", os: "windows-11-arm" },
 ];
 
 const GATE_COMMAND = "yarn build && yarn test && cd src-tauri && cargo test";
 
 const GATE_MATRIX_ROWS = [
-  { triple: "aarch64-apple-darwin", os: "macos-15", stage: "freeze" },
-  { triple: "x86_64-pc-windows-msvc", os: "windows-2025", stage: "manifest" },
+  { triple: "aarch64-apple-darwin", os: "macos-15" },
+  { triple: "x86_64-pc-windows-msvc", os: "windows-2025" },
 ];
 
 const APP_ASSET_PATTERNS = [
@@ -46,9 +53,6 @@ const VALID_TRIGGERS = new Set([
   "release",
   "workflow_call",
 ]);
-
-const ARM_ROW = { triple: "aarch64-apple-darwin", os: "macos-15" };
-const X64_ROW = { triple: "x86_64-apple-darwin", os: "macos-15-intel" };
 
 function isWorkflowFile(file) {
   return file.endsWith(".yml") || file.endsWith(".yaml");
@@ -141,6 +145,26 @@ describe("workflows validation (all files)", () => {
     }
     expect(EXPECTED_WORKFLOWS.find((wf) => wf.file === "freeze.yml")?.status).toBe("current");
   });
+
+  it("no consumer workflow stages engines via scripts/binaries/all.mjs (Ruling: only freeze.yml stages)", async () => {
+    const { existing } = state();
+    for (const file of existing) {
+      if (file === "freeze.yml") continue;
+      const { text } = await loadWorkflow(file);
+      expect(
+        text.includes("scripts/binaries/all.mjs"),
+        `${file}: manifest staging must never run in consumers — frozen bundles are the only engine source`,
+      ).toBe(false);
+    }
+  });
+
+  it("manifest staging never runs where brew could run (Ruling: brew only inside freeze.yml mac rows)", async () => {
+    for (const file of ["release.yml", "ci.yml"]) {
+      const { text } = await loadWorkflow(file);
+      expect(text.includes("brew install"), `${file}: brew installs belong to freeze.yml only`).toBe(false);
+      expect(text.includes("brew update"), `${file}: brew updates belong to freeze.yml only`).toBe(false);
+    }
+  });
 });
 
 describe("freeze.yml freeze workflow", () => {
@@ -166,65 +190,125 @@ describe("freeze.yml freeze workflow", () => {
     expect(doc.concurrency["cancel-in-progress"]).toBe(false);
   });
 
-  it("freeze job matrix includes exactly the two mac rows", async () => {
+  it("freeze job matrix includes exactly the four triple rows across both platforms", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const freeze = jobsOf(doc).freeze;
     expect(freeze).toBeDefined();
-    expect(freeze.strategy.matrix.include).toEqual([ARM_ROW, X64_ROW]);
+    expect(freeze.strategy["fail-fast"], "one row's timeout must not cancel the other rows — each row carries its own evidence").toBe(false);
+    expect(freeze.strategy.matrix.include).toEqual(FREEZE_MATRIX_ROWS);
+  });
+
+  it("freeze rows are bounded by a 40-minute timeout so a runner hang dies loudly, not after six hours", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    expect(jobsOf(doc).freeze["timeout-minutes"]).toBe(40);
+  });
+
+  it("runs every job under an explicit timeout (invariant: no unbounded jobs)", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    for (const [jobName, job] of Object.entries(jobsOf(doc))) {
+      expect(
+        typeof job["timeout-minutes"] === "number" && job["timeout-minutes"] > 0,
+        `job ${jobName} must carry a positive timeout-minutes`,
+      ).toBe(true);
+    }
+  });
+
+  it("mac rows pin homebrew-core to the committed sha instead of blindly installing off a stale runner index", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const freeze = jobsOf(doc).freeze;
+    const pin = stepsOf(freeze).find((s) => stepRuns(s).includes("scripts/ci/homebrew-core.sha"));
+    expect(pin, "a homebrew-core pin step must read the committed pin file").toBeDefined();
+    expect(pin["if"]).toBe("matrix.platform == 'mac'");
+    const run = pin.run;
+    expect(run).toContain("set -euo pipefail");
+    expect(run).toContain('core="$(brew --repository homebrew/core)"');
+    expect(run).toContain('if [ ! -d "$core/.git" ]');
+    expect(run, "a missing tap must be cloned at the pinned commit, not silently skipped").toContain(
+      "git clone --filter=blob:none https://github.com/Homebrew/homebrew-core \"$core\"",
+    );
+    expect(run).toContain('git -C "$core" fetch --depth 1 origin "$pin"');
+    expect(run).toContain('git -C "$core" checkout --detach "$pin"');
+    expect(
+      run,
+      "the raw pin line must be validated as one 40-char hex sha before it touches git",
+    ).toContain("grep -Eq '^[0-9a-f]{40}$'");
+    expect(pin.shell).toBe("bash");
+  });
+
+  it("brew formulas install off the pinned tap with auto-update and API resolution disabled", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const freeze = jobsOf(doc).freeze;
+    const brew = stepsOf(freeze).find((s) => stepRuns(s).includes("brew install vips ghostscript"));
+    expect(brew, "brew install step must exist (drift gate needs the active keg)").toBeDefined();
+    expect(
+      brew.run,
+      "the formula install must be naked — drift handling belongs to prep/verify, not to a version flag here",
+    ).not.toContain("@");
+    expect(brew.env?.HOMEBREW_NO_AUTO_UPDATE, "auto-update would wipe the pin checkout with fresh core").toBe("1");
+    expect(brew.env?.HOMEBREW_NO_INSTALL_FROM_API, "API resolution would bypass the pinned tap formulas").toBe("1");
+    expect(brew["if"]).toBe("matrix.platform == 'mac'");
+    expect(brew.shell).toBe("bash");
+  });
+
+  it("no brew update step exists anywhere (Ruling: replaced by the homebrew-core pin checkout)", async () => {
+    const { doc, text } = await loadWorkflow(FILENAME);
+    const freeze = jobsOf(doc).freeze;
+    expect(
+      stepsOf(freeze).find((s) => stepRuns(s).includes("brew update")),
+      "brew update would pull HEAD homebrew-core, whose formula set cannot match the pin — removed by Ruling",
+    ).toBeUndefined();
+    expect(text.includes("brew update")).toBe(false);
   });
 
   it("freeze job steps follow the acceptance-criteria order", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const freeze = jobsOf(doc).freeze;
-    const uses = stepsOf(freeze).map(stepUses);
+    const steps = stepsOf(freeze);
+    const uses = steps.map(stepUses);
 
     const checkoutIdx = uses.findIndex((u) => u.startsWith("actions/checkout@"));
     const setupNodeIdx = uses.findIndex((u) => u.startsWith("actions/setup-node@"));
     const toolchainIdx = uses.findIndex((u) => u.startsWith("dtolnay/rust-toolchain@"));
     const uploadIdx = uses.findIndex((u) => u.startsWith("actions/upload-artifact@"));
     const installIdx = runIndexesByText(freeze, "yarn install --frozen-lockfile")[0];
-    const brewUpdateIdx = runIndexesByText(freeze, "brew update")[0];
+    const pinIdx = steps.findIndex((s) => stepRuns(s).includes("scripts/ci/homebrew-core.sha"));
     const brewIdx = runIndexesByText(freeze, "brew install vips ghostscript")[0];
     const allIdx = runIndexesByText(freeze, "node scripts/binaries/all.mjs --target")[0];
     const freezeIdx = runIndexesByText(freeze, "bash scripts/ci/freeze.sh --triple")[0];
 
-    const observed = [checkoutIdx, setupNodeIdx, installIdx, brewUpdateIdx, brewIdx, toolchainIdx, allIdx, freezeIdx, uploadIdx];
+    const observed = [checkoutIdx, setupNodeIdx, installIdx, pinIdx, brewIdx, toolchainIdx, allIdx, freezeIdx, uploadIdx];
     for (const [i, idx] of observed.entries()) {
-      expect(idx, `step group #"${i}" (checkout/setup-node/install/brew-update/brew/toolchain/binaries/freeze/upload) is present`).toBeGreaterThanOrEqual(0);
+      expect(idx, `step group #"${i}" (checkout/setup-node/install/pin/brew/toolchain/binaries/freeze/upload) is present`).toBeGreaterThanOrEqual(0);
     }
     for (let i = 1; i < observed.length; i++) {
       expect(observed[i], `step group ${i} out of acceptance-criteria order`).toBeGreaterThan(observed[i - 1]);
     }
   });
 
-  it("installs the brew formulas before staging so a runner-side drift fails loudly in prep", async () => {
-    const { doc } = await loadWorkflow(FILENAME);
-    const brew = stepsOf(jobsOf(doc).freeze).find((s) => stepRuns(s).includes("brew install vips ghostscript"));
-    expect(brew, "brew install step must exist (drift gate needs the active keg)").toBeDefined();
-    expect(
-      brew.run,
-      "the formula install must be naked — drift handling belongs to prep/verify, not to a version flag here",
-    ).not.toContain("@");
-    expect(brew.shell).toBe("bash");
-  });
-
-  it("refreshes the Homebrew index before installing the formulas for every freeze row", async () => {
+  it("staging and bundling run for every row with the matrix triple", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const freeze = jobsOf(doc).freeze;
-    expect(freeze.strategy.matrix.include.length, "both freeze rows share this job's step order").toBe(2);
 
-    const steps = stepsOf(freeze);
-    const update = steps.find((s) => stepRuns(s).includes("brew update"));
-    expect(update, "a brew update step must refresh the stale image formula index").toBeDefined();
-    expect(update.name).toBe("refresh Homebrew index");
-    expect(update.run, "the refresh must be a bare brew update — no flags, no version logic").toBe("brew update");
-    expect(update.shell).toBe("bash");
+    const staging = stepsOf(freeze).find((s) =>
+      stepRuns(s).includes("node scripts/binaries/all.mjs --target"),
+    );
+    expect(staging).toBeDefined();
+    expect(staging["if"], "staging is identical in shape on all four rows").toBeUndefined();
+    expect(staging.env?.TRIPLE).toBe("${{ matrix.triple }}");
 
-    const installIdx = runIndexesByText(freeze, "yarn install --frozen-lockfile")[0];
-    const updateIdx = steps.findIndex((s) => s === update);
-    const brewIdx = runIndexesByText(freeze, "brew install vips ghostscript")[0];
-    expect(updateIdx, "index refresh must run after the yarn install step").toBeGreaterThan(installIdx);
-    expect(updateIdx, "index refresh must run before brew install installs off a stale index").toBeLessThan(brewIdx);
+    const freezeStep = stepsOf(freeze).find((s) => stepRuns(s).includes("bash scripts/ci/freeze.sh --triple"));
+    expect(freezeStep).toBeDefined();
+    expect(freezeStep["if"], "bundling is identical in shape on all four rows").toBeUndefined();
+    expect(freezeStep.env?.TRIPLE).toBe("${{ matrix.triple }}");
+  });
+
+  it("only mac rows carry rust toolchain (windows rows stage from URL pins, no rustc needed for bundling)", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const toolchain = stepsOf(jobsOf(doc).freeze).find((s) =>
+      stepUses(s).startsWith("dtolnay/rust-toolchain@"),
+    );
+    expect(toolchain).toBeDefined();
+    expect(toolchain["if"]).toBe("matrix.platform == 'mac'");
   });
 
   it("setup-node pins node 22 with yarn cache", async () => {
@@ -232,20 +316,6 @@ describe("freeze.yml freeze workflow", () => {
     const setupNode = stepsOf(jobsOf(doc).freeze).find((s) => stepUses(s).startsWith("actions/setup-node@"));
     expect(setupNode.with["node-version"]).toBe(22);
     expect(setupNode.with.cache).toBe("yarn");
-  });
-
-  it("binaries staging step targets the matrix triple", async () => {
-    const { doc } = await loadWorkflow(FILENAME);
-    const staging = stepsOf(jobsOf(doc).freeze).find((s) =>
-      stepRuns(s).includes("node scripts/binaries/all.mjs --target"),
-    );
-    expect(staging.run).toContain("${{ matrix.triple }}");
-  });
-
-  it("freeze step passes --triple from the matrix", async () => {
-    const { doc } = await loadWorkflow(FILENAME);
-    const freezeStep = stepsOf(jobsOf(doc).freeze).find((s) => stepRuns(s).includes("bash scripts/ci/freeze.sh --triple"));
-    expect(freezeStep.run).toContain("${{ matrix.triple }}");
   });
 
   it("upload-artifact carries the bundle + sha256 for this matrix row and errors on no files", async () => {
@@ -305,6 +375,19 @@ describe("freeze.yml freeze workflow", () => {
     expect(collision.env?.GH_TOKEN).toBe("${{ github.token }}");
   });
 
+  it("windows rows dispatch the freeze script in bash (survives the git-bash runner shell)", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    for (const row of FREEZE_MATRIX_ROWS.filter((r) => r.platform === "windows")) {
+      const { doc: parsed } = await loadWorkflow(FILENAME);
+      const freezeStep = stepsOf(jobsOf(parsed).freeze).find((s) =>
+        stepRuns(s).includes("bash scripts/ci/freeze.sh --triple"),
+      );
+      expect(freezeStep.run, `${row.triple} row must invoke freeze.sh through bash, not pwsh`).toContain(
+        "bash scripts/ci/freeze.sh",
+      );
+    }
+  });
+
   it("finalize job needs freeze and downloads bundles", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const finalize = jobsOf(doc).finalize;
@@ -326,12 +409,12 @@ describe("freeze.yml freeze workflow", () => {
     expect(download.with.path).toBe("release-assets");
   });
 
-  it("finalize count preflight annotates a missing release-assets dir and runs before create", async () => {
+  it("finalize count preflight requires all eight bundle assets across the four triples", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const steps = stepsOf(jobsOf(doc).finalize);
 
     const downloadIdx = steps.findIndex((s) => stepUses(s).startsWith("actions/download-artifact@"));
-    const countIdx = steps.findIndex((s) => stepRuns(s).includes("expected 4 bundle assets (2 tarballs + 2 .sha256)"));
+    const countIdx = steps.findIndex((s) => stepRuns(s).includes("expected 8 bundle assets (4 tarballs + 4 .sha256)"));
     const createIdx = steps.findIndex((s) => stepRuns(s).includes('gh release create "$tag"'));
 
     expect(countIdx, "asset-count preflight step must exist").toBeGreaterThanOrEqual(0);
@@ -345,10 +428,11 @@ describe("freeze.yml freeze workflow", () => {
     expect(countStep.run).toContain(
       "::error::release-assets directory missing — download-artifact step produced nothing",
     );
+    expect(countStep.run).toContain('[ "$count" -ne 8 ]');
     expect(countStep.shell).toBe("bash");
   });
 
-  it("finalize publishes draft-first (draft → upload → verify 4 assets → publish) in one step", async () => {
+  it("finalize publishes draft-first (draft → upload → verify 8 assets → publish) in one step", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const publish = stepsOf(jobsOf(doc).finalize).find((s) => stepRuns(s).includes('gh release create "$tag"'));
     expect(publish, "publish step must exist").toBeDefined();
@@ -363,8 +447,8 @@ describe("freeze.yml freeze workflow", () => {
     );
     expect(run).toContain('gh release upload "$tag" release-assets/* --clobber');
     expect(run).toContain("n=\"$(gh release view \"$tag\" --json assets --jq 'length')\"");
-    expect(run).toContain('[ "$n" -ne 4 ]');
-    expect(run).toContain("::error::$tag has $n/4 assets — draft left in place, not published");
+    expect(run).toContain('[ "$n" -ne 8 ]');
+    expect(run).toContain("::error::$tag has $n/8 assets — draft left in place, not published");
     expect(run).toContain("gh release delete $tag --cleanup-tag --yes");
     expect(run).toContain('gh release edit "$tag" --draft=false');
     expect(publish.env?.GH_REPO).toBe("${{ github.repository }}");
@@ -424,12 +508,17 @@ describe("release.yml release workflow", () => {
     }
   });
 
-  it("has exactly the four-triple / four-runner matrix with stages", async () => {
+  it("has exactly the four-triple / four-runner matrix, frozen-bundle semantics on every row", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const release = jobsOf(doc).release;
     expect(release).toBeDefined();
+    expect(release["timeout-minutes"], "release rows must be bounded at 90 — cargo builds are slow but not 6-hour hangs").toBe(90);
     expect(release.strategy["fail-fast"]).toBe(false);
     expect(release.strategy.matrix.include).toEqual(RELEASE_MATRIX_ROWS);
+    expect(
+      JSON.stringify(release.strategy.matrix),
+      "the earlier stage-field matrix collapsed to unfreeze-only semantics (Ruling)",
+    ).not.toContain("stage");
   });
 
   it("version-sync uses trigger-context env instead of run-string interpolation", async () => {
@@ -489,7 +578,7 @@ describe("release.yml release workflow", () => {
     expect(setupNodeIdx).toBeLessThan(syncIdx);
   });
 
-  it("gate preflights sidecars availability for both mac triples with all four bundle assets", async () => {
+  it("gate preflights sidecars availability for all four triples with all eight bundle assets", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const preflight = stepsOf(jobsOf(doc).gate).find((s) => stepRuns(s).includes("sidecars-"));
     expect(preflight, "sidecars-availability preflight must exist").toBeDefined();
@@ -501,9 +590,9 @@ describe("release.yml release workflow", () => {
       run,
       "a failed release list must fail closed with its own annotation, not collapse into 'no sidecars release'",
     ).toContain("::error::sidecars-availability preflight could not list releases (auth/scopes/rate limit/network)");
-    expect(run).toContain("::error::no sidecars-* release found — run the Freeze mac sidecars workflow before building the release (ADR 0001), then re-run the release");
-    for (const triple of ["aarch64-apple-darwin", "x86_64-apple-darwin"]) {
-      expect(run).toContain(triple);
+    expect(run).toContain("::error::no sidecars-* release found — run the Freeze sidecar engines workflow before building the release (ADR 0001), then re-run the release");
+    for (const triple of RELEASE_MATRIX_ROWS.map((row) => row.triple)) {
+      expect(run, `${triple} bundle must be required by the preflight`).toContain(triple);
     }
     for (const pattern of ["sidecar-bundle-${triple}.tar.gz", "sidecar-bundle-${triple}.tar.gz.sha256"]) {
       expect(run).toContain(pattern);
@@ -577,59 +666,49 @@ describe("release.yml release workflow", () => {
     expect(sync.shell).toBe("bash");
   });
 
-  it("runs the gate command verbatim after engine staging", async () => {
-    const { doc } = await loadWorkflow(FILENAME);
-    const release = jobsOf(doc).release;
-    const gateIdx = runIndexesByText(release, GATE_COMMAND)[0];
-    expect(gateIdx, "gate command must appear verbatim").toBeGreaterThanOrEqual(0);
-    const steps = stepsOf(release);
-    const auditIdx = steps.findIndex((s) =>
-      stepRuns(s).includes("yarn binaries:audit") || stepRuns(s).includes("node scripts/binaries/all.mjs --target"),
-    );
-    expect(auditIdx, "engine staging/audit must precede the gate").toBeLessThan(gateIdx);
-  });
-
-  it("mac rows allow the inactive brew version-drift gate on the frozen-engine audit", async () => {
-    const { doc } = await loadWorkflow(FILENAME);
-    const audit = stepsOf(jobsOf(doc).release).find((s) => stepRuns(s).includes("yarn binaries:audit"));
-    expect(audit, "frozen-engine audit step must exist").toBeDefined();
-    expect(audit["if"]).toBe("matrix.stage == 'freeze'");
-    expect(
-      audit.env?.BINARIES_ALLOW_INACTIVE_BREW,
-      "runner brew has no vips/ghostscript kegs — the inactive allowance is what keeps the audit from dying on brew-present/formula-missing hosts",
-    ).toBe("1");
-  });
-
-  it("mac rows unfreeze + audit, windows rows stage fresh via all.mjs", async () => {
+  it("all rows restore frozen engines and audit them before the gate", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const release = jobsOf(doc).release;
     const steps = stepsOf(release);
 
     const unfreezeStep = steps.find((s) => stepRuns(s).includes("bash scripts/ci/unfreeze.sh --triple"));
-    expect(unfreezeStep, "unfreeze step must exist for the freeze stage rows").toBeDefined();
+    expect(unfreezeStep, "unfreeze step must exist").toBeDefined();
     expect(unfreezeStep.run).toContain('--triple "$TRIPLE"');
     expect(unfreezeStep.env?.TRIPLE).toBe("${{ matrix.triple }}");
-    expect(unfreezeStep["if"]).toBe("matrix.stage == 'freeze'");
+    expect(
+      unfreezeStep["if"],
+      "every row is a frozen-bundle row now — no per-stage gating remains (Ruling)",
+    ).toBeUndefined();
     expect(unfreezeStep.env?.GH_TOKEN).toBe("${{ github.token }}");
     expect(unfreezeStep.env?.GH_REPO).toBe("${{ github.repository }}");
 
     const unfreezeIdx = steps.findIndex((s) => s === unfreezeStep);
+    const macAudit = steps.find((s) => stepRuns(s).includes("yarn binaries:audit") && s.env?.BINARIES_ALLOW_INACTIVE_BREW === "1");
+    expect(macAudit, "mac clean-room audit must keep the inactive-brew allowance").toBeDefined();
+    expect(macAudit["if"]).toContain("apple-darwin");
+    const macIdx = steps.findIndex((s) => s === macAudit);
+    expect(macIdx, "audit must run after unfreeze").toBeGreaterThan(unfreezeIdx);
+
+    const winAudit = steps.find((s) => stepRuns(s).includes("yarn binaries:audit") && !s.env?.BINARIES_ALLOW_INACTIVE_BREW);
+    expect(winAudit, "windows audit must exist without brew allowances").toBeDefined();
+    expect(winAudit["if"]).toContain("pc-windows-msvc");
+    const winIdx = steps.findIndex((s) => s === winAudit);
+    expect(winIdx, "windows audit must also follow unfreeze").toBeGreaterThan(unfreezeIdx);
+
+    expect(
+      steps.filter((s) => stepRuns(s).includes("scripts/binaries/all.mjs")),
+      "release rows never stage from the manifest (Ruling)",
+    ).toEqual([]);
+  });
+
+  it("runs the gate command verbatim after engine restore and audit", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const release = jobsOf(doc).release;
+    const gateIdx = runIndexesByText(release, GATE_COMMAND)[0];
+    expect(gateIdx, "gate command must appear verbatim").toBeGreaterThanOrEqual(0);
+    const steps = stepsOf(release);
     const auditIdx = steps.findIndex((s) => stepRuns(s).includes("yarn binaries:audit"));
-    expect(auditIdx, "mac clean-room audit step must exist").toBeGreaterThanOrEqual(0);
-    expect(auditIdx, "audit must run after unfreeze").toBeGreaterThan(unfreezeIdx);
-    expect(steps[auditIdx]["if"]).toBe("matrix.stage == 'freeze'");
-
-    const stageStep = steps.find((s) => stepRuns(s).includes('node scripts/binaries/all.mjs --target "$TRIPLE"'));
-    expect(stageStep, "windows manifest staging step must exist").toBeDefined();
-    expect(stageStep["if"]).toBe("matrix.stage == 'manifest'");
-    expect(stageStep.env?.TRIPLE).toBe("${{ matrix.triple }}");
-
-    const runsText = steps.map((s) => stepRuns(s)).join("\n");
-    for (const row of RELEASE_MATRIX_ROWS) {
-      const usesAllMjs = row.stage === "manifest";
-      const expectedNeedle = usesAllMjs ? 'node scripts/binaries/all.mjs --target "$TRIPLE"' : 'bash scripts/ci/unfreeze.sh --triple "$TRIPLE"';
-      expect(runsText.includes(expectedNeedle), `row ${row.triple}: ${expectedNeedle} must be invoked`).toBe(true);
-    }
+    expect(auditIdx, "engine audit must precede the gate").toBeLessThan(gateIdx);
   });
 
   it("arm windows row adds its rustup target after toolchain setup", async () => {
@@ -663,6 +742,13 @@ describe("release.yml release workflow", () => {
         expect(step.shell, `job ${jobName} step "${step.name}": run steps must set shell: bash`).toBe("bash");
       }
     }
+  });
+
+  it("setup-node pins node 22 with yarn cache on the release rows", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const setupNode = stepsOf(jobsOf(doc).release).find((s) => stepUses(s).startsWith("actions/setup-node@"));
+    expect(setupNode.with["node-version"]).toBe(22);
+    expect(setupNode.with.cache).toBe("yarn");
   });
 
   it("tauri-action uploads into the gated draft by releaseId, with no tag/name/prerelease inputs", async () => {
@@ -817,11 +903,12 @@ describe("ci.yml PR gate workflow", () => {
     }
   });
 
-  it("has exactly the two-row gate matrix — mac freeze on macos-15, windows manifest on windows-2025 (Ruling: no ubuntu, no win-arm)", async () => {
+  it("has exactly the two-row gate matrix — arm mac + win x64 (Ruling: no ubuntu, no win-arm)", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const gate = jobsOf(doc).gate;
     expect(gate, "gate job must exist").toBeDefined();
     expect(gate["runs-on"]).toBe("${{ matrix.os }}");
+    expect(gate["timeout-minutes"], "gate rows must be bounded at 60 minutes").toBe(60);
     expect(gate.strategy["fail-fast"]).toBe(false);
     expect(gate.strategy.matrix.include).toEqual(GATE_MATRIX_ROWS);
 
@@ -829,46 +916,47 @@ describe("ci.yml PR gate workflow", () => {
     expect(matrixText, "linux rows never had a stageable linux engine (Ruling)").not.toContain("ubuntu");
     expect(matrixText, "win-arm coverage is tag-only (Ruling)").not.toContain("windows-11-arm");
     expect(matrixText, "win-arm coverage is tag-only (Ruling)").not.toContain("aarch64-pc-windows-msvc");
+    expect(matrixText, "the stage field collapsed away — every row unfreezes (Ruling)").not.toContain("stage");
     for (const row of GATE_MATRIX_ROWS) {
       expect(row.os, "gate runner labels must never drift to -latest").not.toMatch(/-latest$/);
     }
   });
 
-  it("mac row restores frozen engines from the newest sidecars release with a read token", async () => {
+  it("every row restores frozen engines from the newest sidecars release with a read token (Ruling: no manifest staging in the gate)", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const unfreezeStep = stepsOf(jobsOf(doc).gate).find((s) =>
       stepRuns(s).includes("bash scripts/ci/unfreeze.sh --triple"),
     );
-    expect(unfreezeStep, "unfreeze step must exist for the freeze-stage row").toBeDefined();
+    expect(unfreezeStep, "unfreeze step must exist for every gate row").toBeDefined();
     expect(unfreezeStep.run.trim(), "unfreeze run must stay exactly the unfreeze invocation (no || true, no pipes)").toBe(
       'bash scripts/ci/unfreeze.sh --triple "$TRIPLE"',
     );
-    expect(unfreezeStep["if"]).toBe("matrix.stage == 'freeze'");
+    expect(
+      unfreezeStep["if"],
+      "both rows unfreeze — the stage split is gone (Ruling)",
+    ).toBeUndefined();
     expect(unfreezeStep.env?.TRIPLE).toBe("${{ matrix.triple }}");
     expect(unfreezeStep.env?.GH_TOKEN).toBe("${{ github.token }}");
     expect(unfreezeStep.env?.GH_REPO).toBe("${{ github.repository }}");
+
+    expect(
+      stepsOf(jobsOf(doc).gate).filter((s) => stepRuns(s).includes("scripts/binaries/all.mjs")),
+      "the gate never stages from the manifest (Ruling)",
+    ).toEqual([]);
   });
 
-  it("mac row audits the restored engines with BINARIES_ALLOW_INACTIVE_BREW=1 (runner brew lacks vips/gs kegs)", async () => {
+  it("mac row audits the restored engines with BINARIES_ALLOW_INACTIVE_BREW=1, windows row audits plain", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const steps = stepsOf(jobsOf(doc).gate);
-    const audit = steps.find((s) => stepRuns(s).includes("yarn binaries:audit"));
-    expect(audit, "frozen-engine audit step must exist on the mac row").toBeDefined();
-    expect(audit["if"]).toBe("matrix.stage == 'freeze'");
-    expect(audit.env?.BINARIES_ALLOW_INACTIVE_BREW).toBe("1");
+    const macAudit = steps.find((s) => stepRuns(s).includes("yarn binaries:audit") && s.env?.BINARIES_ALLOW_INACTIVE_BREW === "1");
+    expect(macAudit, "frozen-engine audit step must exist on the mac row").toBeDefined();
+    expect(macAudit["if"]).toContain("apple-darwin");
+    const winAudit = steps.find((s) => stepRuns(s).includes("yarn binaries:audit") && !s.env?.BINARIES_ALLOW_INACTIVE_BREW);
+    expect(winAudit, "windows row must audit the restored bundle without brew allowances").toBeDefined();
+    expect(winAudit["if"]).toContain("pc-windows-msvc");
   });
 
-  it("windows row stages engines from the manifest for the x64 triple", async () => {
-    const { doc } = await loadWorkflow(FILENAME);
-    const stageStep = stepsOf(jobsOf(doc).gate).find((s) =>
-      stepRuns(s).includes('node scripts/binaries/all.mjs --target "$TRIPLE"'),
-    );
-    expect(stageStep, "manifest staging step must exist for the manifest-stage row").toBeDefined();
-    expect(stageStep["if"]).toBe("matrix.stage == 'manifest'");
-    expect(stageStep.env?.TRIPLE).toBe("${{ matrix.triple }}");
-  });
-
-  it("runs the gate command verbatim as a single run string after engine staging", async () => {
+  it("runs the gate command verbatim as a single run string after engine restore and audit", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const gate = jobsOf(doc).gate;
     const steps = stepsOf(gate);
@@ -884,12 +972,11 @@ describe("ci.yml PR gate workflow", () => {
     const toolchainIdx = steps.findIndex((s) => stepUses(s).startsWith("dtolnay/rust-toolchain@"));
     const cacheIdx = steps.findIndex((s) => /swatinem\/rust-cache@/i.test(stepUses(s)));
     const unfreezeIdx = steps.findIndex((s) => stepRuns(s).includes("bash scripts/ci/unfreeze.sh --triple"));
-    const stageIdx = steps.findIndex((s) => stepRuns(s).includes('node scripts/binaries/all.mjs --target "$TRIPLE"'));
     const auditIdx = steps.findIndex((s) => stepRuns(s).includes("yarn binaries:audit"));
 
-    const observed = [checkoutIdx, setupNodeIdx, installIdx, toolchainIdx, cacheIdx, unfreezeIdx, auditIdx, stageIdx, gateIdx];
+    const observed = [checkoutIdx, setupNodeIdx, installIdx, toolchainIdx, cacheIdx, unfreezeIdx, auditIdx, gateIdx];
     for (const [i, idx] of observed.entries()) {
-      const label = ["checkout", "setup-node", "install", "toolchain", "rust-cache", "unfreeze", "audit", "manifest stage", "gate"][i];
+      const label = ["checkout", "setup-node", "install", "toolchain", "rust-cache", "unfreeze", "audit", "gate"][i];
       expect(idx, `step group "${label}" is present`).toBeGreaterThanOrEqual(0);
       if (i > 0) {
         expect(idx, `step group "${label}" is ordered`).toBeGreaterThan(observed[i - 1]);
@@ -923,6 +1010,16 @@ describe("ci.yml PR gate workflow", () => {
     const setupNode = stepsOf(jobsOf(doc).gate).find((s) => stepUses(s).startsWith("actions/setup-node@"));
     expect(setupNode.with["node-version"]).toBe(22);
     expect(setupNode.with.cache).toBe("yarn");
+  });
+
+  it("runs every job under an explicit timeout (invariant: no unbounded jobs)", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    for (const [jobName, job] of Object.entries(jobsOf(doc))) {
+      expect(
+        typeof job["timeout-minutes"] === "number" && job["timeout-minutes"] > 0,
+        `job ${jobName} must carry a positive timeout-minutes`,
+      ).toBe(true);
+    }
   });
 
   it("no run: step interpolates raw ${{ }} templates — context flows through step env", async () => {

@@ -1,4 +1,4 @@
-name: Freeze mac sidecars
+name: Freeze sidecar engines
 
 on:
   workflow_dispatch:
@@ -14,6 +14,7 @@ jobs:
   gate:
     name: tag-collision gate
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -40,15 +41,25 @@ jobs:
   freeze:
     name: freeze (${{ matrix.triple }})
     needs: [gate]
+    timeout-minutes: 40
     permissions:
       contents: read
     strategy:
+      fail-fast: false
       matrix:
         include:
           - triple: aarch64-apple-darwin
             os: macos-15
+            platform: mac
           - triple: x86_64-apple-darwin
             os: macos-15-intel
+            platform: mac
+          - triple: x86_64-pc-windows-msvc
+            os: windows-2025
+            platform: windows
+          - triple: aarch64-pc-windows-msvc
+            os: windows-11-arm
+            platform: windows
     runs-on: ${{ matrix.os }}
     steps:
       - name: checkout (v7.0.1)
@@ -61,19 +72,41 @@ jobs:
       - name: install dependencies
         run: yarn install --frozen-lockfile
         shell: bash
-      - name: refresh Homebrew index
-        run: brew update
+      - name: pin homebrew-core to the committed formula state
+        if: matrix.platform == 'mac'
+        run: |-
+          set -euo pipefail
+          pin="$(tr -d '[:space:]' < scripts/ci/homebrew-core.sha)"
+          printf '%s' "$pin" | grep -Eq '^[0-9a-f]{40}$'
+          core="$(brew --repository homebrew/core)"
+          if [ ! -d "$core/.git" ]; then
+            echo "homebrew-core tap missing at '$core' — cloning the tap repository"
+            mkdir -p "$core"
+            git clone --filter=blob:none https://github.com/Homebrew/homebrew-core "$core"
+          fi
+          git -C "$core" fetch --depth 1 origin "$pin"
+          git -C "$core" checkout --detach "$pin"
+          echo "homebrew-core pinned to $pin"
         shell: bash
       - name: install brew formulas for the drift gate (${{ matrix.triple }})
+        if: matrix.platform == 'mac'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+          HOMEBREW_NO_INSTALL_FROM_API: "1"
         run: brew install vips ghostscript
         shell: bash
       - name: rust toolchain (dtolnay/rust-toolchain stable)
+        if: matrix.platform == 'mac'
         uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249
       - name: stage sidecar engines (${{ matrix.triple }})
-        run: node scripts/binaries/all.mjs --target ${{ matrix.triple }}
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: node scripts/binaries/all.mjs --target "$TRIPLE"
         shell: bash
       - name: freeze bundle (${{ matrix.triple }})
-        run: bash scripts/ci/freeze.sh --triple ${{ matrix.triple }}
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: bash scripts/ci/freeze.sh --triple "$TRIPLE"
         shell: bash
       - name: upload bundle (v4)
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -87,6 +120,7 @@ jobs:
   finalize:
     name: publish sidecars release
     needs: [freeze]
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -97,7 +131,7 @@ jobs:
           pattern: sidecar-bundle-*
           merge-multiple: true
           path: release-assets
-      - name: preflight — require exactly 4 bundle assets
+      - name: preflight — require exactly 8 bundle assets
         run: |-
           set -euo pipefail
           if [ ! -d release-assets ]; then
@@ -105,8 +139,8 @@ jobs:
             exit 1
           fi
           count="$(find release-assets -type f | wc -l | tr -d ' ')"
-          if [ "$count" -ne 4 ]; then
-            echo "::error::expected 4 bundle assets (2 tarballs + 2 .sha256), found $count"
+          if [ "$count" -ne 8 ]; then
+            echo "::error::expected 8 bundle assets (4 tarballs + 4 .sha256), found $count"
             exit 1
           fi
         shell: bash
@@ -120,8 +154,8 @@ jobs:
           gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag"
           gh release upload "$tag" release-assets/* --clobber
           n="$(gh release view "$tag" --json assets --jq 'length')"
-          if [ "$n" -ne 4 ]; then
-            echo "::error::$tag has $n/4 assets — draft left in place, not published; recovery: 'gh release delete $tag --cleanup-tag --yes' to discard the draft, then re-run finalize"
+          if [ "$n" -ne 8 ]; then
+            echo "::error::$tag has $n/8 assets — draft left in place, not published; recovery: 'gh release delete $tag --cleanup-tag --yes' to discard the draft, then re-run finalize"
             exit 1
           fi
           gh release edit "$tag" --draft=false
