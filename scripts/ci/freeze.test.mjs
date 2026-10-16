@@ -152,7 +152,7 @@ describe("freeze.sh", () => {
     });
   });
 
-  it("keeps_the_previous_bundle_and_sha_when_the_tar_step_fails", async () => {
+  it.skipIf(process.platform === "win32")("keeps_the_previous_bundle_and_sha_when_the_tar_step_fails_win32_skips_acl_semantics_differ", async () => {
     await withRoot(async (root) => {
       await stageTree(root, MAC_TRIPLE);
       const first = await runScript(FREEZE, ["--triple", MAC_TRIPLE, "--root", root]);
@@ -269,6 +269,69 @@ describe("freeze.sh", () => {
     });
   });
 
+  it("refuses_a_windows_freeze_when_the_whole_engines_payload_dir_is_missing", async () => {
+    await withRoot(async (root) => {
+      await stageWindowsTree(root, WINDOWS_TRIPLE);
+      await rm(join(root, "src-tauri", "binaries", "engines", "vips"), { recursive: true });
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(1);
+      expect(
+        result.stderr,
+        "a wholly absent engines payload dir must be classified as missing staged payload, not confused with a DLL scan outcome",
+      ).toContain("missing staged payload dir src-tauri/binaries/engines/vips");
+      expect(result.stderr).toContain("yarn binaries:all --target");
+      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+    });
+  });
+
+  it("isolates_the_exe_missing_guard_message_when_the_dll_is_still_present", async () => {
+    await withRoot(async (root) => {
+      await stageWindowsTree(root, WINDOWS_TRIPLE);
+      await unlink(join(root, "src-tauri", "binaries", "engines", "qpdf", "qpdf.exe"));
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(1);
+      expect(
+        result.stderr,
+        "exe missing while the engine dir still carries its DLL — the guard must name the staged engine binary, not the DLL scan",
+      ).toContain("missing staged engine binary src-tauri/binaries/engines/qpdf/qpdf.exe");
+      expect(result.stderr).not.toMatch(/no DLL anywhere under/i);
+      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+    });
+  });
+
+  it.skipIf(process.platform === "win32")("classifies_a_find_read_error_as_a_permissions_problem_not_a_dll_less_tree_win32_skips_acl_semantics_differ", async () => {
+    await withRoot(async (root) => {
+      await stageWindowsTree(root, WINDOWS_TRIPLE);
+      await mkdir(join(root, "src-tauri", "binaries", "engines", "vips", "sealed-subdir"));
+      const sealed = join(root, "src-tauri", "binaries", "engines", "vips", "sealed-subdir");
+      await chmod(sealed, 0o000);
+      try {
+        const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(1);
+        expect(
+          result.stderr,
+          "a read error under the engines dir must be classified distinctly from a DLL-less tree",
+        ).toMatch(/could not read .*engines\/vips.*read error/i);
+        expect(
+          result.stderr,
+          "the read-error classification must rule out restaging as a fix",
+        ).toContain("restaging will not fix a permissions problem");
+        expect(
+          result.stderr,
+          "the DLL-less remediation must not fire for a read error",
+        ).not.toMatch(/no DLL anywhere under/i);
+        expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+      } finally {
+        await chmod(sealed, 0o755);
+      }
+    });
+  });
+
   it("refuses_a_windows_freeze_when_a_flat_engine_exe_is_missing", async () => {
     await withRoot(async (root) => {
       await stageWindowsTree(root, WINDOWS_TRIPLE);
@@ -347,7 +410,7 @@ describe("freeze.sh", () => {
     });
   });
 
-  it("refuses_loudly_when_the_output_dir_cannot_be_created", async () => {
+  it.skipIf(process.platform === "win32")("refuses_loudly_when_the_output_dir_cannot_be_created_win32_skips_acl_semantics_differ", async () => {
     await withRoot(async (root) => {
       await stageTree(root, MAC_TRIPLE);
       await chmod(join(root, "src-tauri"), 0o555);

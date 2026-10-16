@@ -109,6 +109,58 @@ async function tarWindowsTree(base, bundlePath, roots = ["binaries", "gs-resourc
   return bundlePath;
 }
 
+const ustarDirEntry = (name, mode = 0o755) => ustarHeader(name, { mode, type: "5" });
+
+function ustarHeader(name, { mode, type, size = 0 }) {
+  const b = Buffer.alloc(512, 0);
+  b.write(name, 0, "utf8");
+  b.write(`${mode.toString(8).padStart(7, "0")} `, 100, "ascii");
+  b.write("0000000 ", 108, "ascii");
+  b.write("0000000 ", 116, "ascii");
+  b.write(`${size.toString(8).padStart(11, "0")} `, 124, "ascii");
+  b.write("0 ".padEnd(12, " "), 136, "ascii");
+  b.write("        ", 148, "ascii");
+  b.write(type, 156, "ascii");
+  b.write("ustar", 257, "ascii");
+  b.write("00", 263, "ascii");
+  let sum = 0;
+  for (const byte of b) sum += byte;
+  b.write(`${sum.toString(8).padStart(7, "0")}\0`, 148, "ascii");
+  return b;
+}
+
+function ustarFileEntry(name, mode, body) {
+  const header = ustarHeader(name, { mode, type: "0", size: Buffer.byteLength(body) });
+  const content = Buffer.from(body, "utf8");
+  const padding = Buffer.alloc((512 - (content.length % 512)) % 512, 0);
+  return Buffer.concat([header, content, padding]);
+}
+
+const CRAFTED_WIN_TAR_SHAPE = "ustar dir+file headers (MZ-free POSIX tar), a mode-0000 dir under engines/vips forces a find read error at extraction";
+
+async function craftWindowsBundleWithSealedVipsSubdir(destRoot) {
+  const ini = "%! crafted gs init\n";
+  const exeBody = "crafted vips engine payload\n";
+  const tar = Buffer.concat(
+    [
+      ustarDirEntry("binaries/"),
+      ustarDirEntry("binaries/engines/"),
+      ustarDirEntry("binaries/engines/vips/"),
+      ustarFileEntry("binaries/engines/vips/vips.exe", 0o755, exeBody),
+      ustarDirEntry("binaries/engines/vips/sub/", 0o000),
+      ustarDirEntry("gs-resources/Resource/"),
+      ustarDirEntry("gs-resources/Resource/Init/"),
+      ustarFileEntry("gs-resources/Resource/Init/gs_init.ps", 0o644, ini),
+      Buffer.alloc(1024, 0),
+    ],
+  );
+  const { gzipSync } = await import("node:zlib");
+  const bundle = join(destRoot, "win-sealed-vips-sub.tar.gz");
+  await writeFile(bundle, gzipSync(tar));
+  await writeFile(`${bundle}.sha256`, `${shaOf(await readFile(bundle))}  win-sealed-vips-sub.tar.gz\n`);
+  return bundle;
+}
+
 async function freezeFixture() {
   const root = await mkdtemp(join(tmpdir(), "unfreeze-src-"));
   let ok = false;
@@ -491,9 +543,10 @@ describe("unfreeze.sh", () => {
         const tarless = await mkdtemp(join(tmpdir(), "tarless-path-"));
         try {
           const env = { ...process.env, PATH: tarless };
+          const bashToken = process.platform === "win32" ? "bash" : "/bin/bash";
           const result = await new Promise((resolvePromise) => {
             execFile(
-              "/bin/bash",
+              bashToken,
               [UNFREEZE, "--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot],
               { encoding: "utf8", timeout: 60_000, env },
               (error, stdout, stderr) => {
@@ -663,6 +716,51 @@ describe("unfreeze.sh", () => {
       expect(result.stderr).toContain("yarn binaries:all --target");
       expect(existsSync(join(destRoot, "src-tauri", "binaries")), "a DLL-less windows bundle must never swap").toBe(false);
       await expectCleanFreezeDir(destRoot);
+    });
+  });
+
+  it.skipIf(process.platform === "win32")("classifies_an_unreadable_extracted_engines_tree_as_a_permissions_problem_not_a_dll_less_bundle_win32_skips_acl_semantics_differ", async () => {
+    await withRoot(async (destRoot) => {
+      await mkdir(join(destRoot, "src-tauri"));
+      const bundle = await craftWindowsBundleWithSealedVipsSubdir(destRoot);
+
+      const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", bundle, "--root", destRoot]);
+
+      expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(1);
+      expect(
+        result.stderr,
+        "a find read error on the extracted tree must be classified distinctly from a DLL-less bundle",
+      ).toMatch(/could not read .*engines\/vips.*read error/i);
+      expect(
+        result.stderr,
+        "the read-error classification must rule out restaging as a fix",
+      ).toContain("restaging will not fix a permissions problem");
+      expect(
+        result.stderr,
+        "the DLL-less remediation must not fire for a read error",
+      ).not.toMatch(/no DLL anywhere under/i);
+      expect(existsSync(join(destRoot, "src-tauri", "binaries")), "an unreadable extracted tree must never swap").toBe(false);
+      const leftovers = await readdir(freezeDir(destRoot));
+      expect(
+        leftovers,
+        "the blocked run must release its lock; nothing besides the temp workspace may linger",
+      ).toHaveLength(1);
+      expect(
+        leftovers[0],
+        "the temp workspace itself stays when rm cannot enter the mode-0000 dir — that residue must be WARNed about",
+      ).toMatch(/^unfreeze\./);
+      expect(
+        result.stderr,
+        "the cleanup failure must be loud, not silent",
+      ).toContain("could not remove temp dir");
+      const chmodHeal = async (p) => {
+        await chmod(p, 0o755).catch(() => {});
+        const entries = await readdir(p).catch(() => []);
+        for (const e of entries) {
+          await chmodHeal(join(p, e));
+        }
+      };
+      await chmodHeal(freezeDir(destRoot));
     });
   });
 
@@ -879,7 +977,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("fails_closed_when_the_digest_sibling_is_unreadable", async () => {
+  it.skipIf(process.platform === "win32")("fails_closed_when_the_digest_sibling_is_unreadable_win32_skips_acl_semantics_differ", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withBareDest(async (destRoot) => {
         const bundle = join(destRoot, "sneaky-sha.tar.gz");
@@ -953,7 +1051,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("fails_closed_when_the_destination_dir_is_unwritable", async () => {
+  it.skipIf(process.platform === "win32")("fails_closed_when_the_destination_dir_is_unwritable_win32_skips_acl_semantics_differ", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await mkdir(join(destRoot, "src-tauri"));
@@ -977,8 +1075,8 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it.each(["binaries", "frameworks", "gs-resources"])(
-    "rolls_back_to_the_pre_swap_tree_when_the_install_fails_moving_%s",
+  it.skipIf(process.platform === "win32").each(["binaries", "frameworks", "gs-resources"])(
+    "rolls_back_to_the_pre_swap_tree_when_the_install_fails_moving_%s_win32_skips_mv_shim_cygpath_followup_tracked",
     async (failDest) => {
       await withFrozenSource(async (srcRoot) => {
         await withRoot(async (destRoot) => {
@@ -1008,7 +1106,7 @@ describe("unfreeze.sh", () => {
     },
   );
 
-  it("restores_the_pre_swap_tree_when_a_backup_set_aside_move_fails_midway", async () => {
+  it.skipIf(process.platform === "win32")("restores_the_pre_swap_tree_when_a_backup_set_aside_move_fails_midway_win32_skips_mv_shim_cygpath_followup_tracked", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await stageStaleTree(destRoot);
@@ -1033,7 +1131,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("preserves_the_named_backup_and_the_pre_swap_tree_when_a_signal_interrupts_the_swap", async () => {
+  it.skipIf(process.platform === "win32")("preserves_the_named_backup_and_the_pre_swap_tree_when_a_signal_interrupts_the_swap_win32_skips_mv_shim_cygpath_followup_tracked", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await stageStaleTree(destRoot);
@@ -1056,7 +1154,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("keeps_recovery_and_named_backup_messaging_when_a_signal_lands_mid_rollback", async () => {
+  it.skipIf(process.platform === "win32")("keeps_recovery_and_named_backup_messaging_when_a_signal_lands_mid_rollback_win32_skips_mv_shim_cygpath_followup_tracked", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await stageStaleTree(destRoot);
@@ -1095,8 +1193,8 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it.each(["binaries", "gs-resources"])(
-    "rolls_back_the_windows_tree_to_the_pre_swap_state_when_the_install_fails_moving_%s",
+  it.skipIf(process.platform === "win32").each(["binaries", "gs-resources"])(
+    "rolls_back_the_windows_tree_to_the_pre_swap_state_when_the_install_fails_moving_%s_win32_skips_mv_shim_cygpath_followup_tracked",
     async (failDest) => {
       await withWindowsFrozenSource(async (srcRoot) => {
         await withRoot(async (destRoot) => {
@@ -1126,7 +1224,7 @@ describe("unfreeze.sh", () => {
     },
   );
 
-  it("restores_the_windows_pre_swap_tree_when_a_backup_set_aside_move_fails_midway", async () => {
+  it.skipIf(process.platform === "win32")("restores_the_windows_pre_swap_tree_when_a_backup_set_aside_move_fails_midway_win32_skips_mv_shim_cygpath_followup_tracked", async () => {
     await withWindowsFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await stageStaleWindowsTree(destRoot);
@@ -1151,7 +1249,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("preserves_the_windows_named_backup_and_pre_swap_tree_when_a_signal_interrupts_the_swap", async () => {
+  it.skipIf(process.platform === "win32")("preserves_the_windows_named_backup_and_pre_swap_tree_when_a_signal_interrupts_the_swap_win32_skips_mv_shim_cygpath_followup_tracked", async () => {
     await withWindowsFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await stageStaleWindowsTree(destRoot);
@@ -1170,6 +1268,45 @@ describe("unfreeze.sh", () => {
           false,
         );
         expect(result.stderr).toContain(leftovers[0]);
+      });
+    });
+  });
+
+  it.skipIf(process.platform === "win32")("keeps_the_windows_recovery_and_named_backup_messaging_when_a_signal_lands_mid_rollback_win32_skips_mv_shim_cygpath_followup_tracked", async () => {
+    await withWindowsFrozenSource(async (srcRoot) => {
+      await withRoot(async (destRoot) => {
+        await stageStaleWindowsTree(destRoot);
+        const result = await withMvShim(
+          ROLLBACK_TERM_MV_SHIM,
+          {
+            INSTALL_FAIL_DEST: join(destRoot, "src-tauri", "binaries"),
+            INSTALL_FAIL_STATE: join(destRoot, "stub-install-state"),
+            RESTORE_TERM_STATE: join(destRoot, "stub-restore-state"),
+          },
+          (env) =>
+            runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", frozenWindowsBundle(srcRoot), "--root", destRoot], {
+              env,
+            }),
+        );
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(143);
+        expect(result.stderr, "the interrupted rollback must be named, not silent").toMatch(/interrupted mid-swap/);
+        const leftovers = await readdir(freezeDir(destRoot));
+        expect(leftovers.length).toBe(1);
+        expect(leftovers[0]).toMatch(/^unfreeze-backup\./);
+        expect(
+          result.stderr,
+          "the named backup path must appear in the failure messaging",
+        ).toContain(join(destRoot, "src-tauri", ".freeze", leftovers[0]));
+        expect(
+          result.stderr,
+          "the restore continuation must finish with the full byte-for-byte message",
+        ).toMatch(/restored byte-for-byte to its pre-swap state/);
+        expect(
+          existsSync(join(freezeDir(destRoot), "freeze.lock")),
+          "no lock may survive a signal fired during the rollback itself",
+        ).toBe(false);
+        await expectStaleWindowsPreSwapTree(destRoot);
       });
     });
   });
@@ -1333,7 +1470,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("rehydrates_a_windows_bundle_whose_payload_still_passes_the_verify_contract_in_a_fresh_root", async () => {
+  it.skipIf(process.platform !== "darwin")("rehydrates_a_windows_bundle_whose_payload_still_passes_the_verify_contract_in_a_fresh_root_mac_only_clang_fixture_portable_pe_versions_live_in_verify_test", async () => {
     const WIN_ARM_TRIPLE = "aarch64-pc-windows-msvc";
     const FLAT_EXES = ["ffmpeg", "ffprobe", "vips", "qpdf", "gs"];
     const FIXTURE_VERSION = "1.0.0-freeze-roundtrip";

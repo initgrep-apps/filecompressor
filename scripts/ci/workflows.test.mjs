@@ -228,7 +228,7 @@ describe("freeze.yml freeze workflow", () => {
     expect(run, "the pin must be resolved from the pins file by the row's triple env").toContain(
       "process.env.TRIPLE",
     );
-    expect(run).toContain('core="$(brew --repository homebrew/core)"');
+    expect(run).toContain('if ! core="$(brew --repository homebrew/core 2>&1)"; then');
     expect(run).toContain('if [ ! -d "$core/.git" ]');
     expect(run, "a missing tap must be cloned at the pinned commit, not silently skipped").toContain(
       "git clone --filter=blob:none https://github.com/Homebrew/homebrew-core \"$core\"",
@@ -291,6 +291,25 @@ describe("freeze.yml freeze workflow", () => {
     ).toContain('if ! git -C "$core" checkout --detach "$pin"; then');
     expect(run).toContain("::error::git checkout of the homebrew-core pin $pin for $TRIPLE failed —");
     expect(run).toContain("remove the tap checkout $core and re-run the job to restore it");
+  });
+
+  it("the homebrew-core tap location query is guarded — a missing or broken brew must be classified with remediation, not die on line 1 of the pin step", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const run = stepsOf(jobsOf(doc).freeze).find((s) => stepRuns(s).includes("scripts/ci/homebrew-core-pins.json")).run;
+
+    expect(
+      run,
+      "brew --repository must be guarded so a missing/broken brew prints actionable remediation",
+    ).toContain('if ! core="$(brew --repository homebrew/core 2>&1)"; then');
+    expect(
+      run,
+      "the ::error must name the failing command and point at a missing/broken Homebrew prefix",
+    ).toContain("::error::brew --repository homebrew-core failed");
+    expect(run).toContain("Homebrew is missing or its prefix is unreadable");
+    expect(
+      run,
+      "the remediation must name the restore-the-prefix path instead of restaging suggestions",
+    ).toContain("restore the Homebrew prefix");
   });
 
   it("the per-arch pin file records one distinct hex40 sha per mac triple — Intel engines are frozen at the last sonoma-bottled homebrew-core (x86_64 bottles died 2026-09-10/11)", async () => {

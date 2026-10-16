@@ -86,7 +86,10 @@ jobs:
             echo "::error::homebrew-core pin for $TRIPLE in scripts/ci/homebrew-core-pins.json is not a 40-char lowercase sha (got: $pin) — fix the pin file, then re-run"
             exit 1
           fi
-          core="$(brew --repository homebrew/core)"
+          if ! core="$(brew --repository homebrew/core 2>&1)"; then
+            echo "::error::brew --repository homebrew-core failed ($core) — Homebrew is missing or its prefix is unreadable on this runner; restore the Homebrew prefix (macos-15 ships brew at /opt/homebrew, macos-15-intel at /usr/local) or re-run on a clean runner, then re-run this job"
+            exit 1
+          fi
           if [ ! -d "$core/.git" ]; then
             echo "homebrew-core tap missing at '$core' — cloning the tap repository"
             if ! mkdir -p "$core"; then

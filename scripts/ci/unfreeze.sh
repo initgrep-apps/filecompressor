@@ -3,8 +3,11 @@
 # With --archive <tarball>: verify the sibling .sha256, then extract. Without
 # it: select and download the newest sidecars-* release bundle for the triple
 # via gh (requires GH_TOKEN). macOS bundles restore binaries/, frameworks/,
-# gs-resources/; windows bundles restore binaries/engines/, the two tauri
-# externalBin exes, and gs-resources/. The bundle verifies and validates in a
+# gs-resources/; windows bundles restore binaries/engines/, the five flat
+# exes binaries/{ffmpeg,ffprobe,vips,qpdf,gs}-<triple>.exe — ffmpeg/ffprobe
+# are the tauri externalBin pair, the vips/qpdf/gs flat copies exist so the
+# verify.mjs content-arch and audit-sidecars gate holds after unfreeze —
+# and gs-resources/. The bundle verifies and validates in a
 # temp workspace while the current tree is backed up OUTSIDE that workspace,
 # so workspace cleanup can never destroy the only copy; every interrupted or
 # failed install restores the pre-swap tree, and signals mid-swap always leave
@@ -15,6 +18,18 @@ set -euo pipefail
 
 fail() { echo "unfreeze: FAIL — $*" >&2; exit 1; }
 info() { echo "unfreeze: $*"; }
+
+dll_scan() {
+  local dir="$1" errors status listing
+  errors="$(mktemp -t dll-scan-errors)" || fail "cannot create a temp file for the DLL scan of $dir — check free disk space and permissions"
+  status=0
+  listing="$(find "$dir" -type f -name '*.dll' -print -quit 2>"$errors")" || status=$?
+  if [ "$status" -ne 0 ]; then
+    fail "could not read $dir to scan for DLLs: $(tr '\n' ' ' <"$errors") — a read error is not an empty tree, and restaging will not fix a permissions problem"
+  fi
+  rm -f "$errors" || echo "unfreeze: WARN — could not remove temp file $errors" >&2
+  [ -n "$listing" ]
+}
 
 TRIPLE=""
 ROOT=""
@@ -178,8 +193,9 @@ validate_payload() {
         fail "bundle is missing binaries/engines/$engine after extraction — refusing to swap in a partial bundle"
       [ -f "$extracted/binaries/engines/$engine/$engine.exe" ] || \
         fail "bundle is missing binaries/engines/$engine/$engine.exe after extraction — refusing to swap in a partial bundle"
-      [ -n "$(find "$extracted/binaries/engines/$engine" -type f -name '*.dll' -print -quit 2>/dev/null)" ] || \
+      if ! dll_scan "$extracted/binaries/engines/$engine"; then
         fail "bundle carries no DLL anywhere under binaries/engines/$engine after extraction — refusing to swap in a partial bundle; re-freeze from a freshly staged tree ('yarn binaries:all --target $TRIPLE', then bash scripts/ci/freeze.sh)"
+      fi
     done
     for exe in ffmpeg ffprobe qpdf vips gs; do
       [ -f "$extracted/binaries/${exe}-${TRIPLE}.exe" ] || \

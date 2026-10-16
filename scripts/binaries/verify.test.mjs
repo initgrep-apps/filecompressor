@@ -3,7 +3,7 @@ import { vi, describe, expect, it } from "vitest";
 
 vi.setConfig({ testTimeout: 30_000 });
 import { spawn } from "node:child_process";
-import { execFileSync } from "node:child_process";
+import { execFileSync, execFile } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -754,8 +754,129 @@ describe("the shipped manifest", () => {
       "the Intel gs row must declare the same resource tree the clean-room smoke proves",
     ).toEqual(manifest.targets["aarch64-apple-darwin"].gs.resources);
   });
+});
 
+describe("windows handcrafted PE machine-field fixtures (portable pins for contentArchWindows)", () => {
+  const PE_MACHINE_X86_64 = 0x8664;
+  const PE_MACHINE_ARM64 = 0xaa64;
 
+  function buildPe32Plus(machine) {
+    const b = Buffer.alloc(0xd0, 0);
+    b.write("MZ", 0, "ascii");
+    b.writeUInt32LE(0x40, 0x3c);
+    b.write("PE\0\0", 0x40, "ascii");
+    b.writeUInt16LE(machine, 0x44);
+    b.writeUInt16LE(1, 0x46);
+    b.writeUInt16LE(0xf0, 0x54);
+    b.writeUInt16LE(0x0022, 0x56);
+    b.writeUInt16LE(0x020b, 0x58);
+    b.writeUInt16LE(3, 0xa4);
+    return b;
+  }
+
+  function peManifestFor(triple) {
+    return {
+      targets: {
+        [triple]: {
+          vips: {
+            source: "url",
+            url: "https://fixtures.invalid/pe32-plus.zip",
+            sha256: "5".repeat(64),
+            dest: "vips",
+            expectVersion: "1.0.0",
+          },
+        },
+      },
+    };
+  }
+
+  async function writePeFixture(root, triple, machine) {
+    const fixturePath = join(root, "src-tauri", "binaries", `vips-${triple}.exe`);
+    await writeFile(fixturePath, buildPe32Plus(machine));
+    return fixturePath;
+  }
+
+  async function classifyWithFile(fixturePath) {
+    return new Promise((resolvePromise) => {
+      execFile("file", ["-b", fixturePath], { encoding: "utf8" }, (error, stdout, stderr) => {
+        if (error && error.code === "ENOENT") {
+          resolvePromise({ unavailable: "file(1) is not on PATH on this host" });
+          return;
+        }
+        resolvePromise({ description: `${stdout ?? ""}${stderr ?? ""}`.trim(), classifyError: error?.message ?? null });
+      });
+    });
+  }
+
+  it("machine_field_0x8664_clears_the_arch_gate_for_x86_64_pc_windows_msvc_and_reaches_the_execution_gate", async (ctx) => {
+    const root = await makeRoot(peManifestFor("x86_64-pc-windows-msvc"));
+    const fixturePath = await writePeFixture(root, "x86_64-pc-windows-msvc", PE_MACHINE_X86_64);
+    const classification = await classifyWithFile(fixturePath);
+    if (classification.unavailable) {
+      ctx.skip(`${classification.unavailable} — contentArchWindows classification of the PE machine field needs file(1)`);
+    }
+    expect(
+      classification.description,
+      "file -b must classify the hand-crafted MZ + PE\\0\\0 COFF bytes (machine 0x8664, optional-header magic 0x020B) as a PE32+ x86-64 image on any host",
+    ).toMatch(/PE32\+ executable/);
+    expect(classification.description).toMatch(/x86-64/i);
+
+    const result = await runVerify(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(result.code).toBe(1);
+    expect(
+      result.stderr,
+      "the matching machine field must clear the content-arch gate — no arch failure may reach the report",
+    ).not.toMatch(/arch check failed|does not match/);
+    expect(
+      result.stderr,
+      "with the arch gate satisfied, the run proceeds to the execution gate; the fixture bytes cannot execute on any host, which is the only portable failing gate",
+    ).toContain("version check failed");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("machine_field_0xaa64_clears_the_arch_gate_for_aarch64_pc_windows_msvc_and_reaches_the_execution_gate", async (ctx) => {
+    const root = await makeRoot(peManifestFor("aarch64-pc-windows-msvc"));
+    const fixturePath = await writePeFixture(root, "aarch64-pc-windows-msvc", PE_MACHINE_ARM64);
+    const classification = await classifyWithFile(fixturePath);
+    if (classification.unavailable) {
+      ctx.skip(`${classification.unavailable} — contentArchWindows classification of the PE machine field needs file(1)`);
+    }
+    expect(
+      classification.description,
+      "file -b must classify the hand-crafted MZ + PE\\0\\0 COFF bytes (machine 0xAA64, optional-header magic 0x020B) as a PE32+ Aarch64 image on any host",
+    ).toMatch(/PE32\+ executable/);
+    expect(classification.description).toMatch(/Aarch64|ARM64/i);
+
+    const result = await runVerify(["--target", "aarch64-pc-windows-msvc", "--root", root]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).not.toMatch(/arch check failed|does not match/);
+    expect(result.stderr).toContain("version check failed");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("swapped_machine_field_fails_the_arch_gate_with_a_triple_arch_mismatch", async (ctx) => {
+    const root = await makeRoot(peManifestFor("x86_64-pc-windows-msvc"));
+    const fixturePath = await writePeFixture(root, "x86_64-pc-windows-msvc", PE_MACHINE_X86_64);
+    const swapped = buildPe32Plus(PE_MACHINE_ARM64);
+    await writeFile(fixturePath, swapped);
+    const classification = await classifyWithFile(fixturePath);
+    if (classification.unavailable) {
+      ctx.skip(`${classification.unavailable} — contentArchWindows classification of the PE machine field needs file(1)`);
+    }
+    expect(classification.description).toMatch(/Aarch64|ARM64/i);
+
+    const result = await runVerify(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(result.code).toBe(1);
+    expect(
+      result.stderr,
+      "swapping the COFF machine field to ARM64 under an x86_64 filename triple must fail the content-arch gate",
+    ).toContain("does not match x86_64");
+    expect(
+      result.stderr,
+      "the arch gate must stop the run before the execution gate is reached",
+    ).not.toContain("version check failed");
+    await rm(root, { recursive: true, force: true });
+  });
 });
 
 describe("no arm64 assumption hides in the script logic", () => {

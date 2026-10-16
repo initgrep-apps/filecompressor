@@ -2,10 +2,12 @@
 # freeze.sh — package the staged sidecar engines into a release bundle (ADR
 # 0001). macOS triple: binaries/<engine>-<triple> plus frameworks/ and
 # gs-resources/. Windows triple: binaries/engines/<engine>/ payload dirs, the
-# two tauri externalBin exes binaries/ffmpeg-<triple>.exe and
-# binaries/ffprobe-<triple>.exe, and gs-resources/ — everything a windows
-# tauri build needs (tauri.windows.conf.json). Both shapes extract directly
-# into src-tauri/. The bundle is built under a temp name and the pair is
+# five flat exes binaries/ffmpeg-<triple>.exe ffprobe- qpdf- vips- gs- —
+# ffmpeg/ffprobe are the tauri externalBin pair, the vips/qpdf/gs flat copies
+# exist so the verify.mjs content-arch and audit-sidecars gate holds after
+# unfreeze — and gs-resources/: everything a windows tauri build needs
+# (tauri.windows.conf.json). Both shapes extract directly into src-tauri/.
+# The bundle is built under a temp name and the pair is
 # published with the .sha256 first, then the bundle, so a torn publish reads
 # as a digest mismatch rather than a complete-looking stale pair; the final
 # pair is re-verified before success. A failed freeze keeps the previous
@@ -17,6 +19,18 @@ set -euo pipefail
 
 fail() { echo "freeze: FAIL — $*" >&2; exit 1; }
 info() { echo "freeze: $*"; }
+
+dll_scan() {
+  local dir="$1" errors status listing
+  errors="$(mktemp -t dll-scan-errors)" || fail "cannot create a temp file for the DLL scan of $dir — check free disk space and permissions"
+  status=0
+  listing="$(find "$dir" -type f -name '*.dll' -print -quit 2>"$errors")" || status=$?
+  if [ "$status" -ne 0 ]; then
+    fail "could not read $dir to scan for DLLs: $(tr '\n' ' ' <"$errors") — a read error is not an empty tree, and restaging will not fix a permissions problem"
+  fi
+  rm -f "$errors" || echo "freeze: WARN — could not remove temp file $errors" >&2
+  [ -n "$listing" ]
+}
 
 MAC_TRIPLES="aarch64-apple-darwin x86_64-apple-darwin"
 WINDOWS_TRIPLES="x86_64-pc-windows-msvc aarch64-pc-windows-msvc"
@@ -73,8 +87,9 @@ else
       fail "missing staged payload dir src-tauri/binaries/engines/$engine — run 'yarn binaries:all --target $TRIPLE' first"
     [ -f "$SRC/binaries/engines/$engine/$engine.exe" ] || \
       fail "missing staged engine binary src-tauri/binaries/engines/$engine/$engine.exe — run 'yarn binaries:all --target $TRIPLE' first"
-    [ -n "$(find "$SRC/binaries/engines/$engine" -type f -name '*.dll' -print -quit 2>/dev/null)" ] || \
+    if ! dll_scan "$SRC/binaries/engines/$engine"; then
       fail "src-tauri/binaries/engines/$engine carries no DLL anywhere under it — run 'yarn binaries:all --target $TRIPLE' to restage the engine: a windows engine without its DLL siblings fails only at compression time"
+    fi
   done
   for exe in ffmpeg ffprobe qpdf vips gs; do
     [ -f "$SRC/binaries/${exe}-${TRIPLE}.exe" ] || \

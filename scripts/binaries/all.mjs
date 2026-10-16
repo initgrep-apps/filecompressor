@@ -18,7 +18,7 @@ export async function allTarget(target, root) {
       process.stdout.write(stdout ?? "");
       if (stderr) process.stderr.write(stderr);
       if (error) {
-        reject(new Error("audit failed — fix the findings above, then re-run 'yarn binaries:all'"));
+        reject(new Error(`audit failed (${error.message ?? error}) — fix the findings above, then re-run 'yarn binaries:all'`));
         return;
       }
       resolvePromise();
