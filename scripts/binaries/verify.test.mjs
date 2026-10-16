@@ -730,13 +730,25 @@ describe("the shipped manifest", () => {
       "bin/qpdf",
     );
     expect(intel.qpdf.lib).toBe("lib");
-    expect(intel.vips).toMatchObject({ source: "brew", formula: "vips", expectVersion: "8.18.7" });
+    expect(intel.vips).toMatchObject({
+      source: "brew",
+      formula: "vips",
+      expectVersion: "8.18.6",
+    });
     expect(intel.gs).toMatchObject({
       source: "brew",
       formula: "ghostscript",
       binary: "gs",
-      expectVersion: "10.08.0",
+      expectVersion: "10.07.1",
     });
+    expect(
+      intel.vips.expectVersion,
+      "Intel vips is frozen at 8.18.6 — the last sonoma-bottled version; 8.18.7 has no x86_64 bottle ever (ADR 0001)",
+    ).not.toBe(manifest.targets["aarch64-apple-darwin"].vips.expectVersion);
+    expect(
+      intel.gs.expectVersion,
+      "Intel ghostscript is frozen at 10.07.1 — the last sonoma-bottled version; 10.08.0 bottles postdate the x86_64 cutoff (ADR 0001)",
+    ).not.toBe(manifest.targets["aarch64-apple-darwin"].gs.expectVersion);
     expect(
       intel.gs.resources,
       "the Intel gs row must declare the same resource tree the clean-room smoke proves",

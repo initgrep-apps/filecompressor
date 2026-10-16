@@ -74,9 +74,11 @@ jobs:
         shell: bash
       - name: pin homebrew-core to the committed formula state
         if: matrix.platform == 'mac'
+        env:
+          TRIPLE: ${{ matrix.triple }}
         run: |-
           set -euo pipefail
-          pin="$(tr -d '[:space:]' < scripts/ci/homebrew-core.sha)"
+          pin="$(node -e 'const pins=require("./scripts/ci/homebrew-core-pins.json");const sha=pins[process.env.TRIPLE];if(typeof sha!=="string"){process.stderr.write("no homebrew-core pin recorded for triple "+process.env.TRIPLE+"\n");process.exit(1)}process.stdout.write(sha)')"
           printf '%s' "$pin" | grep -Eq '^[0-9a-f]{40}$'
           core="$(brew --repository homebrew/core)"
           if [ ! -d "$core/.git" ]; then
@@ -86,7 +88,7 @@ jobs:
           fi
           git -C "$core" fetch --depth 1 origin "$pin"
           git -C "$core" checkout --detach "$pin"
-          echo "homebrew-core pinned to $pin"
+          echo "homebrew-core pinned to $pin ($TRIPLE)"
         shell: bash
       - name: install brew formulas for the drift gate (${{ matrix.triple }})
         if: matrix.platform == 'mac'

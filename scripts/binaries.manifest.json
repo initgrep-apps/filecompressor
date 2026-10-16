@@ -182,14 +182,14 @@
         "source": "brew",
         "formula": "vips",
         "dest": "vips",
-        "expectVersion": "8.18.7"
+        "expectVersion": "8.18.6"
       },
       "gs": {
         "source": "brew",
         "formula": "ghostscript",
         "binary": "gs",
         "dest": "gs",
-        "expectVersion": "10.08.0",
+        "expectVersion": "10.07.1",
         "resources": [
           "Resource",
           "lib",

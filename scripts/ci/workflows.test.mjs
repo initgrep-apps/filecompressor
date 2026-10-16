@@ -213,14 +213,21 @@ describe("freeze.yml freeze workflow", () => {
     }
   });
 
-  it("mac rows pin homebrew-core to the committed sha instead of blindly installing off a stale runner index", async () => {
+  it("mac rows pin homebrew-core per arch to the committed shas instead of blindly installing off a stale runner index", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const freeze = jobsOf(doc).freeze;
-    const pin = stepsOf(freeze).find((s) => stepRuns(s).includes("scripts/ci/homebrew-core.sha"));
-    expect(pin, "a homebrew-core pin step must read the committed pin file").toBeDefined();
+    const pin = stepsOf(freeze).find((s) => stepRuns(s).includes("scripts/ci/homebrew-core-pins.json"));
+    expect(pin, "a homebrew-core pin step must resolve the committed per-arch pin file").toBeDefined();
     expect(pin["if"]).toBe("matrix.platform == 'mac'");
+    expect(
+      pin.env?.TRIPLE,
+      "the pin must be selected by the row triple passed as env — never a workflow expression inside the run string",
+    ).toBe("${{ matrix.triple }}");
     const run = pin.run;
     expect(run).toContain("set -euo pipefail");
+    expect(run, "the pin must be resolved from the pins file by the row's triple env").toContain(
+      "process.env.TRIPLE",
+    );
     expect(run).toContain('core="$(brew --repository homebrew/core)"');
     expect(run).toContain('if [ ! -d "$core/.git" ]');
     expect(run, "a missing tap must be cloned at the pinned commit, not silently skipped").toContain(
@@ -233,6 +240,49 @@ describe("freeze.yml freeze workflow", () => {
       "the raw pin line must be validated as one 40-char hex sha before it touches git",
     ).toContain("grep -Eq '^[0-9a-f]{40}$'");
     expect(pin.shell).toBe("bash");
+  });
+
+  it("the per-arch pin file records one distinct hex40 sha per mac triple — Intel engines are frozen at the last sonoma-bottled homebrew-core (x86_64 bottles died 2026-09-10/11)", async () => {
+    const pinsPath = new URL("../../scripts/ci/homebrew-core-pins.json", import.meta.url);
+    expect(existsSync(pinsPath), "the per-arch pin file must exist").toBe(true);
+    expect(
+      existsSync(new URL("../../scripts/ci/homebrew-core.sha", import.meta.url)),
+      "the single-sha pin file must be retired — per-arch pins replaced it",
+    ).toBe(false);
+    const pins = JSON.parse(await readFile(pinsPath, "utf8"));
+    expect(Object.keys(pins).sort()).toEqual(["aarch64-apple-darwin", "x86_64-apple-darwin"]);
+    for (const [triple, sha] of Object.entries(pins)) {
+      expect(sha, `pin for ${triple} must be a 40-char lowercase hex sha`).toMatch(/^[0-9a-f]{40}$/);
+    }
+    expect(pins["aarch64-apple-darwin"]).not.toBe(pins["x86_64-apple-darwin"]);
+    expect(
+      pins["aarch64-apple-darwin"],
+      "arm pin: newest commit carrying vips 8.18.7 + gs 10.08.0 arm64_sequoia bottles (ADR 0001)",
+    ).toBe("cb5b5e2230fdc721d35ad6ce88f096ca628b2abf");
+    expect(
+      pins["x86_64-apple-darwin"],
+      "x86 pin: newest commit carrying vips 8.18.6 + gs 10.07.1 sonoma bottles before the 2026-09-10/11 x86_64 bottle cutoff (ADR 0001)",
+    ).toBe("8f15b0f1b9653ade0a6939c2bd7168b04d86eb68");
+  });
+
+  it("the manifest freezes Intel on the last sonoma-bottled brew engines — newer versions have no x86_64 bottle ever", async () => {
+    const manifest = JSON.parse(
+      await readFile(new URL("../../scripts/binaries.manifest.json", import.meta.url), "utf8"),
+    );
+    const arm = manifest.targets["aarch64-apple-darwin"];
+    const x86 = manifest.targets["x86_64-apple-darwin"];
+    expect(x86.vips.source).toBe("brew");
+    expect(x86.gs.source).toBe("brew");
+    expect(
+      x86.vips.expectVersion,
+      "vips 8.18.7 first entered the tap 16 days after the last x86_64 bottle was published — Intel must stay on 8.18.6 until a human re-verifies bottles (ADR 0001)",
+    ).toBe("8.18.6");
+    expect(
+      x86.gs.expectVersion,
+      "ghostscript 10.08.0 bottles postdate the x86_64 cutoff — Intel must stay on 10.07.1 until a human re-verifies bottles (ADR 0001)",
+    ).toBe("10.07.1");
+    expect(arm.vips.expectVersion).toBe("8.18.7");
+    expect(arm.gs.expectVersion).toBe("10.08.0");
   });
 
   it("brew formulas install off the pinned tap with auto-update and API resolution disabled", async () => {
@@ -271,7 +321,7 @@ describe("freeze.yml freeze workflow", () => {
     const toolchainIdx = uses.findIndex((u) => u.startsWith("dtolnay/rust-toolchain@"));
     const uploadIdx = uses.findIndex((u) => u.startsWith("actions/upload-artifact@"));
     const installIdx = runIndexesByText(freeze, "yarn install --frozen-lockfile")[0];
-    const pinIdx = steps.findIndex((s) => stepRuns(s).includes("scripts/ci/homebrew-core.sha"));
+    const pinIdx = steps.findIndex((s) => stepRuns(s).includes("scripts/ci/homebrew-core-pins.json"));
     const brewIdx = runIndexesByText(freeze, "brew install vips ghostscript")[0];
     const allIdx = runIndexesByText(freeze, "node scripts/binaries/all.mjs --target")[0];
     const freezeIdx = runIndexesByText(freeze, "bash scripts/ci/freeze.sh --triple")[0];
