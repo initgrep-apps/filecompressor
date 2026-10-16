@@ -377,14 +377,25 @@ describe("freeze.yml freeze workflow", () => {
 
   it("windows rows dispatch the freeze script in bash (survives the git-bash runner shell)", async () => {
     const { doc } = await loadWorkflow(FILENAME);
-    for (const row of FREEZE_MATRIX_ROWS.filter((r) => r.platform === "windows")) {
-      const { doc: parsed } = await loadWorkflow(FILENAME);
-      const freezeStep = stepsOf(jobsOf(parsed).freeze).find((s) =>
-        stepRuns(s).includes("bash scripts/ci/freeze.sh --triple"),
-      );
-      expect(freezeStep.run, `${row.triple} row must invoke freeze.sh through bash, not pwsh`).toContain(
-        "bash scripts/ci/freeze.sh",
-      );
+    const freezeStep = stepsOf(jobsOf(doc).freeze).find((s) =>
+      stepRuns(s).includes("bash scripts/ci/freeze.sh --triple"),
+    );
+    expect(freezeStep, "freeze step must exist").toBeDefined();
+    expect(freezeStep.run).toContain("bash scripts/ci/freeze.sh");
+    expect(freezeStep.run, "the triple argument must come from env on every row").not.toContain("${{");
+  });
+
+  it("no run: step in any job interpolates raw ${{ }} templates", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    for (const [jobName, job] of Object.entries(jobsOf(doc))) {
+      for (const step of stepsOf(job)) {
+        const runText = stepRuns(step);
+        if (!runText) continue;
+        expect(
+          runText.includes("${{"),
+          `job ${jobName} step "${step.name}": run scripts must not embed raw templates — pass context through step env`,
+        ).toBe(false);
+      }
     }
   });
 
