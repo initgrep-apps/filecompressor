@@ -57,6 +57,9 @@ ROOT="${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 SRC="$ROOT/src-tauri"
 [ -d "$SRC" ] || fail "repo root '$ROOT' has no src-tauri directory"
 
+command -v tar >/dev/null 2>&1 || \
+  fail "tar is not on PATH — unfreeze extracts the bundle with tar; make sure the GNU/bsdtar binary is installed and reachable (macOS: 'xcode-select --install'; git-bash: run inside the bundled shell tools), then re-run"
+
 if [ "$MODE" = "mac" ]; then
   DIR_NAMES="binaries frameworks gs-resources"
 else
@@ -175,10 +178,10 @@ validate_payload() {
         fail "bundle is missing binaries/engines/$engine after extraction — refusing to swap in a partial bundle"
       [ -f "$extracted/binaries/engines/$engine/$engine.exe" ] || \
         fail "bundle is missing binaries/engines/$engine/$engine.exe after extraction — refusing to swap in a partial bundle"
-      [ -n "$(ls -A "$extracted/binaries/engines/$engine" 2>/dev/null)" ] || \
-        fail "bundle has an empty binaries/engines/$engine after extraction — refusing to swap in a partial bundle"
+      [ -n "$(find "$extracted/binaries/engines/$engine" -type f -name '*.dll' -print -quit 2>/dev/null)" ] || \
+        fail "bundle carries no DLL anywhere under binaries/engines/$engine after extraction — refusing to swap in a partial bundle; re-freeze from a freshly staged tree ('yarn binaries:all --target $TRIPLE', then bash scripts/ci/freeze.sh)"
     done
-    for exe in ffmpeg ffprobe; do
+    for exe in ffmpeg ffprobe qpdf vips gs; do
       [ -f "$extracted/binaries/${exe}-${TRIPLE}.exe" ] || \
         fail "bundle is missing binaries/${exe}-${TRIPLE}.exe after extraction — refusing to swap in a partial bundle"
     done
@@ -239,7 +242,7 @@ install_payload() {
 extract_and_restore() {
   archive="$1"
   mkdir -p "$WORK/root" || fail "cannot create the extraction dir $WORK/root — check free disk space"
-  tar -xzf "$archive" -C "$WORK/root" || fail "tar extraction failed for '$archive' — the bundle may be corrupt"
+  tar -xzf "$archive" -C "$WORK/root" || fail "tar extraction failed for '$archive' — the raw tar error is printed above; it may be a truncated, corrupt or tampered bundle (integrity), a volume out of free disk space under '$WORK', or the destination not being writable (permissions); rule those out or re-download the bundle, then re-run — a real integrity break should already have failed the .sha256 check above"
   validate_payload "$WORK/root"
   set_aside_existing
   install_payload

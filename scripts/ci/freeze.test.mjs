@@ -74,8 +74,9 @@ const WINDOWS_TRIPLE = "x86_64-pc-windows-msvc";
 async function stageWindowsTree(root, triple) {
   const bin = join(root, "src-tauri", "binaries");
   await mkdir(bin, { recursive: true });
-  await writeFile(join(bin, `ffmpeg-${triple}.exe`), `ffmpeg payload for ${triple}\n`);
-  await writeFile(join(bin, `ffprobe-${triple}.exe`), `ffprobe payload for ${triple}\n`);
+  for (const exe of ["ffmpeg", "ffprobe", "vips", "qpdf", "gs"]) {
+    await writeFile(join(bin, `${exe}-${triple}.exe`), `${exe} flat payload for ${triple}\n`);
+  }
   for (const engine of ["vips", "qpdf", "gs"]) {
     const enginesDir = join(bin, "engines", engine);
     await mkdir(enginesDir, { recursive: true });
@@ -116,12 +117,11 @@ describe("freeze.sh", () => {
       const shaFile = `${bundlePath(root, MAC_TRIPLE)}.sha256`;
       expect(existsSync(shaFile)).toBe(true);
       const shaLine = (await readFile(shaFile, "utf8")).trim();
-      expect(shaLine, "the sibling .sha256 artifact is '<digest>  <filename>'").toMatch(/^[0-9a-f]{64}  /);
       const digest = createHash("sha256").update(await readFile(bundlePath(root, MAC_TRIPLE))).digest("hex");
       expect(
-        shaLine.startsWith(digest),
-        "freeze.sh computes the digest with shasum -a 256 over the written tarball",
-      ).toBe(true);
+        shaLine,
+        "the sibling .sha256 names the final bundle asset, not the deleted temp file",
+      ).toBe(`${digest}  sidecar-bundle-${MAC_TRIPLE}.tar.gz`);
     });
   });
 
@@ -215,8 +215,11 @@ describe("freeze.sh", () => {
       for (const engine of ["vips", "qpdf", "gs"]) {
         expect(entries).toContain(`binaries/engines/${engine}/${engine}.exe`);
       }
-      expect(entries).toContain(`binaries/ffmpeg-${WINDOWS_TRIPLE}.exe`);
-      expect(entries).toContain(`binaries/ffprobe-${WINDOWS_TRIPLE}.exe`);
+      for (const exe of ["ffmpeg", "ffprobe", "vips", "qpdf", "gs"]) {
+        expect(entries, `${exe}-<triple>.exe must be in the windows bundle so the verify.mjs/audit contract holds post-unfreeze`).toContain(
+          `binaries/${exe}-${WINDOWS_TRIPLE}.exe`,
+        );
+      }
       expect(entries).toContain("gs-resources/Resource/Init/gs_init.ps");
       expect(
         entries.every((entry) => /^(binaries|gs-resources)\//.test(entry)),
@@ -227,10 +230,11 @@ describe("freeze.sh", () => {
         "windows bundles never carry the mac-only frameworks dir",
       ).toBe(false);
 
-      const shaLine = (await readFile(`${bundlePath(root, WINDOWS_TRIPLE)}.sha256`, "utf8")).trim();
-      expect(shaLine, "the sibling .sha256 artifact is '<digest>  <filename>'").toMatch(/^[0-9a-f]{64}  /);
       const digest = createHash("sha256").update(await readFile(bundlePath(root, WINDOWS_TRIPLE))).digest("hex");
-      expect(shaLine.startsWith(digest)).toBe(true);
+      const shaLine = (await readFile(`${bundlePath(root, WINDOWS_TRIPLE)}.sha256`, "utf8")).trim();
+      expect(shaLine, "the sibling .sha256 names the final windows bundle asset, not the deleted temp file").toBe(
+        `${digest}  sidecar-bundle-${WINDOWS_TRIPLE}.tar.gz`,
+      );
     });
   });
 
@@ -244,6 +248,36 @@ describe("freeze.sh", () => {
 
       expect(result.code).toBe(1);
       expect(result.stderr).toContain("binaries/engines/qpdf");
+      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+    });
+  });
+
+  it("refuses_a_windows_freeze_when_an_engines_dir_has_no_dll_anywhere_under_it", async () => {
+    await withRoot(async (root) => {
+      await stageWindowsTree(root, WINDOWS_TRIPLE);
+      await rm(join(root, "src-tauri", "binaries", "engines", "vips", "vips-support.dll"));
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(1);
+      expect(
+        result.stderr,
+        "the guard must reject a present-but-DLL-less engines dir, not just any non-empty dir",
+      ).toMatch(/binaries\/engines\/vips .*no DLL/i);
+      expect(result.stderr).toContain("yarn binaries:all --target");
+      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+    });
+  });
+
+  it("refuses_a_windows_freeze_when_a_flat_engine_exe_is_missing", async () => {
+    await withRoot(async (root) => {
+      await stageWindowsTree(root, WINDOWS_TRIPLE);
+      await unlink(join(root, "src-tauri", "binaries", `qpdf-${WINDOWS_TRIPLE}.exe`));
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(`binaries/qpdf-${WINDOWS_TRIPLE}.exe`);
       expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
     });
   });

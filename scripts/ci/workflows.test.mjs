@@ -242,6 +242,57 @@ describe("freeze.yml freeze workflow", () => {
     expect(pin.shell).toBe("bash");
   });
 
+  it("a missing or malformed homebrew-core pin fails with an actionable ::error naming the pin file — never a silent grep death under set -e", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const run = stepsOf(jobsOf(doc).freeze).find((s) => stepRuns(s).includes("scripts/ci/homebrew-core-pins.json")).run;
+
+    expect(
+      run,
+      "the pin resolution must be guarded so a missing key is classified instead of aborted silently",
+    ).toContain('if ! pin="$(node -e');
+    expect(run).toContain(
+      "::error::homebrew-core pin for $TRIPLE in scripts/ci/homebrew-core-pins.json is missing or unreadable — add a 40-char lowercase sha for $TRIPLE, then re-run",
+    );
+    expect(
+      run,
+      "the malformed-sha check must stay inline so set -e cannot swallow the classification",
+    ).toContain("if ! printf '%s' \"$pin\" | grep -Eq '^[0-9a-f]{40}$'");
+    expect(run).toContain(
+      "::error::homebrew-core pin for $TRIPLE in scripts/ci/homebrew-core-pins.json is not a 40-char lowercase sha (got: $pin) — fix the pin file, then re-run",
+    );
+  });
+
+  it("the homebrew-core pin git operations are wrapped with remediation messages (working-dir recovery vs network vs pruned pin)", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const run = stepsOf(jobsOf(doc).freeze).find((s) => stepRuns(s).includes("scripts/ci/homebrew-core-pins.json")).run;
+
+    expect(
+      run,
+      "tap dir creation must be classified, not swallowed by set -e",
+    ).toContain("::error::cannot create the homebrew-core tap dir $core —");
+    expect(
+      run,
+      "the clone must be guarded so network failures name the recovery",
+    ).toContain("if ! git clone --filter=blob:none https://github.com/Homebrew/homebrew-core \"$core\"; then");
+    expect(run).toContain("::error::homebrew-core tap clone into $core failed —");
+    expect(
+      run,
+      "the fetch must be guarded and distinguish a network flake from a pruned pin",
+    ).toContain('if ! git -C "$core" fetch --depth 1 origin "$pin"; then');
+    expect(run).toContain("::error::git fetch of the homebrew-core pin $pin for $TRIPLE failed —");
+    expect(run).toContain("network errors (flake, proxy or DNS): re-run the job");
+    expect(run).toContain("'unknown revision' or 'object not found' errors: the pin no longer exists in homebrew-core");
+    expect(run).toContain(
+      "re-pin to a sha that still carries the pinned bottles in scripts/ci/homebrew-core-pins.json",
+    );
+    expect(
+      run,
+      "the checkout must be guarded so a corrupt tap points at the recovery command",
+    ).toContain('if ! git -C "$core" checkout --detach "$pin"; then');
+    expect(run).toContain("::error::git checkout of the homebrew-core pin $pin for $TRIPLE failed —");
+    expect(run).toContain("remove the tap checkout $core and re-run the job to restore it");
+  });
+
   it("the per-arch pin file records one distinct hex40 sha per mac triple — Intel engines are frozen at the last sonoma-bottled homebrew-core (x86_64 bottles died 2026-09-10/11)", async () => {
     const pinsPath = new URL("../../scripts/ci/homebrew-core-pins.json", import.meta.url);
     expect(existsSync(pinsPath), "the per-arch pin file must exist").toBe(true);

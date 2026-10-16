@@ -73,10 +73,10 @@ else
       fail "missing staged payload dir src-tauri/binaries/engines/$engine — run 'yarn binaries:all --target $TRIPLE' first"
     [ -f "$SRC/binaries/engines/$engine/$engine.exe" ] || \
       fail "missing staged engine binary src-tauri/binaries/engines/$engine/$engine.exe — run 'yarn binaries:all --target $TRIPLE' first"
-    [ -n "$(ls -A "$SRC/binaries/engines/$engine" 2>/dev/null)" ] || \
-      fail "src-tauri/binaries/engines/$engine is empty — the $engine payload and its DLL siblings are not staged"
+    [ -n "$(find "$SRC/binaries/engines/$engine" -type f -name '*.dll' -print -quit 2>/dev/null)" ] || \
+      fail "src-tauri/binaries/engines/$engine carries no DLL anywhere under it — run 'yarn binaries:all --target $TRIPLE' to restage the engine: a windows engine without its DLL siblings fails only at compression time"
   done
-  for exe in ffmpeg ffprobe; do
+  for exe in ffmpeg ffprobe qpdf vips gs; do
     [ -f "$SRC/binaries/${exe}-${TRIPLE}.exe" ] || \
       fail "missing staged external binary src-tauri/binaries/${exe}-${TRIPLE}.exe — run 'yarn binaries:all --target $TRIPLE' first"
   done
@@ -170,6 +170,9 @@ else
     binaries/engines \
     "binaries/ffmpeg-${TRIPLE}.exe" \
     "binaries/ffprobe-${TRIPLE}.exe" \
+    "binaries/qpdf-${TRIPLE}.exe" \
+    "binaries/vips-${TRIPLE}.exe" \
+    "binaries/gs-${TRIPLE}.exe" \
     gs-resources
 fi
 (cd "$FREEZE_DIR" && compute_sha "$TMP_NAME" > "${TMP_NAME}.sha256")
@@ -178,6 +181,8 @@ mv -f "$TMP_BUNDLE" "$BUNDLE"
 
 published_sha="$(compute_sha "$BUNDLE" | awk '{print $1}')" || \
   fail "cannot compute sha256 of the published bundle $BUNDLE"
+printf '%s  %s\n' "$published_sha" "$(basename "$BUNDLE")" > "$BUNDLE.sha256" || \
+  fail "cannot rewrite $BUNDLE.sha256 with the final bundle filename"
 expected_sha="$(awk 'NR==1 {print tolower($1); exit}' "$BUNDLE.sha256")" || \
   fail "published .sha256 $BUNDLE.sha256 is unreadable"
 [ "$published_sha" = "$expected_sha" ] || \

@@ -10,7 +10,11 @@ export async function allTarget(target, root) {
   await prepTarget(target, root);
   const auditScript = join(root, "scripts", "audit-sidecars.sh");
   await new Promise((resolvePromise, reject) => {
-    execFile("bash", [auditScript], { encoding: "utf8", cwd: root }, (error, stdout, stderr) => {
+    execFile(
+      "bash",
+      [auditScript],
+      { encoding: "utf8", cwd: root, env: { ...process.env, AUDIT_TARGET: target } },
+      (error, stdout, stderr) => {
       process.stdout.write(stdout ?? "");
       if (stderr) process.stderr.write(stderr);
       if (error) {

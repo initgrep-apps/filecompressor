@@ -78,16 +78,34 @@ jobs:
           TRIPLE: ${{ matrix.triple }}
         run: |-
           set -euo pipefail
-          pin="$(node -e 'const pins=require("./scripts/ci/homebrew-core-pins.json");const sha=pins[process.env.TRIPLE];if(typeof sha!=="string"){process.stderr.write("no homebrew-core pin recorded for triple "+process.env.TRIPLE+"\n");process.exit(1)}process.stdout.write(sha)')"
-          printf '%s' "$pin" | grep -Eq '^[0-9a-f]{40}$'
+          if ! pin="$(node -e 'const pins=require("./scripts/ci/homebrew-core-pins.json");const sha=pins[process.env.TRIPLE];if(typeof sha!=="string"){process.exit(1)}process.stdout.write(sha)')"; then
+            echo "::error::homebrew-core pin for $TRIPLE in scripts/ci/homebrew-core-pins.json is missing or unreadable — add a 40-char lowercase sha for $TRIPLE, then re-run"
+            exit 1
+          fi
+          if ! printf '%s' "$pin" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::homebrew-core pin for $TRIPLE in scripts/ci/homebrew-core-pins.json is not a 40-char lowercase sha (got: $pin) — fix the pin file, then re-run"
+            exit 1
+          fi
           core="$(brew --repository homebrew/core)"
           if [ ! -d "$core/.git" ]; then
             echo "homebrew-core tap missing at '$core' — cloning the tap repository"
-            mkdir -p "$core"
-            git clone --filter=blob:none https://github.com/Homebrew/homebrew-core "$core"
+            if ! mkdir -p "$core"; then
+              echo "::error::cannot create the homebrew-core tap dir $core — check free disk space and runner permissions, then re-run"
+              exit 1
+            fi
+            if ! git clone --filter=blob:none https://github.com/Homebrew/homebrew-core "$core"; then
+              echo "::error::homebrew-core tap clone into $core failed — network errors (flake, proxy or DNS): re-run the job; a non-empty partial clone dir also blocks this: remove $core and re-run the job"
+              exit 1
+            fi
           fi
-          git -C "$core" fetch --depth 1 origin "$pin"
-          git -C "$core" checkout --detach "$pin"
+          if ! git -C "$core" fetch --depth 1 origin "$pin"; then
+            echo "::error::git fetch of the homebrew-core pin $pin for $TRIPLE failed — network errors (flake, proxy or DNS): re-run the job; 'unknown revision' or 'object not found' errors: the pin no longer exists in homebrew-core — re-pin to a sha that still carries the pinned bottles in scripts/ci/homebrew-core-pins.json, then re-run"
+            exit 1
+          fi
+          if ! git -C "$core" checkout --detach "$pin"; then
+            echo "::error::git checkout of the homebrew-core pin $pin for $TRIPLE failed — remove the tap checkout $core and re-run the job to restore it"
+            exit 1
+          fi
           echo "homebrew-core pinned to $pin ($TRIPLE)"
         shell: bash
       - name: install brew formulas for the drift gate (${{ matrix.triple }})

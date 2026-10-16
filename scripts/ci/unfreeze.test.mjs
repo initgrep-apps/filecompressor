@@ -1,5 +1,7 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 30_000 });
 
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -79,8 +81,12 @@ async function tarTree(base, bundlePath) {
 async function stageWindowsTree(base, triple, exePayloads = {}) {
   const bin = join(base, "binaries");
   await mkdir(bin, { recursive: true });
-  await writeFile(join(bin, `ffmpeg-${triple}.exe`), exePayloads.ffmpeg ?? `ffmpeg payload for ${triple}\n`);
-  await writeFile(join(bin, `ffprobe-${triple}.exe`), exePayloads.ffprobe ?? `ffprobe payload for ${triple}\n`);
+  for (const flat of ["ffmpeg", "ffprobe", "vips", "qpdf", "gs"]) {
+    await writeFile(
+      join(bin, `${flat}-${triple}.exe`),
+      exePayloads[flat] ?? `${flat} flat payload for ${triple}\n`,
+    );
+  }
   for (const engine of WIN_ENGINES) {
     const enginesDir = join(bin, "engines", engine);
     await mkdir(enginesDir, { recursive: true });
@@ -140,6 +146,21 @@ async function withFrozenSource(body) {
   }
 }
 
+async function withWindowsFrozenSource(body) {
+  const srcRoot = await mkdtemp(join(tmpdir(), "unfreeze-win-src-"));
+  try {
+    await mkdir(join(srcRoot, "src-tauri"), { recursive: true });
+    await stageWindowsTree(join(srcRoot, "src-tauri"), WIN_TRIPLE);
+    const result = await runScript(FREEZE, ["--triple", WIN_TRIPLE, "--root", srcRoot]);
+    if (result.code !== 0) {
+      throw new Error(`windows fixture freeze failed: ${result.stderr}`);
+    }
+    return await body(srcRoot);
+  } finally {
+    await rm(srcRoot, { recursive: true, force: true });
+  }
+}
+
 async function withBareDest(body) {
   return withRoot(async (destRoot) => {
     await mkdir(join(destRoot, "src-tauri"));
@@ -149,6 +170,7 @@ async function withBareDest(body) {
 
 const freezeDir = (root) => join(root, "src-tauri", ".freeze");
 const frozenBundle = (root) => join(freezeDir(root), `sidecar-bundle-${MAC_TRIPLE}.tar.gz`);
+const frozenWindowsBundle = (root) => join(freezeDir(root), `sidecar-bundle-${WIN_TRIPLE}.tar.gz`);
 const freezeLockDir = (root) => join(freezeDir(root), "freeze.lock");
 const restoredBinary = (root, engine) =>
   readFile(join(root, "src-tauri", "binaries", `${engine}-${MAC_TRIPLE}`), "utf8");
@@ -189,6 +211,52 @@ async function expectStalePreSwapTree(destRoot) {
   const entries = await readdir(join(destRoot, "src-tauri"));
   expect(new Set(entries), "no swapped-in payload or temp litter may remain in src-tauri").toEqual(
     new Set(["binaries", "frameworks", "gs-resources", ".freeze"]),
+  );
+}
+
+const STALE_WIN_PAYLOADS = {
+  ffmpeg: "stale flat ffmpeg for windows\n",
+  ffprobe: "stale flat ffprobe for windows\n",
+  vips: "stale flat vips for windows\n",
+  qpdf: "stale flat qpdf for windows\n",
+  gs: "stale flat gs for windows\n",
+};
+const STALE_WIN_ENGINES = Object.fromEntries(
+  WIN_ENGINES.map((engine) => [engine, `stale ${engine} engine payload\n`]),
+);
+const STALE_WIN_DLL = "stale dll bytes\n";
+const STALE_WIN_INIT = "stale gs init bytes\n";
+
+async function stageStaleWindowsTree(destRoot) {
+  await stageWindowsTree(join(destRoot, "src-tauri"), WIN_TRIPLE, STALE_WIN_PAYLOADS);
+  const base = join(destRoot, "src-tauri");
+  for (const engine of WIN_ENGINES) {
+    await writeFile(join(base, "binaries", "engines", engine, `${engine}.exe`), STALE_WIN_ENGINES[engine]);
+    await writeFile(join(base, "binaries", "engines", engine, `${engine}-support.dll`), STALE_WIN_DLL);
+  }
+  await writeFile(join(base, "gs-resources", "Resource", "Init", "gs_init.ps"), STALE_WIN_INIT);
+}
+
+async function expectStaleWindowsPreSwapTree(destRoot) {
+  const base = join(destRoot, "src-tauri");
+  for (const [flat, payload] of Object.entries(STALE_WIN_PAYLOADS)) {
+    expect(
+      await readFile(join(base, "binaries", `${flat}-${WIN_TRIPLE}.exe`), "utf8"),
+      `the pre-swap ${flat} flat exe must survive byte-for-byte`,
+    ).toBe(payload);
+  }
+  for (const engine of WIN_ENGINES) {
+    expect(
+      await readFile(join(base, "binaries", "engines", engine, `${engine}.exe`), "utf8"),
+    ).toBe(STALE_WIN_ENGINES[engine]);
+    expect(
+      await readFile(join(base, "binaries", "engines", engine, `${engine}-support.dll`), "utf8"),
+    ).toBe(STALE_WIN_DLL);
+  }
+  expect(await readFile(join(base, "gs-resources", "Resource", "Init", "gs_init.ps"), "utf8")).toBe(STALE_WIN_INIT);
+  const entries = await readdir(join(destRoot, "src-tauri"));
+  expect(new Set(entries), "no swapped-in payload or temp litter may remain in src-tauri").toEqual(
+    new Set(["binaries", "gs-resources", ".freeze"]),
   );
 }
 
@@ -417,6 +485,34 @@ describe("unfreeze.sh", () => {
     });
   });
 
+  it("fails_closed_when_tar_is_absent_from_the_path", async () => {
+    await withFrozenSource(async (srcRoot) => {
+      await withBareDest(async (destRoot) => {
+        const tarless = await mkdtemp(join(tmpdir(), "tarless-path-"));
+        try {
+          const env = { ...process.env, PATH: tarless };
+          const result = await new Promise((resolvePromise) => {
+            execFile(
+              "/bin/bash",
+              [UNFREEZE, "--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot],
+              { encoding: "utf8", timeout: 60_000, env },
+              (error, stdout, stderr) => {
+                resolvePromise({ code: error?.code ?? (error?.signal ? 255 : 0), stdout, stderr, signal: error?.signal ?? null });
+              },
+            );
+          });
+
+          expect(result.code).toBe(1);
+          expect(result.stderr).toMatch(/tar is not on PATH/i);
+          expect(existsSync(join(destRoot, "src-tauri", "binaries"))).toBe(false);
+          await expectCleanFreezeDir(destRoot);
+        } finally {
+          await rm(tarless, { recursive: true, force: true });
+        }
+      });
+    });
+  });
+
   it("fails_closed_when_the_extracted_bundle_is_missing_the_gs_init_marker", async () => {
     await withRoot(async (destRoot) => {
       await mkdir(join(destRoot, "src-tauri"));
@@ -462,12 +558,12 @@ describe("unfreeze.sh", () => {
             await readFile(join(destRoot, "src-tauri", "binaries", "engines", engine, `${engine}-support.dll`), "utf8"),
           ).toBe(`${engine} dll payload\n`);
         }
-        expect(
-          await readFile(join(destRoot, "src-tauri", "binaries", `ffmpeg-${WIN_TRIPLE}.exe`), "utf8"),
-        ).toBe(`ffmpeg payload for ${WIN_TRIPLE}\n`);
-        expect(
-          await readFile(join(destRoot, "src-tauri", "binaries", `ffprobe-${WIN_TRIPLE}.exe`), "utf8"),
-        ).toBe(`ffprobe payload for ${WIN_TRIPLE}\n`);
+        for (const flat of ["ffmpeg", "ffprobe", "vips", "qpdf", "gs"]) {
+          expect(
+            await readFile(join(destRoot, "src-tauri", "binaries", `${flat}-${WIN_TRIPLE}.exe`), "utf8"),
+            `${flat}-<triple>.exe must be restored so verify.mjs and the tauri externalBin/validation contract hold post-unfreeze`,
+          ).toBe(`${flat} flat payload for ${WIN_TRIPLE}\n`);
+        }
         expect(
           await readFile(join(destRoot, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"), "utf8"),
         ).toBe("ghostscript init payload\n");
@@ -535,6 +631,41 @@ describe("unfreeze.sh", () => {
     });
   });
 
+  it("fails_closed_when_the_windows_bundle_is_missing_a_flat_engine_exe", async () => {
+    await withRoot(async (destRoot) => {
+      await mkdir(join(destRoot, "src-tauri"));
+      const payload = join(destRoot, "payload");
+      await stageWindowsTree(payload, WIN_TRIPLE);
+      await rm(join(payload, "binaries", `qpdf-${WIN_TRIPLE}.exe`));
+      const bundle = await tarWindowsTree(payload, join(destRoot, "no-flat-qpdf.tar.gz"));
+
+      const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", bundle, "--root", destRoot]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(`binaries/qpdf-${WIN_TRIPLE}.exe`);
+      expect(existsSync(join(destRoot, "src-tauri", "binaries")), "a partial windows bundle must never swap").toBe(false);
+      await expectCleanFreezeDir(destRoot);
+    });
+  });
+
+  it("fails_closed_when_the_windows_bundle_has_no_dll_anywhere_under_an_engines_dir", async () => {
+    await withRoot(async (destRoot) => {
+      await mkdir(join(destRoot, "src-tauri"));
+      const payload = join(destRoot, "payload");
+      await stageWindowsTree(payload, WIN_TRIPLE);
+      await rm(join(payload, "binaries", "engines", "vips", "vips-support.dll"));
+      const bundle = await tarWindowsTree(payload, join(destRoot, "dll-less-vips.tar.gz"));
+
+      const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", bundle, "--root", destRoot]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toMatch(/no DLL anywhere under binaries\/engines\/vips/);
+      expect(result.stderr).toContain("yarn binaries:all --target");
+      expect(existsSync(join(destRoot, "src-tauri", "binaries")), "a DLL-less windows bundle must never swap").toBe(false);
+      await expectCleanFreezeDir(destRoot);
+    });
+  });
+
   it("fails_closed_when_the_windows_bundle_is_missing_the_gs_init_marker", async () => {
     await withRoot(async (destRoot) => {
       await mkdir(join(destRoot, "src-tauri"));
@@ -578,6 +709,12 @@ describe("unfreeze.sh", () => {
         expect(
           await readFile(join(destRoot, "src-tauri", "binaries", `ffmpeg-${WIN_TRIPLE}.exe`), "utf8"),
         ).toBe(GH_STUB_PAYLOADS.ffmpeg);
+        for (const flat of ["vips", "qpdf", "gs"]) {
+          expect(
+            await readFile(join(destRoot, "src-tauri", "binaries", `${flat}-${WIN_TRIPLE}.exe`), "utf8"),
+            "the gh-path windows bundle also carries the flat engine exes",
+          ).toBe(GH_STUB_PAYLOADS[flat]);
+        }
         expect(
           await readFile(join(destRoot, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"), "utf8"),
         ).toBe("ghostscript init payload\n");
@@ -772,6 +909,10 @@ describe("unfreeze.sh", () => {
 
         expect(result.code).toBe(1);
         expect(result.stderr).toMatch(/tar extraction failed/);
+        expect(
+          result.stderr,
+          "the tar failure message must cover the realistic failure classes, not just corruption",
+        ).toMatch(/disk space|permissions|integrity/i);
         expect(existsSync(join(destRoot, "src-tauri", "binaries")), "a corrupt bundle must not reach the destination tree").toBe(false);
         await expectCleanFreezeDir(destRoot);
       });
@@ -954,6 +1095,85 @@ describe("unfreeze.sh", () => {
     });
   });
 
+  it.each(["binaries", "gs-resources"])(
+    "rolls_back_the_windows_tree_to_the_pre_swap_state_when_the_install_fails_moving_%s",
+    async (failDest) => {
+      await withWindowsFrozenSource(async (srcRoot) => {
+        await withRoot(async (destRoot) => {
+          await stageStaleWindowsTree(destRoot);
+          const result = await withMvShim(
+            FAIL_DEST_MV_SHIM,
+            {
+              FAIL_MV_DEST: join(destRoot, "src-tauri", failDest),
+              FAIL_MV_STATE_FILE: join(destRoot, "stub-mv-state"),
+            },
+            (env) =>
+              runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", frozenWindowsBundle(srcRoot), "--root", destRoot], {
+                env,
+              }),
+          );
+
+          expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(1);
+          expect(result.stderr).toMatch(/failed to install the new sidecar tree/);
+          expect(
+            result.stderr,
+            "the rollback must not claim success over un-rolled-back names",
+          ).toMatch(/restored byte-for-byte to its pre-swap state/);
+          await expectStaleWindowsPreSwapTree(destRoot);
+          await expectCleanFreezeDir(destRoot);
+        });
+      });
+    },
+  );
+
+  it("restores_the_windows_pre_swap_tree_when_a_backup_set_aside_move_fails_midway", async () => {
+    await withWindowsFrozenSource(async (srcRoot) => {
+      await withRoot(async (destRoot) => {
+        await stageStaleWindowsTree(destRoot);
+        const result = await withMvShim(
+          BACKUP_FAIL_MV_SHIM,
+          {
+            FAIL_BACKUP_DEST_PREFIX: join(destRoot, "src-tauri", ".freeze", "unfreeze-backup."),
+            FAIL_BACKUP_NAMES: "binaries",
+          },
+          (env) =>
+            runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", frozenWindowsBundle(srcRoot), "--root", destRoot], {
+              env,
+            }),
+        );
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(1);
+        expect(result.stderr).toMatch(/failed to swap in the new sidecar tree/);
+        expect(result.stderr).toMatch(/restored byte-for-byte to its pre-swap state/);
+        await expectStaleWindowsPreSwapTree(destRoot);
+        await expectCleanFreezeDir(destRoot);
+      });
+    });
+  });
+
+  it("preserves_the_windows_named_backup_and_pre_swap_tree_when_a_signal_interrupts_the_swap", async () => {
+    await withWindowsFrozenSource(async (srcRoot) => {
+      await withRoot(async (destRoot) => {
+        await stageStaleWindowsTree(destRoot);
+        const result = await withMvShim(TERM_MV_SHIM, {}, (env) =>
+          runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", frozenWindowsBundle(srcRoot), "--root", destRoot], {
+            env,
+          }),
+        );
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(143);
+        await expectStaleWindowsPreSwapTree(destRoot);
+        const leftovers = await readdir(freezeDir(destRoot));
+        expect(leftovers.length).toBe(1);
+        expect(leftovers[0]).toMatch(/^unfreeze-backup\./);
+        expect(existsSync(join(freezeDir(destRoot), "freeze.lock")), "no lock may survive the interrupted run").toBe(
+          false,
+        );
+        expect(result.stderr).toContain(leftovers[0]);
+      });
+    });
+  });
+
   it("recovers_a_stale_lock_left_by_a_dead_predecessor_older_than_an_hour", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
@@ -1112,4 +1332,108 @@ describe("unfreeze.sh", () => {
       }
     });
   });
+
+  it("rehydrates_a_windows_bundle_whose_payload_still_passes_the_verify_contract_in_a_fresh_root", async () => {
+    const WIN_ARM_TRIPLE = "aarch64-pc-windows-msvc";
+    const FLAT_EXES = ["ffmpeg", "ffprobe", "vips", "qpdf", "gs"];
+    const FIXTURE_VERSION = "1.0.0-freeze-roundtrip";
+    const VERIFY_MJS = join(HERE, "..", "binaries", "verify.mjs");
+
+    function runVerify(args) {
+      return new Promise((resolvePromise) => {
+        execFile(
+          process.execPath,
+          [VERIFY_MJS, ...args],
+          { encoding: "utf8", timeout: 60_000 },
+          (error, stdout, stderr) => {
+            resolvePromise({ code: error?.code ?? (error?.signal ? 255 : 0), stdout, stderr });
+          },
+        );
+      });
+    }
+
+    await withRoot(async (srcRoot) => {
+      await mkdir(join(srcRoot, "src-tauri"), { recursive: true });
+      await mkdir(join(srcRoot, "scripts"), { recursive: true });
+      const manifest = {
+        targets: {
+          [WIN_ARM_TRIPLE]: Object.fromEntries(
+            FLAT_EXES.map((name) => [
+              name,
+              {
+                source: "url",
+                url: `https://fixtures.invalid/${name}.zip`,
+                sha256: "0".repeat(64),
+                dest: name,
+                expectVersion: FIXTURE_VERSION,
+              },
+            ]),
+          ),
+        },
+      };
+      await writeFile(join(srcRoot, "scripts", "binaries.manifest.json"), JSON.stringify(manifest, null, 2));
+      await stageWindowsTree(join(srcRoot, "src-tauri"), WIN_ARM_TRIPLE);
+
+      const fixtureSource = join(tmpdir(), `freeze-roundtrip-fixture-${process.pid}-${Date.now()}.c`);
+      const fixtureBinary = join(tmpdir(), `freeze-roundtrip-fixture-${process.pid}-${Date.now()}`);
+      const cSource = [
+        "#include <stdio.h>",
+        `int main(void) { printf("${FIXTURE_VERSION}\\n"); return 0; }`,
+      ].join("\n");
+      try {
+        await writeFile(fixtureSource, cSource);
+        await new Promise((resolvePromise, reject) => {
+          execFile("clang", ["-arch", "arm64", "-o", fixtureBinary, fixtureSource], (error) =>
+            error ? reject(error) : resolvePromise(),
+          );
+        });
+
+        const bin = join(srcRoot, "src-tauri", "binaries");
+        for (const flat of FLAT_EXES) {
+          const dest = join(bin, `${flat}-${WIN_ARM_TRIPLE}.exe`);
+          await copyFile(fixtureBinary, dest);
+          await chmod(dest, 0o755);
+        }
+
+        const frozen = await runScript(FREEZE, ["--triple", WIN_ARM_TRIPLE, "--root", srcRoot]);
+        expect(frozen.code, `freeze stdout: ${frozen.stdout}\nstderr: ${frozen.stderr}`).toBe(0);
+
+        await withRoot(async (destRoot) => {
+          await mkdir(join(destRoot, "src-tauri"), { recursive: true });
+          await mkdir(join(destRoot, "scripts"), { recursive: true });
+          await writeFile(join(destRoot, "scripts", "binaries.manifest.json"), JSON.stringify(manifest, null, 2));
+
+          const restored = await runScript(UNFREEZE, [
+            "--triple",
+            WIN_ARM_TRIPLE,
+            "--archive",
+            join(srcRoot, "src-tauri", ".freeze", `sidecar-bundle-${WIN_ARM_TRIPLE}.tar.gz`),
+            "--root",
+            destRoot,
+          ]);
+          expect(restored.code, `unfreeze stdout: ${restored.stdout}\nstderr: ${restored.stderr}`).toBe(0);
+
+          for (const flat of FLAT_EXES) {
+            expect(
+              existsSync(join(destRoot, "src-tauri", "binaries", `${flat}-${WIN_ARM_TRIPLE}.exe`)),
+              `${flat} flat exe must survive the freeze/unfreeze roundtrip`,
+            ).toBe(true);
+          }
+          for (const engine of WIN_ENGINES) {
+            expect(
+              existsSync(join(destRoot, "src-tauri", "binaries", "engines", engine)),
+              `engines/${engine} payload dir must survive the roundtrip`,
+            ).toBe(true);
+          }
+
+          const verify = await runVerify(["--target", WIN_ARM_TRIPLE, "--root", destRoot]);
+          expect(verify.code, `verify stdout: ${verify.stdout}\nstderr: ${verify.stderr}`).toBe(0);
+          expect(verify.stdout).toContain("verify: PASS");
+        });
+      } finally {
+        await rm(fixtureSource, { force: true });
+        await rm(fixtureBinary, { force: true });
+      }
+    });
+  }, 90_000);
 });
