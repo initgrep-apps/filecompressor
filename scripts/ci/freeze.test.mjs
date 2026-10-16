@@ -69,6 +69,24 @@ function bundlePath(root, triple) {
   return join(root, "src-tauri", ".freeze", `sidecar-bundle-${triple}.tar.gz`);
 }
 
+const WINDOWS_TRIPLE = "x86_64-pc-windows-msvc";
+
+async function stageWindowsTree(root, triple) {
+  const bin = join(root, "src-tauri", "binaries");
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, `ffmpeg-${triple}.exe`), `ffmpeg payload for ${triple}\n`);
+  await writeFile(join(bin, `ffprobe-${triple}.exe`), `ffprobe payload for ${triple}\n`);
+  for (const engine of ["vips", "qpdf", "gs"]) {
+    const enginesDir = join(bin, "engines", engine);
+    await mkdir(enginesDir, { recursive: true });
+    await writeFile(join(enginesDir, `${engine}.exe`), `${engine} engine payload\n`);
+    await writeFile(join(enginesDir, `${engine}-support.dll`), `${engine} dll payload\n`);
+  }
+  const init = join(root, "src-tauri", "gs-resources", "Resource", "Init");
+  await mkdir(init, { recursive: true });
+  await writeFile(join(init, "gs_init.ps"), "ghostscript init payload\n");
+}
+
 async function readSha(root, bundle) {
   return readFile(`${bundle}.sha256`, "utf8");
 }
@@ -166,22 +184,93 @@ describe("freeze.sh", () => {
     });
   });
 
-  it("refuses_windows_triples_before_touching_the_tree", async () => {
+  it("refuses_linux_triples_before_touching_the_tree", async () => {
     await withRoot(async (root) => {
       await stageTree(root, MAC_TRIPLE);
 
       const result = await runScript(FREEZE, [
         "--triple",
-        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
         "--root",
         root,
       ]);
 
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain("x86_64-pc-windows-msvc");
+      expect(result.stderr).toContain("x86_64-unknown-linux-gnu");
       expect(existsSync(join(root, "src-tauri", ".freeze")), "a refused freeze must not even create the output dir").toBe(
         false,
       );
+    });
+  });
+
+  it("packages_the_windows_engines_dirs_external_exes_and_gs_resources", async () => {
+    await withRoot(async (root) => {
+      await stageWindowsTree(root, WINDOWS_TRIPLE);
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+      const listed = await runTool("tar", ["-tzf", bundlePath(root, WINDOWS_TRIPLE)]);
+      const entries = listed.stdout.split("\n").filter(Boolean);
+      for (const engine of ["vips", "qpdf", "gs"]) {
+        expect(entries).toContain(`binaries/engines/${engine}/${engine}.exe`);
+      }
+      expect(entries).toContain(`binaries/ffmpeg-${WINDOWS_TRIPLE}.exe`);
+      expect(entries).toContain(`binaries/ffprobe-${WINDOWS_TRIPLE}.exe`);
+      expect(entries).toContain("gs-resources/Resource/Init/gs_init.ps");
+      expect(
+        entries.every((entry) => /^(binaries|gs-resources)\//.test(entry)),
+        `every entry must extract directly into src-tauri, got:\n${entries.join("\n")}`,
+      ).toBe(true);
+      expect(
+        entries.some((entry) => /^frameworks\//.test(entry)),
+        "windows bundles never carry the mac-only frameworks dir",
+      ).toBe(false);
+
+      const shaLine = (await readFile(`${bundlePath(root, WINDOWS_TRIPLE)}.sha256`, "utf8")).trim();
+      expect(shaLine, "the sibling .sha256 artifact is '<digest>  <filename>'").toMatch(/^[0-9a-f]{64}  /);
+      const digest = createHash("sha256").update(await readFile(bundlePath(root, WINDOWS_TRIPLE))).digest("hex");
+      expect(shaLine.startsWith(digest)).toBe(true);
+    });
+  });
+
+  it("refuses_a_windows_freeze_when_an_engines_dir_is_empty", async () => {
+    await withRoot(async (root) => {
+      await stageWindowsTree(root, WINDOWS_TRIPLE);
+      await rm(join(root, "src-tauri", "binaries", "engines", "qpdf", "qpdf.exe"));
+      await rm(join(root, "src-tauri", "binaries", "engines", "qpdf", "qpdf-support.dll"));
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("binaries/engines/qpdf");
+      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+    });
+  });
+
+  it("refuses_a_windows_freeze_when_the_external_ffmpeg_exe_is_missing", async () => {
+    await withRoot(async (root) => {
+      await stageWindowsTree(root, WINDOWS_TRIPLE);
+      await unlink(join(root, "src-tauri", "binaries", `ffmpeg-${WINDOWS_TRIPLE}.exe`));
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(`ffmpeg-${WINDOWS_TRIPLE}.exe`);
+      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+    });
+  });
+
+  it("refuses_a_windows_freeze_when_the_gs_init_marker_is_missing", async () => {
+    await withRoot(async (root) => {
+      await stageWindowsTree(root, WINDOWS_TRIPLE);
+      await unlink(join(root, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"));
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("gs_init.ps");
+      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
     });
   });
 

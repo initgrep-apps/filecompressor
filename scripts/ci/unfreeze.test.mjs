@@ -15,6 +15,8 @@ const UNFREEZE = join(HERE, "unfreeze.sh");
 
 const ENGINES = ["ffmpeg", "ffprobe", "qpdf", "vips", "gs"];
 const MAC_TRIPLE = "aarch64-apple-darwin";
+const WIN_TRIPLE = "x86_64-pc-windows-msvc";
+const WIN_ENGINES = ["vips", "qpdf", "gs"];
 const ENGINE_PAYLOADS = Object.fromEntries(
   ENGINES.map((engine) => [engine, `payload for ${engine} on ${MAC_TRIPLE}\n`]),
 );
@@ -66,6 +68,33 @@ async function stageSidecarTree(base, payloads) {
 async function tarTree(base, bundlePath) {
   await new Promise((resolvePromise, reject) => {
     execFile("tar", ["-czf", bundlePath, "-C", base, "binaries", "frameworks", "gs-resources"], (error) =>
+      error ? reject(error) : resolvePromise(),
+    );
+  });
+  const digest = shaOf(await readFile(bundlePath));
+  await writeFile(`${bundlePath}.sha256`, `${digest}  ${bundlePath.split("/").pop()}\n`);
+  return bundlePath;
+}
+
+async function stageWindowsTree(base, triple, exePayloads = {}) {
+  const bin = join(base, "binaries");
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, `ffmpeg-${triple}.exe`), exePayloads.ffmpeg ?? `ffmpeg payload for ${triple}\n`);
+  await writeFile(join(bin, `ffprobe-${triple}.exe`), exePayloads.ffprobe ?? `ffprobe payload for ${triple}\n`);
+  for (const engine of WIN_ENGINES) {
+    const enginesDir = join(bin, "engines", engine);
+    await mkdir(enginesDir, { recursive: true });
+    await writeFile(join(enginesDir, `${engine}.exe`), exePayloads[engine] ?? `${engine} engine payload\n`);
+    await writeFile(join(enginesDir, `${engine}-support.dll`), `${engine} dll payload\n`);
+  }
+  const init = join(base, "gs-resources", "Resource", "Init");
+  await mkdir(init, { recursive: true });
+  await writeFile(join(init, "gs_init.ps"), "ghostscript init payload\n");
+}
+
+async function tarWindowsTree(base, bundlePath, roots = ["binaries", "gs-resources"]) {
+  await new Promise((resolvePromise, reject) => {
+    execFile("tar", ["-czf", bundlePath, "-C", base, ...roots], (error) =>
       error ? reject(error) : resolvePromise(),
     );
   });
@@ -234,9 +263,14 @@ async function withMvShim(shimSource, extraEnv, body) {
 
 const GH_LIST = `[{"tagName":"v1.2.3"},{"tagName":"sidecars-20260101"},{"tagName":"sidecars-20261010"}]`;
 
-async function stubEnv(destRoot, { mode, ghList, repo } = {}) {
+async function stubEnv(destRoot, { mode, ghList, repo, triple, roots } = {}) {
   const payload = await mkdtemp(join(tmpdir(), "gh-stub-payload-"));
-  await stageSidecarTree(payload, GH_STUB_PAYLOADS);
+  const stubTriple = triple ?? MAC_TRIPLE;
+  if (triple && triple.includes("pc-windows")) {
+    await stageWindowsTree(payload, stubTriple, GH_STUB_PAYLOADS);
+  } else {
+    await stageSidecarTree(payload, GH_STUB_PAYLOADS);
+  }
   const stubDir = await mkdtemp(join(tmpdir(), "gh-stub-"));
   const stub = join(stubDir, "gh");
   const script = [
@@ -277,7 +311,7 @@ async function stubEnv(destRoot, { mode, ghList, repo } = {}) {
     '      if [ "$prev" = "--dir" ]; then dir="$arg"; fi',
     '      prev="$arg"',
     "    done",
-    '    tar -czf "$dir/sidecar-bundle-$GH_STUB_TRIPLE.tar.gz" -C "$GH_STUB_PAYLOAD" binaries frameworks gs-resources',
+    '    tar -czf "$dir/sidecar-bundle-$GH_STUB_TRIPLE.tar.gz" -C "$GH_STUB_PAYLOAD" $GH_STUB_ROOTS',
     '    (cd "$dir" && shasum -a 256 "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz" > "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz.sha256")',
     "    ;;",
     "esac",
@@ -294,7 +328,8 @@ async function stubEnv(destRoot, { mode, ghList, repo } = {}) {
     GH_STUB_DOWNLOAD_MARKER: markerDownload,
     GH_STUB_TAG_MARKER: join(destRoot, "stub-tag.txt"),
     GH_STUB_PAYLOAD: payload,
-    GH_STUB_TRIPLE: MAC_TRIPLE,
+    GH_STUB_TRIPLE: stubTriple,
+    GH_STUB_ROOTS: roots ?? "binaries frameworks gs-resources",
     ...(repo ? { GITHUB_REPOSITORY: repo } : {}),
     ...(mode ? { GH_STUB_MODE: mode } : {}),
   };
@@ -404,11 +439,56 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("rejects_non_mac_triples", async () => {
+  it("restores_the_windows_frozen_tree_into_a_clean_src_tauri", async () => {
+    const srcRoot = await mkdtemp(join(tmpdir(), "unfreeze-win-src-"));
+    let ok = false;
+    try {
+      await mkdir(join(srcRoot, "src-tauri"), { recursive: true });
+      await stageWindowsTree(join(srcRoot, "src-tauri"), WIN_TRIPLE);
+      const frozen = await runScript(FREEZE, ["--triple", WIN_TRIPLE, "--root", srcRoot]);
+      expect(frozen.code, frozen.stderr).toBe(0);
+
+      await withBareDest(async (destRoot) => {
+        const bundle = join(srcRoot, "src-tauri", ".freeze", `sidecar-bundle-${WIN_TRIPLE}.tar.gz`);
+        const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", bundle, "--root", destRoot]);
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+        for (const engine of WIN_ENGINES) {
+          expect(
+            await readFile(join(destRoot, "src-tauri", "binaries", "engines", engine, `${engine}.exe`), "utf8"),
+            `the frozen ${engine} engine lands byte-for-byte`,
+          ).toBe(`${engine} engine payload\n`);
+          expect(
+            await readFile(join(destRoot, "src-tauri", "binaries", "engines", engine, `${engine}-support.dll`), "utf8"),
+          ).toBe(`${engine} dll payload\n`);
+        }
+        expect(
+          await readFile(join(destRoot, "src-tauri", "binaries", `ffmpeg-${WIN_TRIPLE}.exe`), "utf8"),
+        ).toBe(`ffmpeg payload for ${WIN_TRIPLE}\n`);
+        expect(
+          await readFile(join(destRoot, "src-tauri", "binaries", `ffprobe-${WIN_TRIPLE}.exe`), "utf8"),
+        ).toBe(`ffprobe payload for ${WIN_TRIPLE}\n`);
+        expect(
+          await readFile(join(destRoot, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"), "utf8"),
+        ).toBe("ghostscript init payload\n");
+        expect(existsSync(join(destRoot, "src-tauri", "frameworks")), "windows restore never creates frameworks/").toBe(false);
+        await expectCleanFreezeDir(destRoot);
+      });
+      ok = true;
+    } finally {
+      if (!ok) {
+        await rm(srcRoot, { recursive: true, force: true });
+      } else {
+        await rm(srcRoot, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("refuses_linux_triples", async () => {
     await withRoot(async (destRoot) => {
       const result = await runScript(UNFREEZE, [
         "--triple",
-        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
         "--archive",
         join(destRoot, "anything.tar.gz"),
         "--root",
@@ -416,8 +496,95 @@ describe("unfreeze.sh", () => {
       ]);
 
       expect(result.code).toBe(1);
-      expect(result.stderr).toContain("x86_64-pc-windows-msvc");
+      expect(result.stderr).toContain("x86_64-unknown-linux-gnu");
       expect(existsSync(join(destRoot, "src-tauri"))).toBe(false);
+    });
+  });
+
+  it("fails_closed_when_the_windows_bundle_is_missing_an_engines_dir", async () => {
+    await withRoot(async (destRoot) => {
+      await mkdir(join(destRoot, "src-tauri"));
+      const payload = join(destRoot, "payload");
+      await stageWindowsTree(payload, WIN_TRIPLE);
+      await rm(join(payload, "binaries", "engines", "vips"), { recursive: true });
+      const bundle = await tarWindowsTree(payload, join(destRoot, "no-vips.tar.gz"));
+
+      const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", bundle, "--root", destRoot]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toMatch(/binaries\/engines\/vips/);
+      expect(existsSync(join(destRoot, "src-tauri", "binaries")), "a partial windows bundle must never swap").toBe(false);
+      await expectCleanFreezeDir(destRoot);
+    });
+  });
+
+  it("fails_closed_when_the_windows_bundle_is_missing_the_external_ffmpeg_exe", async () => {
+    await withRoot(async (destRoot) => {
+      await mkdir(join(destRoot, "src-tauri"));
+      const payload = join(destRoot, "payload");
+      await stageWindowsTree(payload, WIN_TRIPLE);
+      await rm(join(payload, "binaries", `ffmpeg-${WIN_TRIPLE}.exe`));
+      const bundle = await tarWindowsTree(payload, join(destRoot, "no-ffmpeg.tar.gz"));
+
+      const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", bundle, "--root", destRoot]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(`binaries/ffmpeg-${WIN_TRIPLE}.exe`);
+      expect(existsSync(join(destRoot, "src-tauri", "binaries"))).toBe(false);
+      await expectCleanFreezeDir(destRoot);
+    });
+  });
+
+  it("fails_closed_when_the_windows_bundle_is_missing_the_gs_init_marker", async () => {
+    await withRoot(async (destRoot) => {
+      await mkdir(join(destRoot, "src-tauri"));
+      const payload = join(destRoot, "payload");
+      await stageWindowsTree(payload, WIN_TRIPLE);
+      await rm(join(payload, "gs-resources"), { recursive: true });
+      const bundle = await tarWindowsTree(payload, join(destRoot, "no-gs.tar.gz"), ["binaries"]);
+
+      const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", bundle, "--root", destRoot]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toMatch(/gs_init\.ps/);
+      expect(existsSync(join(destRoot, "src-tauri", "binaries"))).toBe(false);
+      await expectCleanFreezeDir(destRoot);
+    });
+  });
+
+  it("restores_the_gh_path_windows_bundle_selected_from_the_newest_sidecars_tag", async () => {
+    await withBareDest(async (destRoot) => {
+      const stubbed = await stubEnv(destRoot, {
+        triple: WIN_TRIPLE,
+        roots: "binaries gs-resources",
+      });
+      try {
+        const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--root", destRoot], { env: stubbed.env });
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+        const ghDownloadArgs = (await readFile(stubbed.markers.download, "utf8")).split("\n").filter(Boolean);
+        expect(
+          ghDownloadArgs,
+          "the claimed tag must be the newest sidecars-* for the windows triple",
+        ).toContain("sidecars-20261010");
+        expect(
+          ghDownloadArgs.filter((arg) => arg === `sidecar-bundle-${WIN_TRIPLE}.tar.gz`).length,
+        ).toBe(1);
+        for (const engine of WIN_ENGINES) {
+          expect(
+            await readFile(join(destRoot, "src-tauri", "binaries", "engines", engine, `${engine}.exe`), "utf8"),
+          ).toBe(GH_STUB_PAYLOADS[engine]);
+        }
+        expect(
+          await readFile(join(destRoot, "src-tauri", "binaries", `ffmpeg-${WIN_TRIPLE}.exe`), "utf8"),
+        ).toBe(GH_STUB_PAYLOADS.ffmpeg);
+        expect(
+          await readFile(join(destRoot, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"), "utf8"),
+        ).toBe("ghostscript init payload\n");
+        await expectCleanFreezeDir(destRoot);
+      } finally {
+        await stubbed.cleanup();
+      }
     });
   });
 

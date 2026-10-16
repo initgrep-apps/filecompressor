@@ -1,21 +1,20 @@
 #!/usr/bin/env bash
-# unfreeze.sh — restore a frozen macOS sidecar bundle (ADR 0001) into src-tauri/.
-# With --archive <tarball>: verify the sibling .sha256, then extract. Without it:
-# select and download the newest sidecars-* release bundle for the triple via gh
-# (requires GH_TOKEN). The bundle verifies and validates in a temp workspace
-# while the current tree is backed up OUTSIDE that workspace, so workspace
-# cleanup can never destroy the only copy; every interrupted or failed install
-# restores the pre-swap tree, and signals mid-swap always leave the original
-# tree bytes recoverable at a named backup path. Only a fully validated payload
-# is swapped in.
+# unfreeze.sh — restore a frozen sidecar bundle (ADR 0001) into src-tauri/.
+# With --archive <tarball>: verify the sibling .sha256, then extract. Without
+# it: select and download the newest sidecars-* release bundle for the triple
+# via gh (requires GH_TOKEN). macOS bundles restore binaries/, frameworks/,
+# gs-resources/; windows bundles restore binaries/engines/, the two tauri
+# externalBin exes, and gs-resources/. The bundle verifies and validates in a
+# temp workspace while the current tree is backed up OUTSIDE that workspace,
+# so workspace cleanup can never destroy the only copy; every interrupted or
+# failed install restores the pre-swap tree, and signals mid-swap always leave
+# the original tree bytes recoverable at a named backup path. Only a fully
+# validated payload is swapped in.
 # Usage: bash scripts/ci/unfreeze.sh --triple <triple> [--archive <tarball>] [--root <repo-root>]
 set -euo pipefail
 
 fail() { echo "unfreeze: FAIL — $*" >&2; exit 1; }
 info() { echo "unfreeze: $*"; }
-
-ENGINES="ffmpeg ffprobe qpdf vips gs"
-DIR_NAMES="binaries frameworks gs-resources"
 
 TRIPLE=""
 ROOT=""
@@ -44,14 +43,25 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$TRIPLE" ] || fail "--triple is required"
 
-case "$TRIPLE" in
-  aarch64-apple-darwin|x86_64-apple-darwin) ;;
-  *) fail "unsupported target triple '$TRIPLE' — unfreeze restores macOS freeze bundles only (ADR 0001); windows engines stage from the manifest" ;;
+case " aarch64-apple-darwin x86_64-apple-darwin " in
+  *" $TRIPLE "*) MODE="mac" ;;
+  *)
+    case " x86_64-pc-windows-msvc aarch64-pc-windows-msvc " in
+      *" $TRIPLE "*) MODE="windows" ;;
+      *) fail "unsupported target triple '$TRIPLE' — unfreeze restores macOS or Windows freeze bundles only (ADR 0001)" ;;
+    esac
+    ;;
 esac
 
 ROOT="${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 SRC="$ROOT/src-tauri"
 [ -d "$SRC" ] || fail "repo root '$ROOT' has no src-tauri directory"
+
+if [ "$MODE" = "mac" ]; then
+  DIR_NAMES="binaries frameworks gs-resources"
+else
+  DIR_NAMES="binaries gs-resources"
+fi
 
 WORK=""
 LOCK_DIR=""
@@ -126,7 +136,11 @@ trap cleanup EXIT
 trap 'exit 143' HUP INT TERM
 
 sha256_of() {
-  shasum -a 256 "$1" | awk '{print $1}'
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    sha256sum "$1" | awk '{print $1}'
+  fi
 }
 
 verify_sha() {
@@ -146,14 +160,29 @@ validate_payload() {
   extracted="$1"
   [ -f "$extracted/gs-resources/Resource/Init/gs_init.ps" ] || \
     fail "bundle is missing gs-resources/Resource/Init/gs_init.ps after extraction — refusing to swap in a partial bundle"
-  for engine in $ENGINES; do
-    [ -f "$extracted/binaries/${engine}-${TRIPLE}" ] || \
-      fail "bundle is missing binaries/${engine}-${TRIPLE} after extraction — refusing to swap in a partial bundle"
-  done
-  [ -d "$extracted/frameworks" ] || \
-    fail "bundle has an empty or missing frameworks/ after extraction — refusing to swap in a partial bundle"
-  [ -n "$(ls -A "$extracted/frameworks" 2>/dev/null)" ] || \
-    fail "bundle has an empty or missing frameworks/ after extraction — refusing to swap in a partial bundle"
+  if [ "$MODE" = "mac" ]; then
+    for engine in ffmpeg ffprobe qpdf vips gs; do
+      [ -f "$extracted/binaries/${engine}-${TRIPLE}" ] || \
+        fail "bundle is missing binaries/${engine}-${TRIPLE} after extraction — refusing to swap in a partial bundle"
+    done
+    [ -d "$extracted/frameworks" ] || \
+      fail "bundle has an empty or missing frameworks/ after extraction — refusing to swap in a partial bundle"
+    [ -n "$(ls -A "$extracted/frameworks" 2>/dev/null)" ] || \
+      fail "bundle has an empty or missing frameworks/ after extraction — refusing to swap in a partial bundle"
+  else
+    for engine in vips qpdf gs; do
+      [ -d "$extracted/binaries/engines/$engine" ] || \
+        fail "bundle is missing binaries/engines/$engine after extraction — refusing to swap in a partial bundle"
+      [ -f "$extracted/binaries/engines/$engine/$engine.exe" ] || \
+        fail "bundle is missing binaries/engines/$engine/$engine.exe after extraction — refusing to swap in a partial bundle"
+      [ -n "$(ls -A "$extracted/binaries/engines/$engine" 2>/dev/null)" ] || \
+        fail "bundle has an empty binaries/engines/$engine after extraction — refusing to swap in a partial bundle"
+    done
+    for exe in ffmpeg ffprobe; do
+      [ -f "$extracted/binaries/${exe}-${TRIPLE}.exe" ] || \
+        fail "bundle is missing binaries/${exe}-${TRIPLE}.exe after extraction — refusing to swap in a partial bundle"
+    done
+  fi
 }
 
 restore_from_backup() {
