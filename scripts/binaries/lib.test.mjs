@@ -2,7 +2,7 @@
 import { vi, afterAll, describe, expect, it } from "vitest";
 
 vi.setConfig({ testTimeout: 30_000 });
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, copyFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, copyFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
@@ -17,6 +17,7 @@ import {
   extractTarZstFallback,
   parseArgs,
   tarExtractArgs,
+  tarToolForHost,
   validateLock,
   writeJson,
 } from "./lib.mjs";
@@ -188,17 +189,22 @@ describe("extract", () => {
     await expect(extract(fake, join(root, "out"))).rejects.toThrow(/'zstd' tool/);
   });
 
-  it("extracts .tar.zst through the pure-JS fallback when the primary tar --zstd cannot run (portable: nonexistent tarTool fails with ENOENT)", async () => {
-    const root = await tempRoot("lib-test-");
-    const archive = join(root, "engine.pkg.tar.zst");
-    const fixture = join(FIXTURES, "gs-fixture.pkg.tar.zst");
-    await copyFile(fixture, archive);
-    const out = join(root, "fallback-out");
-    await extract(archive, out, { tarTool: join(root, "definitely-not-a-real-tar-binary") });
-    expect((await readFile(join(out, "pkg", "inner", "tool.exe"), "utf8")).trim()).toBe("fallback-extracted");
-    const siblings = await readdir(root);
-    expect(siblings.filter((name) => name.includes(".tmp.tar"))).toEqual([]);
-  });
+  itDarwin(
+    "extracts .tar.zst through the pure-JS fallback when the host archiver rejects --zstd (mirrors Windows native bsdtar)",
+    async () => {
+      const root = await tempRoot("lib-test-");
+      const fakeTar = join(root, "no-zstd-tar.sh");
+      await writeFile(fakeTar, `#!/bin/sh\nif [ "$1" = "--zstd" ]; then\n  exit 2\nfi\nexec tar "$@"\n`);
+      await chmod(fakeTar, 0o755);
+      const archive = join(root, "engine.pkg.tar.zst");
+      await copyFile(join(FIXTURES, "gs-fixture.pkg.tar.zst"), archive);
+      const out = join(root, "fallback-out");
+      await extract(archive, out, { tarTool: fakeTar });
+      expect((await readFile(join(out, "pkg", "inner", "tool.exe"), "utf8")).trim()).toBe("fallback-extracted");
+      const siblings = await readdir(root);
+      expect(siblings.filter((name) => name.includes(".tmp.tar"))).toEqual([]);
+    },
+  );
 
   it("extractTarZstFallback decompresses with fzstd and untars the temporary plain archive", async () => {
     const root = await tempRoot("lib-test-");
@@ -229,7 +235,7 @@ describe("extract", () => {
 });
 
 describe("tarExtractArgs", () => {
-  it("prepends --force-local ahead of --zstd -xf for the windows primary extraction", () => {
+  it("prepends --force-local ahead of --zstd -xf when forceLocal is requested", () => {
     expect(tarExtractArgs("D:\\a\\engine.tar.zst", "D:\\a\\out", { zstd: true, forceLocal: true })).toEqual([
       "--force-local",
       "--zstd",
@@ -240,7 +246,7 @@ describe("tarExtractArgs", () => {
     ]);
   });
 
-  it("prepends --force-local ahead of plain -xf for the windows fallback extraction", () => {
+  it("prepends --force-local ahead of plain -xf when forceLocal is requested", () => {
     expect(
       tarExtractArgs("D:\\a\\engine.pkg.tar.zst.tmp.tar", "D:\\a\\out", { forceLocal: true }),
     ).toEqual(["--force-local", "-xf", "D:\\a\\engine.pkg.tar.zst.tmp.tar", "-C", "D:\\a\\out"]);
@@ -262,8 +268,71 @@ describe("tarExtractArgs", () => {
     ]);
   });
 
+  it("emits no --force-local for the windows native bsdtar invocations: paths stay mangle-free", () => {
+    expect(tarExtractArgs("D:\\a\\engine.tar.zst", "D:\\a\\out", { zstd: true })).toEqual([
+      "--zstd",
+      "-xf",
+      "D:\\a\\engine.tar.zst",
+      "-C",
+      "D:\\a\\out",
+    ]);
+    expect(tarExtractArgs("D:\\a\\engine.pkg.tar.zst.tmp.tar", "D:\\a\\out")).toEqual([
+      "-xf",
+      "D:\\a\\engine.pkg.tar.zst.tmp.tar",
+      "-C",
+      "D:\\a\\out",
+    ]);
+  });
+
   it("defaults to plain -xf with no options object", () => {
     expect(tarExtractArgs("/a/x.tar", "/a/out")).toEqual(["-xf", "/a/x.tar", "-C", "/a/out"]);
+  });
+});
+
+describe("tarToolForHost", () => {
+  const withPlatform = async (value, systemRoot, body) => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+    const systemRootBefore = process.env.SystemRoot;
+    Object.defineProperty(process, "platform", { value, configurable: true });
+    if (systemRoot === undefined) {
+      delete process.env.SystemRoot;
+    } else {
+      process.env.SystemRoot = systemRoot;
+    }
+    try {
+      await body();
+    } finally {
+      Object.defineProperty(process, "platform", platformDescriptor);
+      if (systemRootBefore === undefined) {
+        delete process.env.SystemRoot;
+      } else {
+        process.env.SystemRoot = systemRootBefore;
+      }
+    }
+  };
+
+  it("resolves the native System32 bsdtar on win32 so drive-letter paths never meet git-bash GNU tar", async () => {
+    await withPlatform("win32", "C:\\Windows", () => {
+      expect(tarToolForHost()).toBe("C:\\Windows\\System32\\tar.exe");
+    });
+  });
+
+  it("defaults the win32 root to C:/Windows when SystemRoot is unset", async () => {
+    await withPlatform("win32", undefined, () => {
+      expect(tarToolForHost()).toBe("C:\\Windows\\System32\\tar.exe");
+    });
+  });
+
+  it("honors a custom SystemRoot on win32", async () => {
+    await withPlatform("win32", "D:\\WinRoot", () => {
+      expect(tarToolForHost()).toBe("D:\\WinRoot\\System32\\tar.exe");
+    });
+  });
+
+  it("stays on PATH 'tar' for non-win32 hosts so macOS extraction is untouched", async () => {
+    await withPlatform("darwin", undefined, () => {
+      expect(tarToolForHost()).toBe("tar");
+    });
   });
 });
 

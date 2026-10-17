@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { basename, join } from "node:path";
+import { basename, join, win32 as pathWin32 } from "node:path";
 import https from "node:https";
 import { decompress as decompressZstd } from "fzstd";
 
@@ -348,12 +348,19 @@ export function download(url, destPath, options = {}) {
   });
 }
 
+export function tarToolForHost() {
+  if (process.platform === "win32") {
+    return pathWin32.resolve(process.env.SystemRoot ?? "C:/Windows", "System32/tar.exe");
+  }
+  return "tar";
+}
+
 export function tarExtractArgs(archivePath, destDir, { zstd = false, forceLocal = false } = {}) {
   const extractOption = zstd ? ["--zstd", "-xf"] : ["-xf"];
   return [...(forceLocal ? ["--force-local"] : []), ...extractOption, archivePath, "-C", destDir];
 }
 
-export async function extractTarZstFallback(archivePath, destDir) {
+export async function extractTarZstFallback(archivePath, destDir, { tarTool } = {}) {
   await mkdir(destDir, { recursive: true });
   let tarBytes;
   try {
@@ -364,7 +371,7 @@ export async function extractTarZstFallback(archivePath, destDir) {
   const tmpTar = `${archivePath}.tmp.tar`;
   try {
     writeFileSync(tmpTar, tarBytes);
-    await run("tar", tarExtractArgs(tmpTar, destDir, { forceLocal: process.platform === "win32" }));
+    await run(tarTool ?? tarToolForHost(), tarExtractArgs(tmpTar, destDir));
   } finally {
     await rm(tmpTar, { force: true }).catch(() => {});
   }
@@ -372,7 +379,7 @@ export async function extractTarZstFallback(archivePath, destDir) {
 
 export async function extract(archivePath, destDir, options = {}) {
   await mkdir(destDir, { recursive: true });
-  const forceLocal = process.platform === "win32";
+  const tarTool = options.tarTool ?? tarToolForHost();
   try {
     if (archivePath.endsWith(".zip")) {
       await run("unzip", ["-o", "-q", archivePath, "-d", destDir]);
@@ -380,11 +387,11 @@ export async function extract(archivePath, destDir, options = {}) {
     }
     if (archivePath.endsWith(".tar.zst")) {
       try {
-        await run(options.tarTool ?? "tar", tarExtractArgs(archivePath, destDir, { zstd: true, forceLocal }));
+        await run(tarTool, tarExtractArgs(archivePath, destDir, { zstd: true }));
         return;
       } catch (primaryError) {
         try {
-          await extractTarZstFallback(archivePath, destDir);
+          await extractTarZstFallback(archivePath, destDir, { tarTool });
         } catch (fallbackError) {
           if (fallbackError.message.startsWith("pure-JS zstd decompression")) {
             throw new Error(
