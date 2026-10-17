@@ -1,47 +1,65 @@
 # CI process definition
 
-States, owners, and commands for the freeze/unfreeze CI model (ADR 0001, 2026-10-16). The invariant: runners never make choices. Brew runs only inside `freeze.yml` mac rows against the pinned `homebrew-core` commit; every consumer restores its engines from the frozen release.
+States, owners, and commands for the snapshot-once freeze/unfreeze CI model (ADR 0001, as amended 2026-10-17). The invariant: runners never make choices. Brew runs only inside `freeze.yml` mac rows against the pinned `homebrew-core` commit; every consumer restores its engines from the frozen release. **Proven live 2026-10-17:** freeze run `39009234965` froze all four triples green; its finalize hit GitHub's asset-indexing race on the first live pass (counted 1/8 while uploads landed, draft left unpublished by design), the operator sha-verified all four bundles and published `sidecars-20261017` (8 assets) — the verify-race retry loop and idempotent draft reuse are now part of finalize. The gate (2 rows) and release (4 native rows) pipelines unfreeze and consume that release.
 
 ## 1. Artifact flow
 
 ```
-operator                freeze.yml                       consumers
-────────                ──────────                       ─────────
-edit manifest ─┐                                         PR gate (ci.yml)
-commit ────────┤   gate: tag-collision preflight          every row, per triple:
-click freeze   │         ↓                                unfreeze --triple <t>
-               │   freeze matrix (4 rows, 40 min)  →  sidecar-bundle-<t>.tar.gz + .sha256
-               │     mac rows: pin checkout → brew     → clean-room audit → verbatim gate
-               │       install (pinned tap) → all.mjs  
-                    → freeze.sh --triple
-               │     win rows: all.mjs (URL+sha256)  →  draft release (v*)
-               │       → freeze.sh --triple        →    unfreeze → audit → gate
-               │         ↓                              → tauri-action (releaseDraft)
-               │   finalize (15 min): preflight 8        → app-asset check per triple
-               │       → draft sidecars-<date>
-               │       → upload 8 assets → verify → publish
-               │         ↓
+operator                freeze.yml                         consumers
+────────                ──────────                         ──────────
+edit manifest ─┐                                           PR gate (ci.yml, 2 rows)
+commit ────────┤   gate: tag-collision preflight           every row, per triple:
+click freeze   │         ↓                                 unfreeze --triple <t>
+               │   freeze matrix (4 rows, 40 min)    →    → (mac) sync-macos-frameworks
+               │     mac rows: pin checkout → brew          (derives the framework list
+               │       install off pinned tap → all.mjs     from the staged tree)
+               │       → sync-macos-frameworks              → clean-room audit (mac rows:
+               │     win rows: all.mjs (URL+sha256,            BINARIES_ALLOW_INACTIVE_BREW=1)
+               │       msys2 gs closure via extraPackages)
+               │       → freeze.sh --triple                 → verbatim gate
+               │         ↓                                  release.yml adds:
+               │   finalize (15 min): preflight 8           → tauri-action into the draft
+               │     create-or-reuse today's draft          (numeric releaseId)
+               │     upload 8 assets → verify 4×10s         → per-row app-asset check
+               │     retry through asset-index lag
+               │       ↓
                └──→  sidecars-<date> release (published)
-                        ↓
-                      gates/releases unfreeze their triple
-                        ↓
-                   draft app release → operator clicks publish
+                       ↓
+                  draft app release → operator clicks publish
 ```
 
-Every artifact is sha256-verified twice: at freeze publish (bundle ↔ sibling digest) and at unfreeze (digest match before extraction).
+Every artifact is sha256-verified twice: at freeze publish (bundle ↔ sibling digest) and at unfreeze (digest match before extraction). Unfreeze leaves a provenance marker, `src-tauri/.sidecars-restored.json` (`triple` + `bundleSha256` + `restoredAt`): `verify.mjs` treats the marker as governing — it skips the `stagedSha256`-vs-lock comparison and pins tree bytes to the bundle sha verified at unfreeze. `fetch`/`prep` delete a stale same-triple marker before staging so a re-stage is never masked by an old marker.
 
-## 2. Operating runbook
+## 2. Engine bundle shapes (proven 2026-10-17)
 
-**Monthly / version bump**
+**mac (`aarch64-apple-darwin`, `x86_64-apple-darwin`)** — roots `binaries/` + `frameworks/` + `gs-resources/`: the 5 flat engine binaries, the vips dylib tree, and the ghostscript `Resource`/`lib`/`iccprofiles`/`fonts` tree, each validated post-unfreeze (`gs_init.ps` marker, non-empty `frameworks/`).
 
-1. Bump engine pins: for URL engines run `yarn binaries:refresh` (rewrites `scripts/binaries.manifest.json` + `scripts/binaries.lock.json`; `--dry-run` only reports); for brew engines install the new build locally (`brew install vips ghostscript`), then hand-edit `expectVersion`, or follow `binaries:refresh` drift output.
+**windows (`x86_64-pc-windows-msvc`, `aarch64-pc-windows-msvc`)** — binaries-only roots, two payloads:
+
+- `binaries/engines/<dest>/` payload dirs for every **non-static** manifest entry (vips, qpdf, gs): engine exe + recursive DLL tree (DLL presence is enforced, not a flaky sibling check);
+- flat exes `binaries/<dest>-<triple>.exe` for **every** manifest entry — the `verify.mjs` content-arch and the audit gate hold after unfreeze, and tauri consumes the flat `externalBin` pair.
+
+Static entries (`ffmpeg`/`ffprobe`, `static: true`) ship as the flat exe only: no engines dir, no DLL scan. Validation lists derive from the manifest at consume time (`scripts/ci/windows-manifest-lists.sh`) — never hardcoded.
+
+**Windows gs runs on the ROM model** (msys2 ucrt64 ghostscript ships no Resource tree; gs serves pdf/cs/img from its compiled-in tree):
+
+- the windows manifest gs row declares **no `resources` key** (mac gs still does);
+- its DLL closure is pinned as `extraPackages`: 25 URL+sha256 msys2 ucrt64 rows on x64, 23 on arm64 — 48 pinned packages in total, staged beside `binaries/engines/gs/`; gated by `pe-imports.mjs` + `closure-check.mjs`;
+- `src-tauri/tauri.windows.conf.json` drops the base conf's gs-resources mapping with RFC 7396 null-merge (`"gs-resources/": null`) — windows bundles never stage a Resource tree;
+- the audit's gs smoke runs in ROM mode: no `-I` flags, only proof that the binary renders complete PDFs from the compiled-in tree.
+
+## 3. Operating runbook
+
+**Version bump = one flow** (manifest/pins edit → gate → merge → freeze → tag; there is no separate "local snapshot" path — the local machine is development only).
+
+1. Bump engine pins: for URL engines run `yarn binaries:refresh` (rewrites `scripts/binaries.manifest.json` + `scripts/binaries.lock.json`; `--dry-run` only reports; vendors rotate to evergreen `latest` tags, the assetPattern stays authoritative). For brew engines hand-edit `expectVersion` after installing locally, or follow `binaries:refresh` drift output.
 2. Update the per-arch pins in `scripts/ci/homebrew-core-pins.json` **only if a manifest `expectVersion` bumped** (ADR 0001 criterion; each mac triple resolves its own sha, and the two pins move independently):
    - `aarch64-apple-darwin`: pick the newest homebrew-core commit carrying the new formula versions with `arm64_sequoia` bottles for the full closure.
-   - `x86_64-apple-darwin`: leave frozen at the last pre-cutoff pin (`8f15b0f1b965`, vips 8.18.6 / gs 10.07.1). **Never bump the Intel engines unless a human re-verifies that the new versions and their whole closure carry `sonoma` x86_64 bottles** — homebrew-core stopped publishing x86_64 bottles on 2026-09-10/11, so nothing bottled after that date can ever be staged from brew on Intel. A new Intel engine source replaces this pin wholesale; it does not move forward.
+   - `x86_64-apple-darwin`: leave frozen at the newest fully-sonoma-bottled closure pin (`c36952de43157c2c4a4ea05f385031aa29f30354`, 2026-08-28 — vips 8.18.6 / gs 10.07.1; per-formula bottle deaths began 2026-08-28 and completed 09-10/11). **Never bump the Intel engines unless a human re-verifies that the new versions and their whole closure carry `sonoma` x86_64 bottles** — homebrew-core stopped publishing x86_64 bottles on 2026-09-10/11, so nothing bottled after that date can ever be staged from brew on Intel. A new Intel engine source replaces this pin wholesale; it does not move forward.
    Values are hex40 sha strings, plain JSON, no comments and no extra keys.
 3. `yarn build && yarn test && cd src-tauri && cargo test` locally, commit, merge.
-4. Click **Freeze sidecar engines** (workflow_dispatch). Expect 4 green rows + finalize publishing `sidecars-<date>` with 8 assets.
-5. Tag `v<version>` (or dispatch release.yml). Expect 4 green rows building into the draft, preflight requiring all 8 bundle assets.
+4. Click **Freeze sidecar engines** (workflow_dispatch). Expect 4 green rows + finalize publishing `sidecars-<date>` with 8 assets. Finalize verifies with `gh release view --json assets --jq '.assets | length'`, retrying 4×10 s through GitHub's asset-indexing lag; it reuses a leftover same-day draft idempotently and never publishes anything short of the exact-8 name set.
+5. Tag `v<version>` (or dispatch release.yml). Expect 4 green rows building into the draft, the sidecars preflight requiring all 8 bundle assets, and the SBOM + third-party notices from the aarch64 row.
 6. Operator verifies the draft and clicks publish. Never publish the `sidecars-*` release by hand.
 
 **Windows-target compile gate (developer-time, runs on the mac)**
@@ -56,31 +74,40 @@ The CI windows row compiles the `src-tauri` tests as `cargo test` on `x86_64-pc-
    rm -f src-tauri/binaries/*-aarch64-pc-windows-msvc.exe
    ```
 
-First local reproduction (2026-10-17): gate run 39022660502's full windows cargo failure = 36 E0425 in `sidecar.rs` + `processors/document.rs`, fixed by extending the repo `#[cfg(unix)]` precedent to the consuming fns/tests. Gate before every push touching `src-tauri/src/`.
+First local reproduction (2026-10-17): gate run 39022660502's full windows cargo failure = 36 E0425 in `sidecar.rs` + `processors/document.rs`, fixed by extending the repo `#[cfg(unix)]` precedent to the consuming fns/tests. Gate before every push touching `src-tauri/src/`. The windows ci row additionally carries loader diagnostics steps (cargo-test link probe, PE-imports probe, test-enumeration loader probe) for the fixed 0xc0000139 loader class — kept until the removal decision tracked in `docs/ci-followups.md`.
 
 **Recovery**
 
 - Same-day `sidecars-<date>` collision: delete the leftover draft; `gh release delete <tag> --cleanup-tag --yes`; re-run the failed freeze rows.
-- Finalize yellow-draft: `gh release delete <tag> --cleanup-tag --yes`, re-run finalize.
+- Finalize yellow-draft: `gh release delete <tag> --cleanup-tag --yes`, re-run finalize (finalize reuses a leftover draft idempotently only while it is still a draft).
 - Release draft leftovers: `gh release delete <tag> --cleanup-tag --yes`, re-run the release.
 
-## 3. Failure classification
+## 4. Failure classification
 
 | Symptom | Meaning | Remedy |
 | --- | --- | --- |
 | freeze mac row: drift gate FAIL | pin's formulas no longer match manifest `expectVersion` | operator: refresh the pin (new commit) or fix the manifest — never hide the drift |
-| freeze mac row: brew install slow/hanging | pin lacks bottles for this closure | bounded by 40-min timeout. arm rows: re-pin (newest commit with `arm64_sequoia` bottles). Intel rows: pin regressed past the 2026-09-10/11 x86_64 bottle cutoff — restore the pre-cutoff pin `8f15b0f1b965`; never push Intel engines forward without human bottle re-verification (ADR 0001) |
-| freeze finalize: found N/8 | a matrix row failed quietly or artifacts dropped | re-run failed rows; no partial-sidecars publishes exist |
+| freeze mac row: brew install slow/hanging | pin lacks bottles for this closure | bounded by 40-min timeout. arm rows: re-pin (newest commit with `arm64_sequoia` bottles). Intel rows: the pin's closure is partially source-building — restore the newest fully-sonoma-bottled closure pin (currently `c36952de4315`); never push Intel engines forward without human bottle re-verification (ADR 0001) |
+| freeze mac row: git ops on the tap fail | dirty/partial tap checkout from a prior run | pin step resets+cleans the tap, then fetches/checkout the pin; clone errors name the recovery |
+| finalize: found N/8 after the 4-retry loop | a matrix row failed quietly or artifacts dropped | re-run failed rows / finalize; no partial-sidecars publishes exist (finalize reuses the draft; never publishes incomplete) |
 | consumer: unfreeze FAIL / no sidecars-* | freeze never ran, or wrong newest release | run freeze.yml first (release preflight catches this earlier) |
 | consumer: sha256 mismatch | torn or tampered publish | delete + re-run freeze finalize |
 | consumer: audit FAIL | frozen engines wrong arch/version/stripping vs manifest | freeze is stale vs manifest: re-run freeze after pin/manifest reconcile |
+| freeze/unfreeze dll-scan under git-bash: "too few X's in template" | git-bash mktemp demands trailing X's | keep the `mktemp -t <name>-XXXXXX` template shape (trailing X's) |
+| git-bash tar: "C:" host/remote errors | GNU tar parses `C:/path` drive-colons as a remote host | extract with the native System32 `tar.exe` (`lib.mjs` `tarToolForHost`), never git-bash GNU tar paths |
+| bash 3.2: ERR trap fires inside guarded pipelines | macOS default bash 3.2 ERR semantics differ | guard the trap with a re-entrancy flag (`err_trap_active` in `scripts/audit-sidecars.sh`) so guarded failures do not double-fire |
+| bash 3.2 + `set -u`: "unbound variable" on `"${arr[@]}"` | empty array expands as unset on bash 3.2 | expansion guards `${arr[@]+"${arr[@]}"}` or ensure non-empty construction before expansion |
+| brew 7.x: `brew list --versions` shapes differ (7.0.9) | brew 7 prints nothing/keg-different text for a missing formula | verify.mjs classifies `no such keg`/empty output; on brew-less CI hosts the audit only proceeds with `BINARIES_ALLOW_INACTIVE_BREW=1` note lines |
+| windows test exe dies pre-main with 0xc0000139 | `STATUS_ENTRYPOINT_NOT_FOUND` — the app's embedded exe manifest was missing from cargo test executables | every msvc link (tests included) embeds `src-tauri/windows-app-manifest.xml` via `src-tauri/build.rs` (`/MANIFEST:EMBED` + `new_without_app_manifest()`, no double manifest); ci.yml keeps loader probes while the diagnostics removal decision is open |
+| windows loader probe: lib-test exe refuses to launch (ENOENT) | libuv resolves the child from the CHILD env PATH | resolve `bash` absolutely from the parent PATH on win32 (`where bash`), POSIX side byte-identical |
 | gate rows red beyond staging | code broken | normal dev-fix flow |
 | tauri-action row: no app assets | build/upload skipped | check tauri-action logs, re-run release |
 
-## 4. Invariants
+## 5. Invariants
 
 1. **CI never brews outside freeze.yml** — consumers only unfreeze; any `brew install`/`brew update`/`all.mjs` in ci.yml/release.yml is a regression.
 2. **Every engine artifact is sha-verified** — manifest URL pins, freeze digests, unfreeze checks.
-3. **Releases are always draft-first** — `sidecars-*` and app drafts publish only after verified assets.
+3. **Releases are always draft-first** — `sidecars-*` and app drafts publish only after verified assets; finalize counts assets live via `--json assets --jq` and reuses (never replaces) a leftover draft.
 4. **Every job carries `timeout-minutes`** — freeze 40, release rows 90, gate rows 60, cheap jobs 10–15.
 5. **No raw `${{ }}` in run strings** — untrusted context enters via step `env`; actions stay SHA-pinned; `shell: bash` everywhere.
+6. **Restore provenance governs verification** — the unfreeze marker pins tree bytes to the verified bundle sha; staging clears stale markers. Open CI follow-ups (mv-shim cygpath, win32 lock-suite skips, SBOM DLL licenses, staging litter, diagnostics removal): `docs/ci-followups.md`.
