@@ -237,6 +237,21 @@ describe("freeze.yml freeze workflow", () => {
     expect(run).toContain('git -C "$core" checkout --detach "$pin"');
     expect(
       run,
+      "the tap must be normalized before fetch/checkout — the runner image ships local modifications to the homebrew-core tap that abort the pinned checkout",
+    ).toContain('git -C "$core" reset --hard HEAD 2>/dev/null || true');
+    expect(
+      run,
+      "untracked tap files must be pruned too — leftover state blocks the pinned checkout",
+    ).toContain('git -C "$core" clean -ffd 2>/dev/null || true');
+    expect(
+      run.indexOf('git -C "$core" reset --hard HEAD 2>/dev/null || true'),
+      "tap normalization must run before the fetch so the pinned checkout cannot be blocked by tap dirt",
+    ).toBeGreaterThan(-1);
+    expect(run.indexOf('git -C "$core" reset --hard HEAD 2>/dev/null || true')).toBeLessThan(
+      run.indexOf('git -C "$core" fetch --depth 1 origin "$pin"'),
+    );
+    expect(
+      run,
       "the raw pin line must be validated as one 40-char hex sha before it touches git",
     ).toContain("grep -Eq '^[0-9a-f]{40}$'");
     expect(pin.shell).toBe("bash");

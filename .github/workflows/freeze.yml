@@ -101,6 +101,8 @@ jobs:
               exit 1
             fi
           fi
+          git -C "$core" reset --hard HEAD 2>/dev/null || true
+          git -C "$core" clean -ffd 2>/dev/null || true
           if ! git -C "$core" fetch --depth 1 origin "$pin"; then
             echo "::error::git fetch of the homebrew-core pin $pin for $TRIPLE failed — network errors (flake, proxy or DNS): re-run the job; 'unknown revision' or 'object not found' errors: the pin no longer exists in homebrew-core — re-pin to a sha that still carries the pinned bottles in scripts/ci/homebrew-core-pins.json, then re-run"
             exit 1

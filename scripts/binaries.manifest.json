@@ -50,18 +50,18 @@
     "x86_64-pc-windows-msvc": {
       "ffmpeg": {
         "source": "url",
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-01-13-06/ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0.zip",
-        "sha256": "74827e097445a136b803febd4dcf80f7cba7f14a4c612fb80f7b5e5cedd3ffbe",
-        "member": "ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0/bin/ffmpeg.exe",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip",
+        "sha256": "177bec2e8c3397c5e9739901993dadc1cad0954de97d2604a2704c8531a59e32",
+        "member": "ffmpeg-n9.0-latest-win64-gpl-9.0/bin/ffmpeg.exe",
         "dest": "ffmpeg",
         "expectVersion": "9.0.2",
         "assetPattern": "win64-gpl-9\\.0\\.zip$"
       },
       "ffprobe": {
         "source": "url",
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-01-13-06/ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0.zip",
-        "sha256": "74827e097445a136b803febd4dcf80f7cba7f14a4c612fb80f7b5e5cedd3ffbe",
-        "member": "ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-9.0/bin/ffprobe.exe",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip",
+        "sha256": "177bec2e8c3397c5e9739901993dadc1cad0954de97d2604a2704c8531a59e32",
+        "member": "ffmpeg-n9.0-latest-win64-gpl-9.0/bin/ffprobe.exe",
         "dest": "ffprobe",
         "expectVersion": "9.0.2",
         "assetPattern": "win64-gpl-9\\.0\\.zip$"
@@ -102,18 +102,18 @@
     "aarch64-pc-windows-msvc": {
       "ffmpeg": {
         "source": "url",
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-01-13-06/ffmpeg-n9.0.2-22-g46d8f462ee-winarm64-gpl-9.0.zip",
-        "sha256": "7263744331532e1606bfbac25b5c1a7dcd23091b44614787efd742d6a8dfa1a6",
-        "member": "ffmpeg-n9.0.2-22-g46d8f462ee-winarm64-gpl-9.0/bin/ffmpeg.exe",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-winarm64-gpl-9.0.zip",
+        "sha256": "d99dafe91825139d6fd8ad237c9217cff290277585899a95d1e69a009aaa275d",
+        "member": "ffmpeg-n9.0-latest-winarm64-gpl-9.0/bin/ffmpeg.exe",
         "dest": "ffmpeg",
         "expectVersion": "9.0.2",
         "assetPattern": "winarm64-gpl-9\\.0\\.zip$"
       },
       "ffprobe": {
         "source": "url",
-        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-01-13-06/ffmpeg-n9.0.2-22-g46d8f462ee-winarm64-gpl-9.0.zip",
-        "sha256": "7263744331532e1606bfbac25b5c1a7dcd23091b44614787efd742d6a8dfa1a6",
-        "member": "ffmpeg-n9.0.2-22-g46d8f462ee-winarm64-gpl-9.0/bin/ffprobe.exe",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-winarm64-gpl-9.0.zip",
+        "sha256": "d99dafe91825139d6fd8ad237c9217cff290277585899a95d1e69a009aaa275d",
+        "member": "ffmpeg-n9.0-latest-winarm64-gpl-9.0/bin/ffprobe.exe",
         "dest": "ffprobe",
         "expectVersion": "9.0.2",
         "assetPattern": "winarm64-gpl-9\\.0\\.zip$"

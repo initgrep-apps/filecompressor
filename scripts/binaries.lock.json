@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-05T21:06:21.666Z",
+  "generated": "2026-10-17T00:33:44.675Z",
   "targets": {
     "aarch64-apple-darwin": {
       "ffmpeg": {
@@ -43,6 +43,90 @@
         "version": "10.08.0",
         "stagedSha256": "27068a27079d7289af79104c7c3204dc37ff3bf6a65b3913c250032146129a0b",
         "date": "2026-10-05T21:06:21.655Z"
+      }
+    },
+    "x86_64-pc-windows-msvc": {
+      "ffmpeg": {
+        "source": "url",
+        "version": "9.0.2",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip",
+        "sha256": "177bec2e8c3397c5e9739901993dadc1cad0954de97d2604a2704c8531a59e32",
+        "stagedSha256": "ba3d6ab69c1c4fb6c5f37e6adfb478f9d441013070f9abc1d87f7580bbe3729c",
+        "date": "2026-10-17T00:33:16.411Z"
+      },
+      "ffprobe": {
+        "source": "url",
+        "version": "9.0.2",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip",
+        "sha256": "177bec2e8c3397c5e9739901993dadc1cad0954de97d2604a2704c8531a59e32",
+        "stagedSha256": "9d6fa8736280058df87cf24f3f9c0fe14a888145f8e900aa0185193cc1ed7c48",
+        "date": "2026-10-17T00:33:22.873Z"
+      },
+      "qpdf": {
+        "source": "url",
+        "version": "12.4.2",
+        "url": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-msvc64.zip",
+        "sha256": "db87077e683630c1217e0e8f9a20a9749d952ab676e881c3689187763a5de25d",
+        "stagedSha256": "1bdaf878f37eaffea1ea3c30591214c77636a0f2fc7432427516b6e22e36c0ff",
+        "date": "2026-10-17T00:33:24.197Z"
+      },
+      "vips": {
+        "source": "url",
+        "version": "8.18.7",
+        "url": "https://github.com/libvips/build-win64-mxe/releases/download/v8.18.7/vips-dev-x64-all-8.18.7.zip",
+        "sha256": "78e56ba30c267ba32ff965200534bd5721364cadbead8c4d595e44b58dfeff15",
+        "stagedSha256": "9fc3a17de474eb8fc90e3be860e7038fd6a6fc137ab30ee9b4accc675505c17a",
+        "date": "2026-10-17T00:33:25.733Z"
+      },
+      "gs": {
+        "source": "url",
+        "version": "10.08.0",
+        "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-ghostscript-10.08.0-2-any.pkg.tar.zst",
+        "sha256": "f2cf05482407de57b0ab3de7b3daf7c7d442eeae73de6ffc4ced75894bc94367",
+        "stagedSha256": "543bc7b9ebda469ab86e6f1d7165cdeff93acf3259895170e4a726d4001f6792",
+        "date": "2026-10-17T00:33:26.695Z"
+      }
+    },
+    "aarch64-pc-windows-msvc": {
+      "ffmpeg": {
+        "source": "url",
+        "version": "9.0.2",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-winarm64-gpl-9.0.zip",
+        "sha256": "d99dafe91825139d6fd8ad237c9217cff290277585899a95d1e69a009aaa275d",
+        "stagedSha256": "7ede3805beaacce58c8978baba83f3a35dc52ffbf68bded1eedf1860f9930c69",
+        "date": "2026-10-17T00:33:36.381Z"
+      },
+      "ffprobe": {
+        "source": "url",
+        "version": "9.0.2",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-winarm64-gpl-9.0.zip",
+        "sha256": "d99dafe91825139d6fd8ad237c9217cff290277585899a95d1e69a009aaa275d",
+        "stagedSha256": "0d72ce9a4dc824d19b73542dcff4fdbd086184cd0e37ceaf54fedf559a195d5a",
+        "date": "2026-10-17T00:33:40.362Z"
+      },
+      "qpdf": {
+        "source": "url",
+        "version": "12.4.2",
+        "url": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-msvc-arm64.zip",
+        "sha256": "2b5d7740a2513d8a841116692dc2cf7efe83f35262386ebab18bed35fbf15ab1",
+        "stagedSha256": "e5b87240eeb26efa857bffd87d058dab35e1c061a3cce9cd779170564e90969e",
+        "date": "2026-10-17T00:33:42.397Z"
+      },
+      "vips": {
+        "source": "url",
+        "version": "8.18.7",
+        "url": "https://github.com/libvips/build-win64-mxe/releases/download/v8.18.7/vips-dev-arm64-all-8.18.7.zip",
+        "sha256": "8f2d3a94bbc485a8226cdea012d3a76ac660a373a154fabcd772226978e56f4a",
+        "stagedSha256": "50ba63c24cd09e7abe913e07dfc7930e90df58a9c5169a5deb1262d85976c949",
+        "date": "2026-10-17T00:33:43.933Z"
+      },
+      "gs": {
+        "source": "url",
+        "version": "10.08.0",
+        "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-ghostscript-10.08.0-2-any.pkg.tar.zst",
+        "sha256": "ade0e912a306bca8add436d188b4006d86eae5e1635151b1b1d7df563fbe316e",
+        "stagedSha256": "a7f643b7a30adfff91220a625224635d2ebd0c14b763389407557704da7305e9",
+        "date": "2026-10-17T00:33:44.675Z"
       }
     }
   }
