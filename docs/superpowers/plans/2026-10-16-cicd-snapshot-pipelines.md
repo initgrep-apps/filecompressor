@@ -90,14 +90,14 @@
 - [ ] Step 1: operator pushes the first `v*` tag → release.yml → 4 green rows → draft release with installers + SBOM
 - [ ] Step 2: operator clicks publish; ledger the run
 
-### Task 5: Process docs close-out
+### Task 5: Process docs close-out (done — PR #122 merged a7066cc)
 
 **Files:**
 - Modify: `docs/ci-process.md` (runbook: bump = manifest/pins edit → dispatch freeze.yml → tag; failure table: no CI-freeze-vs-local distinction needed — one flow), `docs/adr/0001-…` (amend: GitHub-hosted-only decision + Intel revisit date), `docs/bugs.md`, `AGENTS.md` CI/CD section, `docs/superpowers/plans/2026-10-14-cicd-release-workflows.md` (supersede banner — done)
 
-- [ ] Step 1: docs edits
-- [ ] Step 2: full gate green
-- [ ] Step 3: commit `docs: snapshot-once process definition`
+- [x] Step 1: docs edits
+- [x] Step 2: full gate green
+- [x] Step 3: commit `docs: snapshot-once process definition`
 
 ---
 
