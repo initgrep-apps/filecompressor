@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildPe } from "./fixtures/pe-fixture.mjs";
 import { sha256File } from "./lib.mjs";
 import {
   assertAllEnginesStaged,
@@ -28,6 +29,13 @@ import { describeDarwin, itDarwin } from "../test-platform.mjs";
 
 const cleanupRoots = [];
 const originalPath = process.env.PATH;
+
+const KERNEL32 = { dll: "KERNEL32.dll", functions: [{ name: "LoadLibraryExW" }] };
+const REAL_VIPS_EXE = () =>
+  buildPe({ importSpecs: [KERNEL32, { dll: "libglib-2.0-0.dll", functions: [] }] });
+const REAL_LEAF_DLL = () => buildPe({ importSpecs: [KERNEL32] });
+const REAL_GS_EXE = () => buildPe({ importSpecs: [KERNEL32, { dll: "libgs-10.dll", functions: [] }] });
+const REAL_GS_DLL = () => buildPe({ importSpecs: [KERNEL32, { dll: "zlib1.dll", functions: [] }] });
 
 function withPath(value, body) {
   const previous = process.env.PATH;
@@ -579,8 +587,8 @@ describe("prepTarget", () => {
     });
     const staging = join(root, "src-tauri", ".staging", "vips-x86_64-pc-windows-msvc", "vips-dev-8.18", "bin");
     await mkdir(staging, { recursive: true });
-    await writeFile(join(staging, "vips.exe"), "exe");
-    await writeFile(join(staging, "libglib-2.0-0.dll"), "dll");
+    await writeFile(join(staging, "vips.exe"), REAL_VIPS_EXE());
+    await writeFile(join(staging, "libglib-2.0-0.dll"), REAL_LEAF_DLL());
 
     await prepTarget("x86_64-pc-windows-msvc", root);
 
@@ -590,6 +598,32 @@ describe("prepTarget", () => {
       existsSync(join(root, "src-tauri", "frameworks")),
       "the macOS bundle scripts must not run for a Windows target",
     ).toBe(false);
+  });
+
+  it("refuses a windows engine whose staged DLLs leave a non-system import dangling", async () => {
+    const { mkdir, mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(join(tmpdir(), "prep-win-dangling-"));
+    const root = await makeRoot({
+      targets: {
+        "x86_64-pc-windows-msvc": {
+          gs: {
+            source: "url",
+            url: "https://example.invalid/gs.pkg.tar.zst",
+            sha256: "a".repeat(64),
+            member: "ucrt64/bin/gswin64c.exe",
+            dest: "gs",
+            expectVersion: "10.08.0",
+          },
+        },
+      },
+    });
+    const staging = join(root, "src-tauri", ".staging", "gs-x86_64-pc-windows-msvc", "ucrt64", "bin");
+    await mkdir(staging, { recursive: true });
+    await writeFile(join(staging, "gswin64c.exe"), REAL_GS_EXE());
+    await writeFile(join(staging, "libgs-10.dll"), REAL_GS_DLL());
+
+    await expect(prepTarget("x86_64-pc-windows-msvc", root)).rejects.toThrow(/zlib1\.dll/);
   });
 
   it("still refuses an unknown target before doing any work", async () => {

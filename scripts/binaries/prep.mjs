@@ -28,6 +28,7 @@ import {
   validateManifest,
   writeJson,
 } from "./lib.mjs";
+import { assertEngineImportsClosed } from "./closure-check.mjs";
 
 const BUNDLE_SCRIPTS = ["bundle-vips-macos.sh", "bundle-pdf-macos.sh"];
 const GS_INIT_MARKER = join("Resource", "Init", "gs_init.ps");
@@ -469,6 +470,13 @@ async function prepWindowsTarget(target, root, targetEntries) {
   const fetched = Object.entries(targetEntries).filter(([, entry]) => entry.source !== "brew");
   await assertFetchedEntriesUntouched(lock, target, root, fetched);
   const staged = await prepWindowsEngines(root, target, targetEntries);
+  for (const dir of staged) {
+    await assertEngineImportsClosed(dir).catch((error) => {
+      throw new PipelinesError(
+        `${error.message ?? error} — staged from 'yarn binaries:fetch --target ${target}'; if a dependency DLL is absent from every foundation package, declare a new extraPackages row on this engine in scripts/binaries.manifest.json and re-run fetch`,
+      );
+    });
+  }
   lock.generated = new Date().toISOString();
   await writeJson(lockPath(root), lock);
   for (const dir of staged) {

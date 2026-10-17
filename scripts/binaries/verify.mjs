@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { gsSentinelPaths, isGsSentinel } from "./gs-sentinels.mjs";
 import { ENGINES_DIR } from "./prep-windows.mjs";
 import { archForTriple, binaryDir, exists, expectedDest, hostTriple, isMain, isWindowsTriple, knownTriples, lockPath, manifestPath, parseArgs, readJson, run, sha256File, validateLock, validateManifest } from "./lib.mjs";
+import { assertEngineImportsClosed } from "./closure-check.mjs";
 
 async function contentArchMac(path) {
   try {
@@ -328,6 +329,18 @@ export async function verifyTarget(target, root) {
       continue;
     }
     const execPath = enginesExe ?? binPath;
+
+    if (enginesExe) {
+      const engineDir = join(bins, ENGINES_DIR, destName);
+      const closed = await assertEngineImportsClosed(engineDir).then(
+        () => true,
+        (error) => ({ error }),
+      );
+      if (closed !== true) {
+        problems.push(`${dest}: engine import closure failed — ${closed.error.message ?? closed.error}`);
+        continue;
+      }
+    }
 
     const version = await checkVersion(execPath, entry.expectVersion, triple, root);
     if (!version.ok) {
