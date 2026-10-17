@@ -85,6 +85,8 @@
 
 ### Task 4: First real tag = the live verification of release.yml
 
+**Ruling (2026-10-17, release runs 39051112136 → 39058511726):** four runs failed in a ladder of four classes — version-check regex (fixed a4833b1), intel-row + win-arm fixture-arch coupling (fixed 2aa38fe), the draft/left-over-blocks-retry trap (documented recovery; idempotency deferred in `docs/ci-followups.md` 8), and the remaining macIntel failure now fixed by the rustc-stub convention in `bundle-pdf.test.mjs` (RCA + evidence: `docs/bugs.md` → "Release v0.1.0-alpha.1 live-proof residue"; completion plan: `2026-10-17-release-alpha-1-intel-row-fix.md`). In run 39058511726 three of four rows already passed and uploaded their assets (windows-11-arm, windows-2025, macos-15); only the macIntel row's vitest gate failed, and the fix + intel-row de-risking (local x86_64 unfreeze/audit + cross-target cargo check + Rosetta cargo test) are recorded in the ledger.
+
 **Files:** none (operational)
 
 - [ ] Step 1: operator pushes the first `v*` tag → release.yml → 4 green rows → draft release with installers + SBOM

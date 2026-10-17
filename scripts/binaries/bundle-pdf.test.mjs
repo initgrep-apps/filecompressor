@@ -216,6 +216,15 @@ function runBundle(root, { stubBin, env = {} } = {}) {
   });
 }
 
+function stubRustcBin(root) {
+  const stubBin = join(root, "stub-bin");
+  mkdirSync(stubBin, { recursive: true });
+  writeFileSync(join(stubBin, "rustc"), `#!/bin/sh\necho 'host: ${TRIPLE}'\n`, {
+    mode: 0o755,
+  });
+  return stubBin;
+}
+
 function basenameOf(path) {
   return path.split("/").pop();
 }
@@ -235,7 +244,9 @@ describeDarwin("bundle-pdf-macos.sh qpdf lib staging gate", () => {
     arm64Fixture(join(binDir, `qpdf-${TRIPLE}`), "qpdf");
     arm64Fixture(join(binDir, `gs-${TRIPLE}`), "gs");
 
-    const result = sh(`bash scripts/bundle-pdf-macos.sh 2>&1; echo "EXIT:$?"`, root);
+    const result = sh(`bash scripts/bundle-pdf-macos.sh 2>&1; echo "EXIT:$?"`, root, {
+      PATH: `${stubRustcBin(root)}:${process.env.PATH}`,
+    });
     expect(result.out).toMatch(/qpdf lib staging dir missing/);
     expect(result.out).toMatch(/yarn binaries:fetch --target/);
   });
@@ -249,7 +260,9 @@ describeDarwin("bundle-pdf-macos.sh qpdf lib staging gate", () => {
     mkdirSync(stagedLibDir(root), { recursive: true });
     writeFileSync(join(stagedLibDir(root), "unrelated.txt"), "not a dylib");
 
-    const result = sh(`bash scripts/bundle-pdf-macos.sh 2>&1; echo "EXIT:$?"`, root);
+    const result = sh(`bash scripts/bundle-pdf-macos.sh 2>&1; echo "EXIT:$?"`, root, {
+      PATH: `${stubRustcBin(root)}:${process.env.PATH}`,
+    });
     expect(result.out).toMatch(/no libqpdf\*\.dylib in/);
     expect(result.out).toMatch(/yarn binaries:fetch --target/);
   });
