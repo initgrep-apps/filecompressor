@@ -20,6 +20,7 @@ import {
   manifestPath,
   parseArgs,
   readJson,
+  removeRestoreMarker,
   run,
   sha256File,
   sha256Tree,
@@ -532,6 +533,7 @@ async function prepWindowsTarget(target, root, targetEntries) {
   }
   lock.generated = new Date().toISOString();
   await writeJson(lockPath(root), lock);
+  await removeRestoreMarker(root, target);
   for (const dir of staged) {
     console.log(`prep: staged ${dir}`);
   }
@@ -584,6 +586,7 @@ export async function prepTarget(target, root) {
   await refreshBundledStagedShas(lock, target, root, Object.entries(targetEntries));
   lock.generated = new Date().toISOString();
   await writeJson(lockPath(root), lock);
+  await removeRestoreMarker(root, target);
 
   for (const stagedBinary of staged) {
     console.log(`prep: ${stagedBinary.dest} bundled and signed`);

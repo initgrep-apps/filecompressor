@@ -11,6 +11,7 @@ src-tauri/binaries/
 src-tauri/frameworks/
 src-tauri/gs-resources/
 src-tauri/.freeze/
+src-tauri/.sidecars-restored.json
 src-tauri/.staging/
 src-tauri/.frameworks-staging.*/
 src-tauri/gs-resources.staging.*/

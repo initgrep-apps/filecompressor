@@ -862,6 +862,92 @@ describe("prepTarget", () => {
     expect(error).toBeInstanceOf(PipelinesError);
     await expect(readdir(join(root, "src-tauri"))).rejects.toThrow();
   });
+
+  it("removes the restore marker after a windows prep re-stages the engines", async () => {
+    const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(join(tmpdir(), "prep-win-marker-"));
+    const root = await makeRoot({
+      targets: {
+        "x86_64-pc-windows-msvc": {
+          vips: {
+            source: "url",
+            url: "https://example.invalid/vips.zip",
+            sha256: "a".repeat(64),
+            member: "vips-dev-8.18/bin/vips.exe",
+            dest: "vips",
+            expectVersion: "8.18.7",
+          },
+        },
+      },
+    });
+    const staging = join(root, "src-tauri", ".staging", "vips-x86_64-pc-windows-msvc", "vips-dev-8.18", "bin");
+    await mkdir(staging, { recursive: true });
+    await writeFile(join(staging, "vips.exe"), REAL_VIPS_EXE());
+    await writeFile(join(staging, "libglib-2.0-0.dll"), REAL_LEAF_DLL());
+    const marker = join(root, "src-tauri", ".sidecars-restored.json");
+    await writeFile(
+      marker,
+      JSON.stringify({
+        triple: "x86_64-pc-windows-msvc",
+        bundleSha256: "a".repeat(64),
+        restoredAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    const logs = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((line) => logs.push(String(line)));
+    await prepTarget("x86_64-pc-windows-msvc", root);
+    logSpy.mockRestore();
+
+    expect(
+      logs.some((line) =>
+        /removed stale restore marker — staged binaries override restore provenance for x86_64-pc-windows-msvc/.test(
+          line,
+        ),
+      ),
+    ).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  itDarwin("removes the restore marker after a macOS prep re-stages the brew engines", async () => {
+    const root = await makeRoot(WITH_BREW);
+    const prefix = await makeFormulaPrefix("vips");
+    const stubDir = await makeStubBrew(stubBrewScript(prefix));
+    await mkdir(join(root, "src-tauri", "binaries"), { recursive: true });
+    await writeFile(join(root, "src-tauri", "binaries", "ffmpeg-aarch64-apple-darwin"), "fake", {
+      mode: 0o755,
+    });
+    await stubBundleScripts(root, "#!/bin/sh\nexit 0\n");
+    const marker = join(root, "src-tauri", ".sidecars-restored.json");
+    await writeFile(
+      marker,
+      JSON.stringify({
+        triple: "aarch64-apple-darwin",
+        bundleSha256: "a".repeat(64),
+        restoredAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    const logs = [];
+    const logSpy = vi.spyOn(console, "log").mockImplementation((line) => logs.push(String(line)));
+    await withPath(`${stubDir}:${originalPath}`, () => prepTarget("aarch64-apple-darwin", root));
+    logSpy.mockRestore();
+
+    expect(
+      logs.some((line) =>
+        /removed stale restore marker — staged binaries override restore provenance for aarch64-apple-darwin/.test(
+          line,
+        ),
+      ),
+    ).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+
+    const lock = JSON.parse(await readFile(join(root, "scripts", "binaries.lock.json"), "utf8"));
+    expect(lock.targets["aarch64-apple-darwin"].vips.stagedSha256).toBe(
+      await sha256File(join(root, "src-tauri", "binaries", "vips-aarch64-apple-darwin")),
+    );
+  });
 });
 
 describe("prepTarget guard wiring", () => {
