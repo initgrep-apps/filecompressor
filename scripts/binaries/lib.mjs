@@ -33,8 +33,9 @@ const MANIFEST_URL_KEYS = [
   "expectVersion",
   "resources",
   "assetPattern",
+  "static",
 ];
-const MANIFEST_BREW_KEYS = ["source", "formula", "binary", "dest", "expectVersion", "resources"];
+const MANIFEST_BREW_KEYS = ["source", "formula", "binary", "dest", "expectVersion", "resources", "static"];
 const DOWNLOAD_TIMEOUT_MS = 120000;
 const MAX_REDIRECTS = 20;
 const KNOWN_FLAGS = ["--target", "--root"];
@@ -122,6 +123,11 @@ export function validateManifest(manifest) {
       }
       if (typeof entry.expectVersion !== "string" || entry.expectVersion.length === 0) {
         throw new Error(`manifest schema invalid: ${triple}/${name} is missing expectVersion`);
+      }
+      if (entry.static !== undefined && typeof entry.static !== "boolean") {
+        throw new Error(
+          `manifest schema invalid: ${triple}/${name} static must be a boolean when present (static engines ship as the flat '${name}-<triple>.exe' externalBin, not as an engines/ payload dir)`,
+        );
       }
       if (!KNOWN_SOURCES.includes(entry.source)) {
         throw new Error(

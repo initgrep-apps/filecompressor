@@ -55,7 +55,8 @@
         "member": "ffmpeg-n9.0-latest-win64-gpl-9.0/bin/ffmpeg.exe",
         "dest": "ffmpeg",
         "expectVersion": "9.0.2",
-        "assetPattern": "win64-gpl-9\\.0\\.zip$"
+        "assetPattern": "win64-gpl-9\\.0\\.zip$",
+        "static": true
       },
       "ffprobe": {
         "source": "url",
@@ -64,7 +65,8 @@
         "member": "ffmpeg-n9.0-latest-win64-gpl-9.0/bin/ffprobe.exe",
         "dest": "ffprobe",
         "expectVersion": "9.0.2",
-        "assetPattern": "win64-gpl-9\\.0\\.zip$"
+        "assetPattern": "win64-gpl-9\\.0\\.zip$",
+        "static": true
       },
       "qpdf": {
         "source": "url",
@@ -107,7 +109,8 @@
         "member": "ffmpeg-n9.0-latest-winarm64-gpl-9.0/bin/ffmpeg.exe",
         "dest": "ffmpeg",
         "expectVersion": "9.0.2",
-        "assetPattern": "winarm64-gpl-9\\.0\\.zip$"
+        "assetPattern": "winarm64-gpl-9\\.0\\.zip$",
+        "static": true
       },
       "ffprobe": {
         "source": "url",
@@ -116,7 +119,8 @@
         "member": "ffmpeg-n9.0-latest-winarm64-gpl-9.0/bin/ffprobe.exe",
         "dest": "ffprobe",
         "expectVersion": "9.0.2",
-        "assetPattern": "winarm64-gpl-9\\.0\\.zip$"
+        "assetPattern": "winarm64-gpl-9\\.0\\.zip$",
+        "static": true
       },
       "qpdf": {
         "source": "url",

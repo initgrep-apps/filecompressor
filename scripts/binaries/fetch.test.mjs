@@ -200,6 +200,32 @@ describe("manifest schema", () => {
     expect(() => validateManifest({})).toThrow(/schema invalid/);
   });
 
+  it("accepts an optional boolean static flag and rejects non-boolean values", () => {
+    const staticEntry = (value) => ({
+      source: "url",
+      url: "https://x/y.zip",
+      sha256: "a".repeat(64),
+      member: "bin/ffmpeg.exe",
+      dest: "ffmpeg",
+      expectVersion: "9.0.2",
+      static: value,
+    });
+
+    expect(() =>
+      validateManifest({ targets: { "x86_64-pc-windows-msvc": { ffmpeg: staticEntry(true) } } }),
+    ).not.toThrow();
+    expect(() =>
+      validateManifest({ targets: { "x86_64-pc-windows-msvc": { ffmpeg: staticEntry(false) } } }),
+    ).not.toThrow();
+
+    expect(() =>
+      validateManifest({ targets: { "x86_64-pc-windows-msvc": { ffmpeg: staticEntry("yes") } } }),
+    ).toThrow(/static/);
+    expect(() =>
+      validateManifest({ targets: { "x86_64-pc-windows-msvc": { ffmpeg: staticEntry(1) } } }),
+    ).toThrow(/static/);
+  });
+
   itDarwin("accepts the shipping mac arm64 manifest", () => {
     const shipping = JSON.parse(
       execFileSync("cat", [join(SCRIPTS, "..", "binaries.manifest.json")]).toString(),
