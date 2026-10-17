@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { readdir, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { archForTriple, isWindowsTriple, knownTriples, isMain, parseArgs, readJson } from "./lib.mjs";
+import { archForTriple, isWindowsTriple, knownTriples, isMain, parseArgs } from "./lib.mjs";
 
 export class SyncFrameworksError extends Error {
   constructor(message) {
@@ -48,14 +48,21 @@ export async function syncMacosFrameworks({ target, root }) {
   }
   const paths = await stagedFrameworkEntries(root);
   const path = confPath(root);
-  const raw = await readFileTextOrNull(path);
-  if (raw === null) {
-    throw new SyncFrameworksError(
-      `tauri.conf.json is missing at ${path} — the sync cannot rewrite a config that does not exist; restore it from git, then re-run`,
-    );
+  let raw;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      throw new SyncFrameworksError(
+        `tauri.conf.json is missing at ${path} — the sync cannot rewrite a config that does not exist; restore it from git, then re-run`,
+      );
+    }
+    throw error;
   }
   const conf = JSON.parse(raw);
-  const current = conf?.bundle?.macOS?.frameworks;
+  conf.bundle ??= {};
+  conf.bundle.macOS ??= {};
+  const current = conf.bundle.macOS.frameworks;
   if (
     Array.isArray(current) &&
     current.length === paths.length &&
@@ -66,18 +73,6 @@ export async function syncMacosFrameworks({ target, root }) {
   conf.bundle.macOS.frameworks = paths;
   await writeFile(path, `${JSON.stringify(conf, null, 2)}\n`, "utf8");
   return { changed: true, skip: false, frameworks: paths, previousCount: Array.isArray(current) ? current.length : 0 };
-}
-
-async function readFileTextOrNull(path) {
-  try {
-    const { readFile } = await import("node:fs/promises");
-    return await readFile(path, "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
 }
 
 export function parseCliTarget(argv) {
