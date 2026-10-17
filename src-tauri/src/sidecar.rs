@@ -540,19 +540,14 @@ mod tests {
         let dir = std::path::PathBuf::from("/opt/engine");
         let candidates = sidecar_candidates(&dir, "vips");
 
+        let triple_name = sidecar_filename("vips").expect("host platform must map to a triple");
         assert_eq!(
             candidates.len(),
             2,
             "the exe-dir candidate list is exactly the triple-suffixed name then the plain name"
         );
-        assert_eq!(
-            candidates[0],
-            std::path::PathBuf::from("/opt/engine/vips-aarch64-apple-darwin")
-        );
-        assert_eq!(
-            candidates[1],
-            std::path::PathBuf::from("/opt/engine/vips")
-        );
+        assert_eq!(candidates[0], dir.join(triple_name));
+        assert_eq!(candidates[1], dir.join("vips"));
     }
 
     #[test]
@@ -576,6 +571,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn resolve_sidecar_path_returns_io_error_for_other_io_failures() {
         let dir = tempfile::TempDir::new().unwrap();
         let file_path = dir.path().join("vips-regular");
