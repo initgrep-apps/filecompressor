@@ -7,6 +7,7 @@ export const WINDOWS_SYSTEM_DLLS = new Set(
     "advapi32.dll",
     "api-ms-win-core-console-l1-1-0.dll",
     "bcrypt.dll",
+    "bcryptprimitives.dll",
     "comctl32.dll",
     "comdlg32.dll",
     "crypt32.dll",

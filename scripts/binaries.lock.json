@@ -1,5 +1,5 @@
 {
-  "generated": "2026-10-17T00:33:44.675Z",
+  "generated": "2026-10-17T04:51:10.090Z",
   "targets": {
     "aarch64-apple-darwin": {
       "ffmpeg": {
@@ -84,7 +84,236 @@
         "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-ghostscript-10.08.0-2-any.pkg.tar.zst",
         "sha256": "f2cf05482407de57b0ab3de7b3daf7c7d442eeae73de6ffc4ced75894bc94367",
         "stagedSha256": "543bc7b9ebda469ab86e6f1d7165cdeff93acf3259895170e4a726d4001f6792",
-        "date": "2026-10-17T00:33:26.695Z"
+        "date": "2026-10-17T00:33:26.695Z",
+        "extra": [
+          {
+            "name": "brotli",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-brotli-1.2.0-1-any.pkg.tar.zst",
+            "sha256": "9cc89665496ea504751476eafba15c71c554aaf3004babc2004f7c07ffd60514",
+            "stagedSha256s": {
+              "ucrt64/bin/libbrotlidec.dll": "e270b6e576594ee8ee6e33ccc54e34a54304616dd6225652e11e49d6f17ef896",
+              "ucrt64/bin/libbrotlicommon.dll": "c62c08223e450dfc2fff33c752cc228505ffd9d755201958ba800d5d30481a2c"
+            },
+            "date": "2026-10-17T04:50:22.782Z"
+          },
+          {
+            "name": "bzip2",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-bzip2-1.0.8-4-any.pkg.tar.zst",
+            "sha256": "f03a2174034ddd2d96cecd34f617c5f8e2ef86c812b8d2bb3b8875257f2c8bfa",
+            "stagedSha256s": {
+              "ucrt64/bin/libbz2-1.dll": "1790bf6473c9d48db14c1f0ee8124142327556d281299ea2a72ee361118ee01a"
+            },
+            "date": "2026-10-17T04:50:22.882Z"
+          },
+          {
+            "name": "freetype",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-freetype-2.14.3-1-any.pkg.tar.zst",
+            "sha256": "f502bdf9ed07aa95e223e1aba17ce8cb2d975aab5066eec17a2d7dc4fb8a1c20",
+            "stagedSha256s": {
+              "ucrt64/bin/libfreetype-6.dll": "a3271784f8366b3c6412e0c35474884fa12899c392bacb08bc8eac00f4be7e64"
+            },
+            "date": "2026-10-17T04:50:21.638Z"
+          },
+          {
+            "name": "gettext-runtime",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-gettext-runtime-1.0-1-any.pkg.tar.zst",
+            "sha256": "ba693dda4ac375af76ce481ff3a6e7481286546cc7dc6d56c7021dae34084157",
+            "stagedSha256s": {
+              "ucrt64/bin/libintl-8.dll": "0e5a178731e6be6d115442a6ade3df7f03265cd1fc4338f8b6f86a8001cbf582"
+            },
+            "date": "2026-10-17T04:50:23.449Z"
+          },
+          {
+            "name": "glib2",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-glib2-2.90.0-1-any.pkg.tar.zst",
+            "sha256": "877259a47d98b73473c5ea0729ad8297ca31a545c41de2b372e726ebed314b1c",
+            "stagedSha256s": {
+              "ucrt64/bin/libglib-2.0-0.dll": "642d4da7a378374a84b1edc30100b9e9c7b798e53347853aadd1c86691a81468"
+            },
+            "date": "2026-10-17T04:50:25.393Z"
+          },
+          {
+            "name": "graphite2",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-graphite2-1.3.15-1-any.pkg.tar.zst",
+            "sha256": "34ca1f88bff10ef182a6b1c8e5622d5029f13b05748e361af13b552b422ea849",
+            "stagedSha256s": {
+              "ucrt64/bin/libgraphite2.dll": "93953e4744bcfce9a7bc439b956544bc213095cb1349c3602a58370f32b25c18"
+            },
+            "date": "2026-10-17T04:50:25.503Z"
+          },
+          {
+            "name": "harfbuzz",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-harfbuzz-14.5.0-1-any.pkg.tar.zst",
+            "sha256": "e011726c446ad91c28eb8e6d4c456498bf9eae59408c15377d1d4165eb60aa52",
+            "stagedSha256s": {
+              "ucrt64/bin/libharfbuzz-0.dll": "255b36d87925a4fb59f4c906ca116cb48ac336c3cefcea8612c179dd56169eab"
+            },
+            "date": "2026-10-17T04:50:23.175Z"
+          },
+          {
+            "name": "jbig2dec",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-jbig2dec-0.20-1-any.pkg.tar.zst",
+            "sha256": "df57282cc76e53557fcc36a812d4a07e437f1c3f36f2477d871ff416518522b3",
+            "stagedSha256s": {
+              "ucrt64/bin/libjbig2dec-0.dll": "21d84f8e06b39a992488fd8887b97b3e45232183d102718b29122ac88477bf35"
+            },
+            "date": "2026-10-17T04:50:21.928Z"
+          },
+          {
+            "name": "jbigkit",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-jbigkit-2.1-6-any.pkg.tar.zst",
+            "sha256": "9e237d1041350e7436294cfa13d4bd3d1606d1f2a32ade2eb2958b4d4e79b7ad",
+            "stagedSha256s": {
+              "ucrt64/bin/libjbig-0.dll": "36b6155be36d24a19154a48177a09978ff6c26f48665d8c7bb5057aaace6b91c"
+            },
+            "date": "2026-10-17T04:50:23.785Z"
+          },
+          {
+            "name": "lerc",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-lerc-4.1.1-1-any.pkg.tar.zst",
+            "sha256": "c0afbf4832488d67030c6f313349cd814946c9a7bc3ae9fd54524825c9ca055d",
+            "stagedSha256s": {
+              "ucrt64/bin/libLerc.dll": "1ffee78579c25b073267bcac8d0a6045d9bd446e010c7953b569b2629ca8a58a"
+            },
+            "date": "2026-10-17T04:50:23.882Z"
+          },
+          {
+            "name": "libdeflate",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-libdeflate-1.26-1-any.pkg.tar.zst",
+            "sha256": "17720c77bd01641a3554801cafd71d96fb7fff7427f4cc20ac9f36efb8cb3da0",
+            "stagedSha256s": {
+              "ucrt64/bin/libdeflate.dll": "61a60665da9fd15a0e8668c47424f325e1d74479c3f896fa7ae48ffcee4ca300"
+            },
+            "date": "2026-10-17T04:50:23.695Z"
+          },
+          {
+            "name": "libgcc",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-libgcc-16.2.0-4-any.pkg.tar.zst",
+            "sha256": "de65b4adae899d9278427402e29d03860bacba481794460f3a1d078610cbb783",
+            "stagedSha256s": {
+              "ucrt64/bin/libgcc_s_seh-1.dll": "68ca4574b331402879dec403ba4f14491c9b8fc4aa3f4a41432008714b9bc5df"
+            },
+            "date": "2026-10-17T04:50:25.837Z"
+          },
+          {
+            "name": "libiconv",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-libiconv-1.19-1-any.pkg.tar.zst",
+            "sha256": "9a500f38c2b91808741c62fae746b3e9110b33a1ecf5c30fa0c66dbedddf7e16",
+            "stagedSha256s": {
+              "ucrt64/bin/libiconv-2.dll": "94ec68fb8d342b6c91b6b48a8d95092819cdcd006a7166e0b68062f946afd08a"
+            },
+            "date": "2026-10-17T04:50:23.605Z"
+          },
+          {
+            "name": "libidn",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-libidn-1.44-1-any.pkg.tar.zst",
+            "sha256": "7c749992d2452073e2606c3c53ee15b813d176c4ba40f76e7f6a37e7489cc719",
+            "stagedSha256s": {
+              "ucrt64/bin/libidn-12.dll": "c27689153088a40de91b567bdcfe88ff8330b47ffe60d014c6a5a28a9b0076c2"
+            },
+            "date": "2026-10-17T04:50:21.837Z"
+          },
+          {
+            "name": "libjpeg-turbo",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-libjpeg-turbo-3.2.0-1-any.pkg.tar.zst",
+            "sha256": "7c001d00df557cfee969ad43d37b9c31ae22869e8aac4091a89dc3ae6d95e11d",
+            "stagedSha256s": {
+              "ucrt64/bin/libjpeg-8.dll": "c63acd5a3231725aa96aa35444b74cd8d607a6fbdab1dd18b0e0ada7e39476d4"
+            },
+            "date": "2026-10-17T04:50:22.107Z"
+          },
+          {
+            "name": "libpng",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-libpng-1.6.59-1-any.pkg.tar.zst",
+            "sha256": "7f8448e06eceba8f8ce130390addea49f767bdf8f6b7e7eede8ca6d595e3d3a8",
+            "stagedSha256s": {
+              "ucrt64/bin/libpng16-16.dll": "7f425fd2b41d83869bb31bf761b4fb315f11040d55540661f96e582e1ec79a36"
+            },
+            "date": "2026-10-17T04:50:22.369Z"
+          },
+          {
+            "name": "libstdc++",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-libstdc++-16.2.0-4-any.pkg.tar.zst",
+            "sha256": "2211dbbf1220287e49f5d66bb6cb09ee5a157901a485197553c9a940cc902d5b",
+            "stagedSha256s": {
+              "ucrt64/bin/libstdc++-6.dll": "b30dbd914d903992acb28b38455947153886656beafbd91c465c31aa258f9c45"
+            },
+            "date": "2026-10-17T04:50:25.978Z"
+          },
+          {
+            "name": "libtiff",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-libtiff-4.7.2-1-any.pkg.tar.zst",
+            "sha256": "76904b28133fc3cc0a0e518846c98d3d2166fac70ed9c6184dfe5ef145e5f279",
+            "stagedSha256s": {
+              "ucrt64/bin/libtiff-6.dll": "ce0eb686a9b03a8586d7d1f833fadcbe67ad2f6ff8538c3f431d4edb072f935d"
+            },
+            "date": "2026-10-17T04:50:22.558Z"
+          },
+          {
+            "name": "libwebp",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-libwebp-1.6.0-1-any.pkg.tar.zst",
+            "sha256": "34ff8396c403d484c8777ad49ad0fc06dfb94fadf6f14bcf84d50c45bc6fd17e",
+            "stagedSha256s": {
+              "ucrt64/bin/libwebp-7.dll": "8dfe40c4e0abc90ddf18f080898987e01253d099b2b2d6daf7db521e55c00446",
+              "ucrt64/bin/libsharpyuv-0.dll": "d29380c7056383f3e7a80bf9e150f0b8c425c1cf2568d1336e88979ddc2307af"
+            },
+            "date": "2026-10-17T04:50:24.397Z"
+          },
+          {
+            "name": "libwinpthread",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-libwinpthread-14.0.0.r426.g4564ee4b5-1-any.pkg.tar.zst",
+            "sha256": "f8de8153bbc0e47ba244a423c12c426fa1d9f56395117ecaa34c6ad6ebed6ca3",
+            "stagedSha256s": {
+              "ucrt64/bin/libwinpthread-1.dll": "76cc52adfcdb8c800813b2ae8da42a908934eb1ee54ce8e9744fc8d703c76ee1"
+            },
+            "date": "2026-10-17T04:50:26.055Z"
+          },
+          {
+            "name": "openjpeg2",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-openjpeg2-2.5.4-2-any.pkg.tar.zst",
+            "sha256": "2a4c148052b6f8e47abe5e98b29fd8942e2e3c17722ff00f172b1630897a10b9",
+            "stagedSha256s": {
+              "ucrt64/bin/libopenjp2-7.dll": "94f9507828d391cf96d700d34918114f1c1e03f91dd1243a19275e0435690925"
+            },
+            "date": "2026-10-17T04:50:22.239Z"
+          },
+          {
+            "name": "pcre2",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-pcre2-10.49-1-any.pkg.tar.zst",
+            "sha256": "63172179db724ac71e2439a7981134c1bcab8049bdddfd349b32b8f76ed52d1e",
+            "stagedSha256s": {
+              "ucrt64/bin/libpcre2-8-0.dll": "1f609cde2ce432efb7d2b0c7b84a14a6dbfc9622d1ac1a3cbadf51c5b0b4dada"
+            },
+            "date": "2026-10-17T04:50:25.767Z"
+          },
+          {
+            "name": "xz",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-xz-5.8.4-1-any.pkg.tar.zst",
+            "sha256": "a9d771f816d8c0c5bde152ffb27a687ede91079b8e77e5b8297efa3b5a835934",
+            "stagedSha256s": {
+              "ucrt64/bin/liblzma-5.dll": "d97a260b8bb4f6affc34ec47249429240068b94bb6f7dc30c4d64daaafb3ac69"
+            },
+            "date": "2026-10-17T04:50:24.232Z"
+          },
+          {
+            "name": "zlib",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-zlib-1.3.2-2-any.pkg.tar.zst",
+            "sha256": "841401182976d2f9e17e5c0ebaac51f2a8014140ea53d67625e91c8fb3c85ea0",
+            "stagedSha256s": {
+              "ucrt64/bin/zlib1.dll": "11cd91171765cd65f1c3362e3df67e5f5a618a6b88c8cdec899b802eaf1c7b0d"
+            },
+            "date": "2026-10-17T04:50:22.640Z"
+          },
+          {
+            "name": "zstd",
+            "url": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-zstd-1.5.7-2-any.pkg.tar.zst",
+            "sha256": "dbdb8427280046a2b41697780aa4c52983b708082b0da4755951dc3bea96ca89",
+            "stagedSha256s": {
+              "ucrt64/bin/libzstd.dll": "48368ab0ca622d0ec12f41ce85d91f22866bf5da92c77a69a06483564c93816c"
+            },
+            "date": "2026-10-17T04:50:24.544Z"
+          }
+        ]
       }
     },
     "aarch64-pc-windows-msvc": {
@@ -126,7 +355,218 @@
         "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-ghostscript-10.08.0-2-any.pkg.tar.zst",
         "sha256": "ade0e912a306bca8add436d188b4006d86eae5e1635151b1b1d7df563fbe316e",
         "stagedSha256": "a7f643b7a30adfff91220a625224635d2ebd0c14b763389407557704da7305e9",
-        "date": "2026-10-17T00:33:44.675Z"
+        "date": "2026-10-17T00:33:44.675Z",
+        "extra": [
+          {
+            "name": "brotli",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-brotli-1.2.0-1-any.pkg.tar.zst",
+            "sha256": "34acb6ac828721c972c99eedb37e098b9e30321ff00103a70b26170bca221afb",
+            "stagedSha256s": {
+              "clangarm64/bin/libbrotlidec.dll": "916b14535c4cedd0edb53c6a3dc883f1223b8a378ec4838353b37f36cbf23822",
+              "clangarm64/bin/libbrotlicommon.dll": "6f2ab8fa291bfa9b3c8fd335a68c17094ee1f72db313e4ffe1f598a375126a7e"
+            },
+            "date": "2026-10-17T04:50:34.352Z"
+          },
+          {
+            "name": "bzip2",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-bzip2-1.0.8-4-any.pkg.tar.zst",
+            "sha256": "0e684014d7ad49bffe845b33e5bd34944497bbfbed411fe485174b823379d664",
+            "stagedSha256s": {
+              "clangarm64/bin/libbz2-1.dll": "2ea55932ca4f70229c9bdb756faef51fb007d49a1681d448b0ad5256f4ff6141"
+            },
+            "date": "2026-10-17T04:50:34.454Z"
+          },
+          {
+            "name": "freetype",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-freetype-2.14.3-1-any.pkg.tar.zst",
+            "sha256": "0f7b1dc85889b861aefbb2e0fa0ad6b93b36039147c05dbdc13d160981dcd86f",
+            "stagedSha256s": {
+              "clangarm64/bin/libfreetype-6.dll": "6707259f147a2d24fd8358eef838fd925056f46d29683fc8e7756ef1ea858bbe"
+            },
+            "date": "2026-10-17T04:50:33.453Z"
+          },
+          {
+            "name": "gettext-runtime",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-gettext-runtime-1.0-1-any.pkg.tar.zst",
+            "sha256": "b5364a7c78cc4b73273a4a28e07e3c6d9cc8ec0ce269527409d944ab1c8f5a70",
+            "stagedSha256s": {
+              "clangarm64/bin/libintl-8.dll": "31db0d0e7780cf28dca1309a894cb775b2ab130c4ba777c546a206970ca47320"
+            },
+            "date": "2026-10-17T04:50:34.829Z"
+          },
+          {
+            "name": "glib2",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-glib2-2.90.0-1-any.pkg.tar.zst",
+            "sha256": "ccc85cdae8807bcacfda4858b5bf84aeeb95983763022f7f3c1325a5db32b92f",
+            "stagedSha256s": {
+              "clangarm64/bin/libglib-2.0-0.dll": "e84c2342329536c1eb9626e3cb44b9b037dc3aef632f97d7c6deb13b6c94a51d"
+            },
+            "date": "2026-10-17T04:50:36.699Z"
+          },
+          {
+            "name": "graphite2",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-graphite2-1.3.15-1-any.pkg.tar.zst",
+            "sha256": "28490fe4773d50cde27bd5ce5186cb78620afdbdb9665bab01ca89fbd039aaa9",
+            "stagedSha256s": {
+              "clangarm64/bin/libgraphite2.dll": "a7ff3ca8cf8a41599a452d4229fe39b75b583dd7b2971ced082ecbe3bb36fd89"
+            },
+            "date": "2026-10-17T04:50:36.786Z"
+          },
+          {
+            "name": "harfbuzz",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-harfbuzz-14.5.0-1-any.pkg.tar.zst",
+            "sha256": "6c19a47fb95985666e726be6f78c994384cd2f6e8039049bf1e2f3873cf43d14",
+            "stagedSha256s": {
+              "clangarm64/bin/libharfbuzz-0.dll": "e07190f158f8aeb8cbedd5e0ea43d172778c23dff65226b666b42b495946f8e9"
+            },
+            "date": "2026-10-17T04:50:34.643Z"
+          },
+          {
+            "name": "jbig2dec",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-jbig2dec-0.20-1-any.pkg.tar.zst",
+            "sha256": "d2b3f66328804c974270828305e66f9cbfb0320981d48f43f8b25d9cfe72154a",
+            "stagedSha256s": {
+              "clangarm64/bin/libjbig2dec-0.dll": "b182b6dded2154fdf26f73cd1cd5b5b227ac8ec13974eadea65630798d7432de"
+            },
+            "date": "2026-10-17T04:50:33.640Z"
+          },
+          {
+            "name": "jbigkit",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-jbigkit-2.1-6-any.pkg.tar.zst",
+            "sha256": "032761178920b78d051b7b3ecfec0b9a772e2e9a447bd03a77825cc3fb1b3f71",
+            "stagedSha256s": {
+              "clangarm64/bin/libjbig-0.dll": "fee8d3341f79a54b948537969233a5ffdd9f9a3c3ceaec81c256a86ba9a17e95"
+            },
+            "date": "2026-10-17T04:50:35.115Z"
+          },
+          {
+            "name": "lerc",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-lerc-4.1.1-1-any.pkg.tar.zst",
+            "sha256": "be89e9e4fc90672a31fa555d34e2f7aa42723976bfc1ce29835798c999ac09f0",
+            "stagedSha256s": {
+              "clangarm64/bin/libLerc.dll": "428206e8024f9f065c9ba89d7792fd186664c94cd40bf59319534396404195a4"
+            },
+            "date": "2026-10-17T04:50:35.208Z"
+          },
+          {
+            "name": "libc++",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-libc++-22.1.8-1-any.pkg.tar.zst",
+            "sha256": "6755aa5a658d0a906e1e8477858b3518fd87d380ac5c854a226f5a3a2c78d794",
+            "stagedSha256s": {
+              "clangarm64/bin/libc++.dll": "863b2275e85846197903fdb398b476737ddb0fda57406450683a9ce41ee79262"
+            },
+            "date": "2026-10-17T04:50:37.625Z"
+          },
+          {
+            "name": "libdeflate",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-libdeflate-1.26-1-any.pkg.tar.zst",
+            "sha256": "b08ef23423d085c7ac7bd862bee57e51487cfb57886dda934b2c05a65f2b8a69",
+            "stagedSha256s": {
+              "clangarm64/bin/libdeflate.dll": "92b11d2cda00668ce63b59088d6ca8a353aa3cabafced97e329b793661d1e380"
+            },
+            "date": "2026-10-17T04:50:35.029Z"
+          },
+          {
+            "name": "libiconv",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-libiconv-1.19-1-any.pkg.tar.zst",
+            "sha256": "955499bc5cb73d86ea2850ece9bbdbbfd66b213e272e032f28147ecd42897e21",
+            "stagedSha256s": {
+              "clangarm64/bin/libiconv-2.dll": "5eb3e024adbeb40e990530b64498fa5305b4ebeaa34db971196f92317f70a35d"
+            },
+            "date": "2026-10-17T04:50:34.940Z"
+          },
+          {
+            "name": "libidn",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-libidn-1.44-1-any.pkg.tar.zst",
+            "sha256": "5ae16a862ed485bc206b9c672b6f3ceb40bb9cb93f25dc65b60f2036e04d0866",
+            "stagedSha256s": {
+              "clangarm64/bin/libidn-12.dll": "7f5fd6836b17d36da6c8f03e1054c9c7ca12cfa45330019510fef19b7584ae8e"
+            },
+            "date": "2026-10-17T04:50:33.568Z"
+          },
+          {
+            "name": "libjpeg-turbo",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-libjpeg-turbo-3.2.0-1-any.pkg.tar.zst",
+            "sha256": "92206cd729d1bc495427ae056fc622d58726f38b462885b0244a4588d63eb986",
+            "stagedSha256s": {
+              "clangarm64/bin/libjpeg-8.dll": "4f8de459e5ad6d801a5d5274ab2a59ae54e1aa05990db987aa24fa2bdad5c978"
+            },
+            "date": "2026-10-17T04:50:33.791Z"
+          },
+          {
+            "name": "libpng",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-libpng-1.6.59-1-any.pkg.tar.zst",
+            "sha256": "369828bf983803958f2774d3514db8276be0abf7f613ce7f4d0706c0766e5909",
+            "stagedSha256s": {
+              "clangarm64/bin/libpng16-16.dll": "6ae06374c5d9e77b4a9e4d9f3677a8e1da588048fb51df3e1a10d6c6055e6018"
+            },
+            "date": "2026-10-17T04:50:34.010Z"
+          },
+          {
+            "name": "libtiff",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-libtiff-4.7.2-1-any.pkg.tar.zst",
+            "sha256": "a157d9992863c8ef685e1a7de168cf38b8bd64a9714d5e74e89ef11d4f5ad195",
+            "stagedSha256s": {
+              "clangarm64/bin/libtiff-6.dll": "575dac0574d07c1665838f9aef165feb9be23ffc90ad10b99e1748e2ffbabf42"
+            },
+            "date": "2026-10-17T04:50:34.158Z"
+          },
+          {
+            "name": "libwebp",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-libwebp-1.6.0-1-any.pkg.tar.zst",
+            "sha256": "f3be91d8a5c290828c69ad867216229b85c2aafc489807abe9a6bda7f7ffd1cb",
+            "stagedSha256s": {
+              "clangarm64/bin/libwebp-7.dll": "48a2b1e8e3c8cef078f207da282ced541ba63312a8c5413b57d6581ee8909a81",
+              "clangarm64/bin/libsharpyuv-0.dll": "a34e3915282697bb1942fba5c38a08722a241779967761f6d42ac3de091a0f19"
+            },
+            "date": "2026-10-17T04:50:35.729Z"
+          },
+          {
+            "name": "openjpeg2",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-openjpeg2-2.5.4-2-any.pkg.tar.zst",
+            "sha256": "b0a754d1fa8df785741f012259e4044d17de13791e7d2224f1fd79ecb6f78842",
+            "stagedSha256s": {
+              "clangarm64/bin/libopenjp2-7.dll": "d422c1fe2c40c490c388047fb6593780b1f43b8bd27a61e2f4c5b4509f9016a9"
+            },
+            "date": "2026-10-17T04:50:33.897Z"
+          },
+          {
+            "name": "pcre2",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-pcre2-10.49-1-any.pkg.tar.zst",
+            "sha256": "ef4d0222966b68d0c1e2fbc345ad00f1cec73235006ee29983225584d0cb69b8",
+            "stagedSha256s": {
+              "clangarm64/bin/libpcre2-8-0.dll": "502f29e009b367c9e141b1ab5244474fd1cf268115b33f4e87449307ae40f236"
+            },
+            "date": "2026-10-17T04:50:37.029Z"
+          },
+          {
+            "name": "xz",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-xz-5.8.4-1-any.pkg.tar.zst",
+            "sha256": "3a9cad5162492a7c2e3dd215cc20e3432f68ffa453e130954cd9fa9bbecf349a",
+            "stagedSha256s": {
+              "clangarm64/bin/liblzma-5.dll": "6500583e493cf182e75f8a067bcdfc61f57a7291c22e7fe8bd019fbcaa306c96"
+            },
+            "date": "2026-10-17T04:50:35.590Z"
+          },
+          {
+            "name": "zlib",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-zlib-1.3.2-2-any.pkg.tar.zst",
+            "sha256": "28c111cc05d923ac56faa33aa5d7618c9dc16ac2d7c9e43a87f875403517894a",
+            "stagedSha256s": {
+              "clangarm64/bin/zlib1.dll": "fed18d2fda0a1b0252787fd59e7c01ed900f5c90eeb131f30a9992abb328c7ca"
+            },
+            "date": "2026-10-17T04:50:34.233Z"
+          },
+          {
+            "name": "zstd",
+            "url": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-zstd-1.5.7-2-any.pkg.tar.zst",
+            "sha256": "f1444d0e664c6e60b324453ca3158ea159b1e880ba57ea229fbdc58e7ba5d9d2",
+            "stagedSha256s": {
+              "clangarm64/bin/libzstd.dll": "87e871f3f06ee054cdac83f99a7ea260f306472c923a1615ef88000905bfb9f2"
+            },
+            "date": "2026-10-17T04:50:35.842Z"
+          }
+        ]
       }
     }
   }
