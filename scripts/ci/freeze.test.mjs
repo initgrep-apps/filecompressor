@@ -85,9 +85,6 @@ async function stageWindowsTree(root, triple) {
     await writeFile(join(enginesDir, `${engine}.exe`), `${engine} engine payload\n`);
     await writeFile(join(enginesDir, `${engine}-support.dll`), `${engine} dll payload\n`);
   }
-  const init = join(root, "src-tauri", "gs-resources", "Resource", "Init");
-  await mkdir(init, { recursive: true });
-  await writeFile(join(init, "gs_init.ps"), "ghostscript init payload\n");
 }
 
 async function readSha(root, bundle) {
@@ -205,7 +202,7 @@ describe("freeze.sh", () => {
     });
   });
 
-  it("packages_the_windows_engines_dirs_external_exes_and_gs_resources", async () => {
+  it("packages_the_windows_engines_dirs_and_flat_exes_with_binaries_only_tree", async () => {
     await withRoot(async (root) => {
       await stageWindowsTree(root, WINDOWS_TRIPLE);
 
@@ -222,10 +219,13 @@ describe("freeze.sh", () => {
           `binaries/${exe}-${WINDOWS_TRIPLE}.exe`,
         );
       }
-      expect(entries).toContain("gs-resources/Resource/Init/gs_init.ps");
       expect(
-        entries.every((entry) => /^(binaries|gs-resources)\//.test(entry)),
-        `every entry must extract directly into src-tauri, got:\n${entries.join("\n")}`,
+        entries,
+        "msys2 gs runs on its compiled-in resources, so windows bundles never carry gs-resources",
+      ).not.toContain(expect.stringContaining("gs-resources"));
+      expect(
+        entries.every((entry) => /^binaries\//.test(entry)),
+        `every entry must extract directly into src-tauri as binaries payload only, got:\n${entries.join("\n")}`,
       ).toBe(true);
       expect(
         entries.some((entry) => /^frameworks\//.test(entry)),
@@ -360,16 +360,23 @@ describe("freeze.sh", () => {
     });
   });
 
-  it("refuses_a_windows_freeze_when_the_gs_init_marker_is_missing", async () => {
+  it("ignores_a_leftover_gs_resources_tree_for_a_windows_freeze", async () => {
     await withRoot(async (root) => {
       await stageWindowsTree(root, WINDOWS_TRIPLE);
-      await unlink(join(root, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"));
+      const init = join(root, "src-tauri", "gs-resources", "Resource", "Init");
+      await mkdir(init, { recursive: true });
+      await writeFile(join(init, "stale.ps"), "stale payload\n");
 
       const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
 
-      expect(result.code).toBe(1);
-      expect(result.stderr).toContain("gs_init.ps");
-      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+      expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+      const listed = await runTool("tar", ["-tzf", bundlePath(root, WINDOWS_TRIPLE)]);
+      const entries = listed.stdout.split("\n").filter(Boolean);
+      expect(
+        entries,
+        "a stale gs-resources dir must not sneak into the windows bundle it is no longer part of",
+      ).not.toContain(expect.stringContaining("gs-resources"));
+      expect(entries.every((entry) => /^binaries\//.test(entry)), `got:\n${entries.join("\n")}`).toBe(true);
     });
   });
 
@@ -426,9 +433,6 @@ describe("freeze.sh", () => {
       await writeFile(join(enginesDir, `${engine}.exe`), `${engine} engine payload\n`);
       await writeFile(join(enginesDir, `${engine}-support.dll`), `${engine} dll payload\n`);
     }
-    const init = join(root, "src-tauri", "gs-resources", "Resource", "Init");
-    await mkdir(init, { recursive: true });
-    await writeFile(join(init, "gs_init.ps"), "ghostscript init payload\n");
   }
 
   it("requires_engines_dirs_only_for_non_static_manifest_entries_and_every_entry_as_a_flat_exe", async () => {

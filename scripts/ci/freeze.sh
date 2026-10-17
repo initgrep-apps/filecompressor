@@ -6,15 +6,15 @@
 # for every manifest entry (ffmpeg/ffprobe are the tauri externalBin pair,
 # the vips/qpdf/gs flat copies exist so the verify.mjs content-arch and
 # audit-sidecars gate holds after unfreeze; static:true entries ship as the
-# flat exe only) — and gs-resources/: everything a windows tauri build needs
-# (tauri.windows.conf.json). Both shapes extract directly into src-tauri/.
-# The bundle is built under a temp name and the pair is
-# published with the .sha256 first, then the bundle, so a torn publish reads
-# as a digest mismatch rather than a complete-looking stale pair; the final
-# pair is re-verified before success. A failed freeze keeps the previous
-# bundle and its digest intact, and the shared src-tauri/.freeze lock keeps
-# freeze and unfreeze from mutating .freeze concurrently. Refuses triples
-# without a frozen-bundle design and incomplete trees.
+# flat exe only) — everything tauri.windows.conf.json consumes; windows gs
+# runs on its compiled-in resources, so no gs-resources/ is bundled. Both
+# shapes extract directly into src-tauri/. The bundle is built under a temp
+# name and the pair is published with the .sha256 first, then the bundle, so a
+# torn publish reads as a digest mismatch rather than a complete-looking stale
+# pair; the final pair is re-verified before success. A failed freeze keeps
+# the previous bundle and its digest intact, and the shared src-tauri/.freeze
+# lock keeps freeze and unfreeze from mutating .freeze concurrently. Refuses
+# triples without a frozen-bundle design and incomplete trees.
 # Usage: bash scripts/ci/freeze.sh --triple <mac-or-windows-triple> [--root <repo-root>]
 set -euo pipefail
 
@@ -107,9 +107,6 @@ else
     [ -f "$SRC/binaries/${exe}-${TRIPLE}.exe" ] || \
       fail "missing staged external binary src-tauri/binaries/${exe}-${TRIPLE}.exe — run 'yarn binaries:all --target $TRIPLE' first"
   done
-
-  [ -f "$SRC/gs-resources/Resource/Init/gs_init.ps" ] || \
-    fail "missing src-tauri/gs-resources/Resource/Init/gs_init.ps — the ghostscript resources are not staged"
 fi
 
 LOCK_DIR=""
@@ -200,7 +197,6 @@ else
   for exe in $WINDOWS_ALL_LIST; do
     tar_args+=("binaries/${exe}-${TRIPLE}.exe")
   done
-  tar_args+=(gs-resources)
   tar -czf "$TMP_BUNDLE" -C "$SRC" "${tar_args[@]}"
 fi
 (cd "$FREEZE_DIR" && compute_sha "$TMP_NAME" > "${TMP_NAME}.sha256")
