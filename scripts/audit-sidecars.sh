@@ -23,11 +23,16 @@
 # Usage: audit-sidecars.sh [--target <triple>] — an explicit --target wins over
 # AUDIT_TARGET and over host detection, so cross-target audits are possible from
 # any host. Unknown arguments fail rather than being ignored. An explicit
-# --target whose gs sidecar (gs-<triple> or gs-<triple>.exe) is not staged
-# fails: the clean-room smoke must not silently disappear while the audit
-# still reports PASS. A gs row whose manifest entry declares no resources
-# (msys2/ROM-model gs) runs with no -I flags at all: the smoke then only
-# proves the binary renders complete PDFs from its compiled-in tree.
+# --target whose gs sidecar is not staged fails: the clean-room smoke must not
+# silently disappear while the audit still reports PASS. The smoke's gs binary
+# is resolved in node (scripts/binaries/audit-gs-resolve.mjs), never by bash
+# -f probes — the runner's git-bash invocation resolves those unreliably: the
+# manifest decides, so a non-static windows gs row prefers
+# engines/<dest>/<dest>.exe and falls back to the flat <dest>-<triple>.exe,
+# while static and mac rows ship the flat binary only. A gs row whose manifest
+# entry declares no resources (msys2/ROM-model gs) runs with no -I flags at
+# all: the smoke then only proves the binary renders complete PDFs from its
+# compiled-in tree.
 set -eEuo pipefail
 
 failures=()
@@ -683,25 +688,16 @@ gs_rom_smoke() {
 
 gs_smoke_required=0
 gs_smoke_binary=""
-if [ -f "$BIN_DIR/gs-$TARGET" ]; then
-  gs_smoke_binary="$BIN_DIR/gs-$TARGET"
-elif [ -n "$TARGET" ] && [ -f "$BIN_DIR/engines/gs/gs.exe" ]; then
-  gs_smoke_binary="$BIN_DIR/engines/gs/gs.exe"
-elif [ -n "$TARGET" ] && [ -f "$BIN_DIR/gs-$TARGET.exe" ]; then
-  gs_smoke_binary="$BIN_DIR/gs-$TARGET.exe"
-fi
-if [ -n "$gs_smoke_binary" ]; then
+if gs_smoke_binary="$(node "$SCRIPT_DIR/binaries/audit-gs-resolve.mjs" --target "$TARGET" --root "$ROOT")"; then
   gs_smoke_required=1
-elif [ -n "$TARGET" ]; then
-  if [ "$TARGET_EXPLICIT" -eq 1 ]; then
-    printf 'FAIL gs clean-room smoke: gs sidecar not staged for the explicitly requested target: %s\n' "$BIN_DIR/gs-$TARGET" >&2
-    printf "  an explicit --target asks for a real cross-target audit; a missing gs makes\n" >&2
-    printf "  the smoke silently vanish while the audit still reports PASS.\n" >&2
-    printf "  Run 'yarn binaries:all --target %s' to stage it, then re-run the audit.\n" "$TARGET" >&2
-    failures+=("<gs-clean-room-smoke>")
-  else
-    printf 'note: gs clean-room smoke SKIPPED — %s not staged\n' "$BIN_DIR/gs-$TARGET"
-  fi
+elif [ "$TARGET_EXPLICIT" -eq 1 ]; then
+  printf 'FAIL gs clean-room smoke: gs sidecar not staged for the explicitly requested target: %s\n' "$BIN_DIR/gs-$TARGET" >&2
+  printf "  an explicit --target asks for a real cross-target audit; a missing gs makes\n" >&2
+  printf "  the smoke silently vanish while the audit still reports PASS.\n" >&2
+  printf "  Run 'yarn binaries:all --target %s' to stage it, then re-run the audit.\n" "$TARGET" >&2
+  failures+=("<gs-clean-room-smoke>")
+else
+  printf 'note: gs clean-room smoke SKIPPED — %s not staged\n' "$BIN_DIR/gs-$TARGET"
 fi
 if [ "$gs_smoke_required" -eq 1 ]; then
   require_tool env
