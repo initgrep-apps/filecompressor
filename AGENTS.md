@@ -43,10 +43,10 @@ Scaffolded via `yarn create tauri-app` (React + TS + Vite). shadcn/ui via `yarn 
 
 ## CI/CD
 
-- `ci.yml` — PR/push-to-main gate: 2-row matrix (macos-15 unfreezes from the latest `sidecars-*` release; windows-2025 stages from the manifest) → verbatim `yarn build && yarn test && cd src-tauri && cargo test`. Staging is required because tauri-build validates `externalBin` at build-script time. No ubuntu / win-arm rows.
-- `freeze.yml` — manual dispatch; stages + freezes mac engines into a published `sidecars-<date>` release (ADR 0001).
-- `release.yml` — `v*` tags (or dispatch); unfreezes mac / stages windows engines, 4-triple builds upload into a draft release.
-- Freeze-before-tag rule (ADR 0001): bumping a mac engine version requires running `freeze.yml` before tagging a release.
+- `ci.yml` — PR/push-to-main gate: 2-row matrix (macos-15, windows-2025), every row unfreezes its triple from the newest `sidecars-*` release → clean-room audit → verbatim `yarn build && yarn test && cd src-tauri && cargo test`. Staging is required because tauri-build validates `externalBin` at build-script time. No ubuntu / win-arm rows. Rows bounded at 60 min.
+- `freeze.yml` — manual dispatch; ONE run freezes all four triples into a published `sidecars-<date>` release with 8 assets (4 tarballs + 4 digests; ADR 0001). Mac rows install vips/ghostscript from `homebrew-core` pinned per arch via `scripts/ci/homebrew-core-pins.json` — Intel frozen at the last sonoma-bottled engines (vips 8.18.6 / gs 10.07.1; x86_64 bottles died 2026-09-10/11) (`HOMEBREW_NO_INSTALL_FROM_API=1`, no `brew update` anywhere in CI); windows rows stage the URL+sha256-pinned manifest engines. Matrix jobs bounded at 40 min.
+- `release.yml` — `v*` tags (or dispatch): all 4 rows unfreeze → audit → gate → tauri-action draft upload; rows bounded at 90 min. Preflight requires all 8 bundle assets.
+- Freeze-before-tag rule (ADR 0001): bumping any engine version requires running `freeze.yml` before tagging a release. Brew runs only inside freeze.yml mac rows — consumers never stage engines themselves. Bump procedure + failure classes: `docs/ci-process.md`.
 
 ## Skills & AI Docs
 

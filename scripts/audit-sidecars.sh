@@ -24,7 +24,15 @@
 # AUDIT_TARGET and over host detection, so cross-target audits are possible from
 # any host. Unknown arguments fail rather than being ignored. An explicit
 # --target whose gs sidecar is not staged fails: the clean-room smoke must not
-# silently disappear while the audit still reports PASS.
+# silently disappear while the audit still reports PASS. The smoke's gs binary
+# is resolved in node (scripts/binaries/audit-gs-resolve.mjs), never by bash
+# -f probes — the runner's git-bash invocation resolves those unreliably: the
+# manifest decides, so a non-static windows gs row prefers
+# engines/<dest>/<dest>.exe and falls back to the flat <dest>-<triple>.exe,
+# while static and mac rows ship the flat binary only. A gs row whose manifest
+# entry declares no resources (msys2/ROM-model gs) runs with no -I flags at
+# all: the smoke then only proves the binary renders complete PDFs from its
+# compiled-in tree.
 set -eEuo pipefail
 
 failures=()
@@ -403,7 +411,7 @@ gs_sentinel_name_for_dir() {
 
 dir_has_file_recursive() {
   local listing errors status
-  errors="$(mktemp -t gs-dir-read-error)"
+  errors="$(mktemp -t gs-dir-read-error-XXXXXX)"
   listing="$(find "$1" -type f ! -name "$GS_SENTINEL_GLOB" -print -quit 2>"$errors")"
   status=$?
   if [ "$status" -ne 0 ]; then
@@ -565,6 +573,11 @@ EOF
   for dir in "${search_dirs[@]}"; do
     gs_includes+=("-I$gs_resources/$dir")
   done
+  case "$gs" in
+    *.exe)
+      printf 'gs clean-room smoke: invoked gs.exe: %s\n' "$gs"
+      ;;
+  esac
   if [ -d "$gs_resources/iccprofiles" ]; then
     gs_includes+=("-uICCProfilesDir=$gs_resources/iccprofiles")
   fi
@@ -620,33 +633,94 @@ EOF
   printf 'gs clean-room smoke: PASS (%s bytes, %s staged resource flags, sentinel resolved)\n' "$size" "${#gs_includes[@]}"
 }
 
-gs_smoke_required=0
-if [ -n "$TARGET" ] && [ -f "$BIN_DIR/gs-$TARGET" ]; then
-  gs_smoke_required=1
-elif [ -n "$TARGET" ]; then
-  if [ "$TARGET_EXPLICIT" -eq 1 ]; then
-    printf 'FAIL gs clean-room smoke: gs sidecar not staged for the explicitly requested target: %s\n' "$BIN_DIR/gs-$TARGET" >&2
-    printf "  an explicit --target asks for a real cross-target audit; a missing gs makes\n" >&2
-    printf "  the smoke silently vanish while the audit still reports PASS.\n" >&2
-    printf "  Run 'yarn binaries:all --target %s' to stage it, then re-run the audit.\n" "$TARGET" >&2
-    failures+=("<gs-clean-room-smoke>")
-  else
-    printf 'note: gs clean-room smoke SKIPPED — %s not staged\n' "$BIN_DIR/gs-$TARGET"
+gs_rom_smoke() {
+  smoke_mode=1
+  set -e
+  local gs="$1"
+  local work="$2"
+  local fixture="$work/rom-fixture.ps"
+  local out="$work/rom-fixture.pdf"
+  case "$gs" in
+    *.exe)
+      printf 'gs clean-room smoke: invoked gs.exe: %s\n' "$gs"
+      ;;
+  esac
+  {
+    printf '%s\n' '%!PS' \
+      '/Helvetica findfont 16 scalefont setfont' \
+      '72 700 moveto (gs rom smoke) show' \
+      'showpage'
+  } >"$fixture" || {
+    printf 'FAIL gs clean-room smoke: could not write the PostScript fixture %s\n' "$fixture" >&2
+    gs_smoke_failed
+    return 0
+  }
+  local status=0
+  env -i HOME=/nonexistent PATH=/usr/bin:/bin \
+    DYLD_LIBRARY_PATH="$FRAMEWORKS_DIR" \
+    "$gs" -sDEVICE=pdfwrite -dNOPAUSE -dQUIET -dBATCH \
+    -sOutputFile="$out" "$fixture" >"$work/gs.stderr" 2>&1 || status=$?
+  if [ "$status" -ne 0 ]; then
+    printf 'FAIL gs clean-room smoke: gs exited %s with no staged resource flags\n' "$status" >&2
+    printf "  the manifest declares no gs resources for %s, so the binary must render\n" "$TARGET" >&2
+    printf '  from its compiled-in tree; with the fixture itself proven, this failure is real.\n' >&2
+    sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2
+    gs_smoke_failed
+    return 0
   fi
+  local size
+  size="$(wc -c <"$out" | tr -d ' ')" || size=""
+  if [ ! -s "$out" ] || [ -z "$size" ] || [ "$size" -le 1024 ]; then
+    printf 'FAIL gs clean-room smoke: rendered %s bytes, expected more than 1024 from a font-using fixture\n' "${size:-<unreadable>}" >&2
+    sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2
+    gs_smoke_failed
+    return 0
+  fi
+  if ! grep -q '%%EOF' "$out"; then
+    printf 'FAIL gs clean-room smoke: output is not a complete PDF\n' >&2
+    sed -e 's/^/  gs stderr: /' "$work/gs.stderr" >&2
+    gs_smoke_failed
+    return 0
+  fi
+  smoke_mode=0
+  printf 'gs clean-room smoke: PASS (%s bytes, 0 staged resource flags, resources compiled into the executable)\n' "$size"
+}
+
+gs_smoke_required=0
+gs_smoke_binary=""
+if gs_smoke_binary="$(node "$SCRIPT_DIR/binaries/audit-gs-resolve.mjs" --target "$TARGET" --root "$ROOT")"; then
+  gs_smoke_required=1
+elif [ "$TARGET_EXPLICIT" -eq 1 ]; then
+  printf 'FAIL gs clean-room smoke: gs sidecar not staged for the explicitly requested target: %s\n' "$BIN_DIR/gs-$TARGET" >&2
+  printf "  an explicit --target asks for a real cross-target audit; a missing gs makes\n" >&2
+  printf "  the smoke silently vanish while the audit still reports PASS.\n" >&2
+  printf "  Run 'yarn binaries:all --target %s' to stage it, then re-run the audit.\n" "$TARGET" >&2
+  failures+=("<gs-clean-room-smoke>")
+else
+  printf 'note: gs clean-room smoke SKIPPED — %s not staged\n' "$BIN_DIR/gs-$TARGET"
 fi
 if [ "$gs_smoke_required" -eq 1 ]; then
   require_tool env
-  if [ ! -d "$GS_RESOURCES_DIR" ]; then
-    printf 'FAIL gs clean-room smoke: staged gs-resources tree missing: %s\n' "$GS_RESOURCES_DIR" >&2
-    printf "  run 'yarn binaries:prep' to stage it — PDF compression cannot work without it\n" >&2
-    failures+=("<gs-clean-room-smoke>")
+  if gs_manifest_resource_dirs >/dev/null 2>&1; then
+    if [ ! -d "$GS_RESOURCES_DIR" ]; then
+      printf 'FAIL gs clean-room smoke: staged gs-resources tree missing: %s\n' "$GS_RESOURCES_DIR" >&2
+      printf "  run 'yarn binaries:prep' to stage it — PDF compression cannot work without it\n" >&2
+      failures+=("<gs-clean-room-smoke>")
+    else
+      if ! gs_smoke_workdir="$(mktemp -d -t gs-clean-room-XXXXXX)"; then
+        printf 'FAIL gs clean-room smoke: could not create a temp dir (mktemp -d -t gs-clean-room-XXXXXX)\n' >&2
+        printf '  the smoke must run, not be skipped: check that TMPDIR is writable\n' >&2
+        exit 1
+      fi
+      gs_clean_room_smoke "$gs_smoke_binary" "$GS_RESOURCES_DIR" "$gs_smoke_workdir"
+    fi
   else
-    if ! gs_smoke_workdir="$(mktemp -d -t gs-clean-room)"; then
-      printf 'FAIL gs clean-room smoke: could not create a temp dir (mktemp -d -t gs-clean-room)\n' >&2
+    if ! gs_smoke_workdir="$(mktemp -d -t gs-clean-room-XXXXXX)"; then
+      printf 'FAIL gs clean-room smoke: could not create a temp dir (mktemp -d -t gs-clean-room-XXXXXX)\n' >&2
       printf '  the smoke must run, not be skipped: check that TMPDIR is writable\n' >&2
       exit 1
     fi
-    gs_clean_room_smoke "$BIN_DIR/gs-$TARGET" "$GS_RESOURCES_DIR" "$gs_smoke_workdir"
+    gs_rom_smoke "$gs_smoke_binary" "$gs_smoke_workdir"
   fi
 fi
 

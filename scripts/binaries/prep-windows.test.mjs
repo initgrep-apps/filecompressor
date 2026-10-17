@@ -40,6 +40,8 @@ const X64 = "x86_64-pc-windows-msvc";
 const VIPS_MEMBER = "vips-dev-8.18/bin/vips.exe";
 const QPDF_MEMBER = "qpdf-12.4.2-msvc64/bin/qpdf.exe";
 const GS_MEMBER = "ucrt64/bin/gswin64c.exe";
+const FFMPEG_MEMBER = "ffmpeg-n9.0-latest-win64-gpl-9.0/bin/ffmpeg.exe";
+const FFPROBE_MEMBER = "ffmpeg-n9.0-latest-win64-gpl-9.0/bin/ffprobe.exe";
 
 const GS_RESOURCE_DIRS = ["Resource", "lib", "iccprofiles", "fonts"];
 
@@ -162,6 +164,27 @@ describe("prep-windows engine folders", () => {
     );
   });
 
+  it("prep_stages_the_gs_engine_with_dlls_and_no_resources_when_none_are_declared", async () => {
+    const root = await tempRoot("prep-win-gs-rom-");
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+    });
+
+    const staged = await prepWindows(root, X64, {
+      gs: { member: GS_MEMBER, dest: "gs" },
+    });
+
+    const engine = join(root, "src-tauri", "binaries", "engines", "gs");
+    expect(staged).toContain(engine);
+    expect(existsSync(join(engine, "gs.exe"))).toBe(true);
+    expect(existsSync(join(engine, "libgs-10.dll"))).toBe(true);
+    expect(
+      existsSync(join(root, "src-tauri", "gs-resources")),
+      "no declared resources means no gs-resources tree may be staged",
+    ).toBe(false);
+  });
+
   it("refuses a resource tree with no Resource/Init/gs_init.ps", async () => {
     const root = await tempRoot("prep-win-gs-noinit-");
     const files = gsResourceFiles();
@@ -234,5 +257,156 @@ describe("prep-windows engine folders", () => {
       existsSync(join(engine, "stale.dll")),
       "a re-prep must not leave artifacts from a previous run behind",
     ).toBe(false);
+  });
+
+  it("prep_stages_three_engine_folders_for_the_static_ffmpeg_manifest_shape", async () => {
+    const root = await tempRoot("prep-win-static-shape-");
+    await stageEntry(root, "ffmpeg", X64, { [FFMPEG_MEMBER]: "ffmpeg-exe" });
+    await stageEntry(root, "ffprobe", X64, { [FFPROBE_MEMBER]: "ffprobe-exe" });
+    await stageEntry(root, "qpdf", X64, {
+      [QPDF_MEMBER]: "qpdf-exe",
+      "qpdf-12.4.2-msvc64/bin/qpdf-support.dll": "dll",
+    });
+    await stageEntry(root, "vips", X64, {
+      [VIPS_MEMBER]: "vips-exe",
+      "vips-dev-8.18/bin/vips-support.dll": "dll",
+    });
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+      ...gsResourceFiles(),
+    });
+
+    const staged = await prepWindows(root, X64, {
+      ffmpeg: { member: FFMPEG_MEMBER, dest: "ffmpeg", static: true, resources: [] },
+      ffprobe: { member: FFPROBE_MEMBER, dest: "ffprobe", static: true, resources: [] },
+      qpdf: { member: QPDF_MEMBER, dest: "qpdf", resources: [] },
+      vips: { member: VIPS_MEMBER, dest: "vips", resources: [] },
+      gs: { member: GS_MEMBER, dest: "gs", resources: gsResources() },
+    });
+
+    expect(
+      staged,
+      "static engines ship as the flat externalBin exes only — fetch already staged them",
+    ).toEqual([
+      join(root, "src-tauri", "binaries", "engines", "qpdf"),
+      join(root, "src-tauri", "binaries", "engines", "vips"),
+      join(root, "src-tauri", "binaries", "engines", "gs"),
+    ]);
+    expect(existsSync(join(root, "src-tauri", "binaries", "engines", "ffmpeg"))).toBe(false);
+    expect(existsSync(join(root, "src-tauri", "binaries", "engines", "ffprobe"))).toBe(false);
+    expect(
+      await readFile(join(root, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"), "utf8"),
+    ).toBe("%!PS\n");
+  });
+
+  it("does not run the DLL guard for a static entry staged as a bare exe", async () => {
+    const root = await tempRoot("prep-win-static-bare-");
+    await stageEntry(root, "ffmpeg", X64, { [FFMPEG_MEMBER]: "ffmpeg-exe" });
+
+    const staged = await prepWindows(root, X64, {
+      ffmpeg: { member: FFMPEG_MEMBER, dest: "ffmpeg", static: true, resources: [] },
+    });
+
+    expect(staged).toEqual([]);
+    expect(existsSync(join(root, "src-tauri", "binaries", "engines", "ffmpeg"))).toBe(false);
+  });
+});
+describe("prep-windows extraPackages", () => {
+  function extraEntry(name, member) {
+    return { name, source: "url", url: `https://x/${name}.pkg.tar.zst`, sha256: "e".repeat(64), member };
+  }
+
+  it("prep_executes_gs_with_all_extra_package_dlls_beside_the_engine", async () => {
+    const root = await tempRoot("prep-win-extras-");
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+    });
+    await stageEntry(root, "zlib", X64, { "ucrt64/bin/zlib1.dll": "zlib" });
+    await stageEntry(root, "brotli", X64, { "ucrt64/bin/libbrotlidec.dll": "dec", "ucrt64/bin/libbrotlicommon.dll": "common" });
+
+    const staged = await prepWindows(root, X64, {
+      gs: {
+        member: GS_MEMBER,
+        dest: "gs",
+        extraPackages: [
+          extraEntry("zlib", "ucrt64/bin/zlib1.dll"),
+          extraEntry("brotli", ["ucrt64/bin/libbrotlidec.dll", "ucrt64/bin/libbrotlicommon.dll"]),
+        ],
+      },
+    });
+
+    const engine = join(root, "src-tauri", "binaries", "engines", "gs");
+    expect(staged).toContain(engine);
+    expect(existsSync(join(engine, "gs.exe"))).toBe(true);
+    expect(existsSync(join(engine, "libgs-10.dll"))).toBe(true);
+    expect(existsSync(join(engine, "zlib1.dll"))).toBe(true);
+    expect(existsSync(join(engine, "libbrotlidec.dll"))).toBe(true);
+    expect(existsSync(join(engine, "libbrotlicommon.dll"))).toBe(true);
+    expect(
+      existsSync(join(engine, "libbrotlienc.dll")),
+      "members outside the declared pin list must not be staged",
+    ).toBe(false);
+  });
+
+  it("scan-all-dll extras copy every dll in their staging tree", async () => {
+    const root = await tempRoot("prep-win-extras-null-");
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+    });
+    await stageEntry(root, "libwebp", X64, {
+      "ucrt64/bin/libwebp-7.dll": "webp7",
+      "ucrt64/bin/libsharpyuv-0.dll": "sharpyuv",
+      "ucrt64/bin/libwebpdemux-2.dll": "demux",
+    });
+
+    await prepWindows(root, X64, {
+      gs: { member: GS_MEMBER, dest: "gs", extraPackages: [extraEntry("libwebp", null)] },
+    });
+
+    const engine = join(root, "src-tauri", "binaries", "engines", "gs");
+    for (const dll of ["libwebp-7.dll", "libsharpyuv-0.dll", "libwebpdemux-2.dll"]) {
+      expect(existsSync(join(engine, dll)), `${dll} must be staged`).toBe(true);
+    }
+  });
+
+  it("fails naming a manifest member absent from the extra staging tree", async () => {
+    const root = await tempRoot("prep-win-extras-missing-");
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+    });
+    await stageEntry(root, "zlib", X64, { "ucrt64/bin/other.dll": "not-there" });
+
+    await expect(
+      prepWindows(root, X64, {
+        gs: { member: GS_MEMBER, dest: "gs", extraPackages: [extraEntry("zlib", "ucrt64/bin/zlib1.dll")] },
+      }),
+    ).rejects.toThrow(/extraPackages: zlib member 'ucrt64\/bin\/zlib1\.dll' is missing/);
+  });
+
+  it("fails loudly when two extras want the same dll name with different bytes", async () => {
+    const root = await tempRoot("prep-win-extras-clash-");
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+    });
+    await stageEntry(root, "zlib", X64, { "ucrt64/bin/zlib1.dll": "bytes-a" });
+    await stageEntry(root, "zlib-ng-compat", X64, { "ucrt64/bin/zlib1.dll": "bytes-b" });
+
+    await expect(
+      prepWindows(root, X64, {
+        gs: {
+          member: GS_MEMBER,
+          dest: "gs",
+          extraPackages: [
+            extraEntry("zlib", "ucrt64/bin/zlib1.dll"),
+            extraEntry("zlib-ng-compat", "ucrt64/bin/zlib1.dll"),
+          ],
+        },
+      }),
+    ).rejects.toThrow(/zlib1\.dll/);
   });
 });

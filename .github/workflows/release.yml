@@ -22,6 +22,7 @@ jobs:
   gate:
     name: resolve tag + pre-create draft
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     outputs:
@@ -58,7 +59,7 @@ jobs:
             exit 1
           fi
           if [ -z "$newest" ]; then
-            echo "::error::no sidecars-* release found — run the Freeze mac sidecars workflow before building the release (ADR 0001), then re-run the release"
+            echo "::error::no sidecars-* release found — run the Freeze sidecar engines workflow before building the release (ADR 0001), then re-run the release"
             exit 1
           fi
           rc=0
@@ -67,18 +68,18 @@ jobs:
             echo "::error::sidecars-availability preflight could not read the assets of '$newest' (auth/scopes/rate limit/network) — cannot verify the freeze publish"
             exit 1
           fi
-          for triple in aarch64-apple-darwin x86_64-apple-darwin; do
+          for triple in aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
             for asset in "sidecar-bundle-${triple}.tar.gz" "sidecar-bundle-${triple}.tar.gz.sha256"; do
               case ",$names," in
                 *",$asset,"*) ;;
                 *)
-                  echo "::error::sidecars release '$newest' is missing asset '$asset' — freeze builds publish all four bundle assets; re-run the Freeze mac sidecars workflow, then re-run the release"
+                  echo "::error::sidecars release '$newest' is missing asset '$asset' — freeze builds publish all eight bundle assets; re-run the Freeze sidecar engines workflow, then re-run the release"
                   exit 1
                   ;;
               esac
             done
           done
-          echo "sidecars-availability: all four bundle assets present on $newest"
+          echo "sidecars-availability: all eight bundle assets present on $newest"
         shell: bash
       - name: pre-create the draft release
         id: draft
@@ -121,6 +122,7 @@ jobs:
   release:
     name: release (${{ matrix.triple }})
     needs: [gate]
+    timeout-minutes: 90
     permissions:
       contents: write
     strategy:
@@ -129,16 +131,12 @@ jobs:
         include:
           - triple: aarch64-apple-darwin
             os: macos-15
-            stage: freeze
           - triple: x86_64-apple-darwin
             os: macos-15-intel
-            stage: freeze
           - triple: x86_64-pc-windows-msvc
             os: windows-2025
-            stage: manifest
           - triple: aarch64-pc-windows-msvc
             os: windows-11-arm
-            stage: manifest
     runs-on: ${{ matrix.os }}
     steps:
       - name: checkout (v7.0.1)
@@ -172,24 +170,27 @@ jobs:
           key: ${{ matrix.triple }}
           workspaces: src-tauri
       - name: restore frozen engines (${{ matrix.triple }})
-        if: matrix.stage == 'freeze'
         env:
           TRIPLE: ${{ matrix.triple }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: bash scripts/ci/unfreeze.sh --triple "$TRIPLE"
         shell: bash
-      - name: clean-room audit of frozen engines
-        if: matrix.stage == 'freeze'
+      - name: derive macOS frameworks list from the restored tree (${{ matrix.triple }})
+        if: endsWith(matrix.triple, 'apple-darwin')
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: node scripts/binaries/sync-macos-frameworks.mjs --target "$TRIPLE"
+        shell: bash
+      - name: clean-room audit of restored engines (mac)
+        if: endsWith(matrix.triple, 'apple-darwin')
         env:
           BINARIES_ALLOW_INACTIVE_BREW: "1"
         run: yarn binaries:audit
         shell: bash
-      - name: stage engines from manifest (${{ matrix.triple }})
-        if: matrix.stage == 'manifest'
-        env:
-          TRIPLE: ${{ matrix.triple }}
-        run: node scripts/binaries/all.mjs --target "$TRIPLE"
+      - name: clean-room audit of restored engines (windows)
+        if: endsWith(matrix.triple, 'pc-windows-msvc')
+        run: yarn binaries:audit
         shell: bash
       - name: gate (build + tests + cargo tests)
         run: yarn build && yarn test && cd src-tauri && cargo test

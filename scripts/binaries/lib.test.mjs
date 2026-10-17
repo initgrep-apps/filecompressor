@@ -2,9 +2,10 @@
 import { vi, afterAll, describe, expect, it } from "vitest";
 
 vi.setConfig({ testTimeout: 30_000 });
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, copyFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
+import { createHash } from "node:crypto";
 import https from "node:https";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -13,10 +14,14 @@ import {
   expectedDest,
   download,
   extract,
+  extractTarZstFallback,
   parseArgs,
+  tarExtractArgs,
+  tarToolForHost,
   validateLock,
   writeJson,
 } from "./lib.mjs";
+import { itDarwin } from "../test-platform.mjs";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
@@ -67,7 +72,7 @@ describe("expectedDest", () => {
 });
 
 describe("download", () => {
-  it("follows https redirects", async () => {
+  itDarwin("follows https redirects", async () => {
     const server = httpsServer((req, res) => {
       if (req.url === "/redirect") {
         res.writeHead(302, { location: "/final.zip" });
@@ -95,7 +100,7 @@ describe("download", () => {
     );
   });
 
-  it("rejects a redirect that downgrades to http instead of crashing", async () => {
+  itDarwin("rejects a redirect that downgrades to http instead of crashing", async () => {
     const server = httpsServer((req, res) => {
       res.writeHead(302, { location: "http://127.0.0.1:9/plain.zip" });
       res.end();
@@ -111,7 +116,7 @@ describe("download", () => {
     }
   });
 
-  it("rejects a stalled transfer with the real idle budget", async () => {
+  itDarwin("rejects a stalled transfer with the real idle budget", async () => {
     const sockets = [];
     const server = httpsServer((req, res) => {
       res.writeHead(200, { "content-length": "100000" });
@@ -130,7 +135,7 @@ describe("download", () => {
     }
   });
 
-  it("rejects when the connection closes before the body completes", async () => {
+  itDarwin("rejects when the connection closes before the body completes", async () => {
     const server = httpsServer((req, res) => {
       res.writeHead(200, { "content-length": "1000" });
       res.write("partial");
@@ -150,7 +155,7 @@ describe("download", () => {
 });
 
 describe("extract", () => {
-  it("handles zip and tar.zst fixtures", async () => {
+  itDarwin("handles zip and tar.zst fixtures", async () => {
     const root = await tempRoot("lib-test-");
     const zipSrc = join(root, "zipsrc");
     const zipPath = join(root, "a.zip");
@@ -177,11 +182,157 @@ describe("extract", () => {
     await expect(extract("/x/foo.tar.gz", "/tmp/nope")).rejects.toThrow("unsupported archive");
   });
 
-  it("names zstd as the missing tool when tar.zst extraction fails", async () => {
+  itDarwin("names zstd as the missing tool when tar.zst extraction fails", async () => {
     const root = await tempRoot("lib-test-");
     const fake = join(root, "not-an-archive.tar.zst");
     await writeFile(fake, "garbage");
     await expect(extract(fake, join(root, "out"))).rejects.toThrow(/'zstd' tool/);
+  });
+
+  itDarwin(
+    "extracts .tar.zst through the pure-JS fallback when the host archiver rejects --zstd (mirrors Windows native bsdtar)",
+    async () => {
+      const root = await tempRoot("lib-test-");
+      const fakeTar = join(root, "no-zstd-tar.sh");
+      await writeFile(fakeTar, `#!/bin/sh\nif [ "$1" = "--zstd" ]; then\n  exit 2\nfi\nexec tar "$@"\n`);
+      await chmod(fakeTar, 0o755);
+      const archive = join(root, "engine.pkg.tar.zst");
+      await copyFile(join(FIXTURES, "gs-fixture.pkg.tar.zst"), archive);
+      const out = join(root, "fallback-out");
+      await extract(archive, out, { tarTool: fakeTar });
+      expect((await readFile(join(out, "pkg", "inner", "tool.exe"), "utf8")).trim()).toBe("fallback-extracted");
+      const siblings = await readdir(root);
+      expect(siblings.filter((name) => name.includes(".tmp.tar"))).toEqual([]);
+    },
+  );
+
+  it("extractTarZstFallback decompresses with fzstd and untars the temporary plain archive", async () => {
+    const root = await tempRoot("lib-test-");
+    const archive = join(root, "direct.pkg.tar.zst");
+    await copyFile(join(FIXTURES, "gs-fixture.pkg.tar.zst"), archive);
+    const out = join(root, "direct-out");
+    await extractTarZstFallback(archive, out);
+    expect((await readFile(join(out, "pkg", "inner", "tool.exe"), "utf8")).trim()).toBe("fallback-extracted");
+  });
+
+  it("classifies a failing fallback loudly: both the tar --zstd attempt and the pure-JS decompression name their root failure", async () => {
+    const root = await tempRoot("lib-test-");
+    const bogus = join(root, "bogus.pkg.tar.zst");
+    await writeFile(bogus, "this-is-not-zstd-nor-tar");
+    await expect(
+      extract(bogus, join(root, "out"), { tarTool: join(root, "definitely-not-a-real-tar-binary") }),
+    ).rejects.toThrow(/tar --zstd failed .*pure-JS zstd fallback .*'zstd' tool/s);
+  });
+
+  it("the committed fixture archive stays byte-stable so the fallback test exercises a known-good zstd stream", async () => {
+    const fixture = join(FIXTURES, "gs-fixture.pkg.tar.zst");
+    const bytes = await readFile(fixture);
+    expect(
+      createHash("sha256").update(bytes).digest("hex"),
+      "regenerate via: mkdir -p pkg/inner && echo fallback-extracted > pkg/inner/tool.exe && tar -cf - --format=ustar pkg | zstd -q -3 > fixtures/gs-fixture.pkg.tar.zst",
+    ).toBe("fa3112e3a5b785efbeff6d5186c327cf74c31f19235b733f36cac94ad0dfa6e5");
+  });
+});
+
+describe("tarExtractArgs", () => {
+  it("prepends --force-local ahead of --zstd -xf when forceLocal is requested", () => {
+    expect(tarExtractArgs("D:\\a\\engine.tar.zst", "D:\\a\\out", { zstd: true, forceLocal: true })).toEqual([
+      "--force-local",
+      "--zstd",
+      "-xf",
+      "D:\\a\\engine.tar.zst",
+      "-C",
+      "D:\\a\\out",
+    ]);
+  });
+
+  it("prepends --force-local ahead of plain -xf when forceLocal is requested", () => {
+    expect(
+      tarExtractArgs("D:\\a\\engine.pkg.tar.zst.tmp.tar", "D:\\a\\out", { forceLocal: true }),
+    ).toEqual(["--force-local", "-xf", "D:\\a\\engine.pkg.tar.zst.tmp.tar", "-C", "D:\\a\\out"]);
+  });
+
+  it("never emits --force-local for mac bsdtar", () => {
+    expect(tarExtractArgs("/a/engine.tar.zst", "/a/out", { zstd: true })).toEqual([
+      "--zstd",
+      "-xf",
+      "/a/engine.tar.zst",
+      "-C",
+      "/a/out",
+    ]);
+    expect(tarExtractArgs("/a/engine.tar.zst", "/a/out", { forceLocal: false })).toEqual([
+      "-xf",
+      "/a/engine.tar.zst",
+      "-C",
+      "/a/out",
+    ]);
+  });
+
+  it("emits no --force-local for the windows native bsdtar invocations: paths stay mangle-free", () => {
+    expect(tarExtractArgs("D:\\a\\engine.tar.zst", "D:\\a\\out", { zstd: true })).toEqual([
+      "--zstd",
+      "-xf",
+      "D:\\a\\engine.tar.zst",
+      "-C",
+      "D:\\a\\out",
+    ]);
+    expect(tarExtractArgs("D:\\a\\engine.pkg.tar.zst.tmp.tar", "D:\\a\\out")).toEqual([
+      "-xf",
+      "D:\\a\\engine.pkg.tar.zst.tmp.tar",
+      "-C",
+      "D:\\a\\out",
+    ]);
+  });
+
+  it("defaults to plain -xf with no options object", () => {
+    expect(tarExtractArgs("/a/x.tar", "/a/out")).toEqual(["-xf", "/a/x.tar", "-C", "/a/out"]);
+  });
+});
+
+describe("tarToolForHost", () => {
+  const withPlatform = async (value, systemRoot, body) => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+    const systemRootBefore = process.env.SystemRoot;
+    Object.defineProperty(process, "platform", { value, configurable: true });
+    if (systemRoot === undefined) {
+      delete process.env.SystemRoot;
+    } else {
+      process.env.SystemRoot = systemRoot;
+    }
+    try {
+      await body();
+    } finally {
+      Object.defineProperty(process, "platform", platformDescriptor);
+      if (systemRootBefore === undefined) {
+        delete process.env.SystemRoot;
+      } else {
+        process.env.SystemRoot = systemRootBefore;
+      }
+    }
+  };
+
+  it("resolves the native System32 bsdtar on win32 so drive-letter paths never meet git-bash GNU tar", async () => {
+    await withPlatform("win32", "C:\\Windows", () => {
+      expect(tarToolForHost()).toBe("C:\\Windows\\System32\\tar.exe");
+    });
+  });
+
+  it("defaults the win32 root to C:/Windows when SystemRoot is unset", async () => {
+    await withPlatform("win32", undefined, () => {
+      expect(tarToolForHost()).toBe("C:\\Windows\\System32\\tar.exe");
+    });
+  });
+
+  it("honors a custom SystemRoot on win32", async () => {
+    await withPlatform("win32", "D:\\WinRoot", () => {
+      expect(tarToolForHost()).toBe("D:\\WinRoot\\System32\\tar.exe");
+    });
+  });
+
+  it("stays on PATH 'tar' for non-win32 hosts so macOS extraction is untouched", async () => {
+    await withPlatform("darwin", undefined, () => {
+      expect(tarToolForHost()).toBe("tar");
+    });
   });
 });
 
@@ -243,6 +394,57 @@ describe("validateLock libStagedSha256", () => {
     expect(() => wrap({ "/abs/libqpdf.dylib": "b".repeat(64) })).toThrow(/relative path/);
     expect(() => wrap({ "../escape.dylib": "b".repeat(64) })).toThrow(/relative path/);
     expect(() => wrap({ "lib/libqpdf.dylib": "nothex" })).toThrow(/64-hex sha256/);
+  });
+});
+
+describe("validateLock extra staged-package rows", () => {
+  const gsUrlEntry = (extra) => ({
+    source: "url",
+    version: "10.08.0",
+    url: "https://x/gs.pkg.tar.zst",
+    sha256: "a".repeat(64),
+    date: "2026-01-01T00:00:00.000Z",
+    ...extra,
+  });
+
+  const goodExtraRow = () => ({
+    name: "zlib",
+    url: "https://x/zlib.pkg.tar.zst",
+    sha256: "c".repeat(64),
+    stagedSha256s: { "ucrt64/bin/zlib1.dll": "d".repeat(64) },
+    date: "2026-01-01T00:00:00.000Z",
+  });
+
+  it("accepts an extra array with per-member staged digests and its absence", () => {
+    expect(() =>
+      validateLock({
+        targets: { "x86_64-pc-windows-msvc": { gs: gsUrlEntry({ extra: [goodExtraRow()] }) } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateLock({ targets: { "x86_64-pc-windows-msvc": { gs: gsUrlEntry() } } }),
+    ).not.toThrow();
+  });
+
+  it("rejects broken extra rows", () => {
+    const wrap = (extra) =>
+      validateLock({
+        targets: { "x86_64-pc-windows-msvc": { gs: gsUrlEntry({ extra }) } },
+      });
+    expect(() => wrap([])).toThrow(/extra list must be non-empty/);
+    expect(() => wrap("zlib")).toThrow(/must be an array of package rows/);
+    expect(() => wrap([{ ...goodExtraRow(), sha256: "nothex" }])).toThrow(/64-hex sha256/);
+    expect(() => wrap([{ ...goodExtraRow(), name: 42 }])).toThrow(/name/);
+    expect(() => wrap([{ ...goodExtraRow(), url: "" }])).toThrow(/requires a url/);
+    expect(() => wrap([{ ...goodExtraRow(), stagedSha256s: {} }])).toThrow(/non-empty object/);
+    expect(() => wrap([{ ...goodExtraRow(), stagedSha256s: { "/abs.dll": "d".repeat(64) } }])).toThrow(
+      /relative path/,
+    );
+    expect(() => wrap([{ ...goodExtraRow(), stagedSha256s: { "x.dll": "nothex" } }])).toThrow(/64-hex sha256/);
+    expect(() => wrap([{ ...goodExtraRow(), date: null }])).toThrow(/date/);
+    expect(() =>
+      wrap([goodExtraRow(), { ...goodExtraRow() }]),
+    ).toThrow(/duplicate package name 'zlib'/);
   });
 });
 

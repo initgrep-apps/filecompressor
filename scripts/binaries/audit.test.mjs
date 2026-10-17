@@ -3,14 +3,15 @@ import { vi, afterAll, describe, expect, it } from "vitest";
 
 vi.setConfig({ testTimeout: 30_000 });
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, copyFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { chmodSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { sha256File } from "./lib.mjs";
 import { gsSentinelPairs, gsSentinelPaths } from "./gs-sentinels.mjs";
+import { describeDarwin, itDarwin } from "../test-platform.mjs";
 const GS_SENTINEL_NAMES = Object.fromEntries(
   gsSentinelPairs().map(([dir, name]) => [dir.split("/").pop(), name]),
 );
@@ -165,6 +166,58 @@ const GS_MANIFEST_ENTRY = {
   resources: ["Resource", "lib", "iccprofiles", "fonts"],
 };
 
+const GS_ROM_MANIFEST_ENTRY = {
+  source: "url",
+  url: "https://fixtures.invalid/mingw-w64-ucrt-x86_64-ghostscript-10.08.0-2-any.pkg.tar.zst",
+  sha256: "f".repeat(64),
+  member: "ucrt64/bin/gswin64c.exe",
+  dest: "gs",
+  expectVersion: "10.08.0",
+};
+
+const GS_ROM_FIXTURE_C = `
+#include <stdio.h>
+#include <string.h>
+
+int main(int argc, char **argv) {
+  if (argc > 1 && strcmp(argv[1], "--version") == 0) { printf("10.08.0\\n"); return 0; }
+  for (int i = 1; i < argc; i++) {
+    if (strncmp(argv[i], "-I", 2) == 0) {
+      fprintf(stderr, "rom gs rejects -I search paths\\n");
+      return 8;
+    }
+  }
+  const char *out = NULL;
+  const char *fixture = NULL;
+  for (int i = 1; i < argc; i++) {
+    if (strncmp(argv[i], "-sOutputFile=", 13) == 0) out = argv[i] + 13;
+    if (strstr(argv[i], ".ps") != NULL) fixture = argv[i];
+  }
+  if (out == NULL) { fprintf(stderr, "no -sOutputFile=\\n"); return 2; }
+  if (fixture == NULL) { fprintf(stderr, "no postscript fixture argument\\n"); return 3; }
+#if ROM_EXIT_CODE != 0
+  fprintf(stderr, "rom gs fixture refusing to render\\n");
+  return ROM_EXIT_CODE;
+#endif
+  FILE *f = fopen(out, "wb");
+  if (f == NULL) return 7;
+  fputs("%PDF-1.7\\n", f);
+  for (int i = 0; i < 500; i++) fputs("0 0 0 rg 10 10 10 10 re f\\n", f);
+  fputs("%%EOF\\n", f);
+  fclose(f);
+  return 0;
+}
+`;
+
+function compileGsRomFixture(arch, outPath, exitCode = 0) {
+  const source = join(
+    tmpdir(),
+    `gs-rom-fixture-${exitCode}-${arch}-${process.pid}-${Math.random().toString(36).slice(2)}.c`,
+  );
+  execFileSync("sh", ["-c", `cat > '${source}' <<'EOF'\n${GS_ROM_FIXTURE_C}\nEOF`]);
+  execFileSync("clang", [`-DROM_EXIT_CODE=${exitCode}`, "-arch", arch, source, "-o", outPath]);
+}
+
 async function makeGsRoot({
   resources = true,
   icc = true,
@@ -175,16 +228,22 @@ async function makeGsRoot({
   libSentinel = true,
   manifestEntry = GS_MANIFEST_ENTRY,
   stageGs = true,
+  triple = "aarch64-apple-darwin",
+  romFixture = false,
+  romExitCode = 0,
+  romFlatExitCode = null,
+  stageEngines = true,
 } = {}) {
   await mkdir(`${tmpdir()}/audit-test-roots`, { recursive: true });
   const root = await mkdtemp(`${tmpdir()}/audit-test-roots/r`);
   cleanupRoots.push(root);
+  const exeSuffix = triple.includes("windows") ? ".exe" : "";
   await mkdir(`${root}/src-tauri/binaries`, { recursive: true });
   await mkdir(`${root}/scripts`, { recursive: true });
   await writeFile(
     `${root}/scripts/binaries.manifest.json`,
     JSON.stringify({
-      targets: { "aarch64-apple-darwin": { gs: manifestEntry } },
+      targets: { [triple]: { gs: manifestEntry } },
     }),
   );
   await writeFile(
@@ -192,19 +251,42 @@ async function makeGsRoot({
     JSON.stringify({
       generated: new Date().toISOString(),
       targets: {
-        "aarch64-apple-darwin": {
-          gs: {
-            source: "brew",
-            formula: "ghostscript",
-            version: "10.08.0",
-            date: new Date().toISOString(),
-          },
+        [triple]: {
+          gs:
+            manifestEntry.source === "url"
+              ? {
+                  source: "url",
+                  version: manifestEntry.expectVersion ?? "10.08.0",
+                  date: new Date().toISOString(),
+                  sha256: manifestEntry.sha256,
+                }
+              : {
+                  source: "brew",
+                  formula: manifestEntry.formula ?? "ghostscript",
+                  version: manifestEntry.expectVersion ?? "10.08.0",
+                  date: new Date().toISOString(),
+                },
         },
       },
     }),
   );
   if (stageGs) {
-    compileGsFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`);
+    if (romFixture) {
+      compileGsRomFixture("arm64", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, romFlatExitCode ?? romExitCode);
+    } else {
+      compileGsFixture("arm64", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`);
+    }
+    const dest = manifestEntry.dest ?? "gs";
+    if (stageEngines && triple.includes("windows")) {
+      const enginesExe = `${root}/src-tauri/binaries/engines/${dest}/${dest}.exe`;
+      await mkdir(dirname(enginesExe), { recursive: true });
+      if (romFixture) {
+        compileGsRomFixture("arm64", enginesExe, romExitCode);
+      } else {
+        await copyFile(`${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, enginesExe);
+      }
+      await writeFile(`${dirname(enginesExe)}/zlib1.dll`, "dll sibling beside the engines exe");
+    }
   }
   if (resources) {
     const base = `${root}/src-tauri/gs-resources`;
@@ -282,7 +364,7 @@ afterAll(async () => {
   await Promise.all(cleanupRoots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe("audit-sidecars.sh", () => {
+describeDarwin("audit-sidecars.sh", () => {
   it("fails on an x86 Mach-O under an arm64 name via the verify delegate", async () => {
     const root = await makeRoot();
     compileFixture("x86_64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`);
@@ -559,6 +641,10 @@ describe("audit-sidecars.sh", () => {
     expect(result.stdout + result.stderr).toMatch(
       /gs clean-room smoke SKIPPED — .*gs-aarch64-apple-darwin not staged/,
     );
+    expect(
+      result.stderr,
+      "the node resolver's candidate notes must bubble through the audit, so a skip is diagnosable",
+    ).toMatch(/gs resolution: candidate .*gs-aarch64-apple-darwin — missing/);
   });
 
   it("fails when an explicit --target has no staged gs, instead of skipping the smoke", async () => {
@@ -574,6 +660,10 @@ describe("audit-sidecars.sh", () => {
     expect(result.stdout + result.stderr).toContain(
       "gs clean-room smoke: gs sidecar not staged for the explicitly requested target",
     );
+    expect(
+      result.stdout + result.stderr,
+      "even under an explicit target the resolver must log which candidates it tried",
+    ).toMatch(/gs resolution: candidate .*gs-aarch64-apple-darwin — missing/);
     expect(result.stdout).not.toContain("sidecar audit: PASS");
   });
 
@@ -610,18 +700,132 @@ describe("audit-sidecars.sh", () => {
     expect(result.stdout).toContain("gs clean-room smoke: PASS");
   });
 
-  it("fails when the manifest declares no resources at all", async () => {
+  it("passes_the_windows_rom_smoke_with_engines_but_no_gs_resources", async () => {
+    const root = await makeGsRoot({
+      triple: "aarch64-pc-windows-msvc",
+      resources: false,
+      manifestEntry: GS_ROM_MANIFEST_ENTRY,
+      romFixture: true,
+    });
+
+    const result = await runAudit(root, "aarch64-pc-windows-msvc");
+
+    expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+    expect(result.stderr).not.toMatch(/FAIL gs/);
+    expect(result.stdout).toContain("gs clean-room smoke: PASS");
+    expect(
+      result.stdout,
+      "the windows gs row declares no resources, so the smoke must prove gs renders with zero -I flags",
+    ).toMatch(/\b0 staged resource flags\b/);
+    expect(result.stdout).not.toContain("sentinel resolved");
+    expect(
+      result.stdout,
+      "the staged engines/gs payload mirrors prep's windows layout (exe + DLL sibling) and is counted beside the flat copy",
+    ).toContain("sidecar audit: PASS (3 binaries, 0 framework dylibs)");
+  });
+
+  it("nothing_stages_or_demands_gs_resources_below_the_windows_rom_gate", async () => {
+    const root = await makeGsRoot({
+      triple: "aarch64-pc-windows-msvc",
+      resources: false,
+      manifestEntry: GS_ROM_MANIFEST_ENTRY,
+      romFixture: true,
+    });
+    expect(existsSync(`${root}/src-tauri/gs-resources`), "the fixture ships engines only").toBe(false);
+  });
+
+  it("runs_the_windows_rom_smoke_on_the_engines_gs_exe_not_the_flat_launcher_stub", async () => {
+    const root = await makeGsRoot({
+      triple: "aarch64-pc-windows-msvc",
+      resources: false,
+      manifestEntry: GS_ROM_MANIFEST_ENTRY,
+      romFixture: true,
+      romFlatExitCode: 1,
+    });
+
+    const result = await runAudit(root, "aarch64-pc-windows-msvc");
+
+    expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+    expect(result.stderr).not.toMatch(/FAIL gs/);
+    expect(result.stdout).toContain("gs clean-room smoke: PASS");
+    expect(result.stdout).toMatch(/\b0 staged resource flags\b/);
+    expect(result.stdout).not.toContain("sentinel resolved");
+    expect(
+      result.stdout,
+      "the smoke must record which windows gs exe it invoked, so a flat-pick regression shows up in the log itself",
+    ).toMatch(/invoked gs\.exe: .*engines\/gs\/gs\.exe/);
+    expect(
+      result.stdout,
+      "the invocation was NOT the dll-less flat copy",
+    ).not.toMatch(/invoked gs\.exe: .*binaries\/gs-aarch64-pc-windows-msvc\.exe\b/);
+  });
+
+  it("falls_back_to_the_flat_static_windows_gs_when_the_engines_dir_is_absent", async () => {
+    const root = await makeGsRoot({
+      triple: "aarch64-pc-windows-msvc",
+      resources: false,
+      manifestEntry: { ...GS_ROM_MANIFEST_ENTRY, static: true },
+      romFixture: true,
+      stageEngines: false,
+    });
+    expect(
+      existsSync(`${root}/src-tauri/binaries/engines`),
+      "the fixture must stage a flat-only windows layout",
+    ).toBe(false);
+
+    const result = await runAudit(root, "aarch64-pc-windows-msvc");
+
+    expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+    expect(result.stderr).not.toMatch(/FAIL gs/);
+    expect(
+      result.stdout,
+      "the smoke must still run, not silently skip, when only the flat static exe exists",
+    ).toContain("gs clean-room smoke: PASS");
+    expect(result.stdout).toMatch(/\b0 staged resource flags\b/);
+    expect(
+      result.stdout,
+      "the fallback invocation must be the flat copy itself",
+    ).toMatch(/invoked gs\.exe: .*binaries\/gs-aarch64-pc-windows-msvc\.exe\b/);
+    expect(result.stdout).toContain("sidecar audit: PASS (1 binaries, 0 framework dylibs)");
+  });
+
+  it("runs_a_rom_smoke_when_an_explicit_target_declares_no_resources", async () => {
     const { resources: _ignored, ...withoutResources } = GS_MANIFEST_ENTRY;
-    const root = await makeGsRoot({ manifestEntry: withoutResources });
+    const root = await makeGsRoot({
+      resources: false,
+      manifestEntry: withoutResources,
+      romFixture: true,
+    });
     const stubBrew = await makeStubBrew();
 
-    const result = await runAudit(root, "aarch64-apple-darwin", {
-      PATH: `${stubBrew}:${process.env.PATH}`,
+    const result = await runAuditArgs(
+      root,
+      ["--target", "aarch64-apple-darwin"],
+      { PATH: `${stubBrew}:${process.env.PATH}` },
+    );
+    expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+    expect(result.stdout).toContain("gs clean-room smoke: PASS");
+    expect(result.stdout).toMatch(/\b0 staged resource flags\b/);
+    expect(result.stdout).not.toContain("sentinel resolved");
+  });
+
+  it("fails_the_rom_smoke_when_the_no_resource_gs_cannot_render", async () => {
+    const root = await makeGsRoot({
+      triple: "aarch64-pc-windows-msvc",
+      resources: false,
+      manifestEntry: GS_ROM_MANIFEST_ENTRY,
+      romFixture: true,
+      romExitCode: 1,
     });
+
+    const result = await runAudit(root, "aarch64-pc-windows-msvc");
+
     expect(result.code).toBe(1);
     expect(result.stdout + result.stderr).toMatch(
-      /no manifest entry for aarch64-apple-darwin declares a "resources" array/,
+      /gs clean-room smoke: gs exited 1 with no staged resource flags/,
     );
+    expect(result.stdout).not.toContain("gs clean-room smoke: PASS");
+    expect(result.stdout).not.toContain("sentinel resolved");
   });
 
   it("fails when a resource dir holds only empty subdirectories", async () => {
@@ -715,7 +919,7 @@ describe("gs sentinel coverage is shared, not duplicated", () => {
   });
 });
 
-describe("gs Resource subdir content gate (audit side)", () => {
+describeDarwin("gs Resource subdir content gate (audit side)", () => {
   it.each(["CMap", "Encoding"])("fails when Resource/%s holds no files", async (subdir) => {
     const root = await makeGsRoot();
     const dir = `${root}/src-tauri/gs-resources/Resource/${subdir}`;
@@ -737,7 +941,7 @@ describe("gs Resource subdir content gate (audit side)", () => {
   });
 });
 
-describe("gs smoke temp-dir failures are reported, never silent", () => {
+describeDarwin("gs smoke temp-dir failures are reported, never silent", () => {
   it("fails with a message when mktemp cannot create a workdir", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -753,6 +957,39 @@ describe("gs smoke temp-dir failures are reported, never silent", () => {
     );
     expect(result.stdout).not.toContain("gs clean-room smoke: PASS");
     expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+
+  it("survives git-bash GNU mktemp semantics: every audit mktemp template carries trailing X's", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const real = execFileSync("which", ["mktemp"]).toString().trim();
+    const stubMktemp = await makeStubTool("mktemp", `#!/bin/sh
+template=
+for a in "$@"; do
+  case "$a" in
+    -*) continue ;;
+    *) template="$a" ;;
+  esac
+done
+case "$template" in
+  *XXXXXX) exec ${real} "$@" ;;
+  *) printf "mktemp: too few X's in template '%s'\\n" "$template" >&2; exit 1 ;;
+esac
+`);
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubMktemp}:${stubBrew}:${process.env.PATH}`,
+    });
+
+    expect(
+      result.code,
+      "git-bash mktemp rejects X-less templates ('too few X's'), so the audit's smoke \
+       workdir and find-error scratch must both carry trailing X's to work on windows rows",
+    ).toBe(0);
+    expect(result.stdout).toContain("gs clean-room smoke: PASS");
+    expect(result.stdout).toContain("sidecar audit: PASS");
+    expect(result.stdout + result.stderr).not.toContain("could not create a temp dir");
+    expect(result.stdout + result.stderr).not.toContain("too few X's");
   });
 });
 
@@ -775,7 +1012,7 @@ exec ${real} "$@"
   return dir;
 }
 
-describe("the gs smoke fails closed instead of passing vacuously", () => {
+describeDarwin("the gs smoke fails closed instead of passing vacuously", () => {
   it.each([1, 2, 3])(
     "fails when the %s'th manifest read fails, printing neither sentinel resolved nor PASS",
     async (nth) => {
@@ -791,9 +1028,16 @@ describe("the gs smoke fails closed instead of passing vacuously", () => {
       });
 
       expect(result.code, `node -e call #${nth} failing must not pass the audit`).toBe(1);
-      expect(result.stdout + result.stderr).toMatch(
-        /FAIL gs clean-room smoke: no manifest entry for aarch64-apple-darwin declares a "resources" array/,
-      );
+      if (nth === 1) {
+        expect(
+          result.stdout + result.stderr,
+          "a failed gate-level manifest read must still leave the audit red, through whatever smoke path it takes",
+        ).toMatch(/FAIL gs clean-room smoke: gs exited \d+/);
+      } else {
+        expect(result.stdout + result.stderr).toMatch(
+          /FAIL gs clean-room smoke: no manifest entry for aarch64-apple-darwin declares a "resources" array/,
+        );
+      }
       expect(result.stdout).not.toContain("sentinel resolved");
       expect(result.stdout).not.toContain("sidecar audit: PASS");
       expect(result.stdout).not.toContain("gs clean-room smoke: PASS");
@@ -871,7 +1115,7 @@ function runPatchedAudit(root, anchor, extraEnv = {}) {
   });
 }
 
-describe("an unguarded failure inside the gs smoke is reported, not silent", () => {
+describeDarwin("an unguarded failure inside the gs smoke is reported, not silent", () => {
   it("prints a FAIL naming line/status/command and leaves no temp workdir", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -935,17 +1179,17 @@ describe("the smoke's ERR trap cannot outlive the smoke", () => {
     ).toHaveLength(0);
     expect(
       source.match(/smoke_mode=1/g) ?? [],
-      "the smoke must enter smoke mode exactly once",
-    ).toHaveLength(1);
+      "the smoke must enter smoke mode once for each smoke mode: the -I resources smoke and the ROM smoke",
+    ).toHaveLength(2);
     expect(
       source.match(/smoke_mode=0/g) ?? [],
-      "smoke mode must be left on both smoke exit paths, or later body failures are \
+      "smoke mode must be left on every smoke exit path in both smoke modes, or later body failures are \
        misattributed to the gs smoke",
-    ).toHaveLength(3);
+    ).toHaveLength(4);
     expect(source).toContain("err_trap_active=1");
   });
 
-  it("the ERR trap is not inherited by the rest of the audit after the smoke returns", async () => {
+  itDarwin("the ERR trap is not inherited by the rest of the audit after the smoke returns", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
     const result = await runAudit(root, "aarch64-apple-darwin", {
@@ -983,7 +1227,7 @@ describe("the audit's own claims are fail-closed", () => {
     expect(source).toContain('if [ "$audit_finished" -eq 0 ] && [ "${#failures[@]}" -gt 0 ]; then');
   });
 
-  it("refuses to print a PASS summary when the binary count cannot be enumerated", async () => {
+  itDarwin("refuses to print a PASS summary when the binary count cannot be enumerated", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
     const stubFind = await makeStubTool(
@@ -1003,7 +1247,7 @@ describe("the audit's own claims are fail-closed", () => {
     expect(result.stdout).not.toContain("sidecar audit: PASS");
   });
 
-  it("names the framework enumeration failure too", async () => {
+  itDarwin("names the framework enumeration failure too", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
     await mkdir(`${root}/src-tauri/frameworks`, { recursive: true });
@@ -1021,7 +1265,7 @@ describe("the audit's own claims are fail-closed", () => {
     expect(result.stdout + result.stderr).toMatch(/FAIL could not enumerate \S*frameworks/);
   });
 
-  it.each([
+  itDarwin.each([
     ["inside the Mach-O per-file loop", MACHO_LOOP_ANCHOR],
     ["before the gs smoke, at the verify step", VERIFY_ANCHOR],
     ["inside the audit_macho function body", MACHO_FN_ANCHOR],
@@ -1055,7 +1299,7 @@ describe("the audit's own claims are fail-closed", () => {
     },
   );
 
-  it("fails closed when the Resource subdir enumeration yields nothing", async () => {
+  itDarwin("fails closed when the Resource subdir enumeration yields nothing", async () => {
     const root = await makeGsRoot({
       manifestEntry: {
         source: "brew",
@@ -1090,7 +1334,7 @@ describe("the audit's own claims are fail-closed", () => {
   });
 });
 
-describe("an unreadable staged dir is not reported as an empty one", () => {
+describeDarwin("an unreadable staged dir is not reported as an empty one", () => {
   it("names the read error and points at permissions, not at restaging", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -1119,7 +1363,7 @@ describe("an unreadable staged dir is not reported as an empty one", () => {
   });
 });
 
-describe("the dylib cross-check does not mistake a read error for missing dylibs", () => {
+describeDarwin("the dylib cross-check does not mistake a read error for missing dylibs", () => {
   it("names the enumeration failure instead of blaming tauri.conf.json", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -1148,7 +1392,7 @@ describe("the dylib cross-check does not mistake a read error for missing dylibs
   });
 });
 
-describe("a real tool failure inside the audit is an audit finding, not a silent exit", () => {
+describeDarwin("a real tool failure inside the audit is an audit finding, not a silent exit", () => {
   it("names the binary whose otool -L pipeline failed, without a duplicate trap message", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -1193,7 +1437,11 @@ describe("a real tool failure inside the audit is an audit finding, not a silent
       "a failing rm -rf in the EXIT trap must not turn a green audit into exit 1",
     ).toBe(0);
     expect(result.stderr).toContain("WARN sidecar audit: could not remove the smoke workdir");
-    expect(result.stderr).toMatch(/gs-clean-room\./);
+    expect(
+      result.stderr,
+      "the smoke workdir name must survive both BSD mktemp (-t prefix appends a suffix) \
+       and git-bash GNU mktemp (trailing X's replaced), so assert only the stem",
+    ).toMatch(/gs-clean-room-/);
     expect(
       result.stdout.match(/sidecar audit: PASS/g) ?? [],
       "the PASS line must print exactly once",
@@ -1201,7 +1449,7 @@ describe("a real tool failure inside the audit is an audit finding, not a silent
   });
 });
 
-describe("a failing tool inside a substitution is an audit finding, not a discarded subshell", () => {
+describeDarwin("a failing tool inside a substitution is an audit finding, not a discarded subshell", () => {
   it("names the sentinel-name derivation once, with no abort blocks", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -1280,7 +1528,7 @@ describe("a failing tool inside a substitution is an audit finding, not a discar
   });
 });
 
-describe("cross-target audit passthrough", () => {
+describeDarwin("cross-target audit passthrough", () => {
   const INTEL = "x86_64-apple-darwin";
   const ARM = "aarch64-apple-darwin";
 
@@ -1333,7 +1581,166 @@ describe("cross-target audit passthrough", () => {
   });
 });
 
-describe("tauri.conf.json dylib cross-check scoping", () => {
+describe("the audit smoke's gs binary resolves in node, manifest-driven", () => {
+  const GS_RESOLVE = join(SCRIPTS, "audit-gs-resolve.mjs");
+
+  async function makeGsResolveRoot(triple, { manifest } = {}) {
+    await mkdir(`${tmpdir()}/audit-test-roots`, { recursive: true });
+    const root = await mkdtemp(`${tmpdir()}/audit-test-roots/gr`);
+    cleanupRoots.push(root);
+    await mkdir(`${root}/src-tauri/binaries`, { recursive: true });
+    await mkdir(`${root}/scripts`, { recursive: true });
+    await writeFile(
+      `${root}/scripts/binaries.manifest.json`,
+      JSON.stringify({
+        targets: { [triple]: manifest ?? { gs: GS_ROM_MANIFEST_ENTRY } },
+      }),
+    );
+    return root;
+  }
+
+  function runGsResolve(root, args = []) {
+    return new Promise((resolvePromise) => {
+      const child = spawn(process.execPath, [GS_RESOLVE, "--root", root, ...args], {
+        cwd: SCRIPTS,
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      child.onerror = (error) => {
+        child.kill();
+        resolvePromise({ code: 127, stdout, stderr: `${stderr}${error.message ?? error}` });
+      };
+      child.stderr.on("data", (d) => (stderr += d));
+      child.on("close", (code) => resolvePromise({ code, stdout, stderr }));
+    });
+  }
+
+  it("prefers the engines payload exe for a non-static windows gs row", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc");
+    const enginesExe = `${root}/src-tauri/binaries/engines/gs/gs.exe`;
+    await mkdir(dirname(enginesExe), { recursive: true });
+    await writeFile(enginesExe, "engines exe stub");
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual([enginesExe]);
+    expect(
+      result.stderr,
+      "one note per candidate attempted",
+    ).toContain(`candidate ${enginesExe} — found`);
+    expect(
+      result.stderr,
+      "the flat fallback is not attempted while the engines exe resolves",
+    ).not.toMatch(/— missing/);
+  });
+
+  it("falls back to the flat exe when the engines payload is absent", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc");
+    const flat = `${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe`;
+    await writeFile(flat, "flat exe stub");
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual([flat]);
+    expect(result.stderr).toContain(
+      `candidate ${root}/src-tauri/binaries/engines/gs/gs.exe — missing`,
+    );
+    expect(result.stderr).toContain(`candidate ${flat} — found`);
+  });
+
+  it("a static windows gs row ships only the flat exe, so engines is never a candidate", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc", {
+      manifest: { gs: { ...GS_ROM_MANIFEST_ENTRY, static: true } },
+    });
+    const flat = `${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe`;
+    await writeFile(flat, "flat exe stub");
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual([flat]);
+    expect(result.stderr, "mac/static semantics: flat only").not.toMatch(/engines/);
+  });
+
+  it("a static flat exe resolves even though the engines payload left behind", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc", {
+      manifest: { gs: { ...GS_ROM_MANIFEST_ENTRY, static: true } },
+    });
+    const flat = `${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe`;
+    await writeFile(flat, "flat exe stub");
+    const enginesExe = `${root}/src-tauri/binaries/engines/gs/gs.exe`;
+    await mkdir(dirname(enginesExe), { recursive: true });
+    await writeFile(enginesExe, "stale engines exe");
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual([flat]);
+    expect(result.stderr).not.toMatch(/engines/);
+  });
+
+  it("a mac gs row resolves the flat binary and never probes engines", async () => {
+    const root = await makeGsResolveRoot("aarch64-apple-darwin", {
+      manifest: { gs: GS_MANIFEST_ENTRY },
+    });
+    const flat = `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`;
+    await writeFile(flat, "mac binary stub");
+
+    const result = await runGsResolve(root, ["--target", "aarch64-apple-darwin"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual([flat]);
+    expect(result.stderr, "no engines semantics on a mac triple").not.toMatch(/engines/);
+  });
+
+  it("fails closed when every candidate is missing, listing what was tried", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc");
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(
+      "FAIL gs resolution: no gs executable found for target x86_64-pc-windows-msvc",
+    );
+    expect(result.stderr).toContain(
+      `candidate ${root}/src-tauri/binaries/engines/gs/gs.exe — missing`,
+    );
+    expect(result.stderr).toContain(
+      `candidate ${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe — missing`,
+    );
+  });
+
+  it("fails closed naming the manifest when scripts/binaries.manifest.json is absent", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc");
+    await rm(`${root}/scripts/binaries.manifest.json`);
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      `FAIL gs resolution: manifest missing: ${root}/scripts/binaries.manifest.json`,
+    );
+  });
+
+  it("fails closed when the manifest has no gs row for the target", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc", {
+      manifest: { ffmpeg: manifestEntry() },
+    });
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      `FAIL gs resolution: no gs row for target x86_64-pc-windows-msvc in manifest ${root}/scripts/binaries.manifest.json`,
+    );
+  });
+});
+
+describeDarwin("tauri.conf.json dylib cross-check scoping", () => {
   const WIN = "x86_64-pc-windows-msvc";
 
   async function makeConfRoot() {

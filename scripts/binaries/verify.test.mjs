@@ -3,7 +3,7 @@ import { vi, describe, expect, it } from "vitest";
 
 vi.setConfig({ testTimeout: 30_000 });
 import { spawn } from "node:child_process";
-import { execFileSync } from "node:child_process";
+import { execFileSync, execFile } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,10 +11,34 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { knownTriples, sha256File, validateManifest } from "./lib.mjs";
 import { gsSentinelPaths } from "./gs-sentinels.mjs";
+import { describeDarwin, itDarwin } from "../test-platform.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VERIFY = join(HERE, "verify.mjs");
 const GS_SENTINELS = gsSentinelPaths();
+
+function mergePatch(target, patch) {
+  if (patch === null) {
+    return null;
+  }
+  if (typeof patch !== "object" || Array.isArray(patch)) {
+    return structuredClone(patch);
+  }
+  if (typeof target !== "object" || target === null || Array.isArray(target)) {
+    target = {};
+  }
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete target[key];
+    } else {
+      target[key] = mergePatch(target[key] ?? null, value);
+      if (target[key] === null) {
+        delete target[key];
+      }
+    }
+  }
+  return target;
+}
 
 async function stageGsResources(root, { sentinels = true } = {}) {
   const base = join(root, "src-tauri", "gs-resources");
@@ -104,6 +128,38 @@ async function makeRoot(manifest) {
   return root;
 }
 
+const PE_MACHINE_X86_64 = 0x8664;
+const PE_MACHINE_ARM64 = 0xaa64;
+
+function buildPe32Plus(machine) {
+  const b = Buffer.alloc(0xd0, 0);
+  b.write("MZ", 0, "ascii");
+  b.writeUInt32LE(0x40, 0x3c);
+  b.write("PE\0\0", 0x40, "ascii");
+  b.writeUInt16LE(machine, 0x44);
+  b.writeUInt16LE(1, 0x46);
+  b.writeUInt16LE(0xf0, 0x54);
+  b.writeUInt16LE(0x0022, 0x56);
+  b.writeUInt16LE(0x020b, 0x58);
+  b.writeUInt16LE(3, 0x9c);
+  return b;
+}
+
+async function classifyPeFixture(fixturePath) {
+  return new Promise((resolvePromise) => {
+    execFile("file", ["-b", fixturePath], { encoding: "utf8" }, (error, stdout, stderr) => {
+      if (error && error.code === "ENOENT") {
+        resolvePromise({ unavailable: "file(1) is not on PATH on this host" });
+        return;
+      }
+      resolvePromise({
+        description: `${stdout ?? ""}${stderr ?? ""}`.trim(),
+        classifyError: error?.message ?? null,
+      });
+    });
+  });
+}
+
 const FFMPEG_MANIFEST = {
   targets: {
     "aarch64-apple-darwin": {
@@ -128,7 +184,7 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("fails on arch flip fixture (x86 Mach-O under arm64 name)", async () => {
+  itDarwin("fails on arch flip fixture (x86 Mach-O under arm64 name)", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
     compileFixture("x86_64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2");
     const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
@@ -138,7 +194,7 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("fails when version output lacks expectVersion", async () => {
+  itDarwin("fails when version output lacks expectVersion", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
     compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "garbage 1.2.3");
     const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
@@ -148,7 +204,7 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("passes when arch and version match", async () => {
+  itDarwin("passes when arch and version match", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
     compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2 Copyright");
     const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
@@ -157,7 +213,7 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("fails when the staged binary no longer matches the lock's stagedSha256", async () => {
+  itDarwin("fails when the staged binary no longer matches the lock's stagedSha256", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
     compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2");
     await writeFile(
@@ -190,7 +246,7 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("does not gate a brew row on a machine-local staged digest", async () => {
+  itDarwin("does not gate a brew row on a machine-local staged digest", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -239,7 +295,7 @@ describe("verify.mjs", () => {
     await rm(stubBrew, { recursive: true, force: true });
   });
 
-  it("fails on brew version drift against the manifest pin even when the lock agrees with brew", async () => {
+  itDarwin("fails on brew version drift against the manifest pin even when the lock agrees with brew", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -289,7 +345,7 @@ describe("verify.mjs", () => {
     await rm(stubDir, { recursive: true, force: true });
   });
 
-  it("compares against the ACTIVE keg, which brew lists last", async () => {
+  itDarwin("compares against the ACTIVE keg, which brew lists last", async () => {
     const makeCase = async (pin) => {
       const root = await makeRoot({
         targets: {
@@ -356,7 +412,7 @@ describe("verify.mjs", () => {
     }
   });
 
-  it("fails loudly when the brew drift gate is inactive because brew is off PATH", async () => {
+  itDarwin("fails loudly when the brew drift gate is inactive because brew is off PATH", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -386,7 +442,7 @@ describe("verify.mjs", () => {
     await rm(emptyBin, { recursive: true, force: true });
   });
 
-  it("proceeds with a stated INACTIVE gate when the allowance is set", async () => {
+  itDarwin("proceeds with a stated INACTIVE gate when the allowance is set", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -417,7 +473,7 @@ describe("verify.mjs", () => {
     await rm(emptyBin, { recursive: true, force: true });
   });
 
-  it("fails when the formula is not installed on a brew-present host without the allowance", async () => {
+  itDarwin("fails when the formula is not installed on a brew-present host without the allowance", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -447,7 +503,7 @@ describe("verify.mjs", () => {
     await rm(stubBrew, { recursive: true, force: true });
   });
 
-  it("proceeds with a stated INACTIVE note when brew is present but the formula is not installed and the allowance is set", async () => {
+  itDarwin("proceeds with a stated INACTIVE note when brew is present but the formula is not installed and the allowance is set", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -479,7 +535,7 @@ describe("verify.mjs", () => {
     await rm(stubBrew, { recursive: true, force: true });
   });
 
-  it("proceeds with a stated INACTIVE note when the installed brewed formula drifted and the allowance is set", async () => {
+  itDarwin("proceeds with a stated INACTIVE note when the installed brewed formula drifted and the allowance is set", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -551,7 +607,7 @@ describe("verify.mjs", () => {
     await rm(stubDir, { recursive: true, force: true });
   });
 
-  it("treats a No-such-keg brew failure as a missing formula gate", async () => {
+  itDarwin("treats a No-such-keg brew failure as a missing formula gate", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -591,7 +647,7 @@ describe("verify.mjs", () => {
     await rm(stubNoKeg, { recursive: true, force: true });
   });
 
-  it("fails when a staged gs acceptance sentinel is missing", async () => {
+  itDarwin("fails when a staged gs acceptance sentinel is missing", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -645,7 +701,7 @@ describe("verify.mjs", () => {
   });
 });
 
-describe("gs Resource subdir content gate (verify side)", () => {
+describeDarwin("gs Resource subdir content gate (verify side)", () => {
   const GS_MANIFEST = {
     targets: {
       "aarch64-apple-darwin": {
@@ -730,20 +786,274 @@ describe("the shipped manifest", () => {
       "bin/qpdf",
     );
     expect(intel.qpdf.lib).toBe("lib");
-    expect(intel.vips).toMatchObject({ source: "brew", formula: "vips", expectVersion: "8.18.7" });
+    expect(intel.vips).toMatchObject({
+      source: "brew",
+      formula: "vips",
+      expectVersion: "8.18.6",
+    });
     expect(intel.gs).toMatchObject({
       source: "brew",
       formula: "ghostscript",
       binary: "gs",
-      expectVersion: "10.08.0",
+      expectVersion: "10.07.1",
     });
+    expect(
+      intel.vips.expectVersion,
+      "Intel vips is frozen at 8.18.6 — the last sonoma-bottled version; 8.18.7 has no x86_64 bottle ever (ADR 0001)",
+    ).not.toBe(manifest.targets["aarch64-apple-darwin"].vips.expectVersion);
+    expect(
+      intel.gs.expectVersion,
+      "Intel ghostscript is frozen at 10.07.1 — the last sonoma-bottled version; 10.08.0 bottles postdate the x86_64 cutoff (ADR 0001)",
+    ).not.toBe(manifest.targets["aarch64-apple-darwin"].gs.expectVersion);
     expect(
       intel.gs.resources,
       "the Intel gs row must declare the same resource tree the clean-room smoke proves",
     ).toEqual(manifest.targets["aarch64-apple-darwin"].gs.resources);
   });
+});
 
+describe("the shipped windows gs rows and platform config", () => {
+  const REPO_ROOT = join(HERE, "..", "..");
+  const manifest = JSON.parse(
+    readFileSync(join(REPO_ROOT, "scripts", "binaries.manifest.json"), "utf8"),
+  );
+  const baseConf = JSON.parse(
+    readFileSync(join(REPO_ROOT, "src-tauri", "tauri.conf.json"), "utf8"),
+  );
+  const windowsConf = JSON.parse(
+    readFileSync(join(REPO_ROOT, "src-tauri", "tauri.windows.conf.json"), "utf8"),
+  );
 
+  it.each(["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"])(
+    "%s_gs_row_declares_no_resources",
+    (triple) => {
+      expect(
+        manifest.targets[triple].gs,
+        "msys2 ships no resource payload for gs (ROM model) — the row must not stage gs-resources",
+      ).not.toHaveProperty("resources");
+    },
+  );
+
+  it("keeps_the_mac_gs_resource_declarations_intact", () => {
+    expect(
+      manifest.targets["aarch64-apple-darwin"].gs.resources,
+      "the arm64 gs row must declare the four staged resource dirs",
+    ).toEqual(["Resource", "lib", "iccprofiles", "fonts"]);
+  });
+
+  it("merges_the_windows_conf_into_a_resources_map_without_gs_resources", () => {
+    const merged = mergePatch(structuredClone(baseConf), windowsConf);
+    expect(
+      merged.bundle.resources,
+      "tauri-build copies the resolved resources map on every cargo run — a gs-resources key today would demand a tree windows never stages",
+    ).toEqual({ "binaries/engines/": "engines/" });
+  });
+
+  it("merges_the_windows_conf_into_the_two_entry_externalBin", () => {
+    const merged = mergePatch(structuredClone(baseConf), windowsConf);
+    expect(merged.bundle.externalBin).toEqual([
+      "binaries/ffmpeg",
+      "binaries/ffprobe",
+    ]);
+  });
+
+  it("keeps_the_base_conf_gs_resources_mapping_for_mac", () => {
+    expect(baseConf.bundle.resources).toEqual({ "gs-resources/": "gs-resources/" });
+  });
+});
+
+describe("windows handcrafted PE machine-field fixtures (portable pins for contentArchWindows)", () => {
+
+  function peManifestFor(triple) {
+    return {
+      targets: {
+        [triple]: {
+          vips: {
+            source: "url",
+            url: "https://fixtures.invalid/pe32-plus.zip",
+            sha256: "5".repeat(64),
+            dest: "vips",
+            expectVersion: "1.0.0",
+            static: true,
+          },
+        },
+      },
+    };
+  }
+
+  async function writePeFixture(root, triple, machine) {
+    const fixturePath = join(root, "src-tauri", "binaries", `vips-${triple}.exe`);
+    await writeFile(fixturePath, buildPe32Plus(machine));
+    return fixturePath;
+  }
+
+  async function classifyWithFile(fixturePath) {
+    return classifyPeFixture(fixturePath);
+  }
+
+  it("machine_field_0x8664_clears_the_arch_gate_for_x86_64_pc_windows_msvc_and_reaches_the_execution_gate", async (ctx) => {
+    const root = await makeRoot(peManifestFor("x86_64-pc-windows-msvc"));
+    const fixturePath = await writePeFixture(root, "x86_64-pc-windows-msvc", PE_MACHINE_X86_64);
+    const classification = await classifyWithFile(fixturePath);
+    if (classification.unavailable) {
+      ctx.skip(`${classification.unavailable} — contentArchWindows classification of the PE machine field needs file(1)`);
+    }
+    expect(
+      classification.description,
+      "file -b must classify the hand-crafted MZ + PE\\0\\0 COFF bytes (machine 0x8664, optional-header magic 0x020B) as a PE32+ x86-64 image on any host",
+    ).toMatch(/PE32\+ executable/);
+    expect(classification.description).toMatch(/x86-64/i);
+
+    const result = await runVerify(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(result.code).toBe(1);
+    expect(
+      result.stderr,
+      "the matching machine field must clear the content-arch gate — no arch failure may reach the report",
+    ).not.toMatch(/arch check failed|does not match/);
+    expect(
+      result.stderr,
+      "with the arch gate satisfied, the run proceeds to the execution gate; the fixture bytes cannot execute on any host, which is the only portable failing gate",
+    ).toContain("version check failed");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("machine_field_0xaa64_clears_the_arch_gate_for_aarch64_pc_windows_msvc_and_reaches_the_execution_gate", async (ctx) => {
+    const root = await makeRoot(peManifestFor("aarch64-pc-windows-msvc"));
+    const fixturePath = await writePeFixture(root, "aarch64-pc-windows-msvc", PE_MACHINE_ARM64);
+    const classification = await classifyWithFile(fixturePath);
+    if (classification.unavailable) {
+      ctx.skip(`${classification.unavailable} — contentArchWindows classification of the PE machine field needs file(1)`);
+    }
+    expect(
+      classification.description,
+      "file -b must classify the hand-crafted MZ + PE\\0\\0 COFF bytes (machine 0xAA64, optional-header magic 0x020B) as a PE32+ Aarch64 image on any host",
+    ).toMatch(/PE32\+ executable/);
+    expect(classification.description).toMatch(/Aarch64|ARM64/i);
+
+    const result = await runVerify(["--target", "aarch64-pc-windows-msvc", "--root", root]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).not.toMatch(/arch check failed|does not match/);
+    expect(result.stderr).toContain("version check failed");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("swapped_machine_field_fails_the_arch_gate_with_a_triple_arch_mismatch", async (ctx) => {
+    const root = await makeRoot(peManifestFor("x86_64-pc-windows-msvc"));
+    const fixturePath = await writePeFixture(root, "x86_64-pc-windows-msvc", PE_MACHINE_X86_64);
+    const swapped = buildPe32Plus(PE_MACHINE_ARM64);
+    await writeFile(fixturePath, swapped);
+    const classification = await classifyWithFile(fixturePath);
+    if (classification.unavailable) {
+      ctx.skip(`${classification.unavailable} — contentArchWindows classification of the PE machine field needs file(1)`);
+    }
+    expect(classification.description).toMatch(/Aarch64|ARM64/i);
+
+    const result = await runVerify(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(result.code).toBe(1);
+    expect(
+      result.stderr,
+      "swapping the COFF machine field to ARM64 under an x86_64 filename triple must fail the content-arch gate",
+    ).toContain("does not match x86_64");
+    expect(
+      result.stderr,
+      "the arch gate must stop the run before the execution gate is reached",
+    ).not.toContain("version check failed");
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("windows verify must execute what the app executes", () => {
+  const TRIPLE = "x86_64-pc-windows-msvc";
+  const FLAT_EXE = `vips-${TRIPLE}.exe`;
+
+  function manifestFor(entry) {
+    return {
+      targets: {
+        [TRIPLE]: {
+          vips: {
+            source: "url",
+            url: "https://fixtures.invalid/vips.zip",
+            sha256: "5".repeat(64),
+            dest: "vips",
+            expectVersion: "1.0.0",
+            ...entry,
+          },
+        },
+      },
+    };
+  }
+
+  async function writeFlatPe(root, ctx) {
+    const flatPath = join(root, "src-tauri", "binaries", FLAT_EXE);
+    await writeFile(flatPath, buildPe32Plus(PE_MACHINE_X86_64));
+    const classification = await classifyPeFixture(flatPath);
+    if (classification.unavailable || classification.classifyError) {
+      ctx.skip(`PE classification unavailable on this host: ${classification.unavailable ?? classification.classifyError}`);
+    }
+    expect(classification.description).toMatch(/PE32\+ executable/);
+    expect(classification.description).toMatch(/x86-64/i);
+    return flatPath;
+  }
+
+  it("static rows keep executing the flat externalBin copy", async (ctx) => {
+    const root = await makeRoot(manifestFor({ static: true }));
+    await writeFlatPe(root, ctx);
+
+    const result = await runVerify(["--target", TRIPLE, "--root", root]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("version check failed");
+    expect(
+      result.stderr,
+      "the failure must name the flat copy the app actually runs",
+    ).toMatch(new RegExp(`binaries[\\\\/]${FLAT_EXE}`));
+    expect(
+      result.stderr,
+      "a static engine ships no engines/ payload dir, so no engines/ demand may appear",
+    ).not.toMatch(/engines/);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("fails loudly naming the engines exe when a non-static row has no engine payload", async (ctx) => {
+    const root = await makeRoot(manifestFor({}));
+    await writeFlatPe(root, ctx);
+
+    const result = await runVerify(["--target", TRIPLE, "--root", root]);
+
+    expect(result.code).toBe(1);
+    expect(
+      result.stderr,
+      "the remedy is prep, which stages engines/<dest>/<dest>.exe beside its DLLs",
+    ).toContain("yarn binaries:prep");
+    expect(
+      result.stderr,
+      "the report must name the exact app-relevant executable path",
+    ).toMatch(/engines[\\/]vips[\\/]vips\.exe/);
+    expect(
+      result.stderr,
+      "the flat copy cannot run without its DLLs, so an opaque exec failure must not be reported",
+    ).not.toContain("failed to execute");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  itDarwin("executes engines/<dest>/<dest>.exe for a non-static row, the path the app probes", async (ctx) => {
+    const root = await makeRoot(manifestFor({}));
+    await writeFlatPe(root, ctx);
+    const enginesExe = join(root, "src-tauri", "binaries", "engines", "vips", "vips.exe");
+    await mkdir(dirname(enginesExe), { recursive: true });
+    compileFixture("arm64", enginesExe, "vips 1.0.0");
+
+    const result = await runVerify(["--target", TRIPLE, "--root", root]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("verify: PASS");
+    expect(result.stdout).toContain(`${FLAT_EXE} 1.0.0`);
+    expect(
+      result.stderr,
+      "the reachable app-relevant exe must be executed, not the DLL-less flat copy",
+    ).not.toContain("failed to execute");
+    await rm(root, { recursive: true, force: true });
+  });
 });
 
 describe("no arm64 assumption hides in the script logic", () => {
@@ -786,7 +1096,7 @@ describe("no arm64 assumption hides in the script logic", () => {
     const offences = [];
     for (const file of files) {
       const relative = file.replace(`${scriptsDir}/`, "");
-      if (relative === "binaries/lib.mjs") {
+      if (relative === "binaries/lib.mjs" || relative === "binaries/pe-imports.mjs") {
         continue;
       }
       const source = readFileSync(file, "utf8");
