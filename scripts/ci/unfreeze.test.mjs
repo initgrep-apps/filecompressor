@@ -1793,10 +1793,13 @@ describe("unfreeze.sh", () => {
       try {
         await writeFile(fixtureSource, cSource);
         await new Promise((resolvePromise, reject) => {
-          execFile("clang", ["-arch", "arm64", "-o", fixtureBinary, fixtureSource], (error) =>
-            error ? reject(error) : resolvePromise(),
+          execFile(
+            "clang",
+            ["-arch", "arm64", "-arch", "x86_64", "-o", fixtureBinary, fixtureSource],
+            (error) => (error ? reject(error) : resolvePromise()),
           );
         });
+        execFileSync("codesign", ["--force", "--sign", "-", fixtureBinary]);
 
         const bin = join(srcRoot, "src-tauri", "binaries");
         for (const flat of FLAT_EXES) {

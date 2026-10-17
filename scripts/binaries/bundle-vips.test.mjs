@@ -36,6 +36,8 @@ function dylib(outPath, symbol) {
   const source = `${outPath}.c`;
   writeFileSync(source, `int ${symbol}(void){return 0;}\n`);
   execFileSync("clang", [
+    "-arch",
+    "arm64",
     "-dynamiclib",
     "-Wl,-headerpad_max_install_names",
     source,

@@ -19,9 +19,11 @@ async function contentArchMac(path) {
 async function contentArchWindows(path) {
   try {
     const { stdout } = await run("file", ["-b", path]);
-    if (/x86-64|x86_64/i.test(stdout)) return ["x86_64"];
-    if (/ARM64|Aarch64/i.test(stdout)) return ["arm64"];
-    return { error: `unrecognized PE arch in: ${stdout.trim()}` };
+    const arches = [];
+    if (/x86-64|x86_64/i.test(stdout)) arches.push("x86_64");
+    if (/ARM64|Aarch64/i.test(stdout)) arches.push("arm64");
+    if (arches.length === 0) return { error: `unrecognized PE arch in: ${stdout.trim()}` };
+    return arches;
   } catch (error) {
     return { error: `${error.message ?? error}` };
   }

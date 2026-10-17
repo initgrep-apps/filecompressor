@@ -70,7 +70,7 @@ function arm64Fixture(outPath, marker) {
 function dylibFixture(outPath, symbol, { installName = null } = {}) {
   const source = join(dirname(outPath), `${symbol}.c`);
   writeFileSync(source, `int ${symbol}(void){return 0;}\n`);
-  const args = ["-dynamiclib", "-Wl,-headerpad_max_install_names", source, "-o", outPath];
+  const args = ["-arch", "arm64", "-dynamiclib", "-Wl,-headerpad_max_install_names", source, "-o", outPath];
   if (installName) {
     args.push(`-Wl,-dylib_install_name,${installName}`);
   }

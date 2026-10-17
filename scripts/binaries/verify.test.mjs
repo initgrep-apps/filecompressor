@@ -120,7 +120,11 @@ function compileFixture(arch, outPath, versionOutput) {
 #include <stdio.h>
 int main(void) { printf("${versionOutput}\\n"); return 0; }
 EOF`]);
-  execFileSync("clang", ["-arch", arch, source, "-o", outPath]);
+  const archArgs = arch === "universal" ? ["-arch", "arm64", "-arch", "x86_64"] : ["-arch", arch];
+  execFileSync("clang", [...archArgs, source, "-o", outPath]);
+  if (arch === "universal") {
+    execFileSync("codesign", ["--force", "--sign", "-", outPath]);
+  }
 }
 
 function runVerify(args, env = process.env) {
@@ -212,7 +216,7 @@ describe("verify.mjs", () => {
 
   itDarwin("fails when version output lacks expectVersion", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
-    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "garbage 1.2.3");
+    compileFixture("universal", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "garbage 1.2.3");
     const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("version");
@@ -222,7 +226,7 @@ describe("verify.mjs", () => {
 
   itDarwin("passes when arch and version match", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
-    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2 Copyright");
+    compileFixture("universal", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2 Copyright");
     const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
     expect(result.code).toBe(0);
     expect(result.stdout).toContain("verify: PASS");
@@ -264,7 +268,7 @@ describe("verify.mjs", () => {
 
   itDarwin("skips_the_stagedSha256_lock_comparison_when_the_restore_provenance_marker_matches_the_target", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
-    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2");
+    compileFixture("universal", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2");
     await writeFile(
       `${root}/scripts/binaries.lock.json`,
       JSON.stringify({
@@ -353,7 +357,7 @@ describe("verify.mjs", () => {
         },
       },
     });
-    compileFixture("arm64", `${root}/src-tauri/binaries/vips-aarch64-apple-darwin`, "8.18.7");
+    compileFixture("universal", `${root}/src-tauri/binaries/vips-aarch64-apple-darwin`, "8.18.7");
     const stubBrew = await makeStubBrewDir("vips 8.18.7");
     await writeFile(
       `${root}/scripts/binaries.lock.json`,
@@ -403,7 +407,7 @@ describe("verify.mjs", () => {
         },
       },
     });
-    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.1");
+    compileFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.1");
     await stageGsResources(root);
     const stagedSha256 = await sha256File(
       `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`,
@@ -454,7 +458,7 @@ describe("verify.mjs", () => {
           },
         },
       });
-      compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, pin);
+      compileFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, pin);
       await stageGsResources(root);
       const stagedSha256 = await sha256File(
         `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`,
@@ -520,7 +524,7 @@ describe("verify.mjs", () => {
         },
       },
     });
-    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    compileFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
     await stageGsResources(root);
     const emptyBin = await mkdtemp(`${tmpdir()}/verify-no-brew-`);
 
@@ -550,7 +554,7 @@ describe("verify.mjs", () => {
         },
       },
     });
-    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    compileFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
     await stageGsResources(root);
     const emptyBin = await mkdtemp(`${tmpdir()}/verify-no-brew-`);
 
@@ -581,7 +585,7 @@ describe("verify.mjs", () => {
         },
       },
     });
-    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    compileFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
     await stageGsResources(root);
     const stubBrew = await makeStubBrewDir("");
 
@@ -611,7 +615,7 @@ describe("verify.mjs", () => {
         },
       },
     });
-    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    compileFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
     await stageGsResources(root);
     const stubBrew = await makeStubBrewDir("");
 
@@ -643,7 +647,7 @@ describe("verify.mjs", () => {
         },
       },
     });
-    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    compileFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
     await stageGsResources(root);
     const stagedSha256 = await sha256File(
       `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`,
@@ -714,7 +718,7 @@ describe("verify.mjs", () => {
         },
       },
     });
-    compileFixture("arm64", `${root}/src-tauri/binaries/vips-aarch64-apple-darwin`, "8.18.6");
+    compileFixture("universal", `${root}/src-tauri/binaries/vips-aarch64-apple-darwin`, "8.18.6");
     const stubDir = await makeStubBrewFailDir("Error: something unexpected from brew");
 
     const allowed = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
@@ -749,7 +753,7 @@ describe("verify.mjs", () => {
         },
       },
     });
-    compileFixture("arm64", `${root}/src-tauri/binaries/vips-aarch64-apple-darwin`, "8.18.6");
+    compileFixture("universal", `${root}/src-tauri/binaries/vips-aarch64-apple-darwin`, "8.18.6");
     const stubDir = await makeStubBrewFailDir("Error: something unexpected from brew");
 
     const rejected = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
@@ -779,7 +783,7 @@ describe("verify.mjs", () => {
         },
       },
     });
-    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    compileFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
     await stageGsResources(root);
     const stubNoKeg = await makeStubBrewNoKegDir();
 
@@ -820,7 +824,7 @@ describe("verify.mjs", () => {
         },
       },
     });
-    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    compileFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
     const base = await stageGsResources(root, { sentinels: false });
     const stubDir = await makeStubBrewDir("ghostscript 10.08.0");
 
@@ -877,7 +881,7 @@ describeDarwin("gs Resource subdir content gate (verify side)", () => {
 
   it.each(["CMap", "Encoding"])("fails when Resource/%s holds no files", async (subdir) => {
     const root = await makeRoot(GS_MANIFEST);
-    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    compileFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
     const base = await stageGsResources(root);
     await rm(join(base, "Resource", subdir), { recursive: true, force: true });
     await mkdir(join(base, "Resource", subdir), { recursive: true });
@@ -899,7 +903,7 @@ describeDarwin("gs Resource subdir content gate (verify side)", () => {
 
   it("passes for a complete Resource tree, proving the subdir gate is not vacuous", async () => {
     const root = await makeRoot(GS_MANIFEST);
-    compileFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
+    compileFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, "10.08.0");
     await stageGsResources(root);
     const stubDir = await makeStubBrewDir("ghostscript 10.08.0");
 
@@ -1199,7 +1203,7 @@ describe("windows verify must execute what the app executes", () => {
     await writeFlatPe(root, ctx);
     const enginesExe = join(root, "src-tauri", "binaries", "engines", "vips", "vips.exe");
     await mkdir(dirname(enginesExe), { recursive: true });
-    compileFixture("arm64", enginesExe, "vips 1.0.0");
+    compileFixture("universal", enginesExe, "vips 1.0.0");
 
     const result = await runVerify(["--target", TRIPLE, "--root", root]);
 
