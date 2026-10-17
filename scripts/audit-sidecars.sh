@@ -568,6 +568,11 @@ EOF
   for dir in "${search_dirs[@]}"; do
     gs_includes+=("-I$gs_resources/$dir")
   done
+  case "$gs" in
+    *.exe)
+      printf 'gs clean-room smoke: invoked gs.exe: %s\n' "$gs"
+      ;;
+  esac
   if [ -d "$gs_resources/iccprofiles" ]; then
     gs_includes+=("-uICCProfilesDir=$gs_resources/iccprofiles")
   fi
@@ -630,6 +635,11 @@ gs_rom_smoke() {
   local work="$2"
   local fixture="$work/rom-fixture.ps"
   local out="$work/rom-fixture.pdf"
+  case "$gs" in
+    *.exe)
+      printf 'gs clean-room smoke: invoked gs.exe: %s\n' "$gs"
+      ;;
+  esac
   {
     printf '%s\n' '%!PS' \
       '/Helvetica findfont 16 scalefont setfont' \

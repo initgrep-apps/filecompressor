@@ -232,6 +232,7 @@ async function makeGsRoot({
   romFixture = false,
   romExitCode = 0,
   romFlatExitCode = null,
+  stageEngines = true,
 } = {}) {
   await mkdir(`${tmpdir()}/audit-test-roots`, { recursive: true });
   const root = await mkdtemp(`${tmpdir()}/audit-test-roots/r`);
@@ -276,7 +277,7 @@ async function makeGsRoot({
       compileGsFixture("arm64", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`);
     }
     const dest = manifestEntry.dest ?? "gs";
-    if (triple.includes("windows")) {
+    if (stageEngines && triple.includes("windows")) {
       const enginesExe = `${root}/src-tauri/binaries/engines/${dest}/${dest}.exe`;
       await mkdir(dirname(enginesExe), { recursive: true });
       if (romFixture) {
@@ -284,6 +285,7 @@ async function makeGsRoot({
       } else {
         await copyFile(`${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, enginesExe);
       }
+      await writeFile(`${dirname(enginesExe)}/zlib1.dll`, "dll sibling beside the engines exe");
     }
   }
   if (resources) {
@@ -710,8 +712,8 @@ describeDarwin("audit-sidecars.sh", () => {
     expect(result.stdout).not.toContain("sentinel resolved");
     expect(
       result.stdout,
-      "the staged engines/gs payload mirrors prep's windows layout and is counted beside the flat copy",
-    ).toContain("sidecar audit: PASS (2 binaries, 0 framework dylibs)");
+      "the staged engines/gs payload mirrors prep's windows layout (exe + DLL sibling) and is counted beside the flat copy",
+    ).toContain("sidecar audit: PASS (3 binaries, 0 framework dylibs)");
   });
 
   it("nothing_stages_or_demands_gs_resources_below_the_windows_rom_gate", async () => {
@@ -740,6 +742,43 @@ describeDarwin("audit-sidecars.sh", () => {
     expect(result.stdout).toContain("gs clean-room smoke: PASS");
     expect(result.stdout).toMatch(/\b0 staged resource flags\b/);
     expect(result.stdout).not.toContain("sentinel resolved");
+    expect(
+      result.stdout,
+      "the smoke must record which windows gs exe it invoked, so a flat-pick regression shows up in the log itself",
+    ).toMatch(/invoked gs\.exe: .*engines\/gs\/gs\.exe/);
+    expect(
+      result.stdout,
+      "the invocation was NOT the dll-less flat copy",
+    ).not.toMatch(/invoked gs\.exe: .*binaries\/gs-aarch64-pc-windows-msvc\.exe\b/);
+  });
+
+  it("falls_back_to_the_flat_static_windows_gs_when_the_engines_dir_is_absent", async () => {
+    const root = await makeGsRoot({
+      triple: "aarch64-pc-windows-msvc",
+      resources: false,
+      manifestEntry: { ...GS_ROM_MANIFEST_ENTRY, static: true },
+      romFixture: true,
+      stageEngines: false,
+    });
+    expect(
+      existsSync(`${root}/src-tauri/binaries/engines`),
+      "the fixture must stage a flat-only windows layout",
+    ).toBe(false);
+
+    const result = await runAudit(root, "aarch64-pc-windows-msvc");
+
+    expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+    expect(result.stderr).not.toMatch(/FAIL gs/);
+    expect(
+      result.stdout,
+      "the smoke must still run, not silently skip, when only the flat static exe exists",
+    ).toContain("gs clean-room smoke: PASS");
+    expect(result.stdout).toMatch(/\b0 staged resource flags\b/);
+    expect(
+      result.stdout,
+      "the fallback invocation must be the flat copy itself",
+    ).toMatch(/invoked gs\.exe: .*binaries\/gs-aarch64-pc-windows-msvc\.exe\b/);
+    expect(result.stdout).toContain("sidecar audit: PASS (1 binaries, 0 framework dylibs)");
   });
 
   it("runs_a_rom_smoke_when_an_explicit_target_declares_no_resources", async () => {
