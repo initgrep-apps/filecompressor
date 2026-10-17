@@ -24,6 +24,7 @@ import {
   stageBrewBinary,
   writeBrewLockEntries,
 } from "./prep.mjs";
+import { describeDarwin, itDarwin } from "../test-platform.mjs";
 
 const cleanupRoots = [];
 const originalPath = process.env.PATH;
@@ -177,25 +178,25 @@ describe("parseBrewVersion", () => {
 });
 
 describe("brewVersion", () => {
-  it("reads the installed version from brew", async () => {
+  itDarwin("reads the installed version from brew", async () => {
     useStubBrew(await makeStubBrew(stubBrewScript("/opt/homebrew/opt/ghostscript", "10.08.0")));
     await expect(brewVersion("ghostscript")).resolves.toBe("10.08.0");
   });
 
-  it("names the install command when the formula is absent", async () => {
+  itDarwin("names the install command when the formula is absent", async () => {
     useStubBrew(await makeStubBrew("#!/bin/sh\nexit 1\n"));
     const error = await brewVersion("ghostscript").catch((thrown) => thrown);
     expect(error.message).toMatch(/brew list --versions ghostscript failed/);
     expect(error.remedy).toMatch(/brew install ghostscript/);
   });
 
-  it("reads the installed version for a brew formula that matches its pin", async () => {
+  itDarwin("reads the installed version for a brew formula that matches its pin", async () => {
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
     await expect(brewVersion("vips")).resolves.toBe("8.18.7");
   });
 
-  it("exposes a structured remedy instead of embedding it in the message", async () => {
+  itDarwin("exposes a structured remedy instead of embedding it in the message", async () => {
     useStubBrew(await makeStubBrew("#!/bin/sh\nexit 1\n"));
     await expect(brewVersion("ghostscript")).rejects.toMatchObject({
       name: "PipelinesError",
@@ -218,7 +219,7 @@ describe("brewVersion", () => {
   });
 });
 
-describe("assertBrewVersionsPinned", () => {
+describeDarwin("assertBrewVersionsPinned", () => {
   it("passes when every formula matches its pin", async () => {
     useStubBrew(await makeStubBrew(stubBrewScript("/opt/homebrew/opt/vips", "8.18.7")));
     await expect(assertBrewVersionsPinned([["vips", VIPS_ENTRY]])).resolves.toBeUndefined();
@@ -233,7 +234,7 @@ describe("assertBrewVersionsPinned", () => {
   });
 });
 
-describe("stageBrewBinary", () => {
+describeDarwin("stageBrewBinary", () => {
   it("copies the formula binary to the triple-suffixed staged path", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
@@ -272,7 +273,7 @@ describe("stageBrewBinary", () => {
   });
 });
 
-describe("assertStagedArch", () => {
+describeDarwin("assertStagedArch", () => {
   it("accepts the host arch and rejects a foreign-arch formula build", async () => {
     const root = await makeRoot(WITH_BREW);
     const armPrefix = await makeFormulaPrefix("vips", "arm64");
@@ -289,7 +290,7 @@ describe("assertStagedArch", () => {
   });
 });
 
-describe("writeBrewLockEntries", () => {
+describeDarwin("writeBrewLockEntries", () => {
   it("records the brew version and the staged sha for each brew engine", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
@@ -609,7 +610,7 @@ describe("prepTarget", () => {
     ).rejects.toThrow(/not staged and executable/);
   });
 
-  it("accepts a fully staged and executable engine set", async () => {
+  itDarwin("accepts a fully staged and executable engine set", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
@@ -619,7 +620,7 @@ describe("prepTarget", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("rejects a staged engine that lost its executable bit", async () => {
+  itDarwin("rejects a staged engine that lost its executable bit", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
@@ -643,7 +644,7 @@ describe("prepTarget", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("accepts any mode with at least one execute bit", async () => {
+  itDarwin("accepts any mode with at least one execute bit", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
@@ -672,7 +673,7 @@ describe("prepTarget", () => {
     expect(process.env.PATH, "withPath must restore the process PATH").toBe(originalPath);
   });
 
-  it("leaves the staged tree untouched when brew has drifted", async () => {
+  itDarwin("leaves the staged tree untouched when brew has drifted", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix, "8.19.0")));
@@ -692,7 +693,7 @@ describe("prepTarget", () => {
     expect(await readFile(destPath, "utf8")).toBe("previously staged bytes");
   });
 
-  it("reports the drift without creating binaries/ at all", async () => {
+  itDarwin("reports the drift without creating binaries/ at all", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix, "8.19.0")));
@@ -724,7 +725,7 @@ describe("prepTarget guard wiring", () => {
     expect(error.message).toMatch(/^gs: gs resources dir missing/);
   });
 
-  it("aborts when the bundle step leaves a staged engine non-executable", async () => {
+  itDarwin("aborts when the bundle step leaves a staged engine non-executable", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
@@ -820,7 +821,7 @@ exit 0
     await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("reports brew drift before any bundle script mutates frameworks", async () => {
+  itDarwin("reports brew drift before any bundle script mutates frameworks", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix, "8.19.0")));

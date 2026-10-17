@@ -11,6 +11,7 @@ import https from "node:https";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { sha256File } from "./lib.mjs";
+import { describeDarwin, itDarwin } from "../test-platform.mjs";
 import { validateManifest } from "./lib.mjs";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
@@ -199,7 +200,7 @@ describe("manifest schema", () => {
     expect(() => validateManifest({})).toThrow(/schema invalid/);
   });
 
-  it("accepts the shipping mac arm64 manifest", () => {
+  itDarwin("accepts the shipping mac arm64 manifest", () => {
     const shipping = JSON.parse(
       execFileSync("cat", [join(SCRIPTS, "..", "binaries.manifest.json")]).toString(),
     );
@@ -207,7 +208,7 @@ describe("manifest schema", () => {
   });
 });
 
-describe("fetch.mjs", () => {
+describeDarwin("fetch.mjs", () => {
   let server;
   let base;
   let servedPath;

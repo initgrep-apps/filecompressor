@@ -17,6 +17,7 @@ import {
   validateLock,
   writeJson,
 } from "./lib.mjs";
+import { itDarwin } from "../test-platform.mjs";
 
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
@@ -67,7 +68,7 @@ describe("expectedDest", () => {
 });
 
 describe("download", () => {
-  it("follows https redirects", async () => {
+  itDarwin("follows https redirects", async () => {
     const server = httpsServer((req, res) => {
       if (req.url === "/redirect") {
         res.writeHead(302, { location: "/final.zip" });
@@ -95,7 +96,7 @@ describe("download", () => {
     );
   });
 
-  it("rejects a redirect that downgrades to http instead of crashing", async () => {
+  itDarwin("rejects a redirect that downgrades to http instead of crashing", async () => {
     const server = httpsServer((req, res) => {
       res.writeHead(302, { location: "http://127.0.0.1:9/plain.zip" });
       res.end();
@@ -111,7 +112,7 @@ describe("download", () => {
     }
   });
 
-  it("rejects a stalled transfer with the real idle budget", async () => {
+  itDarwin("rejects a stalled transfer with the real idle budget", async () => {
     const sockets = [];
     const server = httpsServer((req, res) => {
       res.writeHead(200, { "content-length": "100000" });
@@ -130,7 +131,7 @@ describe("download", () => {
     }
   });
 
-  it("rejects when the connection closes before the body completes", async () => {
+  itDarwin("rejects when the connection closes before the body completes", async () => {
     const server = httpsServer((req, res) => {
       res.writeHead(200, { "content-length": "1000" });
       res.write("partial");
@@ -150,7 +151,7 @@ describe("download", () => {
 });
 
 describe("extract", () => {
-  it("handles zip and tar.zst fixtures", async () => {
+  itDarwin("handles zip and tar.zst fixtures", async () => {
     const root = await tempRoot("lib-test-");
     const zipSrc = join(root, "zipsrc");
     const zipPath = join(root, "a.zip");
@@ -177,7 +178,7 @@ describe("extract", () => {
     await expect(extract("/x/foo.tar.gz", "/tmp/nope")).rejects.toThrow("unsupported archive");
   });
 
-  it("names zstd as the missing tool when tar.zst extraction fails", async () => {
+  itDarwin("names zstd as the missing tool when tar.zst extraction fails", async () => {
     const root = await tempRoot("lib-test-");
     const fake = join(root, "not-an-archive.tar.zst");
     await writeFile(fake, "garbage");

@@ -7,6 +7,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirS
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { describeDarwin, itDarwin } from "../test-platform.mjs";
 
 const SCRIPTS = dirname(dirname(fileURLToPath(import.meta.url)));
 
@@ -78,8 +79,8 @@ afterAll(() => {
   }
 });
 
-describe("bundle-vips-macos.sh transactional frameworks swap", () => {
-  it("keeps a previously built frameworks/ tree when a later run cannot resolve a dep", () => {
+describeDarwin("bundle-vips-macos.sh transactional frameworks swap", () => {
+  itDarwin("keeps a previously built frameworks/ tree when a later run cannot resolve a dep", () => {
     const root = makeRoot();
     const binDir = join(root, "src-tauri", "binaries");
     const sidecar = join(binDir, "vips-aarch64-apple-darwin");
@@ -130,7 +131,7 @@ describe("bundle-vips-macos.sh transactional frameworks swap", () => {
   }, 60000);
 });
 describe("staging dirs never leak", () => {
-  it("removes the staging dir after a failed run and git-ignores the pattern", () => {
+  itDarwin("removes the staging dir after a failed run and git-ignores the pattern", () => {
     const root = makeRoot();
     const binDir = join(root, "src-tauri", "binaries");
     const libDir = join(root, "libs");

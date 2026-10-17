@@ -136,8 +136,6 @@ function ustarFileEntry(name, mode, body) {
   return Buffer.concat([header, content, padding]);
 }
 
-const CRAFTED_WIN_TAR_SHAPE = "ustar dir+file headers (MZ-free POSIX tar), a mode-0000 dir under engines/vips forces a find read error at extraction";
-
 async function craftWindowsBundleWithSealedVipsSubdir(destRoot) {
   const ini = "%! crafted gs init\n";
   const exeBody = "crafted vips engine payload\n";

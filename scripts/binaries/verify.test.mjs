@@ -11,6 +11,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { knownTriples, sha256File, validateManifest } from "./lib.mjs";
 import { gsSentinelPaths } from "./gs-sentinels.mjs";
+import { describeDarwin, itDarwin } from "../test-platform.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VERIFY = join(HERE, "verify.mjs");
@@ -128,7 +129,7 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("fails on arch flip fixture (x86 Mach-O under arm64 name)", async () => {
+  itDarwin("fails on arch flip fixture (x86 Mach-O under arm64 name)", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
     compileFixture("x86_64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2");
     const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
@@ -138,7 +139,7 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("fails when version output lacks expectVersion", async () => {
+  itDarwin("fails when version output lacks expectVersion", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
     compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "garbage 1.2.3");
     const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
@@ -148,7 +149,7 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("passes when arch and version match", async () => {
+  itDarwin("passes when arch and version match", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
     compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2 Copyright");
     const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
@@ -157,7 +158,7 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("fails when the staged binary no longer matches the lock's stagedSha256", async () => {
+  itDarwin("fails when the staged binary no longer matches the lock's stagedSha256", async () => {
     const root = await makeRoot(FFMPEG_MANIFEST);
     compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2");
     await writeFile(
@@ -190,7 +191,7 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("does not gate a brew row on a machine-local staged digest", async () => {
+  itDarwin("does not gate a brew row on a machine-local staged digest", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -239,7 +240,7 @@ describe("verify.mjs", () => {
     await rm(stubBrew, { recursive: true, force: true });
   });
 
-  it("fails on brew version drift against the manifest pin even when the lock agrees with brew", async () => {
+  itDarwin("fails on brew version drift against the manifest pin even when the lock agrees with brew", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -289,7 +290,7 @@ describe("verify.mjs", () => {
     await rm(stubDir, { recursive: true, force: true });
   });
 
-  it("compares against the ACTIVE keg, which brew lists last", async () => {
+  itDarwin("compares against the ACTIVE keg, which brew lists last", async () => {
     const makeCase = async (pin) => {
       const root = await makeRoot({
         targets: {
@@ -356,7 +357,7 @@ describe("verify.mjs", () => {
     }
   });
 
-  it("fails loudly when the brew drift gate is inactive because brew is off PATH", async () => {
+  itDarwin("fails loudly when the brew drift gate is inactive because brew is off PATH", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -386,7 +387,7 @@ describe("verify.mjs", () => {
     await rm(emptyBin, { recursive: true, force: true });
   });
 
-  it("proceeds with a stated INACTIVE gate when the allowance is set", async () => {
+  itDarwin("proceeds with a stated INACTIVE gate when the allowance is set", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -417,7 +418,7 @@ describe("verify.mjs", () => {
     await rm(emptyBin, { recursive: true, force: true });
   });
 
-  it("fails when the formula is not installed on a brew-present host without the allowance", async () => {
+  itDarwin("fails when the formula is not installed on a brew-present host without the allowance", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -447,7 +448,7 @@ describe("verify.mjs", () => {
     await rm(stubBrew, { recursive: true, force: true });
   });
 
-  it("proceeds with a stated INACTIVE note when brew is present but the formula is not installed and the allowance is set", async () => {
+  itDarwin("proceeds with a stated INACTIVE note when brew is present but the formula is not installed and the allowance is set", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -479,7 +480,7 @@ describe("verify.mjs", () => {
     await rm(stubBrew, { recursive: true, force: true });
   });
 
-  it("proceeds with a stated INACTIVE note when the installed brewed formula drifted and the allowance is set", async () => {
+  itDarwin("proceeds with a stated INACTIVE note when the installed brewed formula drifted and the allowance is set", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -551,7 +552,7 @@ describe("verify.mjs", () => {
     await rm(stubDir, { recursive: true, force: true });
   });
 
-  it("treats a No-such-keg brew failure as a missing formula gate", async () => {
+  itDarwin("treats a No-such-keg brew failure as a missing formula gate", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -591,7 +592,7 @@ describe("verify.mjs", () => {
     await rm(stubNoKeg, { recursive: true, force: true });
   });
 
-  it("fails when a staged gs acceptance sentinel is missing", async () => {
+  itDarwin("fails when a staged gs acceptance sentinel is missing", async () => {
     const root = await makeRoot({
       targets: {
         "aarch64-apple-darwin": {
@@ -645,7 +646,7 @@ describe("verify.mjs", () => {
   });
 });
 
-describe("gs Resource subdir content gate (verify side)", () => {
+describeDarwin("gs Resource subdir content gate (verify side)", () => {
   const GS_MANIFEST = {
     targets: {
       "aarch64-apple-darwin": {
@@ -770,7 +771,7 @@ describe("windows handcrafted PE machine-field fixtures (portable pins for conte
     b.writeUInt16LE(0xf0, 0x54);
     b.writeUInt16LE(0x0022, 0x56);
     b.writeUInt16LE(0x020b, 0x58);
-    b.writeUInt16LE(3, 0xa4);
+    b.writeUInt16LE(3, 0x9c);
     return b;
   }
 

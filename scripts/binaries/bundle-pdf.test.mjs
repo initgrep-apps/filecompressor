@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { describeDarwin } from "../test-platform.mjs";
 
 const SCRIPTS = dirname(dirname(fileURLToPath(import.meta.url)));
 const BUNDLE_PDF = join(SCRIPTS, "bundle-pdf-macos.sh");
@@ -226,7 +227,7 @@ afterAll(() => {
   }
 });
 
-describe("bundle-pdf-macos.sh qpdf lib staging gate", () => {
+describeDarwin("bundle-pdf-macos.sh qpdf lib staging gate", () => {
   it("refuses to bundle when the fetch staging lib dir is absent", () => {
     const root = makeRoot();
     const binDir = join(root, "src-tauri", "binaries");
@@ -254,7 +255,7 @@ describe("bundle-pdf-macos.sh qpdf lib staging gate", () => {
   });
 });
 
-describe("bundle-pdf-macos.sh staged lib digest gate", () => {
+describeDarwin("bundle-pdf-macos.sh staged lib digest gate", () => {
   function happyRoot({ symlinkLib = false } = {}) {
     const root = makeRoot();
     const binDir = join(root, "src-tauri", "binaries");
@@ -311,7 +312,7 @@ describe("bundle-pdf-macos.sh staged lib digest gate", () => {
   });
 });
 
-describe("bundle-pdf-macos.sh qpdf lib provenance guards", () => {
+describeDarwin("bundle-pdf-macos.sh qpdf lib provenance guards", () => {
   function rootWithStagedLib() {
     const root = makeRoot();
     const binDir = join(root, "src-tauri", "binaries");
@@ -430,7 +431,7 @@ function expectStagedCopyMatches(stagedResources, brewPrefix, dir) {
   });
 }
 
-describe("bundle-pdf-macos.sh gs resource staging", () => {
+describeDarwin("bundle-pdf-macos.sh gs resource staging", () => {
   it("stages gs resources and every acceptance sentinel when brew is reached through a symlink", () => {
     const root = makeRoot();
     const binDir = join(root, "src-tauri", "binaries");
@@ -540,7 +541,7 @@ describe("bundle-pdf-macos.sh gs resource staging", () => {
     expect(result.out).not.toContain("bundled: qpdf + gs sidecars self-contained");
   });
 });
-describe("bundle-pdf-macos.sh rejects hollow gs resource sources", () => {
+describeDarwin("bundle-pdf-macos.sh rejects hollow gs resource sources", () => {
   function prepare(root) {
     const binDir = join(root, "src-tauri", "binaries");
     mkdirSync(binDir, { recursive: true });
@@ -623,7 +624,7 @@ describe("bundle-pdf-macos.sh rejects hollow gs resource sources", () => {
   }, 30000);
 });
 
-describe("bundle-pdf-macos.sh staging dirs never leak", () => {
+describeDarwin("bundle-pdf-macos.sh staging dirs never leak", () => {
   it("removes the gs-resources staging dir after a rejected run", () => {
     const root = makeRoot();
     const binDir = join(root, "src-tauri", "binaries");
@@ -649,7 +650,7 @@ describe("bundle-pdf-macos.sh staging dirs never leak", () => {
   }, 30000);
 });
 
-describe("bundle-pdf-macos.sh rejects hollow gs Resource subdirs", () => {
+describeDarwin("bundle-pdf-macos.sh rejects hollow gs Resource subdirs", () => {
   it.each(["CMap", "Encoding", "ColorSpace"])(
     "refuses to stage when the brew Resource/%s subdir has no real files",
     (subdir) => {
@@ -693,7 +694,7 @@ describe("bundle-pdf-macos.sh rejects hollow gs Resource subdirs", () => {
   });
 });
 
-describe("the staged sentinel dirs match gs-sentinels.mjs exactly", () => {
+describeDarwin("the staged sentinel dirs match gs-sentinels.mjs exactly", () => {
   it("stages a sentinel in every dir the shared module names, and no others", async () => {
     const shared = await import("./gs-sentinels.mjs");
     const root = makeRoot();

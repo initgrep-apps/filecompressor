@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { chmodSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { sha256File } from "./lib.mjs";
 import { gsSentinelPairs, gsSentinelPaths } from "./gs-sentinels.mjs";
+import { describeDarwin, itDarwin } from "../test-platform.mjs";
 const GS_SENTINEL_NAMES = Object.fromEntries(
   gsSentinelPairs().map(([dir, name]) => [dir.split("/").pop(), name]),
 );
@@ -282,7 +283,7 @@ afterAll(async () => {
   await Promise.all(cleanupRoots.map((root) => rm(root, { recursive: true, force: true })));
 });
 
-describe("audit-sidecars.sh", () => {
+describeDarwin("audit-sidecars.sh", () => {
   it("fails on an x86 Mach-O under an arm64 name via the verify delegate", async () => {
     const root = await makeRoot();
     compileFixture("x86_64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`);
@@ -715,7 +716,7 @@ describe("gs sentinel coverage is shared, not duplicated", () => {
   });
 });
 
-describe("gs Resource subdir content gate (audit side)", () => {
+describeDarwin("gs Resource subdir content gate (audit side)", () => {
   it.each(["CMap", "Encoding"])("fails when Resource/%s holds no files", async (subdir) => {
     const root = await makeGsRoot();
     const dir = `${root}/src-tauri/gs-resources/Resource/${subdir}`;
@@ -737,7 +738,7 @@ describe("gs Resource subdir content gate (audit side)", () => {
   });
 });
 
-describe("gs smoke temp-dir failures are reported, never silent", () => {
+describeDarwin("gs smoke temp-dir failures are reported, never silent", () => {
   it("fails with a message when mktemp cannot create a workdir", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -775,7 +776,7 @@ exec ${real} "$@"
   return dir;
 }
 
-describe("the gs smoke fails closed instead of passing vacuously", () => {
+describeDarwin("the gs smoke fails closed instead of passing vacuously", () => {
   it.each([1, 2, 3])(
     "fails when the %s'th manifest read fails, printing neither sentinel resolved nor PASS",
     async (nth) => {
@@ -871,7 +872,7 @@ function runPatchedAudit(root, anchor, extraEnv = {}) {
   });
 }
 
-describe("an unguarded failure inside the gs smoke is reported, not silent", () => {
+describeDarwin("an unguarded failure inside the gs smoke is reported, not silent", () => {
   it("prints a FAIL naming line/status/command and leaves no temp workdir", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -945,7 +946,7 @@ describe("the smoke's ERR trap cannot outlive the smoke", () => {
     expect(source).toContain("err_trap_active=1");
   });
 
-  it("the ERR trap is not inherited by the rest of the audit after the smoke returns", async () => {
+  itDarwin("the ERR trap is not inherited by the rest of the audit after the smoke returns", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
     const result = await runAudit(root, "aarch64-apple-darwin", {
@@ -983,7 +984,7 @@ describe("the audit's own claims are fail-closed", () => {
     expect(source).toContain('if [ "$audit_finished" -eq 0 ] && [ "${#failures[@]}" -gt 0 ]; then');
   });
 
-  it("refuses to print a PASS summary when the binary count cannot be enumerated", async () => {
+  itDarwin("refuses to print a PASS summary when the binary count cannot be enumerated", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
     const stubFind = await makeStubTool(
@@ -1003,7 +1004,7 @@ describe("the audit's own claims are fail-closed", () => {
     expect(result.stdout).not.toContain("sidecar audit: PASS");
   });
 
-  it("names the framework enumeration failure too", async () => {
+  itDarwin("names the framework enumeration failure too", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
     await mkdir(`${root}/src-tauri/frameworks`, { recursive: true });
@@ -1021,7 +1022,7 @@ describe("the audit's own claims are fail-closed", () => {
     expect(result.stdout + result.stderr).toMatch(/FAIL could not enumerate \S*frameworks/);
   });
 
-  it.each([
+  itDarwin.each([
     ["inside the Mach-O per-file loop", MACHO_LOOP_ANCHOR],
     ["before the gs smoke, at the verify step", VERIFY_ANCHOR],
     ["inside the audit_macho function body", MACHO_FN_ANCHOR],
@@ -1055,7 +1056,7 @@ describe("the audit's own claims are fail-closed", () => {
     },
   );
 
-  it("fails closed when the Resource subdir enumeration yields nothing", async () => {
+  itDarwin("fails closed when the Resource subdir enumeration yields nothing", async () => {
     const root = await makeGsRoot({
       manifestEntry: {
         source: "brew",
@@ -1090,7 +1091,7 @@ describe("the audit's own claims are fail-closed", () => {
   });
 });
 
-describe("an unreadable staged dir is not reported as an empty one", () => {
+describeDarwin("an unreadable staged dir is not reported as an empty one", () => {
   it("names the read error and points at permissions, not at restaging", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -1119,7 +1120,7 @@ describe("an unreadable staged dir is not reported as an empty one", () => {
   });
 });
 
-describe("the dylib cross-check does not mistake a read error for missing dylibs", () => {
+describeDarwin("the dylib cross-check does not mistake a read error for missing dylibs", () => {
   it("names the enumeration failure instead of blaming tauri.conf.json", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -1148,7 +1149,7 @@ describe("the dylib cross-check does not mistake a read error for missing dylibs
   });
 });
 
-describe("a real tool failure inside the audit is an audit finding, not a silent exit", () => {
+describeDarwin("a real tool failure inside the audit is an audit finding, not a silent exit", () => {
   it("names the binary whose otool -L pipeline failed, without a duplicate trap message", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -1201,7 +1202,7 @@ describe("a real tool failure inside the audit is an audit finding, not a silent
   });
 });
 
-describe("a failing tool inside a substitution is an audit finding, not a discarded subshell", () => {
+describeDarwin("a failing tool inside a substitution is an audit finding, not a discarded subshell", () => {
   it("names the sentinel-name derivation once, with no abort blocks", async () => {
     const root = await makeGsRoot();
     const stubBrew = await makeStubBrew();
@@ -1280,7 +1281,7 @@ describe("a failing tool inside a substitution is an audit finding, not a discar
   });
 });
 
-describe("cross-target audit passthrough", () => {
+describeDarwin("cross-target audit passthrough", () => {
   const INTEL = "x86_64-apple-darwin";
   const ARM = "aarch64-apple-darwin";
 
@@ -1333,7 +1334,7 @@ describe("cross-target audit passthrough", () => {
   });
 });
 
-describe("tauri.conf.json dylib cross-check scoping", () => {
+describeDarwin("tauri.conf.json dylib cross-check scoping", () => {
   const WIN = "x86_64-pc-windows-msvc";
 
   async function makeConfRoot() {
