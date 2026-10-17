@@ -40,6 +40,8 @@ const X64 = "x86_64-pc-windows-msvc";
 const VIPS_MEMBER = "vips-dev-8.18/bin/vips.exe";
 const QPDF_MEMBER = "qpdf-12.4.2-msvc64/bin/qpdf.exe";
 const GS_MEMBER = "ucrt64/bin/gswin64c.exe";
+const FFMPEG_MEMBER = "ffmpeg-n9.0-latest-win64-gpl-9.0/bin/ffmpeg.exe";
+const FFPROBE_MEMBER = "ffmpeg-n9.0-latest-win64-gpl-9.0/bin/ffprobe.exe";
 
 const GS_RESOURCE_DIRS = ["Resource", "lib", "iccprofiles", "fonts"];
 
@@ -234,5 +236,58 @@ describe("prep-windows engine folders", () => {
       existsSync(join(engine, "stale.dll")),
       "a re-prep must not leave artifacts from a previous run behind",
     ).toBe(false);
+  });
+
+  it("prep_stages_three_engine_folders_for_the_static_ffmpeg_manifest_shape", async () => {
+    const root = await tempRoot("prep-win-static-shape-");
+    await stageEntry(root, "ffmpeg", X64, { [FFMPEG_MEMBER]: "ffmpeg-exe" });
+    await stageEntry(root, "ffprobe", X64, { [FFPROBE_MEMBER]: "ffprobe-exe" });
+    await stageEntry(root, "qpdf", X64, {
+      [QPDF_MEMBER]: "qpdf-exe",
+      "qpdf-12.4.2-msvc64/bin/qpdf-support.dll": "dll",
+    });
+    await stageEntry(root, "vips", X64, {
+      [VIPS_MEMBER]: "vips-exe",
+      "vips-dev-8.18/bin/vips-support.dll": "dll",
+    });
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+      ...gsResourceFiles(),
+    });
+
+    const staged = await prepWindows(root, X64, {
+      ffmpeg: { member: FFMPEG_MEMBER, dest: "ffmpeg", static: true, resources: [] },
+      ffprobe: { member: FFPROBE_MEMBER, dest: "ffprobe", static: true, resources: [] },
+      qpdf: { member: QPDF_MEMBER, dest: "qpdf", resources: [] },
+      vips: { member: VIPS_MEMBER, dest: "vips", resources: [] },
+      gs: { member: GS_MEMBER, dest: "gs", resources: gsResources() },
+    });
+
+    expect(
+      staged,
+      "static engines ship as the flat externalBin exes only — fetch already staged them",
+    ).toEqual([
+      join(root, "src-tauri", "binaries", "engines", "qpdf"),
+      join(root, "src-tauri", "binaries", "engines", "vips"),
+      join(root, "src-tauri", "binaries", "engines", "gs"),
+    ]);
+    expect(existsSync(join(root, "src-tauri", "binaries", "engines", "ffmpeg"))).toBe(false);
+    expect(existsSync(join(root, "src-tauri", "binaries", "engines", "ffprobe"))).toBe(false);
+    expect(
+      await readFile(join(root, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"), "utf8"),
+    ).toBe("%!PS\n");
+  });
+
+  it("does not run the DLL guard for a static entry staged as a bare exe", async () => {
+    const root = await tempRoot("prep-win-static-bare-");
+    await stageEntry(root, "ffmpeg", X64, { [FFMPEG_MEMBER]: "ffmpeg-exe" });
+
+    const staged = await prepWindows(root, X64, {
+      ffmpeg: { member: FFMPEG_MEMBER, dest: "ffmpeg", static: true, resources: [] },
+    });
+
+    expect(staged).toEqual([]);
+    expect(existsSync(join(root, "src-tauri", "binaries", "engines", "ffmpeg"))).toBe(false);
   });
 });

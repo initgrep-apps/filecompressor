@@ -180,13 +180,15 @@ export async function prepWindowsEngines(root, triple, entries) {
   archForTriple(triple);
   const staged = [];
   for (const [name, entry] of Object.entries(entries)) {
-    if (!entry?.member) {
-      throw new PrepWindowsError(
-        `${name} (${triple}) has no 'member' pin — the Windows layout copies the payload dir beside it, ` +
-          `which cannot be derived without one`,
-      );
+    if (entry?.static !== true) {
+      if (!entry?.member) {
+        throw new PrepWindowsError(
+          `${name} (${triple}) has no 'member' pin — the Windows layout copies the payload dir beside it, ` +
+            `which cannot be derived without one`,
+        );
+      }
+      staged.push(await stageEngine(root, name, entry, triple));
     }
-    staged.push(await stageEngine(root, name, entry, triple));
     if (Array.isArray(entry.resources) && entry.resources.length > 0) {
       await stageGsResources(root, name, entry, triple);
     }
