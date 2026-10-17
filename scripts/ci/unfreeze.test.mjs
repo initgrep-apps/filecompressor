@@ -93,12 +93,9 @@ async function stageWindowsTree(base, triple, exePayloads = {}) {
     await writeFile(join(enginesDir, `${engine}.exe`), exePayloads[engine] ?? `${engine} engine payload\n`);
     await writeFile(join(enginesDir, `${engine}-support.dll`), `${engine} dll payload\n`);
   }
-  const init = join(base, "gs-resources", "Resource", "Init");
-  await mkdir(init, { recursive: true });
-  await writeFile(join(init, "gs_init.ps"), "ghostscript init payload\n");
 }
 
-async function tarWindowsTree(base, bundlePath, roots = ["binaries", "gs-resources"]) {
+async function tarWindowsTree(base, bundlePath, roots = ["binaries"]) {
   await new Promise((resolvePromise, reject) => {
     execFile("tar", ["-czf", bundlePath, "-C", base, ...roots], (error) =>
       error ? reject(error) : resolvePromise(),
@@ -284,7 +281,9 @@ async function stageStaleWindowsTree(destRoot) {
     await writeFile(join(base, "binaries", "engines", engine, `${engine}.exe`), STALE_WIN_ENGINES[engine]);
     await writeFile(join(base, "binaries", "engines", engine, `${engine}-support.dll`), STALE_WIN_DLL);
   }
-  await writeFile(join(base, "gs-resources", "Resource", "Init", "gs_init.ps"), STALE_WIN_INIT);
+  const staleInit = join(base, "gs-resources", "Resource", "Init");
+  await mkdir(staleInit, { recursive: true });
+  await writeFile(join(staleInit, "gs_init.ps"), STALE_WIN_INIT);
 }
 
 async function expectStaleWindowsPreSwapTree(destRoot) {
@@ -586,7 +585,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("restores_the_windows_frozen_tree_into_a_clean_src_tauri", async () => {
+  it("restores_the_windows_frozen_tree_into_a_clean_src_tauri_as_binaries_only", async () => {
     const srcRoot = await mkdtemp(join(tmpdir(), "unfreeze-win-src-"));
     let ok = false;
     try {
@@ -616,8 +615,9 @@ describe("unfreeze.sh", () => {
           ).toBe(`${flat} flat payload for ${WIN_TRIPLE}\n`);
         }
         expect(
-          await readFile(join(destRoot, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"), "utf8"),
-        ).toBe("ghostscript init payload\n");
+          new Set(await readdir(join(destRoot, "src-tauri"))),
+          "a windows restore swaps binaries only: no gs-resources dir, no frameworks dir",
+        ).toEqual(new Set(["binaries", ".freeze"]));
         expect(existsSync(join(destRoot, "src-tauri", "frameworks")), "windows restore never creates frameworks/").toBe(false);
         await expectCleanFreezeDir(destRoot);
       });
@@ -746,9 +746,6 @@ describe("unfreeze.sh", () => {
       await writeFile(join(enginesDir, `${engine}.exe`), `${engine} engine payload\n`);
       await writeFile(join(enginesDir, `${engine}-support.dll`), `${engine} dll payload\n`);
     }
-    const init = join(payload, "gs-resources", "Resource", "Init");
-    await mkdir(init, { recursive: true });
-    await writeFile(join(init, "gs_init.ps"), "ghostscript init payload\n");
     if (dropFlatExe) {
       await rm(join(bin, `${dropFlatExe}-${WIN_MANIFEST_TRIPLE}.exe`));
     }
@@ -917,19 +914,24 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("fails_closed_when_the_windows_bundle_is_missing_the_gs_init_marker", async () => {
+  it("restores_a_windows_bundle_without_gs_resources_as_binaries_only", async () => {
     await withRoot(async (destRoot) => {
       await mkdir(join(destRoot, "src-tauri"));
       const payload = join(destRoot, "payload");
       await stageWindowsTree(payload, WIN_TRIPLE);
-      await rm(join(payload, "gs-resources"), { recursive: true });
       const bundle = await tarWindowsTree(payload, join(destRoot, "no-gs.tar.gz"), ["binaries"]);
 
       const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", bundle, "--root", destRoot]);
 
-      expect(result.code).toBe(1);
-      expect(result.stderr).toMatch(/gs_init\.ps/);
-      expect(existsSync(join(destRoot, "src-tauri", "binaries"))).toBe(false);
+      expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+      expect(
+        await readFile(join(destRoot, "src-tauri", "binaries", "engines", "gs", "gs.exe"), "utf8"),
+        "the binaries payload restores even when the bundle carries no gs-resources",
+      ).toBe("gs engine payload\n");
+      expect(
+        existsSync(join(destRoot, "src-tauri", "gs-resources")),
+        "the restore must not demand or fabricate a gs-resources tree on windows",
+      ).toBe(false);
       await expectCleanFreezeDir(destRoot);
     });
   });
@@ -938,7 +940,7 @@ describe("unfreeze.sh", () => {
     await withBareDest(async (destRoot) => {
       const stubbed = await stubEnv(destRoot, {
         triple: WIN_TRIPLE,
-        roots: "binaries gs-resources",
+        roots: "binaries",
       });
       try {
         const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--root", destRoot], { env: stubbed.env });
@@ -967,8 +969,9 @@ describe("unfreeze.sh", () => {
           ).toBe(GH_STUB_PAYLOADS[flat]);
         }
         expect(
-          await readFile(join(destRoot, "src-tauri", "gs-resources", "Resource", "Init", "gs_init.ps"), "utf8"),
-        ).toBe("ghostscript init payload\n");
+          new Set(await readdir(join(destRoot, "src-tauri"))),
+          "the gh-path windows restore swaps binaries only",
+        ).toEqual(new Set(["binaries", ".freeze"]));
         await expectCleanFreezeDir(destRoot);
       } finally {
         await stubbed.cleanup();
@@ -1346,7 +1349,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it.skipIf(process.platform === "win32").each(["binaries", "gs-resources"])(
+  it.skipIf(process.platform === "win32").each(["binaries"])(
     "rolls_back_the_windows_tree_to_the_pre_swap_state_when_the_install_fails_moving_%s_win32_skips_mv_shim_cygpath_followup_tracked",
     async (failDest) => {
       await withWindowsFrozenSource(async (srcRoot) => {

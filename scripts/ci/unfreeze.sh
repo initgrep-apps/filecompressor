@@ -3,11 +3,11 @@
 # With --archive <tarball>: verify the sibling .sha256, then extract. Without
 # it: select and download the newest sidecars-* release bundle for the triple
 # via gh (requires GH_TOKEN). macOS bundles restore binaries/, frameworks/,
-# gs-resources/; windows bundles restore binaries/engines/ for the non-static
-# manifest entries, the flat exes binaries/<dest>-<triple>.exe for every
-# manifest entry (ffmpeg/ffprobe are the tauri externalBin pair, the
+# gs-resources/; windows bundles restore binaries/ only: binaries/engines/ for
+# the non-static manifest entries and the flat exes binaries/<dest>-<triple>.exe
+# for every manifest entry (ffmpeg/ffprobe are the tauri externalBin pair, the
 # vips/qpdf/gs flat copies exist so the verify.mjs content-arch and
-# audit-sidecars gate holds after unfreeze), and gs-resources/. The bundle
+# audit-sidecars gate holds after unfreeze). The bundle
 # verifies and validates in a
 # temp workspace while the current tree is backed up OUTSIDE that workspace,
 # so workspace cleanup can never destroy the only copy; every interrupted or
@@ -89,7 +89,7 @@ command -v tar >/dev/null 2>&1 || \
 if [ "$MODE" = "mac" ]; then
   DIR_NAMES="binaries frameworks gs-resources"
 else
-  DIR_NAMES="binaries gs-resources"
+  DIR_NAMES="binaries"
 fi
 
 WORK=""
@@ -187,9 +187,9 @@ verify_sha() {
 
 validate_payload() {
   extracted="$1"
-  [ -f "$extracted/gs-resources/Resource/Init/gs_init.ps" ] || \
-    fail "bundle is missing gs-resources/Resource/Init/gs_init.ps after extraction — refusing to swap in a partial bundle"
   if [ "$MODE" = "mac" ]; then
+    [ -f "$extracted/gs-resources/Resource/Init/gs_init.ps" ] || \
+      fail "bundle is missing gs-resources/Resource/Init/gs_init.ps after extraction — refusing to swap in a partial bundle"
     for engine in ffmpeg ffprobe qpdf vips gs; do
       [ -f "$extracted/binaries/${engine}-${TRIPLE}" ] || \
         fail "bundle is missing binaries/${engine}-${TRIPLE} after extraction — refusing to swap in a partial bundle"
