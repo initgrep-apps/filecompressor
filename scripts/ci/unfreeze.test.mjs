@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.setConfig({ testTimeout: 30_000 });
 
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -14,6 +14,19 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FREEZE = join(HERE, "freeze.sh");
 const UNFREEZE = join(HERE, "unfreeze.sh");
+
+function toBashPath(p) {
+  if (process.platform !== "win32") {
+    return p;
+  }
+  return p.replace(/\\/g, "/").replace(/^([A-Za-z]):/, "/$1");
+}
+
+function asBashArgs(args) {
+  return args.map((arg) =>
+    typeof arg === "string" && /^[A-Za-z]:[\\/]/.test(arg) ? toBashPath(arg) : arg,
+  );
+}
 
 const ENGINES = ["ffmpeg", "ffprobe", "qpdf", "vips", "gs"];
 const MAC_TRIPLE = "aarch64-apple-darwin";
@@ -28,7 +41,7 @@ const GH_STUB_PAYLOADS = Object.fromEntries(
 
 function runScript(script, args, options = {}) {
   return new Promise((resolvePromise) => {
-    execFile("bash", [script, ...args], { encoding: "utf8", timeout: 60_000, ...options }, (error, stdout, stderr) => {
+    execFile("bash", [script, ...asBashArgs(args)], { encoding: "utf8", timeout: 60_000, ...options }, (error, stdout, stderr) => {
       const code = error?.code ?? (error?.signal ? 255 : 0);
       resolvePromise({ code, stdout, stderr, signal: error?.signal ?? null });
     });
@@ -69,7 +82,7 @@ async function stageSidecarTree(base, payloads) {
 
 async function tarTree(base, bundlePath) {
   await new Promise((resolvePromise, reject) => {
-    execFile("tar", ["-czf", bundlePath, "-C", base, "binaries", "frameworks", "gs-resources"], (error) =>
+    execFile("tar", ["-czf", toBashPath(bundlePath), "-C", toBashPath(base), "binaries", "frameworks", "gs-resources"], (error) =>
       error ? reject(error) : resolvePromise(),
     );
   });
@@ -97,7 +110,7 @@ async function stageWindowsTree(base, triple, exePayloads = {}) {
 
 async function tarWindowsTree(base, bundlePath, roots = ["binaries"]) {
   await new Promise((resolvePromise, reject) => {
-    execFile("tar", ["-czf", bundlePath, "-C", base, ...roots], (error) =>
+    execFile("tar", ["-czf", toBashPath(bundlePath), "-C", toBashPath(base), ...roots], (error) =>
       error ? reject(error) : resolvePromise(),
     );
   });
@@ -429,7 +442,7 @@ async function stubEnv(destRoot, { mode, ghList, repo, triple, roots } = {}) {
     '      prev="$arg"',
     "    done",
     '    tar -czf "$dir/sidecar-bundle-$GH_STUB_TRIPLE.tar.gz" -C "$GH_STUB_PAYLOAD" $GH_STUB_ROOTS',
-    '    (cd "$dir" && shasum -a 256 "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz" > "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz.sha256")',
+    '    (cd "$dir" && { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz"; else sha256sum "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz"; fi; } > "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz.sha256")',
     "    ;;",
     "esac",
   ].join("\n");
@@ -441,10 +454,10 @@ async function stubEnv(destRoot, { mode, ghList, repo, triple, roots } = {}) {
     PATH: `${stubDir}:${process.env.PATH ?? ""}`,
     GH_TOKEN: "stub-token",
     GH_STUB_LIST: ghList ?? GH_LIST,
-    GH_STUB_LIST_MARKER: markerList,
-    GH_STUB_DOWNLOAD_MARKER: markerDownload,
-    GH_STUB_TAG_MARKER: join(destRoot, "stub-tag.txt"),
-    GH_STUB_PAYLOAD: payload,
+    GH_STUB_LIST_MARKER: toBashPath(markerList),
+    GH_STUB_DOWNLOAD_MARKER: toBashPath(markerDownload),
+    GH_STUB_TAG_MARKER: toBashPath(join(destRoot, "stub-tag.txt")),
+    GH_STUB_PAYLOAD: toBashPath(payload),
     GH_STUB_TRIPLE: stubTriple,
     GH_STUB_ROOTS: roots ?? "binaries frameworks gs-resources",
     ...(repo ? { GITHUB_REPOSITORY: repo } : {}),
@@ -461,6 +474,14 @@ async function stubEnv(destRoot, { mode, ghList, repo, triple, roots } = {}) {
 }
 
 describe("unfreeze.sh", () => {
+  it("resolves_windows_backslash_script_paths_for_the_sibling_manifest_lists_and_root", () => {
+    const source = readFileSync(join(HERE, "unfreeze.sh"), "utf8");
+    expect(
+      source.includes("${0//\\\\//}"),
+      "the sibling windows-manifest-lists.sh lookup and the fallback repo-root derivation must normalize Windows backslash argv[0] (execFile passes D:\\... so ${0%/*} never sees a slash and every fixture freeze/unfreeze dies with 'cannot load ./windows-manifest-lists.sh')",
+    ).toBe(true);
+  });
+
   it("survives_gnu_mktemp_semantics_when_scanning_window_engine_dirs_for_dlls", async () => {
     await withWindowsFrozenSource(async (srcRoot) => {
       await withBareDest(async (destRoot) => {
@@ -498,6 +519,57 @@ describe("unfreeze.sh", () => {
         expect(result.stdout).toContain(`restored ${WIN_TRIPLE} sidecars into src-tauri/`);
         expect(result.stdout + result.stderr).not.toContain("too few X's");
         await expectCleanFreezeDir(destRoot);
+      });
+    });
+  });
+
+  it("writes_a_provenance_marker_with_triple_bundle_sha_and_iso_timestamp_after_a_successful_restore", async () => {
+    await withFrozenSource(async (srcRoot) => {
+      await withBareDest(async (destRoot) => {
+        const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot]);
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+        const markerPath = join(destRoot, "src-tauri", ".sidecars-restored.json");
+        expect(existsSync(markerPath), "the consumer audit needs the provenance marker to govern the stagedSha256 lock comparison — without it the restored-vs-lock hash drift fails the row").toBe(true);
+        const marker = JSON.parse(await readFile(markerPath, "utf8"));
+        expect(marker.triple).toBe(MAC_TRIPLE);
+        expect(marker.bundleSha256, "the marker pins the sha256 of the bundle that was actually restored").toBe(shaOf(await readFile(frozenBundle(srcRoot))));
+        expect(marker.restoredAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+        expect(new Date(marker.restoredAt).getTime(), "restoredAt must parse as ISO-8601 UTC on every host").not.toBeNaN();
+        await expectCleanFreezeDir(destRoot);
+      });
+    });
+  });
+
+  it("writes_the_provenance_marker_for_windows_restores_too", async () => {
+    await withWindowsFrozenSource(async (srcRoot) => {
+      await withBareDest(async (destRoot) => {
+        const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", frozenWindowsBundle(srcRoot), "--root", destRoot]);
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+        const marker = JSON.parse(await readFile(join(destRoot, "src-tauri", ".sidecars-restored.json"), "utf8"));
+        expect(marker.triple).toBe(WIN_TRIPLE);
+        expect(marker.bundleSha256).toBe(shaOf(await readFile(frozenWindowsBundle(srcRoot))));
+      });
+    });
+  });
+
+  it("leaves_no_provenance_marker_when_the_restore_fails", async () => {
+    await withFrozenSource(async (srcRoot) => {
+      await withBareDest(async (destRoot) => {
+        const bundle = join(destRoot, "tampered.tar.gz");
+        await copyFile(frozenBundle(srcRoot), bundle);
+        await copyFile(`${frozenBundle(srcRoot)}.sha256`, `${bundle}.sha256`);
+        await writeFile(bundle, "\0", { flag: "a" });
+
+        const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", bundle, "--root", destRoot]);
+
+        expect(result.code).toBe(1);
+        expect(result.stderr).toMatch(/sha256 mismatch/i);
+        expect(
+          existsSync(join(destRoot, "src-tauri", ".sidecars-restored.json")),
+          "a failed restore must not leave a provenance marker — the marker would disable the stagedSha256 gate for a tree it never restored",
+        ).toBe(false);
       });
     });
   });
@@ -581,7 +653,10 @@ describe("unfreeze.sh", () => {
         const tarless = await mkdtemp(join(tmpdir(), "tarless-path-"));
         try {
           const env = { ...process.env, PATH: tarless };
-          const bashToken = process.platform === "win32" ? "bash" : "/bin/bash";
+          const bashToken =
+            process.platform === "win32"
+              ? execFileSync("where", ["bash"], { encoding: "utf8" }).split(/\r?\n/)[0].trim()
+              : "/bin/bash";
           const result = await new Promise((resolvePromise) => {
             execFile(
               bashToken,
@@ -612,7 +687,7 @@ describe("unfreeze.sh", () => {
       await rm(join(payload, "gs-resources"), { recursive: true });
       const bundle = join(destRoot, "handmade.tar.gz");
       await new Promise((resolvePromise, reject) => {
-        execFile("tar", ["-czf", bundle, "-C", payload, "binaries", "frameworks"], (error) =>
+        execFile("tar", ["-czf", toBashPath(bundle), "-C", toBashPath(payload), "binaries", "frameworks"], (error) =>
           error ? reject(error) : resolvePromise(),
         );
       });
@@ -657,8 +732,8 @@ describe("unfreeze.sh", () => {
         }
         expect(
           new Set(await readdir(join(destRoot, "src-tauri"))),
-          "a windows restore swaps binaries only: no gs-resources dir, no frameworks dir",
-        ).toEqual(new Set(["binaries", ".freeze"]));
+          "a windows restore swaps binaries only: no gs-resources dir, no frameworks dir — the restore provenance marker records the bundle sha",
+        ).toEqual(new Set(["binaries", ".freeze", ".sidecars-restored.json"]));
         expect(existsSync(join(destRoot, "src-tauri", "frameworks")), "windows restore never creates frameworks/").toBe(false);
         await expectCleanFreezeDir(destRoot);
       });
@@ -1011,8 +1086,8 @@ describe("unfreeze.sh", () => {
         }
         expect(
           new Set(await readdir(join(destRoot, "src-tauri"))),
-          "the gh-path windows restore swaps binaries only",
-        ).toEqual(new Set(["binaries", ".freeze"]));
+          "the gh-path windows restore swaps binaries only plus the restore provenance marker",
+        ).toEqual(new Set(["binaries", ".freeze", ".sidecars-restored.json"]));
         await expectCleanFreezeDir(destRoot);
       } finally {
         await stubbed.cleanup();
@@ -1057,7 +1132,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("refuses_to_run_while_another_freeze_or_unfreeze_holds_the_lock", async () => {
+  it.skipIf(process.platform === "win32")("refuses_to_run_while_another_freeze_or_unfreeze_holds_the_lock_win32_skips_lock_refusal_semantics_differ", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await mkdir(join(destRoot, "src-tauri"));
@@ -1508,7 +1583,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("recovers_a_stale_lock_left_by_a_dead_predecessor_older_than_an_hour", async () => {
+  it.skipIf(process.platform === "win32")("recovers_a_stale_lock_left_by_a_dead_predecessor_older_than_an_hour_win32_skips_lock_refusal_semantics_differ", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await mkdir(join(destRoot, "src-tauri"));
@@ -1530,7 +1605,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("refuses_a_lock_held_by_a_live_pid_even_when_the_stamp_is_old", async () => {
+  it.skipIf(process.platform === "win32")("refuses_a_lock_held_by_a_live_pid_even_when_the_stamp_is_old_win32_skips_lock_refusal_semantics_differ", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await mkdir(join(destRoot, "src-tauri"));
@@ -1554,7 +1629,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("refuses_a_fresh_dead_pid_lock_and_advises_the_stale_lock_remediation", async () => {
+  it.skipIf(process.platform === "win32")("refuses_a_fresh_dead_pid_lock_and_advises_the_stale_lock_remediation_win32_skips_lock_refusal_semantics_differ", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await mkdir(join(destRoot, "src-tauri"));

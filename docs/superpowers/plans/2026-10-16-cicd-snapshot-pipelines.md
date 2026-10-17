@@ -64,7 +64,11 @@
 - [x] Step 1: merge Task 1; dispatch freeze.yml; verify 4 rows green + 8 assets (operator may dispatch; orchestrator verifies)
 - [x] Step 2: ledger the run ids + release tag
 
+**Ruling (2026-10-17, gate run 39022660502, agent-established local gate):** the windows cargo compile is gated locally on the mac before every push: `cargo check --all-targets --target aarch64-pc-windows-msvc` from `src-tauri/` compiles + typechecks all targets WITHOUT linking (no MSVC needed), catching every `#[cfg(unix)]`-fixture-vs-ungated-test drift that only appeared on the windows CI row. Setup (one-time): `rustup target add aarch64-pc-windows-msvc` + `brew install llvm` (llvm-rc cross-compiles the Windows app resource that tauri-build's build script embeds; brew clang preprocesses it for the msvc triple); then stage gitignored placeholders because tauri-build validates `externalBin` + the windows-conf `binaries/engines` mapping at build-script time (touch the 5 `<bin>-aarch64-pc-windows-msvc.exe` files + `mkdir -p src-tauri/binaries/engines`, and REMOVE the .exe placeholders after the check — the mac-native `sidecars_are_self_contained` audit fails on empty files left behind; see docs/ci-process.md → runbook for the verbatim command). First local reproduction of run 39022660502 = 36 E0425 errors: `SHARED_SENTINEL_MODULE` consumed by the ungated `shared_sentinel_contract` support fn + `SharedSentinelContract` struct in sidecar.rs (5 sites) and 12 ungated tests in processors/document.rs reaching the `#[cfg(unix)]` fixtures (`write_fake_vips`, `read_q_log`, `test_sidecar_paths`, `make_executable_script`). Fix = repo cfg precedent: `#[cfg(unix)]` on the struct + support fn and on each dependent `#[test]` — no windows test semantics invented (mac-native `cargo check --all-targets` and the full gate stay green).
+
 ### Task 3: Finalize consumer workflows
+
+**Ruling (2026-10-17, gate run 39021164217, agent + orchestrator-approved plan):** the mac row's remaining cargo-test failure `sidecars_are_self_contained` is CI-proven and not locally reproducible (brew vips installed locally: keg check passes here). Root cause: the test's audit-subprocess spawn lacked the workflow step's `BINARIES_ALLOW_INACTIVE_BREW=1`; on the runner the restored tree has no pinned brew keg, so verify.mjs pushed the keg-missing problem and the audit failed. Fix = env parity with the audit step (restored-tree semantics: the brew lifecycle is inert; the allowance prints note lines only — the `sidecar audit: PASS` summary and `gs clean-room smoke: PASS` assertions are unchanged). Same ruling covers the windows-row residue: `fails_closed_when_tar_is_absent_from_the_path` ENOENT is libuv resolving the child executable from the CHILD env PATH on win32 (PATH replaced by an empty dir → `bash` unresolvable); fixed by resolving bash absolutely from the parent PATH on win32, POSIX side byte-identical. The five lock-refusal/recovery tests exit 1 with empty stdout+stderr on the windows runner under msys bash (stable across runs 39016160897 → 39021164217) — not mechanical without a win32 shell session; skipIf(win32) with `_win32_skips_lock_refusal_semantics_differ` + tracked in docs/bugs.md, matching the established `win32_skips_acl_semantics_differ` / `win32_skips_mv_shim_cygpath_followup_tracked` precedent.
 
 **Files:**
 - Modify: `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `src-tauri/tauri.conf.json` (`signingIdentity: "-"` under `bundle.macOS`), `scripts/ci/workflows.test.mjs`
@@ -74,10 +78,10 @@
 - release.yml: 4 rows `{macos-15, aarch64}` `{macos-15-intel, x86_64}` `{windows-2025, x64}` `{windows-11-arm, arm64}` (+ rustup target on the arm row); gate job (ubuntu): version-check + sidecars-availability preflight (8 assets) + draft pre-creation (numeric `databaseId`); rows: unfreeze → audit → gate → tauri-action; per-row app-asset check; SBOM from aarch64 row + 2-asset post-verify. 90-min rows. **No cross-compile step — x86 builds natively on macos-15-intel.**
 - workflows.test.mjs: matrices exact; no `-latest`/no local-only assumptions; consumer-no-brew assertion; invariants intact.
 
-- [ ] Step 1: RED workflow tests
-- [ ] Step 2: implement workflows + conf change
-- [ ] Step 3: full gate green
-- [ ] Step 4: commit `ci: native 2x2 release matrix; ad-hoc signing; tauri-action final`
+- [x] Step 1: RED workflow tests
+- [x] Step 2: implement workflows + conf change
+- [x] Step 3: full gate green
+- [x] Step 4: commit `ci: native 2x2 release matrix; ad-hoc signing; tauri-action final`
 
 ### Task 4: First real tag = the live verification of release.yml
 

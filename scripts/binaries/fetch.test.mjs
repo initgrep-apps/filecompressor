@@ -400,6 +400,88 @@ describeDarwin("fetch.mjs", () => {
     expect(entry.stagedSha256).toBe(await sha256File(staged));
   });
 
+  it("removes a stale restore marker when fetch re-stages the tree and rewrites the lock", async () => {
+    const root = await makeRoot();
+    const marker = `${root}/src-tauri/.sidecars-restored.json`;
+    await writeFile(
+      marker,
+      JSON.stringify({
+        triple: "aarch64-apple-darwin",
+        bundleSha256: "a".repeat(64),
+        restoredAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    servedPath = `${ZIPS}/ffmpeg.zip`;
+    makeZip(servedPath, "ffmpeg", "fake-ffmpeg-macho-arm64");
+    const sha = await sha256File(servedPath);
+    await writeManifest(root, {
+      targets: { "aarch64-apple-darwin": { ffmpeg: ffmpegEntry(`${base}/ffmpeg.zip`, sha) } },
+    });
+
+    const result = await runFetch(["--target", "aarch64-apple-darwin", "--root", root]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).toMatch(
+      /removed stale restore marker — staged binaries override restore provenance for aarch64-apple-darwin/,
+    );
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("keeps the restore marker when fetch changes nothing", async () => {
+    const root = await makeRoot();
+    const marker = `${root}/src-tauri/.sidecars-restored.json`;
+    servedPath = `${ZIPS}/ffmpeg.zip`;
+    makeZip(servedPath, "ffmpeg", "fake-ffmpeg-macho-arm64");
+    const sha = await sha256File(servedPath);
+    await writeManifest(root, {
+      targets: { "aarch64-apple-darwin": { ffmpeg: ffmpegEntry(`${base}/ffmpeg.zip`, sha) } },
+    });
+
+    const first = await runFetch(["--target", "aarch64-apple-darwin", "--root", root]);
+    expect(first.code).toBe(0);
+    expect(existsSync(marker)).toBe(false, "the first re-stage removes the marker");
+    await writeFile(
+      marker,
+      JSON.stringify({
+        triple: "aarch64-apple-darwin",
+        bundleSha256: "a".repeat(64),
+        restoredAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+
+    const second = await runFetch(["--target", "aarch64-apple-darwin", "--root", root]);
+    expect(second.code).toBe(0);
+    expect(second.stderr).toBe("");
+    expect(second.stdout).toMatch(/unchanged \(lock \+ staged sha256 match\)/);
+    expect(second.stdout).not.toMatch(/removed stale restore marker/);
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  it("keeps a restore marker pinned to another triple", async () => {
+    const root = await makeRoot();
+    const marker = `${root}/src-tauri/.sidecars-restored.json`;
+    await writeFile(
+      marker,
+      JSON.stringify({
+        triple: "x86_64-pc-windows-msvc",
+        bundleSha256: "a".repeat(64),
+        restoredAt: "2026-01-01T00:00:00Z",
+      }),
+    );
+    servedPath = `${ZIPS}/ffmpeg.zip`;
+    makeZip(servedPath, "ffmpeg", "fake-ffmpeg-macho-arm64");
+    const sha = await sha256File(servedPath);
+    await writeManifest(root, {
+      targets: { "aarch64-apple-darwin": { ffmpeg: ffmpegEntry(`${base}/ffmpeg.zip`, sha) } },
+    });
+
+    const result = await runFetch(["--target", "aarch64-apple-darwin", "--root", root]);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toBe("");
+    expect(result.stdout).not.toMatch(/removed stale restore marker/);
+    expect(existsSync(marker)).toBe(true);
+  });
+
   it("fetch_stages_qpdf_full_bin_and_lib_dir", async () => {
     const root = await makeRoot();
     servedPath = `${ZIPS}/qpdf.zip`;

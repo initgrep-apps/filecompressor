@@ -9,7 +9,8 @@ import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { sha256File } from "./lib.mjs";
+import { binaryDir, expectedDest, manifestPath, sha256File } from "./lib.mjs";
+import { ENGINES_DIR } from "./prep-windows.mjs";
 import { gsSentinelPairs, gsSentinelPaths } from "./gs-sentinels.mjs";
 import { describeDarwin, itDarwin } from "../test-platform.mjs";
 const GS_SENTINEL_NAMES = Object.fromEntries(
@@ -913,7 +914,7 @@ describe("gs sentinel coverage is shared, not duplicated", () => {
     const prep = await import("./prep.mjs");
     const verify = await import("./verify.mjs");
     expect(prep.GS_ACCEPTANCE_SENTINELS).toEqual(verify.GS_ACCEPTANCE_SENTINELS);
-    expect(prep.GS_ACCEPTANCE_SENTINELS.map((p) => p.split("/").join("/"))).toEqual(
+    expect(prep.GS_ACCEPTANCE_SENTINELS.map((p) => p.replace(/\\/g, "/"))).toEqual(
       gsSentinelPaths(),
     );
   });
@@ -1091,7 +1092,7 @@ const EARLY_ANCHOR = '  local gs="$1"\n';
 const LATE_ANCHOR = '  local fixture="$work/font-fixture.ps"\n';
 const MACHO_LOOP_ANCHOR = 'for f in "$BIN_DIR"/*; do\n';
 const VERIFY_ANCHOR = 'if ! node "$SCRIPT_DIR/binaries/verify.mjs" --target "$TARGET" --root "$ROOT"; then\n';
-const MACHO_FN_ANCHOR = '  if ! deps="$(otool -L "$file"';
+const MACHO_FN_ANCHOR = '  err_trap_active=1\n  deps="$(otool -L "$file"';
 
 function runPatchedAudit(root, anchor, extraEnv = {}) {
   const patched = `${root}/scripts/audit-sidecars-injected.sh`;
@@ -1583,6 +1584,11 @@ describeDarwin("cross-target audit passthrough", () => {
 
 describe("the audit smoke's gs binary resolves in node, manifest-driven", () => {
   const GS_RESOLVE = join(SCRIPTS, "audit-gs-resolve.mjs");
+  const gsFlatFile = (root, triple) =>
+    join(binaryDir(root), expectedDest("gs", triple));
+  const gsEnginesFile = (root) =>
+    join(binaryDir(root), ENGINES_DIR, "gs", "gs.exe");
+  const gsManifestFile = (root) => manifestPath(root);
 
   async function makeGsResolveRoot(triple, { manifest } = {}) {
     await mkdir(`${tmpdir()}/audit-test-roots`, { recursive: true });
@@ -1618,7 +1624,7 @@ describe("the audit smoke's gs binary resolves in node, manifest-driven", () => 
 
   it("prefers the engines payload exe for a non-static windows gs row", async () => {
     const root = await makeGsResolveRoot("x86_64-pc-windows-msvc");
-    const enginesExe = `${root}/src-tauri/binaries/engines/gs/gs.exe`;
+    const enginesExe = gsEnginesFile(root);
     await mkdir(dirname(enginesExe), { recursive: true });
     await writeFile(enginesExe, "engines exe stub");
 
@@ -1638,7 +1644,7 @@ describe("the audit smoke's gs binary resolves in node, manifest-driven", () => 
 
   it("falls back to the flat exe when the engines payload is absent", async () => {
     const root = await makeGsResolveRoot("x86_64-pc-windows-msvc");
-    const flat = `${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe`;
+    const flat = gsFlatFile(root, "x86_64-pc-windows-msvc");
     await writeFile(flat, "flat exe stub");
 
     const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
@@ -1646,7 +1652,7 @@ describe("the audit smoke's gs binary resolves in node, manifest-driven", () => 
     expect(result.code).toBe(0);
     expect(result.stdout.split("\n").filter(Boolean)).toEqual([flat]);
     expect(result.stderr).toContain(
-      `candidate ${root}/src-tauri/binaries/engines/gs/gs.exe — missing`,
+      `candidate ${gsEnginesFile(root)} — missing`,
     );
     expect(result.stderr).toContain(`candidate ${flat} — found`);
   });
@@ -1655,7 +1661,7 @@ describe("the audit smoke's gs binary resolves in node, manifest-driven", () => 
     const root = await makeGsResolveRoot("x86_64-pc-windows-msvc", {
       manifest: { gs: { ...GS_ROM_MANIFEST_ENTRY, static: true } },
     });
-    const flat = `${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe`;
+    const flat = gsFlatFile(root, "x86_64-pc-windows-msvc");
     await writeFile(flat, "flat exe stub");
 
     const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
@@ -1669,9 +1675,9 @@ describe("the audit smoke's gs binary resolves in node, manifest-driven", () => 
     const root = await makeGsResolveRoot("x86_64-pc-windows-msvc", {
       manifest: { gs: { ...GS_ROM_MANIFEST_ENTRY, static: true } },
     });
-    const flat = `${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe`;
+    const flat = gsFlatFile(root, "x86_64-pc-windows-msvc");
     await writeFile(flat, "flat exe stub");
-    const enginesExe = `${root}/src-tauri/binaries/engines/gs/gs.exe`;
+    const enginesExe = gsEnginesFile(root);
     await mkdir(dirname(enginesExe), { recursive: true });
     await writeFile(enginesExe, "stale engines exe");
 
@@ -1686,7 +1692,7 @@ describe("the audit smoke's gs binary resolves in node, manifest-driven", () => 
     const root = await makeGsResolveRoot("aarch64-apple-darwin", {
       manifest: { gs: GS_MANIFEST_ENTRY },
     });
-    const flat = `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`;
+    const flat = gsFlatFile(root, "aarch64-apple-darwin");
     await writeFile(flat, "mac binary stub");
 
     const result = await runGsResolve(root, ["--target", "aarch64-apple-darwin"]);
@@ -1707,10 +1713,10 @@ describe("the audit smoke's gs binary resolves in node, manifest-driven", () => 
       "FAIL gs resolution: no gs executable found for target x86_64-pc-windows-msvc",
     );
     expect(result.stderr).toContain(
-      `candidate ${root}/src-tauri/binaries/engines/gs/gs.exe — missing`,
+      `candidate ${gsEnginesFile(root)} — missing`,
     );
     expect(result.stderr).toContain(
-      `candidate ${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe — missing`,
+      `candidate ${gsFlatFile(root, "x86_64-pc-windows-msvc")} — missing`,
     );
   });
 
@@ -1722,7 +1728,7 @@ describe("the audit smoke's gs binary resolves in node, manifest-driven", () => 
 
     expect(result.code).toBe(1);
     expect(result.stderr).toContain(
-      `FAIL gs resolution: manifest missing: ${root}/scripts/binaries.manifest.json`,
+      `FAIL gs resolution: manifest missing: ${gsManifestFile(root)}`,
     );
   });
 
@@ -1735,7 +1741,7 @@ describe("the audit smoke's gs binary resolves in node, manifest-driven", () => 
 
     expect(result.code).toBe(1);
     expect(result.stderr).toContain(
-      `FAIL gs resolution: no gs row for target x86_64-pc-windows-msvc in manifest ${root}/scripts/binaries.manifest.json`,
+      `FAIL gs resolution: no gs row for target x86_64-pc-windows-msvc in manifest ${gsManifestFile(root)}`,
     );
   });
 });

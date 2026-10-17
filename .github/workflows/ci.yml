@@ -16,9 +16,9 @@ permissions:
 jobs:
   gate:
     name: gate (${{ matrix.triple }})
-    timeout-minutes: 60
     permissions:
       contents: read
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -54,20 +54,62 @@ jobs:
         run: bash scripts/ci/unfreeze.sh --triple "$TRIPLE"
         shell: bash
       - name: derive macOS frameworks list from the restored tree (${{ matrix.triple }})
-        if: endsWith(matrix.triple, 'apple-darwin')
+        if: runner.os == 'macOS'
         env:
           TRIPLE: ${{ matrix.triple }}
         run: node scripts/binaries/sync-macos-frameworks.mjs --target "$TRIPLE"
         shell: bash
-      - name: clean-room audit of restored engines (mac)
-        if: endsWith(matrix.triple, 'apple-darwin')
+      - name: clean-room audit of restored engines (macos)
+        if: runner.os == 'macOS'
         env:
           BINARIES_ALLOW_INACTIVE_BREW: "1"
         run: yarn binaries:audit
         shell: bash
       - name: clean-room audit of restored engines (windows)
-        if: endsWith(matrix.triple, 'pc-windows-msvc')
+        if: runner.os == 'Windows'
         run: yarn binaries:audit
+        shell: bash
+      - name: cargo test build (windows loader diagnostics)
+        if: runner.os == 'Windows'
+        run: cd src-tauri && cargo test --no-run
+        shell: bash
+      - name: loader diagnostics (windows)
+        if: runner.os == 'Windows'
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: |
+          cd src-tauri
+          EXE="$(ls -t target/debug/deps/file_compressor_lib-*.exe | head -1)"
+          echo "newest lib-test exe: $EXE"
+          echo "node: $(node --version)"
+          echo "rustc: $(rustc --version)"
+          echo "rust-cache key (matrix part): $TRIPLE (auto part comes from the rust-cache step log)"
+          LOADER_DLLS="$(find target -iname 'WebView2Loader.dll' 2>/dev/null || true)"
+          if [ -n "$LOADER_DLLS" ]; then
+            echo "WebView2Loader.dll under target:"
+            echo "$LOADER_DLLS"
+          else
+            echo "WebView2Loader.dll under target: none"
+          fi
+          if ! node ../scripts/binaries/pe-imports-diag.mjs "$EXE"; then
+            echo "node PE parser failed — dumpbin fallback"
+            DUMPBIN="$(find "/c/Program Files/Microsoft Visual Studio" "/c/Program Files (x86)/Microsoft Visual Studio" -name dumpbin.exe 2>/dev/null | head -1)"
+            if [ -n "$DUMPBIN" ]; then
+              MSYS_NO_PATHCONV=1 "$DUMPBIN" /DEPENDENTS "$EXE"
+            else
+              echo "dumpbin.exe not found on the runner"
+            fi
+          fi
+        shell: bash
+      - name: loader probe (windows)
+        if: runner.os == 'Windows'
+        run: |
+          cd src-tauri
+          if cargo test --lib -- --list; then
+            echo "loader accepted the test exe (harness enumerated its tests)"
+          else
+            echo "lib-test harness died — loader failure confirmed pre-main"
+          fi
         shell: bash
       - name: gate (build + tests + cargo tests)
         run: yarn build && yarn test && cd src-tauri && cargo test

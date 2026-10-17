@@ -269,6 +269,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn reserved_registry_fs_error_falls_back_to_uuid() {
         let dir = tempdir().unwrap();
         let blocker = dir.path().join("blocker");

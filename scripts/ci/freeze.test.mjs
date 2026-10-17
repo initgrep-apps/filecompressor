@@ -5,7 +5,7 @@ vi.setConfig({ testTimeout: 30_000 });
 
 import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,12 +14,25 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FREEZE = join(HERE, "freeze.sh");
 
+function toBashPath(p) {
+  if (process.platform !== "win32") {
+    return p;
+  }
+  return p.replace(/\\/g, "/").replace(/^([A-Za-z]):/, "/$1");
+}
+
+function asBashArgs(args) {
+  return args.map((arg) =>
+    typeof arg === "string" && /^[A-Za-z]:[\\/]/.test(arg) ? toBashPath(arg) : arg,
+  );
+}
+
 const ENGINES = ["ffmpeg", "ffprobe", "qpdf", "vips", "gs"];
 const MAC_TRIPLE = "aarch64-apple-darwin";
 
 function runScript(script, args, options = {}) {
   return new Promise((resolvePromise) => {
-    execFile("bash", [script, ...args], { encoding: "utf8", timeout: 60_000, ...options }, (error, stdout, stderr) => {
+    execFile("bash", [script, ...asBashArgs(args)], { encoding: "utf8", timeout: 60_000, ...options }, (error, stdout, stderr) => {
       const code = error?.code ?? (error?.signal ? 255 : 0);
       resolvePromise({ code, stdout, stderr, signal: error?.signal ?? null });
     });
@@ -28,7 +41,7 @@ function runScript(script, args, options = {}) {
 
 function runTool(tool, args) {
   return new Promise((resolvePromise, reject) => {
-    execFile(tool, args, { encoding: "utf8" }, (error, stdout, stderr) => {
+    execFile(tool, asBashArgs(args), { encoding: "utf8" }, (error, stdout, stderr) => {
       if (error) {
         error.stdout = stdout;
         error.stderr = stderr;
@@ -92,6 +105,14 @@ async function readSha(root, bundle) {
 }
 
 describe("freeze.sh", () => {
+  it("resolves_windows_backslash_script_paths_for_the_sibling_manifest_lists", () => {
+    const source = readFileSync(join(HERE, "freeze.sh"), "utf8");
+    expect(
+      source.includes("${0//\\\\//}"),
+      "the sibling windows-manifest-lists.sh lookup must normalize Windows backslash argv[0] (execFile passes D:\\... so ${0%/*} never sees a slash and the fixture freeze dies with 'cannot load ./windows-manifest-lists.sh')",
+    ).toBe(true);
+  });
+
   it("packages_the_five_engines_frameworks_and_gs_resources_with_paths_rooted_for_src_tauri", async () => {
     await withRoot(async (root) => {
       await stageTree(root, MAC_TRIPLE);
@@ -630,7 +651,7 @@ describe("freeze.sh", () => {
     });
   });
 
-  it("refuses_while_another_freeze_or_unfreeze_holds_the_shared_lock", async () => {
+  it.skipIf(process.platform === "win32")("refuses_while_another_freeze_or_unfreeze_holds_the_shared_lock_win32_skips_lock_refusal_semantics_differ", async () => {
     await withRoot(async (root) => {
       await stageTree(root, MAC_TRIPLE);
       const lockDir = join(root, "src-tauri", ".freeze", "freeze.lock");

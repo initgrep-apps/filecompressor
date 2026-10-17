@@ -21,7 +21,11 @@ fail() { echo "unfreeze: FAIL — $*" >&2; exit 1; }
 info() { echo "unfreeze: $*"; }
 
 case "$0" in
-  */*) manifest_lists_sh="${0%/*}/windows-manifest-lists.sh" ;;
+  *\\*) arg0="${0//\\//}" ;;
+  *) arg0="$0" ;;
+esac
+case "$arg0" in
+  */*) manifest_lists_sh="${arg0%/*}/windows-manifest-lists.sh" ;;
   *) manifest_lists_sh="windows-manifest-lists.sh" ;;
 esac
 if [ -f "$manifest_lists_sh" ]; then
@@ -79,7 +83,7 @@ case " aarch64-apple-darwin x86_64-apple-darwin " in
     ;;
 esac
 
-ROOT="${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+ROOT="${ROOT:-$(cd "$(dirname "$arg0")/../.." && pwd)}"
 SRC="$ROOT/src-tauri"
 [ -d "$SRC" ] || fail "repo root '$ROOT' has no src-tauri directory"
 
@@ -334,5 +338,12 @@ fi
 
 verify_sha "$source_archive"
 extract_and_restore "$source_archive"
+
+restore_marker="$SRC/.sidecars-restored.json"
+restore_marker_sha="$(sha256_of "$source_archive")" || \
+  fail "cannot hash the bundle for the restore provenance marker"
+restore_marker_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '{\n  "triple": "%s",\n  "bundleSha256": "%s",\n  "restoredAt": "%s"\n}\n' "$TRIPLE" "$restore_marker_sha" "$restore_marker_at" > "$restore_marker" || \
+  fail "cannot write the restore provenance marker $restore_marker — the consumer audit needs it to govern the stagedSha256 lock comparison; check that src-tauri is writable and re-run"
 
 info "restored $TRIPLE sidecars into src-tauri/"

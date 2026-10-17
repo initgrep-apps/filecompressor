@@ -47,7 +47,11 @@ async function checkVersion(binPath, expectVersion, triple, root) {
           return;
         }
         if (error && !combined) {
-          resolvePromise({ ok: false, detail: `failed to execute: ${error.message ?? error}` });
+          const execDetail = `failed to execute: ${error.message ?? error}`;
+          resolvePromise({
+            ok: false,
+            detail: /binaries[\\/]/.test(execDetail) ? execDetail : `${execDetail} (the exe used was ${binPath})`,
+          });
           return;
         }
         if (combined.includes(expectVersion)) {
@@ -174,6 +178,8 @@ export async function checkBrewVersion(name, entry, problems) {
     const detail = `${error.stdout ?? ""}${error.stderr ?? ""}${error.message ?? error}`.trim();
     if (/no such keg|not installed/i.test(detail)) {
       notInstalled = `'brew list --versions ${entry.formula}' failed: ${detail} — the formula is not installed`;
+    } else if (process.env[ALLOW_INACTIVE_BREW] === "1") {
+      notInstalled = `'brew list --versions ${entry.formula}' failed on this host: ${detail || "(brew printed nothing)"} — the formula's install state is unknown here (brew 7.x prints nothing for a missing keg)`;
     } else {
       problems.push(
         `${name}: 'brew list --versions ${entry.formula}' failed: ${error.message ?? error} — run 'brew install ${entry.formula}' then re-run 'yarn binaries:prep'`,
@@ -264,6 +270,24 @@ export async function verifyTarget(target, root) {
 
   const bins = binaryDir(root);
   let checked = 0;
+  let restoredBundleSha = null;
+  const restoredMarkerFile = join(root, "src-tauri", ".sidecars-restored.json");
+  if (await exists(restoredMarkerFile)) {
+    try {
+      const marker = readJson(restoredMarkerFile);
+      if (marker?.triple === triple) {
+        restoredBundleSha = String(marker.bundleSha256 ?? "");
+        console.log(
+          `note: stagedSha256 lock comparison disabled — src-tauri/.sidecars-restored.json pins restored bundle ${restoredBundleSha || "with an undisclosed sha256"} for ${triple}, so tree bytes are governed by the bundle sha256 verified at unfreeze instead (ADR 0001)`,
+        );
+      }
+    } catch {
+      console.error(
+        `FAIL unreadable restore marker at ${restoredMarkerFile}: expected {triple, bundleSha256, restoredAt} JSON written by unfreeze`,
+      );
+      return false;
+    }
+  }
 
   const lockFile = lockPath(root);
   let lockTarget = {};
@@ -310,49 +334,60 @@ export async function verifyTarget(target, root) {
       continue;
     }
 
-    const lockEntry = lockTarget[name];
-    if (lockEntry?.stagedSha256 && entry.source !== "brew") {
-      const stagedSha = await sha256File(binPath);
-      if (stagedSha !== lockEntry.stagedSha256) {
+    try {
+      const lockEntry = lockTarget[name];
+      if (lockEntry?.stagedSha256 && entry.source !== "brew" && restoredBundleSha === null) {
+        const stagedSha = await sha256File(binPath);
+        if (stagedSha !== lockEntry.stagedSha256) {
+          problems.push(
+            `${dest}: sha256 mismatch — lock records staged ${lockEntry.stagedSha256}, file is ${stagedSha} — the staged binary was swapped or corrupted; re-run 'yarn binaries:prep', which re-stages it and re-records the digest ('yarn binaries:refresh' will automate this once it lands)`,
+          );
+          continue;
+        }
+      }
+
+      const enginesExe = isWindowsTriple(triple) && entry.static !== true ? join(bins, ENGINES_DIR, destName, `${destName}.exe`) : null;
+      if (enginesExe && !(await exists(enginesExe))) {
         problems.push(
-          `${dest}: sha256 mismatch — lock records staged ${lockEntry.stagedSha256}, file is ${stagedSha} — the staged binary was swapped or corrupted; re-run 'yarn binaries:prep', which re-stages it and re-records the digest ('yarn binaries:refresh' will automate this once it lands)`,
+          `${dest}: windows engine executable missing: ${enginesExe} — the app runs ${ENGINES_DIR}/${destName}/${destName}.exe (its dependent DLLs live beside it) and the flat copy beside the app binary cannot start without them; run 'yarn binaries:prep' to stage it`,
         );
         continue;
       }
-    }
+      const execPath = enginesExe ?? binPath;
 
-    const enginesExe = isWindowsTriple(triple) && entry.static !== true ? join(bins, ENGINES_DIR, destName, `${destName}.exe`) : null;
-    if (enginesExe && !(await exists(enginesExe))) {
-      problems.push(
-        `${dest}: windows engine executable missing: ${enginesExe} — the app runs ${ENGINES_DIR}/${destName}/${destName}.exe (its dependent DLLs live beside it) and the flat copy beside the app binary cannot start without them; run 'yarn binaries:prep' to stage it`,
-      );
-      continue;
-    }
-    const execPath = enginesExe ?? binPath;
-
-    if (enginesExe) {
-      const engineDir = join(bins, ENGINES_DIR, destName);
-      const closed = await assertEngineImportsClosed(engineDir).then(
-        () => true,
-        (error) => ({ error }),
-      );
-      if (closed !== true) {
-        problems.push(`${dest}: engine import closure failed — ${closed.error.message ?? closed.error}`);
-        continue;
+      if (enginesExe) {
+        const engineDir = join(bins, ENGINES_DIR, destName);
+        const closed = await assertEngineImportsClosed(engineDir).then(
+          () => true,
+          (error) => ({ error }),
+        );
+        if (closed !== true) {
+          problems.push(`${dest}: engine import closure failed — ${closed.error.message ?? closed.error}`);
+          continue;
+        }
       }
-    }
 
-    const version = await checkVersion(execPath, entry.expectVersion, triple, root);
-    if (!version.ok) {
-      problems.push(`${dest}: version check failed — ${version.detail}`);
-    } else {
-      console.log(`verify: ${dest} ${entry.expectVersion} (${expectedArch}) OK`);
-    }
+      const version = await checkVersion(execPath, entry.expectVersion, triple, root).catch(
+        (error) => {
+          const detail = `${error.message ?? error}`;
+          const withPath = /binaries[\\/]/.test(detail) ? detail : `failed to execute ${binPath}: ${detail}`;
+          return { ok: false, detail: withPath };
+        },
+      );
+      if (!version.ok) {
+        problems.push(`${dest}: version check failed — ${version.detail}`);
+      } else {
+        console.log(`verify: ${dest} ${entry.expectVersion} (${expectedArch}) OK`);
+      }
 
-    await checkGsResources(root, dest, entry, problems);
-    await checkBrewVersion(dest, entry, problems);
+      await checkGsResources(root, dest, entry, problems);
+      await checkBrewVersion(dest, entry, problems);
+    } catch (error) {
+      problems.push(
+        `${dest}: version check failed — the post-arch gates could not be evaluated on ${binPath}: ${error.message ?? error}`,
+      );
+    }
   }
-
   if (problems.length > 0) {
     for (const problem of problems) {
       console.error(`FAIL ${problem}`);

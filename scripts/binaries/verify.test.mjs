@@ -7,7 +7,7 @@ import { execFileSync, execFile } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { knownTriples, sha256File, validateManifest } from "./lib.mjs";
 import { gsSentinelPaths } from "./gs-sentinels.mjs";
@@ -88,6 +88,22 @@ async function makeStubBrewNoKegDir() {
 case "$1" in
   --version) echo ok ;;
   list) echo "Error: No such keg: $3" >&2; exit 1 ;;
+  *) exit 1 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  return dir;
+}
+
+async function makeStubBrewFailDir(stderrLine) {
+  const dir = await mkdtemp(`${tmpdir()}/verify-stub-brew-fail-`);
+  await writeFile(
+    join(dir, "brew"),
+    `#!/bin/sh
+case "$1" in
+  --version) echo ok ;;
+  list) printf '%s\\n' '${stderrLine}' >&2; exit 9 ;;
   *) exit 1 ;;
 esac
 `,
@@ -243,6 +259,84 @@ describe("verify.mjs", () => {
       result.stderr,
       "the remedy must be the command that actually re-stages and re-records the digest",
     ).toContain("yarn binaries:prep");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  itDarwin("skips_the_stagedSha256_lock_comparison_when_the_restore_provenance_marker_matches_the_target", async () => {
+    const root = await makeRoot(FFMPEG_MANIFEST);
+    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2");
+    await writeFile(
+      `${root}/scripts/binaries.lock.json`,
+      JSON.stringify({
+        generated: new Date().toISOString(),
+        targets: {
+          "aarch64-apple-darwin": {
+            ffmpeg: {
+              source: "url",
+              version: "9.0.2",
+              url: "https://x/ffmpeg.zip",
+              sha256: "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+              stagedSha256: "0000000000000000000000000000000000000000000000000000000000000000",
+              date: new Date().toISOString(),
+            },
+          },
+        },
+      }),
+    );
+    await writeFile(
+      `${root}/src-tauri/.sidecars-restored.json`,
+      JSON.stringify({
+        triple: "aarch64-apple-darwin",
+        bundleSha256: "a".repeat(64),
+        restoredAt: new Date().toISOString(),
+      }),
+    );
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout, "the disabled digest gate must be visible in the audit report").toContain(
+      "stagedSha256 lock comparison disabled",
+    );
+    expect(result.stdout).toContain("verify: PASS");
+    expect(result.stderr, "no sha mismatch may surface for a marker-governed restore").not.toContain("sha256 mismatch");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  itDarwin("keeps_enforcing_the_stagedSha256_lock_comparison_when_the_marker_records_a_different_triple", async () => {
+    const root = await makeRoot(FFMPEG_MANIFEST);
+    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2");
+    await writeFile(
+      `${root}/scripts/binaries.lock.json`,
+      JSON.stringify({
+        generated: new Date().toISOString(),
+        targets: {
+          "aarch64-apple-darwin": {
+            ffmpeg: {
+              source: "url",
+              version: "9.0.2",
+              url: "https://x/ffmpeg.zip",
+              sha256: "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+              stagedSha256: "0000000000000000000000000000000000000000000000000000000000000000",
+              date: new Date().toISOString(),
+            },
+          },
+        },
+      }),
+    );
+    await writeFile(
+      `${root}/src-tauri/.sidecars-restored.json`,
+      JSON.stringify({
+        triple: "x86_64-apple-darwin",
+        bundleSha256: "a".repeat(64),
+        restoredAt: new Date().toISOString(),
+      }),
+    );
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("sha256 mismatch");
     await rm(root, { recursive: true, force: true });
   });
 
@@ -602,6 +696,70 @@ describe("verify.mjs", () => {
     expect(denied.stderr).toContain("brew version drift");
     expect(denied.stderr).toContain("ghostscript is 10.08.1");
     expect(denied.stderr).toContain("binaries.manifest.json pins 10.08.0");
+
+    await rm(root, { recursive: true, force: true });
+    await rm(stubDir, { recursive: true, force: true });
+  });
+
+  itDarwin("treats_any_brew_list_failure_as_the_inactive_allowance_when_BINARIES_ALLOW_INACTIVE_BREW_1", async () => {
+    const root = await makeRoot({
+      targets: {
+        "aarch64-apple-darwin": {
+          vips: {
+            source: "brew",
+            formula: "vips",
+            dest: "vips",
+            expectVersion: "8.18.6",
+          },
+        },
+      },
+    });
+    compileFixture("arm64", `${root}/src-tauri/binaries/vips-aarch64-apple-darwin`, "8.18.6");
+    const stubDir = await makeStubBrewFailDir("Error: something unexpected from brew");
+
+    const allowed = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubDir}:${process.env.PATH}`,
+      BINARIES_ALLOW_INACTIVE_BREW: "1",
+    });
+
+    expect(
+      allowed.code,
+      "brew 7.x prints nothing at all for a missing keg, so the no-such-keg regex can never match — the allowance must cover any brew-list failure or the mac consumer row dies on a keg-missing runner (CI run 39011908076)",
+    ).toBe(0);
+    expect(allowed.stdout).toContain("brew version-drift gate INACTIVE for vips");
+    expect(allowed.stdout).toContain("failed on this host");
+    expect(allowed.stdout).toContain("something unexpected from brew");
+    expect(allowed.stdout).toContain("verify: PASS");
+
+    await rm(root, { recursive: true, force: true });
+    await rm(stubDir, { recursive: true, force: true });
+  });
+
+  itDarwin("fails_the_audit_on_a_brew_list_failure_without_the_inactive_allowance", async () => {
+    const root = await makeRoot({
+      targets: {
+        "aarch64-apple-darwin": {
+          vips: {
+            source: "brew",
+            formula: "vips",
+            dest: "vips",
+            expectVersion: "8.18.6",
+          },
+        },
+      },
+    });
+    compileFixture("arm64", `${root}/src-tauri/binaries/vips-aarch64-apple-darwin`, "8.18.6");
+    const stubDir = await makeStubBrewFailDir("Error: something unexpected from brew");
+
+    const rejected = await runVerify(["--target", "aarch64-apple-darwin", "--root", root], {
+      ...process.env,
+      PATH: `${stubDir}:${process.env.PATH}`,
+    });
+
+    expect(rejected.code, "without the allowance an opaque brew-list failure stays a hard failure").toBe(1);
+    expect(rejected.stderr).toContain("'brew list --versions vips' failed");
+    expect(rejected.stderr).toContain("brew install vips");
 
     await rm(root, { recursive: true, force: true });
     await rm(stubDir, { recursive: true, force: true });
@@ -1095,8 +1253,8 @@ describe("no arm64 assumption hides in the script logic", () => {
 
     const offences = [];
     for (const file of files) {
-      const relative = file.replace(`${scriptsDir}/`, "");
-      if (relative === "binaries/lib.mjs" || relative === "binaries/pe-imports.mjs") {
+      const relativePath = relative(scriptsDir, file).replace(/\\/g, "/");
+      if (relativePath === "binaries/lib.mjs" || relativePath === "binaries/pe-imports.mjs") {
         continue;
       }
       const source = readFileSync(file, "utf8");
@@ -1112,7 +1270,7 @@ describe("no arm64 assumption hides in the script logic", () => {
         if (inParser(offset)) {
           return;
         }
-        offences.push(`${relative}:${index + 1}: ${line.trim()}`);
+        offences.push(`${relativePath}:${index + 1}: ${line.trim()}`);
       });
 
       for (const [start, end] of parserSpans) {
@@ -1123,7 +1281,7 @@ describe("no arm64 assumption hides in the script logic", () => {
         const missing = arches.filter((arch) => !new RegExp(`\\b${arch}\\b`).test(body));
         expect(
           missing,
-          `${relative}: an arch parser that does not handle ${missing.join(", ")} is a \
+          `${relativePath}: an arch parser that does not handle ${missing.join(", ")} is a \
                per-arch assumption in waiting — it would pass every arm64 target and fail Intel`,
         ).toEqual([]);
       }

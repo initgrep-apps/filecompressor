@@ -76,6 +76,32 @@ export function lockPath(root) {
   return join(root, "scripts", "binaries.lock.json");
 }
 
+export function restoreMarkerPath(root) {
+  return join(root, "src-tauri", ".sidecars-restored.json");
+}
+
+export async function removeRestoreMarker(root, triple) {
+  const markerPath = restoreMarkerPath(root);
+  if (!(await exists(markerPath))) {
+    return false;
+  }
+  let stale = true;
+  try {
+    const marker = readJson(markerPath);
+    if (marker?.triple && marker.triple !== triple) {
+      stale = false;
+    }
+  } catch {
+    stale = true;
+  }
+  if (!stale) {
+    return false;
+  }
+  await rm(markerPath, { force: true });
+  console.log(`note: removed stale restore marker — staged binaries override restore provenance for ${triple}`);
+  return true;
+}
+
 export function manifestPath(root) {
   return join(root, "scripts", "binaries.manifest.json");
 }

@@ -750,6 +750,7 @@ awk -v n="$n" 'BEGIN { s = 12345; for (i = 0; i < n; i++) { s = (s * 16807 + 11)
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_non_media_entries_copied_byte_identical() {
         let dir = tempfile::tempdir().unwrap();
@@ -802,6 +803,7 @@ awk -v n="$n" 'BEGIN { s = 12345; for (i = 0; i < n; i++) { s = (s * 16807 + 11)
         assert_eq!(output[3].1.as_slice(), DOCUMENT_XML);
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_rezip_uses_deflate_level_9() {
         let dir = tempfile::tempdir().unwrap();
@@ -879,6 +881,7 @@ awk -v n="$n" 'BEGIN { s = 12345; for (i = 0; i < n; i++) { s = (s * 16807 + 11)
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_media_binary_search_floors_at_q40() {
         let dir = tempfile::tempdir().unwrap();
@@ -1002,6 +1005,7 @@ awk -v n="$n" 'BEGIN { s = 12345; for (i = 0; i < n; i++) { s = (s * 16807 + 11)
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_over_target_lowers_quality_and_retries() {
         let dir = tempfile::tempdir().unwrap();
@@ -1081,6 +1085,7 @@ awk -v n="$n" 'BEGIN { s = 12345; for (i = 0; i < n; i++) { s = (s * 16807 + 11)
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_emf_wmf_skipped_without_error() {
         let dir = tempfile::tempdir().unwrap();
@@ -1130,6 +1135,7 @@ awk -v n="$n" 'BEGIN { s = 12345; for (i = 0; i < n; i++) { s = (s * 16807 + 11)
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_vips_fails_on_media_copies_original_entry() {
         let dir = tempfile::tempdir().unwrap();
@@ -1199,6 +1205,7 @@ exit 1
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_zero_media_docx_pure_rezip_or_pass_through() {
         let dir = tempfile::tempdir().unwrap();
@@ -1259,6 +1266,7 @@ exit 1
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_corrupt_zip_fails_gracefully() {
         let dir = tempfile::tempdir().unwrap();
@@ -1301,6 +1309,7 @@ exit 1
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_already_under_target() {
         let dir = tempfile::tempdir().unwrap();
@@ -1687,6 +1696,7 @@ awk -v n="$n" 'BEGIN { for (i = 0; i < n; i++) printf "%c", i % 251 }' > "$base"
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_output_opens_valid() {
         let dir = tempfile::tempdir().unwrap();
@@ -2027,6 +2037,7 @@ rm "$base"
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_rezip_duplicate_entry_names_fail_gracefully() {
         let dir = tempfile::tempdir().unwrap();
@@ -2151,6 +2162,7 @@ rm "$base"
         fs::write(path, &buf).unwrap();
     }
 
+    #[cfg(unix)]
     #[test]
     fn document_empty_archive_rezip_produces_valid_eocd() {
         let dir = tempfile::tempdir().unwrap();

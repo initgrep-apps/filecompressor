@@ -13,6 +13,7 @@ import {
   manifestPath,
   parseArgs,
   readJson,
+  removeRestoreMarker,
   sha256File,
   sha256Tree,
   stagingDir,
@@ -378,6 +379,7 @@ export async function fetchTarget(target, root) {
   if (changed) {
     lock.generated = new Date().toISOString();
     await writeJson(lockPath(root), lock);
+    await removeRestoreMarker(root, target);
   }
 }
 

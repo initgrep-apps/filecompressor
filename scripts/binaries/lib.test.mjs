@@ -16,6 +16,7 @@ import {
   extract,
   extractTarZstFallback,
   parseArgs,
+  run,
   tarExtractArgs,
   tarToolForHost,
   validateLock,
@@ -448,8 +449,35 @@ describe("validateLock extra staged-package rows", () => {
   });
 });
 
-describe("writeJson", () => {
-  it("is atomic — tmp+rename, no torn lock on failure", async () => {
+describe("run", () => {
+  it("carries_the_child_stdout_and_stderr_on_a_failing_spawns_error", async () => {
+    const winDirect = process.platform === "win32";
+    let tool;
+    let args;
+    if (winDirect) {
+      tool = process.execPath;
+      args = ["-e", "console.log('out-line'); console.error('err-line'); process.exit(3)"];
+    } else {
+      const dir = await tempRoot("run-capture-");
+      tool = join(dir, "emitter.sh");
+      await writeFile(tool, "#!/bin/sh\necho out-line\necho err-line >&2\nexit 3\n", { mode: 0o755 });
+      args = [];
+    }
+
+    const thrown = await run(tool, args).then(
+      () => {
+        throw new Error("run resolved but the tool exits nonzero");
+      },
+      (error) => error,
+    );
+
+    expect(thrown, "run must reject with the spawned error, not a wrapped message-only clone — downstream classification needs the hose output").toBeInstanceOf(Error);
+    expect(thrown.stderr, "stderr must ride on the error or keg-classification regexes never see brew's real failure detail").toContain("err-line");
+    expect(thrown.stdout).toContain("out-line");
+  });
+});
+
+describe("writeJson", () => {  it("is atomic — tmp+rename, no torn lock on failure", async () => {
     const root = await tempRoot("lib-test-");
     const path = join(root, "binaries.lock.json");
     await writeJson(path, { v: 1 });

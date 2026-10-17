@@ -22,9 +22,9 @@ jobs:
   gate:
     name: resolve tag + pre-create draft
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
     permissions:
       contents: write
+    timeout-minutes: 15
     outputs:
       release_id: ${{ steps.draft.outputs.release_id }}
       release_tag: ${{ steps.draft.outputs.release_tag }}
@@ -59,7 +59,7 @@ jobs:
             exit 1
           fi
           if [ -z "$newest" ]; then
-            echo "::error::no sidecars-* release found — run the Freeze sidecar engines workflow before building the release (ADR 0001), then re-run the release"
+            echo "::error::no sidecars-* release found — run the freeze.yml snapshot workflow before building the release (ADR 0001), then re-run the release"
             exit 1
           fi
           rc=0
@@ -73,7 +73,7 @@ jobs:
               case ",$names," in
                 *",$asset,"*) ;;
                 *)
-                  echo "::error::sidecars release '$newest' is missing asset '$asset' — freeze builds publish all eight bundle assets; re-run the Freeze sidecar engines workflow, then re-run the release"
+                  echo "::error::sidecars release '$newest' is missing asset '$asset' — the snapshot publishes all eight bundle assets (four triples x tarball + sha256); re-run the freeze workflow, then re-run the release"
                   exit 1
                   ;;
               esac
@@ -122,9 +122,9 @@ jobs:
   release:
     name: release (${{ matrix.triple }})
     needs: [gate]
-    timeout-minutes: 90
     permissions:
       contents: write
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -177,19 +177,19 @@ jobs:
         run: bash scripts/ci/unfreeze.sh --triple "$TRIPLE"
         shell: bash
       - name: derive macOS frameworks list from the restored tree (${{ matrix.triple }})
-        if: endsWith(matrix.triple, 'apple-darwin')
+        if: runner.os == 'macOS'
         env:
           TRIPLE: ${{ matrix.triple }}
         run: node scripts/binaries/sync-macos-frameworks.mjs --target "$TRIPLE"
         shell: bash
-      - name: clean-room audit of restored engines (mac)
-        if: endsWith(matrix.triple, 'apple-darwin')
+      - name: clean-room audit of restored engines (macos)
+        if: runner.os == 'macOS'
         env:
           BINARIES_ALLOW_INACTIVE_BREW: "1"
         run: yarn binaries:audit
         shell: bash
       - name: clean-room audit of restored engines (windows)
-        if: endsWith(matrix.triple, 'pc-windows-msvc')
+        if: runner.os == 'Windows'
         run: yarn binaries:audit
         shell: bash
       - name: gate (build + tests + cargo tests)

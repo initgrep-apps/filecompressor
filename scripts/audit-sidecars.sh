@@ -165,7 +165,11 @@ audit_macho() {
     return
   fi
   deps=""
-  if ! deps="$(otool -L "$file" | tail -n +2 | awk '{print $1}' | sort -u)"; then
+  deps_status=0
+  err_trap_active=1
+  deps="$(otool -L "$file" | tail -n +2 | awk '{print $1}' | sort -u)" || deps_status=$?
+  err_trap_active=0
+  if [ "$deps_status" -ne 0 ]; then
     printf 'FAIL %s: could not read the dylib load commands (the otool -L pipeline failed)\n' "$file" >&2
     printf '  without the dependency list the @rpath and absolute-path checks below are unproven.\n' >&2
     printf '  Free some disk — find and sort both need temp space — then re-run the audit.\n' >&2
@@ -388,7 +392,7 @@ gs_smoke_search_dirs() {
       *) ordered+=("$dir") ;;
     esac
   done
-  printf '%s\n' "${ordered[@]}"
+  printf '%s\n' ${ordered[@]+"${ordered[@]}"}
   return 0
 }
 
@@ -402,7 +406,11 @@ gs_sentinel_name_for_dir() {
       ;;
   esac
   local slug
-  if ! slug="$(printf '%s' "$1" | tr '/' '-' | tr 'A-Z' 'a-z')"; then
+  slug_status=0
+  err_trap_active=1
+  slug="$(printf '%s' "$1" | tr '/' '-' | tr 'A-Z' 'a-z')" || slug_status=$?
+  err_trap_active=0
+  if [ "$slug_status" -ne 0 ]; then
     return 1
   fi
   gs_sentinel_name="$GS_DIR_SENTINEL_PREFIX$slug-sentinel.ps"
@@ -462,7 +470,11 @@ gs_clean_room_smoke() {
   local -a gs_includes=()
   local -a required_dirs=()
   local declared_list
-  if ! declared_list="$(gs_smoke_required_dirs)"; then
+  declared_status=0
+  err_trap_active=1
+  declared_list="$(gs_smoke_required_dirs)" || declared_status=$?
+  err_trap_active=0
+  if [ "$declared_status" -ne 0 ]; then
     gs_smoke_failed
     return 0
   fi
@@ -474,7 +486,11 @@ $declared_list
 EOF
   local -a search_dirs=()
   local search_list
-  if ! search_list="$(gs_smoke_search_dirs)"; then
+  search_status=0
+  err_trap_active=1
+  search_list="$(gs_smoke_search_dirs)" || search_status=$?
+  err_trap_active=0
+  if [ "$search_status" -ne 0 ]; then
     gs_smoke_failed
     return 0
   fi
@@ -485,7 +501,7 @@ EOF
 $search_list
 EOF
   local -a sentinel_pairs=()
-  for dir in "${search_dirs[@]}"; do
+  for dir in ${search_dirs[@]+"${search_dirs[@]}"}; do
     gs_sentinel_name=""
     if ! gs_sentinel_name_for_dir "$dir"; then
       printf 'FAIL gs clean-room smoke: could not derive the sentinel name for %s\n' "$dir" >&2
