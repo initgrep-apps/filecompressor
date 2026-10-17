@@ -1,6 +1,6 @@
 # CI follow-ups — deferred after the snapshot-pipeline close-out (2026-10-17)
 
-Tracked leftovers from the CI/CD snapshot close-out. None blocks the proven flow (freeze run 39009234965 → `sidecars-20261017`; green gate `39022660502`); each item is a deliberate deferral, not silent debt.
+Tracked leftovers from the CI/CD snapshot close-out. None blocks the proven flow (freeze run 39009234965 → `sidecars-20261017`; green gate `39032317929` — the merge-commit run for 64bfe98, both rows success); each item is a deliberate deferral, not silent debt.
 
 1. **mv-shim cygpath portability (win32 skips)** — the freeze/unfreeze rollback tests drive a mock `mv` shim on POSIX (git-bash's `mv`/`cygpath` semantics differ); affected cases run with `win32_skips_mv_shim_cygpath_followup_tracked` (`scripts/ci/unfreeze.test.mjs`) and hold POSIX coverage complete. Next step: hands-on win32 shell session to observe real mv/cygpath behavior, then un-skip or port the shim.
 2. **win-row lock-refusal skips (5 tests)** — under msys bash on the runner, the pre-existing-lock path in `acquire_lock` exits 1 with empty stdout+stderr, so refusal/recovery output assertions can't run there: `it.skipIf(win32)` with `_win32_skips_lock_refusal_semantics_differ`. Diagnosis handoff is in `docs/bugs.md` → "Windows-row msys lock-refusal residue".
