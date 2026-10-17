@@ -52,7 +52,7 @@
     "fzstd": "0.1.1",
     "jsdom": "^30.1.1",
     "tailwindcss": "^4.3",
-    "typescript": "~6.0.3",
+    "typescript": "~7.0.2",
     "vite": "8.3.x",
     "vitest": "^5.0.2",
     "yaml": "^2"
