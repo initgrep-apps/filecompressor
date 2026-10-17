@@ -4,6 +4,7 @@ import { vi, afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } 
 vi.setConfig({ testTimeout: 30_000 });
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
@@ -851,5 +852,264 @@ describeDarwin("fetch.mjs", () => {
     expect(second.code).toBe(0);
     expect(await readFile(staged, "utf8")).toBe(before);
     expect(await readFile(`${root}/scripts/binaries.lock.json`, "utf8")).toBe(lockBefore);
+  });
+});
+
+describeDarwin("fetch.mjs extraPackages", () => {
+  let server;
+  let base;
+  let servedPath;
+  const cleanupRoots2 = [];
+  async function makeRoot2() {
+    await mkdir(`${tmpdir()}/fetch-test-roots`, { recursive: true });
+    const root = await mkdtemp(`${tmpdir()}/fetch-test-roots/gs-extra-`);
+    cleanupRoots2.push(root);
+    await mkdir(`${root}/src-tauri/binaries`, { recursive: true });
+    return root;
+  }
+
+  async function writeManifest2(root, manifest) {
+    await mkdir(`${root}/scripts`, { recursive: true });
+    await writeFile(`${root}/scripts/binaries.manifest.json`, JSON.stringify(manifest));
+  }
+
+  function urlZip(pkg) {
+    return `${base}/${pkg}.zip`;
+  }
+
+  async function servePkg(name, files) {
+    servedPath = `${ZIPS}/${name}.zip`;
+    makeTreeZip(servedPath, files);
+    return { url: urlZip(name), sha256: await sha256File(servedPath) };
+  }
+
+  function gsMain(pkg) {
+    return {
+      source: "url",
+      url: pkg.url,
+      sha256: pkg.sha256,
+      member: "ucrt64/bin/gswin64c.exe",
+      dest: "gs",
+      expectVersion: "10.08.0",
+      extraPackages: [
+        {
+          name: "zlib",
+          source: "url",
+          url: pkg.url,
+          sha256: pkg.sha256,
+          member: "ucrt64/bin/zlib1.dll",
+        },
+        {
+          name: "brotli",
+          source: "url",
+          url: pkg.url,
+          sha256: pkg.sha256,
+          member: ["ucrt64/bin/libbrotlidec.dll", "ucrt64/bin/libbrotlicommon.dll"],
+        },
+        {
+          name: "libwebp",
+          source: "url",
+          url: pkg.url,
+          sha256: pkg.sha256,
+          member: null,
+        },
+      ],
+    };
+  }
+
+  beforeEach(async () => {
+    server = https.createServer(
+      { cert: execFileSync("cat", [CERT]), key: execFileSync("cat", [KEY]) },
+      (req, res) => {
+        const name = decodeURIComponent(req.url.replace(/^\//, "")).replace(/\.zip$/, "");
+        readFile(`${ZIPS}/${name}.zip`)
+          .then(
+            (buf) => {
+              res.writeHead(200);
+              res.end(buf);
+            },
+            () => {
+              res.writeHead(404);
+              res.end();
+            },
+          );
+      },
+    );
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    base = `https://127.0.0.1:${server.address().port}`;
+    await mkdir(ZIPS, { recursive: true });
+  });
+
+  afterEach(async () => {
+    server?.close();
+  });
+
+  afterAll(async () => {
+    for (const root of cleanupRoots2) {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  async function stagedManifestRoot() {
+    const root = await makeRoot2();
+    const gs = await servePkg("gs", {
+      "ucrt64/bin/gswin64c.exe": "fake-gs-exe",
+      "ucrt64/bin/libgs-10.dll": "fake-libgs",
+    });
+    const zlib = await servePkg("zlib", {
+      "ucrt64/bin/zlib1.dll": "fake-zlib",
+    });
+    const brotli = await servePkg("brotli", {
+      "ucrt64/bin/libbrotlidec.dll": "fake-brotdec",
+      "ucrt64/bin/libbrotlicommon.dll": "fake-brotcommon",
+      "ucrt64/bin/libbrotlienc.dll": "fake-brotenc-not-a-member",
+    });
+    const libwebp = await servePkg("libwebp", {
+      "ucrt64/bin/libwebp-7.dll": "fake-webp7",
+      "ucrt64/bin/libsharpyuv-0.dll": "fake-sharpyuv",
+      "ucrt64/bin/libwebpdemux-2.dll": "fake-webpdemux",
+    });
+    await writeManifest2(root, {
+      targets: {
+        "x86_64-pc-windows-msvc": {
+          gs: {
+            source: "url",
+            url: gs.url,
+            sha256: gs.sha256,
+            member: "ucrt64/bin/gswin64c.exe",
+            dest: "gs",
+            expectVersion: "10.08.0",
+            extraPackages: [
+              { name: "zlib", source: "url", url: zlib.url, sha256: zlib.sha256, member: "ucrt64/bin/zlib1.dll" },
+              {
+                name: "brotli",
+                source: "url",
+                url: brotli.url,
+                sha256: brotli.sha256,
+                member: ["ucrt64/bin/libbrotlidec.dll", "ucrt64/bin/libbrotlicommon.dll"],
+              },
+              { name: "libwebp", source: "url", url: libwebp.url, sha256: libwebp.sha256, member: null },
+            ],
+          },
+        },
+      },
+    });
+    return root;
+  }
+
+  it("stages every extra package and records lock extra rows", async () => {
+    const root = await stagedManifestRoot();
+    const result = await runFetch(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(result.code, `stderr: ${result.stderr}\nstdout: ${result.stdout}`).toBe(0);
+    expect(result.stderr).toBe("");
+
+    for (const output of [
+      `${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe`,
+      `${root}/src-tauri/.staging/zlib-x86_64-pc-windows-msvc/ucrt64/bin/zlib1.dll`,
+      `${root}/src-tauri/.staging/brotli-x86_64-pc-windows-msvc/ucrt64/bin/libbrotlidec.dll`,
+      `${root}/src-tauri/.staging/libwebp-x86_64-pc-windows-msvc/ucrt64/bin/libwebp-7.dll`,
+    ]) {
+      expect(existsSync(output), `${output} must be staged`).toBe(true);
+    }
+
+    const lock = JSON.parse(await readFile(`${root}/scripts/binaries.lock.json`, "utf8"));
+    const extras = lock.targets["x86_64-pc-windows-msvc"].gs.extra;
+    expect(extras.map((row) => row.name).sort()).toEqual(["brotli", "libwebp", "zlib"]);
+    const zlib = extras.find((row) => row.name === "zlib");
+    expect(zlib.stagedSha256s).toEqual({
+      "ucrt64/bin/zlib1.dll": await sha256File(`${root}/src-tauri/.staging/zlib-x86_64-pc-windows-msvc/ucrt64/bin/zlib1.dll`),
+    });
+    const libwebp = extras.find((row) => row.name === "libwebp");
+    expect(Object.keys(libwebp.stagedSha256s).sort()).toEqual([
+      "ucrt64/bin/libsharpyuv-0.dll",
+      "ucrt64/bin/libwebp-7.dll",
+      "ucrt64/bin/libwebpdemux-2.dll",
+    ]);
+    for (const row of extras) {
+      expect(row.date).toMatch(/^\d{4}-/);
+    }
+  });
+
+  it("is idempotent when the lock rows and staged extras match", async () => {
+    const root = await stagedManifestRoot();
+    const first = await runFetch(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(first.code).toBe(0);
+    const lockBefore = await readFile(`${root}/scripts/binaries.lock.json`, "utf8");
+    const stagingContent = await readFile(`${root}/src-tauri/.staging/zlib-x86_64-pc-windows-msvc/ucrt64/bin/zlib1.dll`, "utf8");
+
+    const second = await runFetch(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(second.code).toBe(0);
+    expect(await readFile(`${root}/scripts/binaries.lock.json`, "utf8")).toBe(lockBefore);
+    expect(
+      await readFile(`${root}/src-tauri/.staging/zlib-x86_64-pc-windows-msvc/ucrt64/bin/zlib1.dll`, "utf8"),
+    ).toBe(stagingContent);
+  });
+
+  it("re-downloads an extra whose staged tree drifted and heals the digest pins", async () => {
+    const root = await stagedManifestRoot();
+    const first = await runFetch(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(first.code).toBe(0);
+    const lockBefore = JSON.parse(await readFile(`${root}/scripts/binaries.lock.json`, "utf8"));
+    const zlibStaging = `${root}/src-tauri/.staging/zlib-x86_64-pc-windows-msvc/ucrt64/bin/zlib1.dll`;
+    await writeFile(zlibStaging, "tampered");
+
+    const second = await runFetch(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(second.code).toBe(0);
+    expect(await readFile(zlibStaging, "utf8")).toBe("fake-zlib");
+    const lockAfter = JSON.parse(await readFile(`${root}/scripts/binaries.lock.json`, "utf8"));
+    const beforeRows = lockBefore.targets["x86_64-pc-windows-msvc"].gs.extra;
+    const afterRows = lockAfter.targets["x86_64-pc-windows-msvc"].gs.extra;
+    expect(afterRows.map((row) => [row.name, row.sha256, ...Object.values(row.stagedSha256s)])).toEqual(
+      beforeRows.map((row) => [row.name, row.sha256, ...Object.values(row.stagedSha256s)]),
+    );
+  });
+
+  it("fails loudly when an extra package download pin diverges", async () => {
+    const root = await makeRoot2();
+    const good = await servePkg("gs-good", {
+      "ucrt64/bin/gswin64c.exe": "fake-gs-exe",
+      "ucrt64/bin/zlib1.dll": "fake-zlib",
+    });
+    await servePkg("decoy", { "ucrt64/bin/unused.dll": "unused" });
+    await writeManifest2(root, {
+      targets: {
+        "x86_64-pc-windows-msvc": {
+          gs: {
+            ...gsMain(good),
+            extraPackages: [
+              {
+                name: "zlib",
+                source: "url",
+                url: good.url,
+                sha256: "e".repeat(64),
+                member: "ucrt64/bin/zlib1.dll",
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = await runFetch(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toMatch(/extraPackages: zlib sha256 mismatch/);
+  });
+
+  it("prunes stale lock rows when the manifest drops an extra", async () => {
+    const root = await stagedManifestRoot();
+    const first = await runFetch(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(first.code).toBe(0);
+
+    const manifest = JSON.parse(await readFile(`${root}/scripts/binaries.manifest.json`, "utf8"));
+    manifest.targets["x86_64-pc-windows-msvc"].gs.extraPackages = manifest.targets[
+      "x86_64-pc-windows-msvc"
+    ].gs.extraPackages.filter((extra) => extra.name === "zlib");
+    await writeManifest2(root, manifest);
+
+    const second = await runFetch(["--target", "x86_64-pc-windows-msvc", "--root", root]);
+    expect(second.code).toBe(0);
+    const lock = JSON.parse(await readFile(`${root}/scripts/binaries.lock.json`, "utf8"));
+    const extras = lock.targets["x86_64-pc-windows-msvc"].gs.extra ?? [];
+    expect(extras.map((row) => row.name).sort()).toEqual(["zlib"]);
   });
 });
