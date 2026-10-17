@@ -348,6 +348,11 @@ export function download(url, destPath, options = {}) {
   });
 }
 
+export function tarExtractArgs(archivePath, destDir, { zstd = false, forceLocal = false } = {}) {
+  const extractOption = zstd ? ["--zstd", "-xf"] : ["-xf"];
+  return [...(forceLocal ? ["--force-local"] : []), ...extractOption, archivePath, "-C", destDir];
+}
+
 export async function extractTarZstFallback(archivePath, destDir) {
   await mkdir(destDir, { recursive: true });
   let tarBytes;
@@ -359,7 +364,7 @@ export async function extractTarZstFallback(archivePath, destDir) {
   const tmpTar = `${archivePath}.tmp.tar`;
   try {
     writeFileSync(tmpTar, tarBytes);
-    await run("tar", ["-xf", tmpTar, "-C", destDir]);
+    await run("tar", tarExtractArgs(tmpTar, destDir, { forceLocal: process.platform === "win32" }));
   } finally {
     await rm(tmpTar, { force: true }).catch(() => {});
   }
@@ -367,6 +372,7 @@ export async function extractTarZstFallback(archivePath, destDir) {
 
 export async function extract(archivePath, destDir, options = {}) {
   await mkdir(destDir, { recursive: true });
+  const forceLocal = process.platform === "win32";
   try {
     if (archivePath.endsWith(".zip")) {
       await run("unzip", ["-o", "-q", archivePath, "-d", destDir]);
@@ -374,7 +380,7 @@ export async function extract(archivePath, destDir, options = {}) {
     }
     if (archivePath.endsWith(".tar.zst")) {
       try {
-        await run(options.tarTool ?? "tar", ["--zstd", "-xf", archivePath, "-C", destDir]);
+        await run(options.tarTool ?? "tar", tarExtractArgs(archivePath, destDir, { zstd: true, forceLocal }));
         return;
       } catch (primaryError) {
         try {

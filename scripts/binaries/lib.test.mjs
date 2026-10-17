@@ -16,6 +16,7 @@ import {
   extract,
   extractTarZstFallback,
   parseArgs,
+  tarExtractArgs,
   validateLock,
   writeJson,
 } from "./lib.mjs";
@@ -224,6 +225,45 @@ describe("extract", () => {
       createHash("sha256").update(bytes).digest("hex"),
       "regenerate via: mkdir -p pkg/inner && echo fallback-extracted > pkg/inner/tool.exe && tar -cf - --format=ustar pkg | zstd -q -3 > fixtures/gs-fixture.pkg.tar.zst",
     ).toBe("fa3112e3a5b785efbeff6d5186c327cf74c31f19235b733f36cac94ad0dfa6e5");
+  });
+});
+
+describe("tarExtractArgs", () => {
+  it("prepends --force-local ahead of --zstd -xf for the windows primary extraction", () => {
+    expect(tarExtractArgs("D:\\a\\engine.tar.zst", "D:\\a\\out", { zstd: true, forceLocal: true })).toEqual([
+      "--force-local",
+      "--zstd",
+      "-xf",
+      "D:\\a\\engine.tar.zst",
+      "-C",
+      "D:\\a\\out",
+    ]);
+  });
+
+  it("prepends --force-local ahead of plain -xf for the windows fallback extraction", () => {
+    expect(
+      tarExtractArgs("D:\\a\\engine.pkg.tar.zst.tmp.tar", "D:\\a\\out", { forceLocal: true }),
+    ).toEqual(["--force-local", "-xf", "D:\\a\\engine.pkg.tar.zst.tmp.tar", "-C", "D:\\a\\out"]);
+  });
+
+  it("never emits --force-local for mac bsdtar", () => {
+    expect(tarExtractArgs("/a/engine.tar.zst", "/a/out", { zstd: true })).toEqual([
+      "--zstd",
+      "-xf",
+      "/a/engine.tar.zst",
+      "-C",
+      "/a/out",
+    ]);
+    expect(tarExtractArgs("/a/engine.tar.zst", "/a/out", { forceLocal: false })).toEqual([
+      "-xf",
+      "/a/engine.tar.zst",
+      "-C",
+      "/a/out",
+    ]);
+  });
+
+  it("defaults to plain -xf with no options object", () => {
+    expect(tarExtractArgs("/a/x.tar", "/a/out")).toEqual(["-xf", "/a/x.tar", "-C", "/a/out"]);
   });
 });
 
