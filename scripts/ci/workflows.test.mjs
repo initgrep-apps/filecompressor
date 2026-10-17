@@ -327,7 +327,7 @@ describe("freeze.yml freeze workflow", () => {
     ).toContain("restore the Homebrew prefix");
   });
 
-  it("the per-arch pin file records one distinct hex40 sha per mac triple — Intel engines are frozen at the last sonoma-bottled homebrew-core (x86_64 bottles died 2026-09-10/11)", async () => {
+  it("the per-arch pin file records one distinct hex40 sha per mac triple — Intel is frozen at the last homebrew-core commit whose full vips+gs closure is sonoma-bottled for x86_64 (per-formula bottle deaths start 2026-08-28: openssl@3 3.6.4; the death completes 2026-09-10/11)", async () => {
     const pinsPath = new URL("../../scripts/ci/homebrew-core-pins.json", import.meta.url);
     expect(existsSync(pinsPath), "the per-arch pin file must exist").toBe(true);
     expect(
@@ -346,8 +346,8 @@ describe("freeze.yml freeze workflow", () => {
     ).toBe("cb5b5e2230fdc721d35ad6ce88f096ca628b2abf");
     expect(
       pins["x86_64-apple-darwin"],
-      "x86 pin: newest commit carrying vips 8.18.6 + gs 10.07.1 sonoma bottles before the 2026-09-10/11 x86_64 bottle cutoff (ADR 0001)",
-    ).toBe("8f15b0f1b9653ade0a6939c2bd7168b04d86eb68");
+      "x86 pin: parent of the openssl@3 3.6.4 bump — the first 2026-08/09 homebrew-core commit on the vips 8.18.6 + gs 10.07.1 window whose whole 61-formula macOS closure (incl. cgif 0.5.3, libheif 1.23.2) still carries sonoma x86_64 bottles; its successor commits lose one (cgif 0.5.4 on 09-02, libheif 1.23.3 on 09-01) and never regain one (ADR 0001)",
+    ).toBe("c36952de43157c2c4a4ea05f385031aa29f30354");
   });
 
   it("the manifest freezes Intel on the last sonoma-bottled brew engines — newer versions have no x86_64 bottle ever", async () => {
