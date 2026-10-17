@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream, readFileSync, constants } from "node:fs";
+import { createReadStream, createWriteStream, readFileSync, writeFileSync, constants } from "node:fs";
 import {
   access,
   mkdir,
@@ -12,6 +12,7 @@ import {
 import { execFile } from "node:child_process";
 import { basename, join } from "node:path";
 import https from "node:https";
+import { decompress as decompressZstd } from "fzstd";
 
 const TRIPLE_ARCH = {
   "aarch64-apple-darwin": "arm64",
@@ -347,7 +348,24 @@ export function download(url, destPath, options = {}) {
   });
 }
 
-export async function extract(archivePath, destDir) {
+export async function extractTarZstFallback(archivePath, destDir) {
+  await mkdir(destDir, { recursive: true });
+  let tarBytes;
+  try {
+    tarBytes = decompressZstd(readFileSync(archivePath));
+  } catch (error) {
+    throw new Error(`pure-JS zstd decompression of ${archivePath} failed: ${error.message ?? error}`);
+  }
+  const tmpTar = `${archivePath}.tmp.tar`;
+  try {
+    writeFileSync(tmpTar, tarBytes);
+    await run("tar", ["-xf", tmpTar, "-C", destDir]);
+  } finally {
+    await rm(tmpTar, { force: true }).catch(() => {});
+  }
+}
+
+export async function extract(archivePath, destDir, options = {}) {
   await mkdir(destDir, { recursive: true });
   try {
     if (archivePath.endsWith(".zip")) {
@@ -355,11 +373,30 @@ export async function extract(archivePath, destDir) {
       return;
     }
     if (archivePath.endsWith(".tar.zst")) {
-      await run("tar", ["--zstd", "-xf", archivePath, "-C", destDir]);
-      return;
+      try {
+        await run(options.tarTool ?? "tar", ["--zstd", "-xf", archivePath, "-C", destDir]);
+        return;
+      } catch (primaryError) {
+        try {
+          await extractTarZstFallback(archivePath, destDir);
+        } catch (fallbackError) {
+          if (fallbackError.message.startsWith("pure-JS zstd decompression")) {
+            throw new Error(
+              `extract failed for ${archivePath}: tar --zstd failed (${primaryError.message ?? primaryError}); pure-JS zstd fallback failed (${fallbackError.message ?? fallbackError}) — .tar.zst requires either a 'tar' with --zstd support or a valid zstd stream ('zstd' tool on PATH for faster diagnosis: brew install zstd)`,
+            );
+          }
+          throw new Error(
+            `extract failed for ${archivePath}: decompressed to ${archivePath}.tmp.tar but plain tar extraction failed (${fallbackError.message ?? fallbackError}) after tar --zstd failed (${primaryError.message ?? primaryError}) — the plain-tar step must work everywhere; check free disk space and permissions, then re-run`,
+          );
+        }
+        return;
+      }
     }
     throw new Error(`unsupported archive: ${archivePath}`);
   } catch (error) {
+    if (error.message.startsWith("extract failed for")) {
+      throw error;
+    }
     if (archivePath.endsWith(".tar.zst")) {
       throw new Error(
         `extract failed for ${archivePath}: ${error.message ?? error} — .tar.zst requires the 'zstd' tool on PATH (brew install zstd)`,

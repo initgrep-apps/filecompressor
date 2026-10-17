@@ -49,6 +49,7 @@
     "@types/react": "19.3.x",
     "@types/react-dom": "19.3.x",
     "@vitejs/plugin-react": "6.1.x",
+    "fzstd": "0.1.1",
     "jsdom": "^30.1.1",
     "tailwindcss": "^4.3",
     "typescript": "~6.0.3",

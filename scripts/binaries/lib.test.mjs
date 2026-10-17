@@ -2,9 +2,10 @@
 import { vi, afterAll, describe, expect, it } from "vitest";
 
 vi.setConfig({ testTimeout: 30_000 });
-import { mkdtemp, mkdir, writeFile, readFile, rm, readdir } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rm, readdir, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
+import { createHash } from "node:crypto";
 import https from "node:https";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -13,6 +14,7 @@ import {
   expectedDest,
   download,
   extract,
+  extractTarZstFallback,
   parseArgs,
   validateLock,
   writeJson,
@@ -183,6 +185,45 @@ describe("extract", () => {
     const fake = join(root, "not-an-archive.tar.zst");
     await writeFile(fake, "garbage");
     await expect(extract(fake, join(root, "out"))).rejects.toThrow(/'zstd' tool/);
+  });
+
+  it("extracts .tar.zst through the pure-JS fallback when the primary tar --zstd cannot run (portable: nonexistent tarTool fails with ENOENT)", async () => {
+    const root = await tempRoot("lib-test-");
+    const archive = join(root, "engine.pkg.tar.zst");
+    const fixture = join(FIXTURES, "gs-fixture.pkg.tar.zst");
+    await copyFile(fixture, archive);
+    const out = join(root, "fallback-out");
+    await extract(archive, out, { tarTool: join(root, "definitely-not-a-real-tar-binary") });
+    expect((await readFile(join(out, "pkg", "inner", "tool.exe"), "utf8")).trim()).toBe("fallback-extracted");
+    const siblings = await readdir(root);
+    expect(siblings.filter((name) => name.includes(".tmp.tar"))).toEqual([]);
+  });
+
+  it("extractTarZstFallback decompresses with fzstd and untars the temporary plain archive", async () => {
+    const root = await tempRoot("lib-test-");
+    const archive = join(root, "direct.pkg.tar.zst");
+    await copyFile(join(FIXTURES, "gs-fixture.pkg.tar.zst"), archive);
+    const out = join(root, "direct-out");
+    await extractTarZstFallback(archive, out);
+    expect((await readFile(join(out, "pkg", "inner", "tool.exe"), "utf8")).trim()).toBe("fallback-extracted");
+  });
+
+  it("classifies a failing fallback loudly: both the tar --zstd attempt and the pure-JS decompression name their root failure", async () => {
+    const root = await tempRoot("lib-test-");
+    const bogus = join(root, "bogus.pkg.tar.zst");
+    await writeFile(bogus, "this-is-not-zstd-nor-tar");
+    await expect(
+      extract(bogus, join(root, "out"), { tarTool: join(root, "definitely-not-a-real-tar-binary") }),
+    ).rejects.toThrow(/tar --zstd failed .*pure-JS zstd fallback .*'zstd' tool/s);
+  });
+
+  it("the committed fixture archive stays byte-stable so the fallback test exercises a known-good zstd stream", async () => {
+    const fixture = join(FIXTURES, "gs-fixture.pkg.tar.zst");
+    const bytes = await readFile(fixture);
+    expect(
+      createHash("sha256").update(bytes).digest("hex"),
+      "regenerate via: mkdir -p pkg/inner && echo fallback-extracted > pkg/inner/tool.exe && tar -cf - --format=ustar pkg | zstd -q -3 > fixtures/gs-fixture.pkg.tar.zst",
+    ).toBe("fa3112e3a5b785efbeff6d5186c327cf74c31f19235b733f36cac94ad0dfa6e5");
   });
 });
 
