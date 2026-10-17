@@ -44,6 +44,20 @@ Every artifact is sha256-verified twice: at freeze publish (bundle ↔ sibling d
 5. Tag `v<version>` (or dispatch release.yml). Expect 4 green rows building into the draft, preflight requiring all 8 bundle assets.
 6. Operator verifies the draft and clicks publish. Never publish the `sidecars-*` release by hand.
 
+**Windows-target compile gate (developer-time, runs on the mac)**
+
+The CI windows row compiles the `src-tauri` tests as `cargo test` on `x86_64-pc-windows-msvc`; the mac can catch every one of those compile errors before push. `cargo check --all-targets --target aarch64-pc-windows-msvc` compiles + typechecks without linking (no MSVC needed). Making the tauri-build build script pass is all that is required:
+
+1. One-time: `rustup target add aarch64-pc-windows-msvc` + `brew install llvm` (llvm-rc cross-compiles the Windows app resource that tauri-build embeds, brew clang preprocesses it for the msvc triple).
+2. Stage gitignored placeholders then check, then remove them — tauri-build validates `externalBin` + the windows-conf `binaries/engines` mapping at build-script time, and the mac-native `sidecars_are_self_contained` test must not see leftover placeholder files (from the repo root):
+   ```bash
+   for b in vips qpdf gs ffmpeg ffprobe; do : > src-tauri/binaries/${b}-aarch64-pc-windows-msvc.exe; done && mkdir -p src-tauri/binaries/engines
+   cd src-tauri && env RC_aarch64-pc-windows-msvc=/opt/homebrew/opt/llvm/bin/llvm-rc CC_aarch64-pc-windows-msvc=/opt/homebrew/opt/llvm/bin/clang cargo check --all-targets --target aarch64-pc-windows-msvc; cd ..
+   rm -f src-tauri/binaries/*-aarch64-pc-windows-msvc.exe
+   ```
+
+First local reproduction (2026-10-17): gate run 39022660502's full windows cargo failure = 36 E0425 in `sidecar.rs` + `processors/document.rs`, fixed by extending the repo `#[cfg(unix)]` precedent to the consuming fns/tests. Gate before every push touching `src-tauri/src/`.
+
 **Recovery**
 
 - Same-day `sidecars-<date>` collision: delete the leftover draft; `gh release delete <tag> --cleanup-tag --yes`; re-run the failed freeze rows.

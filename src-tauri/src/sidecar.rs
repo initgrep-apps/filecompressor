@@ -648,6 +648,7 @@ mod tests {
     const SHARED_SENTINEL_MODULE: &str =
         concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/binaries/gs-sentinels.mjs");
 
+    #[cfg(unix)]
     struct SharedSentinelContract {
         prefix: String,
         init_sentinel: String,
@@ -655,6 +656,7 @@ mod tests {
         sentinel_names: Vec<String>,
     }
 
+    #[cfg(unix)]
     fn shared_sentinel_contract() -> SharedSentinelContract {
         let source = std::fs::read_to_string(SHARED_SENTINEL_MODULE).unwrap_or_else(|error| {
             panic!(
