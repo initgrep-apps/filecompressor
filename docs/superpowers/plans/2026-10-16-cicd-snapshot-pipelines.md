@@ -87,9 +87,11 @@
 
 **Ruling (2026-10-17, release runs 39051112136 → 39058511726):** four runs failed in a ladder of four classes — version-check regex (fixed a4833b1), intel-row + win-arm fixture-arch coupling (fixed 2aa38fe), the draft/left-over-blocks-retry trap (documented recovery; idempotency deferred in `docs/ci-followups.md` 8), and the remaining macIntel failure now fixed by the rustc-stub convention in `bundle-pdf.test.mjs` (RCA + evidence: `docs/bugs.md` → "Release v0.1.0-alpha.1 live-proof residue"; completion plan: `2026-10-17-release-alpha-1-intel-row-fix.md`). In run 39058511726 three of four rows already passed and uploaded their assets (windows-11-arm, windows-2025, macos-15); only the macIntel row's vitest gate failed, and the fix + intel-row de-risking (local x86_64 unfreeze/audit + cross-target cargo check + Rosetta cargo test) are recorded in the ledger.
 
+**Ruling (2026-10-17, release run 39063341057):** after the fix landed (PR #126, tag re-created at 3766201) the run is **4/4 green** — gate 9s; aarch64-apple-darwin 8m19s; aarch64-pc-windows-msvc 11m23s; **x86_64-apple-darwin 18m46s (first-ever intel row completion)**; x86_64-pc-windows-msvc 10m11s — and the draft carries exactly the 10 expected assets (8 app artifacts incl. the previously-missing `…_x64.dmg`/`…_x64.app.tar.gz` pair, plus `sbom.json` + `THIRD_PARTY_LICENSES.md`). 2x2 mac/windows matrix live-verified. Publish is the operator's click (Step 2).
+
 **Files:** none (operational)
 
-- [ ] Step 1: operator pushes the first `v*` tag → release.yml → 4 green rows → draft release with installers + SBOM
+- [x] Step 1: operator pushes the first `v*` tag → release.yml → 4 green rows → draft release with installers + SBOM
 - [ ] Step 2: operator clicks publish; ledger the run
 
 ### Task 5: Process docs close-out (done — PR #122 merged a7066cc)
