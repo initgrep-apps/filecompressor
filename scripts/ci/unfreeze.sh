@@ -32,7 +32,7 @@ fi
 
 dll_scan() {
   local dir="$1" errors status listing
-  errors="$(mktemp -t dll-scan-errors)" || fail "cannot create a temp file for the DLL scan of $dir — check free disk space and permissions"
+  errors="$(mktemp -t dll-scan-errors-XXXXXX)" || fail "cannot create a temp file for the DLL scan of $dir — check free disk space and permissions"
   status=0
   listing="$(find "$dir" -type f -name '*.dll' -print -quit 2>"$errors")" || status=$?
   if [ "$status" -ne 0 ]; then

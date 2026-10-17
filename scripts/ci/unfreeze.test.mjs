@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 30_000 });
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -461,6 +461,47 @@ async function stubEnv(destRoot, { mode, ghList, repo, triple, roots } = {}) {
 }
 
 describe("unfreeze.sh", () => {
+  it("survives_gnu_mktemp_semantics_when_scanning_window_engine_dirs_for_dlls", async () => {
+    await withWindowsFrozenSource(async (srcRoot) => {
+      await withBareDest(async (destRoot) => {
+        const stubDir = await mkdtemp(join(tmpdir(), "gnu-mktemp-"));
+        const real = execFileSync("which", ["mktemp"]).toString().trim();
+        await writeFile(
+          join(stubDir, "mktemp"),
+          [
+            "#!/bin/sh",
+            "template=",
+            'for a in "$@"; do',
+            '  case "$a" in',
+            "    -*) continue ;;",
+            '    *) template="$a" ;;',
+            "  esac",
+            "done",
+            'case "$template" in',
+            `*XXXXXX) exec ${real} "$@" ;;`,
+            `*) printf "mktemp: too few X's in template '%s'\\n" "$template" >&2; exit 1 ;;`,
+            "esac",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+
+        const result = await runScript(
+          UNFREEZE,
+          ["--triple", WIN_TRIPLE, "--archive", frozenWindowsBundle(srcRoot), "--root", destRoot],
+          { env: { ...process.env, PATH: `${stubDir}:${process.env.PATH ?? ""}` } },
+        );
+
+        expect(
+          result.code,
+          `git-bash mktemp rejects X-less templates, so every unfreeze mktemp template must carry trailing X's: stdout: ${result.stdout}\nstderr: ${result.stderr}`,
+        ).toBe(0);
+        expect(result.stdout).toContain(`restored ${WIN_TRIPLE} sidecars into src-tauri/`);
+        expect(result.stdout + result.stderr).not.toContain("too few X's");
+        await expectCleanFreezeDir(destRoot);
+      });
+    });
+  });
+
   it("restores_the_frozen_tree_into_a_clean_src_tauri_with_no_extraction_litter", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withBareDest(async (destRoot) => {

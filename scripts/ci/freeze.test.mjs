@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.setConfig({ testTimeout: 30_000 });
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile, chmod } from "node:fs/promises";
@@ -435,6 +435,30 @@ describe("freeze.sh", () => {
     }
   }
 
+  async function stubGnuMktemp() {
+    const stubDir = await mkdtemp(join(tmpdir(), "gnu-mktemp-"));
+    const real = execFileSync("which", ["mktemp"]).toString().trim();
+    await writeFile(
+      join(stubDir, "mktemp"),
+      [
+        "#!/bin/sh",
+        "template=",
+        'for a in "$@"; do',
+        '  case "$a" in',
+        "    -*) continue ;;",
+        '    *) template="$a" ;;',
+        "  esac",
+        "done",
+        'case "$template" in',
+        `*XXXXXX) exec ${real} "$@" ;;`,
+        `*) printf "mktemp: too few X's in template '%s'\\n" "$template" >&2; exit 1 ;;`,
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    return stubDir;
+  }
+
   it("requires_engines_dirs_only_for_non_static_manifest_entries_and_every_entry_as_a_flat_exe", async () => {
     await withRoot(async (root) => {
       await stageManifest(root, WIN_STATIC_MANIFEST);
@@ -498,6 +522,28 @@ describe("freeze.sh", () => {
         result.code,
         `a bare static engines dir must not trip the DLL-less guard: stdout: ${result.stdout}\nstderr: ${result.stderr}`,
       ).toBe(0);
+    });
+  });
+
+  it("survives_gnu_mktemp_semantics_when_scanning_window_engine_dirs_for_dlls", async () => {
+    await withRoot(async (root) => {
+      await stageManifest(root, WIN_STATIC_MANIFEST);
+      await stageStaticShapeTree(root);
+      const stubMktemp = await stubGnuMktemp();
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root], {
+        env: { ...process.env, PATH: `${stubMktemp}:${process.env.PATH ?? ""}` },
+      });
+
+      expect(
+        result.code,
+        `git-bash mktemp rejects X-less templates, so every freeze mktemp template must carry trailing X's: stdout: ${result.stdout}\nstderr: ${result.stderr}`,
+      ).toBe(0);
+      expect(result.stdout).toContain(
+        `${WINDOWS_TRIPLE} bundle → src-tauri/.freeze/sidecar-bundle-${WINDOWS_TRIPLE}.tar.gz`,
+      );
+      expect(result.stdout + result.stderr).not.toContain("too few X's");
+      expect(result.stdout + result.stderr).not.toContain("cannot create a temp file");
     });
   });
 
