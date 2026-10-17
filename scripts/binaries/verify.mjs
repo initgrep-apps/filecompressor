@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { gsSentinelPaths, isGsSentinel } from "./gs-sentinels.mjs";
+import { ENGINES_DIR } from "./prep-windows.mjs";
 import { archForTriple, binaryDir, exists, expectedDest, hostTriple, isMain, isWindowsTriple, knownTriples, lockPath, manifestPath, parseArgs, readJson, run, sha256File, validateLock, validateManifest } from "./lib.mjs";
 
 async function contentArchMac(path) {
@@ -280,7 +281,8 @@ export async function verifyTarget(target, root) {
   }
 
   for (const [name, entry] of Object.entries(entries)) {
-    const dest = expectedDest(entry.dest ?? name, triple);
+    const destName = entry.dest ?? name;
+    const dest = expectedDest(destName, triple);
     const binPath = join(bins, dest);
 
     if (!(await exists(binPath))) {
@@ -318,7 +320,16 @@ export async function verifyTarget(target, root) {
       }
     }
 
-    const version = await checkVersion(binPath, entry.expectVersion, triple, root);
+    const enginesExe = isWindowsTriple(triple) && entry.static !== true ? join(bins, ENGINES_DIR, destName, `${destName}.exe`) : null;
+    if (enginesExe && !(await exists(enginesExe))) {
+      problems.push(
+        `${dest}: windows engine executable missing: ${enginesExe} — the app runs ${ENGINES_DIR}/${destName}/${destName}.exe (its dependent DLLs live beside it) and the flat copy beside the app binary cannot start without them; run 'yarn binaries:prep' to stage it`,
+      );
+      continue;
+    }
+    const execPath = enginesExe ?? binPath;
+
+    const version = await checkVersion(execPath, entry.expectVersion, triple, root);
     if (!version.ok) {
       problems.push(`${dest}: version check failed — ${version.detail}`);
     } else {

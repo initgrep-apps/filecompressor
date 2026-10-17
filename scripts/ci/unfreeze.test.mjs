@@ -1688,6 +1688,11 @@ describe("unfreeze.sh", () => {
           await copyFile(fixtureBinary, dest);
           await chmod(dest, 0o755);
         }
+        for (const engine of WIN_ENGINES) {
+          const engineExe = join(bin, "engines", engine, `${engine}.exe`);
+          await copyFile(fixtureBinary, engineExe);
+          await chmod(engineExe, 0o755);
+        }
 
         const frozen = await runScript(FREEZE, ["--triple", WIN_ARM_TRIPLE, "--root", srcRoot]);
         expect(frozen.code, `freeze stdout: ${frozen.stdout}\nstderr: ${frozen.stderr}`).toBe(0);

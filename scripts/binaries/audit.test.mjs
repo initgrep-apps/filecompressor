@@ -3,7 +3,7 @@ import { vi, afterAll, describe, expect, it } from "vitest";
 
 vi.setConfig({ testTimeout: 30_000 });
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, copyFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -273,6 +273,12 @@ async function makeGsRoot({
       compileGsRomFixture("arm64", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, romExitCode);
     } else {
       compileGsFixture("arm64", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`);
+    }
+    const dest = manifestEntry.dest ?? "gs";
+    if (triple.includes("windows")) {
+      const enginesExe = `${root}/src-tauri/binaries/engines/${dest}/${dest}.exe`;
+      await mkdir(dirname(enginesExe), { recursive: true });
+      await copyFile(`${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, enginesExe);
     }
   }
   if (resources) {
@@ -697,7 +703,10 @@ describeDarwin("audit-sidecars.sh", () => {
       "the windows gs row declares no resources, so the smoke must prove gs renders with zero -I flags",
     ).toMatch(/\b0 staged resource flags\b/);
     expect(result.stdout).not.toContain("sentinel resolved");
-    expect(result.stdout).toContain("sidecar audit: PASS (1 binaries, 0 framework dylibs)");
+    expect(
+      result.stdout,
+      "the staged engines/gs payload mirrors prep's windows layout and is counted beside the flat copy",
+    ).toContain("sidecar audit: PASS (2 binaries, 0 framework dylibs)");
   });
 
   it("nothing_stages_or_demands_gs_resources_below_the_windows_rom_gate", async () => {
@@ -878,6 +887,39 @@ describeDarwin("gs smoke temp-dir failures are reported, never silent", () => {
     );
     expect(result.stdout).not.toContain("gs clean-room smoke: PASS");
     expect(result.stdout).not.toContain("sidecar audit: PASS");
+  });
+
+  it("survives git-bash GNU mktemp semantics: every audit mktemp template carries trailing X's", async () => {
+    const root = await makeGsRoot();
+    const stubBrew = await makeStubBrew();
+    const real = execFileSync("which", ["mktemp"]).toString().trim();
+    const stubMktemp = await makeStubTool("mktemp", `#!/bin/sh
+template=
+for a in "$@"; do
+  case "$a" in
+    -*) continue ;;
+    *) template="$a" ;;
+  esac
+done
+case "$template" in
+  *XXXXXX) exec ${real} "$@" ;;
+  *) printf "mktemp: too few X's in template '%s'\\n" "$template" >&2; exit 1 ;;
+esac
+`);
+
+    const result = await runAudit(root, "aarch64-apple-darwin", {
+      PATH: `${stubMktemp}:${stubBrew}:${process.env.PATH}`,
+    });
+
+    expect(
+      result.code,
+      "git-bash mktemp rejects X-less templates ('too few X's'), so the audit's smoke \
+       workdir and find-error scratch must both carry trailing X's to work on windows rows",
+    ).toBe(0);
+    expect(result.stdout).toContain("gs clean-room smoke: PASS");
+    expect(result.stdout).toContain("sidecar audit: PASS");
+    expect(result.stdout + result.stderr).not.toContain("could not create a temp dir");
+    expect(result.stdout + result.stderr).not.toContain("too few X's");
   });
 });
 
@@ -1325,7 +1367,11 @@ describeDarwin("a real tool failure inside the audit is an audit finding, not a 
       "a failing rm -rf in the EXIT trap must not turn a green audit into exit 1",
     ).toBe(0);
     expect(result.stderr).toContain("WARN sidecar audit: could not remove the smoke workdir");
-    expect(result.stderr).toMatch(/gs-clean-room\./);
+    expect(
+      result.stderr,
+      "the smoke workdir name must survive both BSD mktemp (-t prefix appends a suffix) \
+       and git-bash GNU mktemp (trailing X's replaced), so assert only the stem",
+    ).toMatch(/gs-clean-room-/);
     expect(
       result.stdout.match(/sidecar audit: PASS/g) ?? [],
       "the PASS line must print exactly once",

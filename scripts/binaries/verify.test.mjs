@@ -128,6 +128,38 @@ async function makeRoot(manifest) {
   return root;
 }
 
+const PE_MACHINE_X86_64 = 0x8664;
+const PE_MACHINE_ARM64 = 0xaa64;
+
+function buildPe32Plus(machine) {
+  const b = Buffer.alloc(0xd0, 0);
+  b.write("MZ", 0, "ascii");
+  b.writeUInt32LE(0x40, 0x3c);
+  b.write("PE\0\0", 0x40, "ascii");
+  b.writeUInt16LE(machine, 0x44);
+  b.writeUInt16LE(1, 0x46);
+  b.writeUInt16LE(0xf0, 0x54);
+  b.writeUInt16LE(0x0022, 0x56);
+  b.writeUInt16LE(0x020b, 0x58);
+  b.writeUInt16LE(3, 0x9c);
+  return b;
+}
+
+async function classifyPeFixture(fixturePath) {
+  return new Promise((resolvePromise) => {
+    execFile("file", ["-b", fixturePath], { encoding: "utf8" }, (error, stdout, stderr) => {
+      if (error && error.code === "ENOENT") {
+        resolvePromise({ unavailable: "file(1) is not on PATH on this host" });
+        return;
+      }
+      resolvePromise({
+        description: `${stdout ?? ""}${stderr ?? ""}`.trim(),
+        classifyError: error?.message ?? null,
+      });
+    });
+  });
+}
+
 const FFMPEG_MANIFEST = {
   targets: {
     "aarch64-apple-darwin": {
@@ -831,22 +863,6 @@ describe("the shipped windows gs rows and platform config", () => {
 });
 
 describe("windows handcrafted PE machine-field fixtures (portable pins for contentArchWindows)", () => {
-  const PE_MACHINE_X86_64 = 0x8664;
-  const PE_MACHINE_ARM64 = 0xaa64;
-
-  function buildPe32Plus(machine) {
-    const b = Buffer.alloc(0xd0, 0);
-    b.write("MZ", 0, "ascii");
-    b.writeUInt32LE(0x40, 0x3c);
-    b.write("PE\0\0", 0x40, "ascii");
-    b.writeUInt16LE(machine, 0x44);
-    b.writeUInt16LE(1, 0x46);
-    b.writeUInt16LE(0xf0, 0x54);
-    b.writeUInt16LE(0x0022, 0x56);
-    b.writeUInt16LE(0x020b, 0x58);
-    b.writeUInt16LE(3, 0x9c);
-    return b;
-  }
 
   function peManifestFor(triple) {
     return {
@@ -858,6 +874,7 @@ describe("windows handcrafted PE machine-field fixtures (portable pins for conte
             sha256: "5".repeat(64),
             dest: "vips",
             expectVersion: "1.0.0",
+            static: true,
           },
         },
       },
@@ -871,15 +888,7 @@ describe("windows handcrafted PE machine-field fixtures (portable pins for conte
   }
 
   async function classifyWithFile(fixturePath) {
-    return new Promise((resolvePromise) => {
-      execFile("file", ["-b", fixturePath], { encoding: "utf8" }, (error, stdout, stderr) => {
-        if (error && error.code === "ENOENT") {
-          resolvePromise({ unavailable: "file(1) is not on PATH on this host" });
-          return;
-        }
-        resolvePromise({ description: `${stdout ?? ""}${stderr ?? ""}`.trim(), classifyError: error?.message ?? null });
-      });
-    });
+    return classifyPeFixture(fixturePath);
   }
 
   it("machine_field_0x8664_clears_the_arch_gate_for_x86_64_pc_windows_msvc_and_reaches_the_execution_gate", async (ctx) => {
@@ -949,6 +958,100 @@ describe("windows handcrafted PE machine-field fixtures (portable pins for conte
       result.stderr,
       "the arch gate must stop the run before the execution gate is reached",
     ).not.toContain("version check failed");
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("windows verify must execute what the app executes", () => {
+  const TRIPLE = "x86_64-pc-windows-msvc";
+  const FLAT_EXE = `vips-${TRIPLE}.exe`;
+
+  function manifestFor(entry) {
+    return {
+      targets: {
+        [TRIPLE]: {
+          vips: {
+            source: "url",
+            url: "https://fixtures.invalid/vips.zip",
+            sha256: "5".repeat(64),
+            dest: "vips",
+            expectVersion: "1.0.0",
+            ...entry,
+          },
+        },
+      },
+    };
+  }
+
+  async function writeFlatPe(root, ctx) {
+    const flatPath = join(root, "src-tauri", "binaries", FLAT_EXE);
+    await writeFile(flatPath, buildPe32Plus(PE_MACHINE_X86_64));
+    const classification = await classifyPeFixture(flatPath);
+    if (classification.unavailable || classification.classifyError) {
+      ctx.skip(`PE classification unavailable on this host: ${classification.unavailable ?? classification.classifyError}`);
+    }
+    expect(classification.description).toMatch(/PE32\+ executable/);
+    expect(classification.description).toMatch(/x86-64/i);
+    return flatPath;
+  }
+
+  it("static rows keep executing the flat externalBin copy", async (ctx) => {
+    const root = await makeRoot(manifestFor({ static: true }));
+    await writeFlatPe(root, ctx);
+
+    const result = await runVerify(["--target", TRIPLE, "--root", root]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("version check failed");
+    expect(
+      result.stderr,
+      "the failure must name the flat copy the app actually runs",
+    ).toMatch(new RegExp(`binaries[\\\\/]${FLAT_EXE}`));
+    expect(
+      result.stderr,
+      "a static engine ships no engines/ payload dir, so no engines/ demand may appear",
+    ).not.toMatch(/engines/);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("fails loudly naming the engines exe when a non-static row has no engine payload", async (ctx) => {
+    const root = await makeRoot(manifestFor({}));
+    await writeFlatPe(root, ctx);
+
+    const result = await runVerify(["--target", TRIPLE, "--root", root]);
+
+    expect(result.code).toBe(1);
+    expect(
+      result.stderr,
+      "the remedy is prep, which stages engines/<dest>/<dest>.exe beside its DLLs",
+    ).toContain("yarn binaries:prep");
+    expect(
+      result.stderr,
+      "the report must name the exact app-relevant executable path",
+    ).toMatch(/engines[\\/]vips[\\/]vips\.exe/);
+    expect(
+      result.stderr,
+      "the flat copy cannot run without its DLLs, so an opaque exec failure must not be reported",
+    ).not.toContain("failed to execute");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  itDarwin("executes engines/<dest>/<dest>.exe for a non-static row, the path the app probes", async (ctx) => {
+    const root = await makeRoot(manifestFor({}));
+    await writeFlatPe(root, ctx);
+    const enginesExe = join(root, "src-tauri", "binaries", "engines", "vips", "vips.exe");
+    await mkdir(dirname(enginesExe), { recursive: true });
+    compileFixture("arm64", enginesExe, "vips 1.0.0");
+
+    const result = await runVerify(["--target", TRIPLE, "--root", root]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain("verify: PASS");
+    expect(result.stdout).toContain(`${FLAT_EXE} 1.0.0`);
+    expect(
+      result.stderr,
+      "the reachable app-relevant exe must be executed, not the DLL-less flat copy",
+    ).not.toContain("failed to execute");
     await rm(root, { recursive: true, force: true });
   });
 });

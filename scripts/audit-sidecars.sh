@@ -406,7 +406,7 @@ gs_sentinel_name_for_dir() {
 
 dir_has_file_recursive() {
   local listing errors status
-  errors="$(mktemp -t gs-dir-read-error)"
+  errors="$(mktemp -t gs-dir-read-error-XXXXXX)"
   listing="$(find "$1" -type f ! -name "$GS_SENTINEL_GLOB" -print -quit 2>"$errors")"
   status=$?
   if [ "$status" -ne 0 ]; then
@@ -699,16 +699,16 @@ if [ "$gs_smoke_required" -eq 1 ]; then
       printf "  run 'yarn binaries:prep' to stage it — PDF compression cannot work without it\n" >&2
       failures+=("<gs-clean-room-smoke>")
     else
-      if ! gs_smoke_workdir="$(mktemp -d -t gs-clean-room)"; then
-        printf 'FAIL gs clean-room smoke: could not create a temp dir (mktemp -d -t gs-clean-room)\n' >&2
+      if ! gs_smoke_workdir="$(mktemp -d -t gs-clean-room-XXXXXX)"; then
+        printf 'FAIL gs clean-room smoke: could not create a temp dir (mktemp -d -t gs-clean-room-XXXXXX)\n' >&2
         printf '  the smoke must run, not be skipped: check that TMPDIR is writable\n' >&2
         exit 1
       fi
       gs_clean_room_smoke "$gs_smoke_binary" "$GS_RESOURCES_DIR" "$gs_smoke_workdir"
     fi
   else
-    if ! gs_smoke_workdir="$(mktemp -d -t gs-clean-room)"; then
-      printf 'FAIL gs clean-room smoke: could not create a temp dir (mktemp -d -t gs-clean-room)\n' >&2
+    if ! gs_smoke_workdir="$(mktemp -d -t gs-clean-room-XXXXXX)"; then
+      printf 'FAIL gs clean-room smoke: could not create a temp dir (mktemp -d -t gs-clean-room-XXXXXX)\n' >&2
       printf '  the smoke must run, not be skipped: check that TMPDIR is writable\n' >&2
       exit 1
     fi
