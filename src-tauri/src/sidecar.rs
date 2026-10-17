@@ -1245,6 +1245,7 @@ mod tests {
         );
         let out = std::process::Command::new("bash")
             .arg(&script)
+            .env("BINARIES_ALLOW_INACTIVE_BREW", "1")
             .output()
             .expect("audit-sidecars.sh runs");
         assert!(

@@ -651,7 +651,7 @@ describe("freeze.sh", () => {
     });
   });
 
-  it("refuses_while_another_freeze_or_unfreeze_holds_the_shared_lock", async () => {
+  it.skipIf(process.platform === "win32")("refuses_while_another_freeze_or_unfreeze_holds_the_shared_lock_win32_skips_lock_refusal_semantics_differ", async () => {
     await withRoot(async (root) => {
       await stageTree(root, MAC_TRIPLE);
       const lockDir = join(root, "src-tauri", ".freeze", "freeze.lock");

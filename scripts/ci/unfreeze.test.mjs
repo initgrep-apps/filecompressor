@@ -653,7 +653,10 @@ describe("unfreeze.sh", () => {
         const tarless = await mkdtemp(join(tmpdir(), "tarless-path-"));
         try {
           const env = { ...process.env, PATH: tarless };
-          const bashToken = process.platform === "win32" ? "bash" : "/bin/bash";
+          const bashToken =
+            process.platform === "win32"
+              ? execFileSync("where", ["bash"], { encoding: "utf8" }).split(/\r?\n/)[0].trim()
+              : "/bin/bash";
           const result = await new Promise((resolvePromise) => {
             execFile(
               bashToken,
@@ -1129,7 +1132,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("refuses_to_run_while_another_freeze_or_unfreeze_holds_the_lock", async () => {
+  it.skipIf(process.platform === "win32")("refuses_to_run_while_another_freeze_or_unfreeze_holds_the_lock_win32_skips_lock_refusal_semantics_differ", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await mkdir(join(destRoot, "src-tauri"));
@@ -1580,7 +1583,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("recovers_a_stale_lock_left_by_a_dead_predecessor_older_than_an_hour", async () => {
+  it.skipIf(process.platform === "win32")("recovers_a_stale_lock_left_by_a_dead_predecessor_older_than_an_hour_win32_skips_lock_refusal_semantics_differ", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await mkdir(join(destRoot, "src-tauri"));
@@ -1602,7 +1605,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("refuses_a_lock_held_by_a_live_pid_even_when_the_stamp_is_old", async () => {
+  it.skipIf(process.platform === "win32")("refuses_a_lock_held_by_a_live_pid_even_when_the_stamp_is_old_win32_skips_lock_refusal_semantics_differ", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await mkdir(join(destRoot, "src-tauri"));
@@ -1626,7 +1629,7 @@ describe("unfreeze.sh", () => {
     });
   });
 
-  it("refuses_a_fresh_dead_pid_lock_and_advises_the_stale_lock_remediation", async () => {
+  it.skipIf(process.platform === "win32")("refuses_a_fresh_dead_pid_lock_and_advises_the_stale_lock_remediation_win32_skips_lock_refusal_semantics_differ", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withRoot(async (destRoot) => {
         await mkdir(join(destRoot, "src-tauri"));

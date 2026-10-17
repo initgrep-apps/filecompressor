@@ -66,6 +66,8 @@
 
 ### Task 3: Finalize consumer workflows
 
+**Ruling (2026-10-17, gate run 39021164217, agent + orchestrator-approved plan):** the mac row's remaining cargo-test failure `sidecars_are_self_contained` is CI-proven and not locally reproducible (brew vips installed locally: keg check passes here). Root cause: the test's audit-subprocess spawn lacked the workflow step's `BINARIES_ALLOW_INACTIVE_BREW=1`; on the runner the restored tree has no pinned brew keg, so verify.mjs pushed the keg-missing problem and the audit failed. Fix = env parity with the audit step (restored-tree semantics: the brew lifecycle is inert; the allowance prints note lines only — the `sidecar audit: PASS` summary and `gs clean-room smoke: PASS` assertions are unchanged). Same ruling covers the windows-row residue: `fails_closed_when_tar_is_absent_from_the_path` ENOENT is libuv resolving the child executable from the CHILD env PATH on win32 (PATH replaced by an empty dir → `bash` unresolvable); fixed by resolving bash absolutely from the parent PATH on win32, POSIX side byte-identical. The five lock-refusal/recovery tests exit 1 with empty stdout+stderr on the windows runner under msys bash (stable across runs 39016160897 → 39021164217) — not mechanical without a win32 shell session; skipIf(win32) with `_win32_skips_lock_refusal_semantics_differ` + tracked in docs/bugs.md, matching the established `win32_skips_acl_semantics_differ` / `win32_skips_mv_shim_cygpath_followup_tracked` precedent.
+
 **Files:**
 - Modify: `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `src-tauri/tauri.conf.json` (`signingIdentity: "-"` under `bundle.macOS`), `scripts/ci/workflows.test.mjs`
 
