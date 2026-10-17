@@ -10,6 +10,7 @@ import {
   manifestPath,
   parseArgs,
   readJson,
+  sha256File,
   stagingDir,
   validateManifest,
 } from "./lib.mjs";
@@ -112,9 +113,72 @@ async function stageEngine(root, name, entry, triple) {
     );
   }
 
+  const digests = new Map();
+  for (const existing of await listDir(work)) {
+    if (existing.isFile()) {
+      const path = join(work, existing.name);
+      digests.set(existing.name.toLowerCase(), await sha256File(path));
+    }
+  }
+  for (const extra of entry.extraPackages ?? []) {
+    await copyExtraMembers(root, name, entry, extra, triple, work, digests);
+  }
+
   await cp(memberPath, join(work, `${entry.dest}.exe`));
   await swapIn(work, engineDir(root, entry.dest));
   return engineDir(root, entry.dest);
+}
+
+async function copyExtraMembers(root, engineName, entry, extra, triple, work, digests) {
+  const { extraMembersOf } = await import("./fetch.mjs");
+  const members = extraMembersOf(extra);
+  const claimed = [];
+  if (members === null) {
+    const entries = await readdir(join(stagingDir(root, extra.name, triple)), {
+      recursive: true,
+      withFileTypes: true,
+    }).catch(() => []);
+    for (const item of entries) {
+      if (item.isFile() && item.name.toLowerCase().endsWith(".dll")) {
+        const parent = item.parentPath ?? item.path;
+        const relativeDir =
+          typeof parent === "string" && parent.startsWith(stagingDir(root, extra.name, triple))
+            ? parent.slice(stagingDir(root, extra.name, triple).length + 1)
+            : "";
+        claimed.push(relativeDir ? `${relativeDir}/${item.name}` : item.name);
+      }
+    }
+  } else {
+    claimed.push(...members);
+  }
+  if (claimed.length === 0) {
+    throw new PrepWindowsError(
+      `${engineName} (${triple}): extraPackages ${extra.name} holds no *.dll to stage beside ${entry.dest}.exe — re-run 'yarn binaries:fetch --target ${triple}' or check the member pin`,
+    );
+  }
+  for (const member of claimed) {
+    const source = join(stagingDir(root, extra.name, triple), ...member.split("/"));
+    if (!(await exists(source))) {
+      await rm(work, { recursive: true, force: true });
+      throw new PrepWindowsError(
+        `${engineName} (${triple}): extraPackages: ${extra.name} member '${member}' is missing from ${stagingDir(root, extra.name, triple)} — re-run 'yarn binaries:fetch --target ${triple}' and re-check the member pin`,
+      );
+    }
+    const digest = await sha256File(source);
+    const fileName = member.split("/").pop();
+    const key = fileName.toLowerCase();
+    const previous = digests.get(key);
+    if (previous !== undefined && previous !== digest) {
+      await rm(work, { recursive: true, force: true });
+      throw new PrepWindowsError(
+        `${engineName} (${triple}): two extra packages stage '${fileName}' with different bytes (${digest.slice(0, 12)} vs ${previous.slice(0, 12)}) — one engine dir cannot carry two different DLLs under one name; align the extraPackages pins so the same package wins, then re-run 'yarn binaries:prep'`,
+      );
+    }
+    if (previous === undefined) {
+      await cp(source, join(work, fileName));
+      digests.set(key, digest);
+    }
+  }
 }
 
 async function stageGsResources(root, name, entry, triple) {

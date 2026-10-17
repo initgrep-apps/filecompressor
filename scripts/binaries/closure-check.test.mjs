@@ -97,4 +97,14 @@ describe("assertEngineImportsClosed", () => {
     await mkdir(engine, { recursive: true });
     await expect(assertEngineImportsClosed(engine)).rejects.toThrow(/gs\.exe/);
   });
+
+  it("skips quietly when the root exe is not a PE image", async () => {
+    const { assertEngineImportsClosed } = await import("./closure-check.mjs");
+    const root = await tempRoot("macho");
+    const engine = join(root, "src-tauri", "binaries", "engines", "vips");
+    await mkdir(engine, { recursive: true });
+    await writeFile(join(engine, "vips.exe"), "a mach-o launcher cannot be PE-parsed");
+    await writeFile(join(engine, "libglib-2.0-0.dll"), buildPe({ importSpecs: [] }));
+    await expect(assertEngineImportsClosed(engine)).resolves.toBeUndefined();
+  });
 });

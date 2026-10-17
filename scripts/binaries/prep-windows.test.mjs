@@ -312,3 +312,101 @@ describe("prep-windows engine folders", () => {
     expect(existsSync(join(root, "src-tauri", "binaries", "engines", "ffmpeg"))).toBe(false);
   });
 });
+describe("prep-windows extraPackages", () => {
+  function extraEntry(name, member) {
+    return { name, source: "url", url: `https://x/${name}.pkg.tar.zst`, sha256: "e".repeat(64), member };
+  }
+
+  it("prep_executes_gs_with_all_extra_package_dlls_beside_the_engine", async () => {
+    const root = await tempRoot("prep-win-extras-");
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+    });
+    await stageEntry(root, "zlib", X64, { "ucrt64/bin/zlib1.dll": "zlib" });
+    await stageEntry(root, "brotli", X64, { "ucrt64/bin/libbrotlidec.dll": "dec", "ucrt64/bin/libbrotlicommon.dll": "common" });
+
+    const staged = await prepWindows(root, X64, {
+      gs: {
+        member: GS_MEMBER,
+        dest: "gs",
+        extraPackages: [
+          extraEntry("zlib", "ucrt64/bin/zlib1.dll"),
+          extraEntry("brotli", ["ucrt64/bin/libbrotlidec.dll", "ucrt64/bin/libbrotlicommon.dll"]),
+        ],
+      },
+    });
+
+    const engine = join(root, "src-tauri", "binaries", "engines", "gs");
+    expect(staged).toContain(engine);
+    expect(existsSync(join(engine, "gs.exe"))).toBe(true);
+    expect(existsSync(join(engine, "libgs-10.dll"))).toBe(true);
+    expect(existsSync(join(engine, "zlib1.dll"))).toBe(true);
+    expect(existsSync(join(engine, "libbrotlidec.dll"))).toBe(true);
+    expect(existsSync(join(engine, "libbrotlicommon.dll"))).toBe(true);
+    expect(
+      existsSync(join(engine, "libbrotlienc.dll")),
+      "members outside the declared pin list must not be staged",
+    ).toBe(false);
+  });
+
+  it("scan-all-dll extras copy every dll in their staging tree", async () => {
+    const root = await tempRoot("prep-win-extras-null-");
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+    });
+    await stageEntry(root, "libwebp", X64, {
+      "ucrt64/bin/libwebp-7.dll": "webp7",
+      "ucrt64/bin/libsharpyuv-0.dll": "sharpyuv",
+      "ucrt64/bin/libwebpdemux-2.dll": "demux",
+    });
+
+    await prepWindows(root, X64, {
+      gs: { member: GS_MEMBER, dest: "gs", extraPackages: [extraEntry("libwebp", null)] },
+    });
+
+    const engine = join(root, "src-tauri", "binaries", "engines", "gs");
+    for (const dll of ["libwebp-7.dll", "libsharpyuv-0.dll", "libwebpdemux-2.dll"]) {
+      expect(existsSync(join(engine, dll)), `${dll} must be staged`).toBe(true);
+    }
+  });
+
+  it("fails naming a manifest member absent from the extra staging tree", async () => {
+    const root = await tempRoot("prep-win-extras-missing-");
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+    });
+    await stageEntry(root, "zlib", X64, { "ucrt64/bin/other.dll": "not-there" });
+
+    await expect(
+      prepWindows(root, X64, {
+        gs: { member: GS_MEMBER, dest: "gs", extraPackages: [extraEntry("zlib", "ucrt64/bin/zlib1.dll")] },
+      }),
+    ).rejects.toThrow(/extraPackages: zlib member 'ucrt64\/bin\/zlib1\.dll' is missing/);
+  });
+
+  it("fails loudly when two extras want the same dll name with different bytes", async () => {
+    const root = await tempRoot("prep-win-extras-clash-");
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+    });
+    await stageEntry(root, "zlib", X64, { "ucrt64/bin/zlib1.dll": "bytes-a" });
+    await stageEntry(root, "zlib-ng-compat", X64, { "ucrt64/bin/zlib1.dll": "bytes-b" });
+
+    await expect(
+      prepWindows(root, X64, {
+        gs: {
+          member: GS_MEMBER,
+          dest: "gs",
+          extraPackages: [
+            extraEntry("zlib", "ucrt64/bin/zlib1.dll"),
+            extraEntry("zlib-ng-compat", "ucrt64/bin/zlib1.dll"),
+          ],
+        },
+      }),
+    ).rejects.toThrow(/zlib1\.dll/);
+  });
+});

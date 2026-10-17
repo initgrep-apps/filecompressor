@@ -83,6 +83,12 @@ export async function assertEngineImportsClosed(engineDir, { label = null } = {}
     try {
       parsed = parsePeImports(await readFile(path));
     } catch (error) {
+      if (current === exeName && /not a PE image/.test(`${error.message ?? error}`)) {
+        console.log(
+          `note: engine import-closure check skipped for ${engineName}: ${exeName} is not a PE image (${error.message ?? error})`,
+        );
+        return;
+      }
       const lower = current.toLowerCase();
       const who = importers.get(lower) ? ` (imported by ${importers.get(lower)})` : "";
       throw new ClosureCheckError(

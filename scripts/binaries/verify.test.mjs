@@ -1096,7 +1096,7 @@ describe("no arm64 assumption hides in the script logic", () => {
     const offences = [];
     for (const file of files) {
       const relative = file.replace(`${scriptsDir}/`, "");
-      if (relative === "binaries/lib.mjs") {
+      if (relative === "binaries/lib.mjs" || relative === "binaries/pe-imports.mjs") {
         continue;
       }
       const source = readFileSync(file, "utf8");

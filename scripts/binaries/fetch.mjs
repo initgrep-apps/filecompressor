@@ -110,7 +110,7 @@ async function libStagingIntact(entry, staging, lockEntry) {
   return names.every((name) => digests[name] === pinned[name]);
 }
 
-async function stagedDigestsForMembers(staging, members) {
+export async function stagedDigestsForMembers(staging, members) {
   const digests = {};
   if (members === null) {
     const entries = await readdir(staging, { recursive: true, withFileTypes: true }).catch(() => []);
