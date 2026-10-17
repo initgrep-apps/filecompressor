@@ -613,6 +613,29 @@ describe("freeze.yml freeze workflow", () => {
       expect(order[i], `draft-first stage ${i} out of order`).toBeGreaterThan(order[i - 1]);
     }
   });
+
+  it("mac rows derive the tauri.conf.json frameworks list from the staged tree after staging; windows rows skip it", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const freeze = jobsOf(doc).freeze;
+    const steps = stepsOf(freeze);
+    const sync = steps.find((s) => stepRuns(s).includes("scripts/binaries/sync-macos-frameworks.mjs"));
+    expect(sync, "a frameworks-sync step must exist on freeze rows").toBeDefined();
+    expect(sync["if"], "frameworks are a macOS-only artifact — the sync must gate on the mac platform").toBe(
+      "matrix.platform == 'mac'",
+    );
+    expect(sync.env?.TRIPLE).toBe("${{ matrix.triple }}");
+    expect(
+      sync.run,
+      "the sync is resolved from the row's triple env — never a workflow expression inside the run string",
+    ).toContain('node scripts/binaries/sync-macos-frameworks.mjs --target "$TRIPLE"');
+
+    const stagingIdx = runIndexesByText(freeze, "node scripts/binaries/all.mjs --target")[0];
+    const syncIdx = steps.findIndex((s) => s === sync);
+    const freezeIdx = runIndexesByText(freeze, "bash scripts/ci/freeze.sh --triple")[0];
+    expect(stagingIdx).toBeGreaterThanOrEqual(0);
+    expect(syncIdx, "the sync must run after the all.mjs staging step").toBeGreaterThan(stagingIdx);
+    expect(freezeIdx, "the sync must run before the bundle freezes the tree").toBeGreaterThan(syncIdx);
+  });
 });
 
 describe("release.yml release workflow", () => {
@@ -993,8 +1016,30 @@ describe("release.yml release workflow", () => {
     expect(sbom.env?.GH_REPO).toBe("${{ github.repository }}");
   });
 
-  it("prerelease flag is applied at gate draft creation from the helper-provided env", async () => {
-    const { doc, text } = await loadWorkflow(FILENAME);
+  it("release mac rows derive the tauri.conf.json frameworks list from the restored bundle before the audit; windows rows never run it", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const steps = stepsOf(jobsOf(doc).release);
+    const sync = steps.find((s) => stepRuns(s).includes("scripts/binaries/sync-macos-frameworks.mjs"));
+    expect(sync, "a frameworks-sync step must exist on release rows").toBeDefined();
+    expect(
+      sync["if"],
+      "frameworks are a macOS-only artifact — release rows must gate the sync on apple-darwin so windows rows (which restore no frameworks) never run it",
+    ).toContain("apple-darwin");
+    expect(sync.env?.TRIPLE).toBe("${{ matrix.triple }}");
+    expect(sync.run).toContain('node scripts/binaries/sync-macos-frameworks.mjs --target "$TRIPLE"');
+
+    const unfreezeStep = steps.find((s) => stepRuns(s).includes("bash scripts/ci/unfreeze.sh --triple"));
+    expect(unfreezeStep).toBeDefined();
+    const unfreezeIdx = steps.findIndex((s) => s === unfreezeStep);
+    const syncIdx = steps.findIndex((s) => s === sync);
+    const macAudit = steps.find((s) => stepRuns(s).includes("yarn binaries:audit") && s.env?.BINARIES_ALLOW_INACTIVE_BREW === "1");
+    expect(macAudit).toBeDefined();
+    const macIdx = steps.findIndex((s) => s === macAudit);
+    expect(syncIdx, "the sync must run after the unfreeze restores the bundle").toBeGreaterThan(unfreezeIdx);
+    expect(macIdx, "the sync must run before the clean-room audit reads the conf").toBeGreaterThan(syncIdx);
+  });
+
+  it("prerelease flag is applied at gate draft creation from the helper-provided env", async () => {    const { doc, text } = await loadWorkflow(FILENAME);
     const draft = stepsOf(jobsOf(doc).gate).find((s) => stepRuns(s).includes('gh release create "$RELEASE_TAG"'));
     expect(draft.run).toContain('[ "$PRERELEASE" = "true" ]');
     expect(draft.run).toContain("draft_flags+=(--prerelease)");
@@ -1190,5 +1235,28 @@ describe("ci.yml PR gate workflow", () => {
         expect(step.shell, `job ${jobName} step "${step.name}": run steps must set shell: bash`).toBe("bash");
       }
     }
+  });
+
+  it("gate mac rows derive the tauri.conf.json frameworks list from the restored bundle before the audit; windows rows never run it", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const steps = stepsOf(jobsOf(doc).gate);
+    const sync = steps.find((s) => stepRuns(s).includes("scripts/binaries/sync-macos-frameworks.mjs"));
+    expect(sync, "a frameworks-sync step must exist on gate rows").toBeDefined();
+    expect(
+      sync["if"],
+      "frameworks are a macOS-only artifact — gate rows must gate the sync on apple-darwin so the windows row (which restores no frameworks) never runs it",
+    ).toContain("apple-darwin");
+    expect(sync.env?.TRIPLE).toBe("${{ matrix.triple }}");
+    expect(sync.run).toContain('node scripts/binaries/sync-macos-frameworks.mjs --target "$TRIPLE"');
+
+    const unfreezeStep = steps.find((s) => stepRuns(s).includes("bash scripts/ci/unfreeze.sh --triple"));
+    expect(unfreezeStep).toBeDefined();
+    const unfreezeIdx = steps.findIndex((s) => s === unfreezeStep);
+    const syncIdx = steps.findIndex((s) => s === sync);
+    const macAudit = steps.find((s) => stepRuns(s).includes("yarn binaries:audit") && s.env?.BINARIES_ALLOW_INACTIVE_BREW === "1");
+    expect(macAudit).toBeDefined();
+    const macIdx = steps.findIndex((s) => s === macAudit);
+    expect(syncIdx, "the sync must run after the unfreeze restores the bundle").toBeGreaterThan(unfreezeIdx);
+    expect(macIdx, "the sync must run before the clean-room audit reads the conf").toBeGreaterThan(syncIdx);
   });
 });

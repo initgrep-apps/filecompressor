@@ -128,6 +128,12 @@ jobs:
           TRIPLE: ${{ matrix.triple }}
         run: node scripts/binaries/all.mjs --target "$TRIPLE"
         shell: bash
+      - name: derive macOS frameworks list from the staged tree (${{ matrix.triple }})
+        if: matrix.platform == 'mac'
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: node scripts/binaries/sync-macos-frameworks.mjs --target "$TRIPLE"
+        shell: bash
       - name: freeze bundle (${{ matrix.triple }})
         env:
           TRIPLE: ${{ matrix.triple }}

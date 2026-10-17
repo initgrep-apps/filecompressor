@@ -2,12 +2,23 @@
 import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { hostTriple, isMain, parseArgs } from "./lib.mjs";
+import { syncMacosFrameworks } from "./sync-macos-frameworks.mjs";
 
 export async function allTarget(target, root) {
   const { fetchTarget } = await import("./fetch.mjs");
   const { prepTarget } = await import("./prep.mjs");
   await fetchTarget(target, root);
   await prepTarget(target, root);
+  const sync = await syncMacosFrameworks({ target, root });
+  if (sync.skip) {
+    console.log(`binaries:all — ${sync.reason}`);
+  } else if (sync.alreadyInSync) {
+    console.log(`binaries:all — tauri.conf.json already in sync with src-tauri/frameworks (${sync.frameworks.length} dylibs)`);
+  } else {
+    console.log(
+      `binaries:all — synced tauri.conf.json to src-tauri/frameworks for ${target} (${sync.frameworks.length} dylibs, was ${sync.previousCount})`,
+    );
+  }
   const auditScript = join(root, "scripts", "audit-sidecars.sh");
   await new Promise((resolvePromise, reject) => {
     execFile(
