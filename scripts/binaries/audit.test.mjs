@@ -641,6 +641,10 @@ describeDarwin("audit-sidecars.sh", () => {
     expect(result.stdout + result.stderr).toMatch(
       /gs clean-room smoke SKIPPED — .*gs-aarch64-apple-darwin not staged/,
     );
+    expect(
+      result.stderr,
+      "the node resolver's candidate notes must bubble through the audit, so a skip is diagnosable",
+    ).toMatch(/gs resolution: candidate .*gs-aarch64-apple-darwin — missing/);
   });
 
   it("fails when an explicit --target has no staged gs, instead of skipping the smoke", async () => {
@@ -656,6 +660,10 @@ describeDarwin("audit-sidecars.sh", () => {
     expect(result.stdout + result.stderr).toContain(
       "gs clean-room smoke: gs sidecar not staged for the explicitly requested target",
     );
+    expect(
+      result.stdout + result.stderr,
+      "even under an explicit target the resolver must log which candidates it tried",
+    ).toMatch(/gs resolution: candidate .*gs-aarch64-apple-darwin — missing/);
     expect(result.stdout).not.toContain("sidecar audit: PASS");
   });
 
@@ -1570,6 +1578,165 @@ describeDarwin("cross-target audit passthrough", () => {
     ).toBe(1);
     expect(crossed.stdout).not.toContain(`verify: ffprobe-${INTEL} 9.0.2 (x86_64) OK`);
     expect(crossed.stdout + crossed.stderr).toMatch(/ffprobe/);
+  });
+});
+
+describe("the audit smoke's gs binary resolves in node, manifest-driven", () => {
+  const GS_RESOLVE = join(SCRIPTS, "audit-gs-resolve.mjs");
+
+  async function makeGsResolveRoot(triple, { manifest } = {}) {
+    await mkdir(`${tmpdir()}/audit-test-roots`, { recursive: true });
+    const root = await mkdtemp(`${tmpdir()}/audit-test-roots/gr`);
+    cleanupRoots.push(root);
+    await mkdir(`${root}/src-tauri/binaries`, { recursive: true });
+    await mkdir(`${root}/scripts`, { recursive: true });
+    await writeFile(
+      `${root}/scripts/binaries.manifest.json`,
+      JSON.stringify({
+        targets: { [triple]: manifest ?? { gs: GS_ROM_MANIFEST_ENTRY } },
+      }),
+    );
+    return root;
+  }
+
+  function runGsResolve(root, args = []) {
+    return new Promise((resolvePromise) => {
+      const child = spawn(process.execPath, [GS_RESOLVE, "--root", root, ...args], {
+        cwd: SCRIPTS,
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (d) => (stdout += d));
+      child.onerror = (error) => {
+        child.kill();
+        resolvePromise({ code: 127, stdout, stderr: `${stderr}${error.message ?? error}` });
+      };
+      child.stderr.on("data", (d) => (stderr += d));
+      child.on("close", (code) => resolvePromise({ code, stdout, stderr }));
+    });
+  }
+
+  it("prefers the engines payload exe for a non-static windows gs row", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc");
+    const enginesExe = `${root}/src-tauri/binaries/engines/gs/gs.exe`;
+    await mkdir(dirname(enginesExe), { recursive: true });
+    await writeFile(enginesExe, "engines exe stub");
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual([enginesExe]);
+    expect(
+      result.stderr,
+      "one note per candidate attempted",
+    ).toContain(`candidate ${enginesExe} — found`);
+    expect(
+      result.stderr,
+      "the flat fallback is not attempted while the engines exe resolves",
+    ).not.toMatch(/— missing/);
+  });
+
+  it("falls back to the flat exe when the engines payload is absent", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc");
+    const flat = `${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe`;
+    await writeFile(flat, "flat exe stub");
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual([flat]);
+    expect(result.stderr).toContain(
+      `candidate ${root}/src-tauri/binaries/engines/gs/gs.exe — missing`,
+    );
+    expect(result.stderr).toContain(`candidate ${flat} — found`);
+  });
+
+  it("a static windows gs row ships only the flat exe, so engines is never a candidate", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc", {
+      manifest: { gs: { ...GS_ROM_MANIFEST_ENTRY, static: true } },
+    });
+    const flat = `${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe`;
+    await writeFile(flat, "flat exe stub");
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual([flat]);
+    expect(result.stderr, "mac/static semantics: flat only").not.toMatch(/engines/);
+  });
+
+  it("a static flat exe resolves even though the engines payload left behind", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc", {
+      manifest: { gs: { ...GS_ROM_MANIFEST_ENTRY, static: true } },
+    });
+    const flat = `${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe`;
+    await writeFile(flat, "flat exe stub");
+    const enginesExe = `${root}/src-tauri/binaries/engines/gs/gs.exe`;
+    await mkdir(dirname(enginesExe), { recursive: true });
+    await writeFile(enginesExe, "stale engines exe");
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual([flat]);
+    expect(result.stderr).not.toMatch(/engines/);
+  });
+
+  it("a mac gs row resolves the flat binary and never probes engines", async () => {
+    const root = await makeGsResolveRoot("aarch64-apple-darwin", {
+      manifest: { gs: GS_MANIFEST_ENTRY },
+    });
+    const flat = `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`;
+    await writeFile(flat, "mac binary stub");
+
+    const result = await runGsResolve(root, ["--target", "aarch64-apple-darwin"]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout.split("\n").filter(Boolean)).toEqual([flat]);
+    expect(result.stderr, "no engines semantics on a mac triple").not.toMatch(/engines/);
+  });
+
+  it("fails closed when every candidate is missing, listing what was tried", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc");
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain(
+      "FAIL gs resolution: no gs executable found for target x86_64-pc-windows-msvc",
+    );
+    expect(result.stderr).toContain(
+      `candidate ${root}/src-tauri/binaries/engines/gs/gs.exe — missing`,
+    );
+    expect(result.stderr).toContain(
+      `candidate ${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe — missing`,
+    );
+  });
+
+  it("fails closed naming the manifest when scripts/binaries.manifest.json is absent", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc");
+    await rm(`${root}/scripts/binaries.manifest.json`);
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      `FAIL gs resolution: manifest missing: ${root}/scripts/binaries.manifest.json`,
+    );
+  });
+
+  it("fails closed when the manifest has no gs row for the target", async () => {
+    const root = await makeGsResolveRoot("x86_64-pc-windows-msvc", {
+      manifest: { ffmpeg: manifestEntry() },
+    });
+
+    const result = await runGsResolve(root, ["--target", "x86_64-pc-windows-msvc"]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain(
+      `FAIL gs resolution: no gs row for target x86_64-pc-windows-msvc in manifest ${root}/scripts/binaries.manifest.json`,
+    );
   });
 });
 
