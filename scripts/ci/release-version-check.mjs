@@ -5,12 +5,12 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(HERE, "..", "..");
 const DEFAULT_CONF = join(REPO_ROOT, "src-tauri", "tauri.conf.json");
-const TAG_PATTERN = /^v(\d+\.\d+\.\d+)(-rc\d+)?$/;
+const TAG_PATTERN = /^v(\d+\.\d+\.\d+)(-[A-Za-z][A-Za-z0-9.-]*)?$/;
 
 export function resolveVersion(tag, confVersion) {
   const match = TAG_PATTERN.exec(tag ?? "");
   if (!match) {
-    throw new Error(`tag '${tag}' is not a v-prefixed semver release tag (expected '^v<semver>[-rcN]$')`);
+    throw new Error(`tag '${tag}' is not a v-prefixed semver release tag (expected '^v<semver>[-<prerelease>]')`);
   }
   if (confVersion !== match[1]) {
     throw new Error(`tag '${tag}' does not match src-tauri/tauri.conf.json version '${confVersion}' — move the tag (or bump the manifest to '${match[1]}') before building the release`);

@@ -24,6 +24,30 @@ describe("release-version-check resolveVersion", () => {
     expect(resolveVersion("v1.2.3-rc2", "1.2.3")).toEqual({ version: "1.2.3", prerelease: true });
   });
 
+  it("flags prerelease and keeps the manifest version for alpha.n dev tags", () => {
+    expect(resolveVersion("v0.1.0-alpha.1", "0.1.0")).toEqual({ version: "0.1.0", prerelease: true });
+  });
+
+  it("accepts beta.n prerelease tags the same way", () => {
+    expect(resolveVersion("v0.1.0-beta.2", "0.1.0")).toEqual({ version: "0.1.0", prerelease: true });
+  });
+
+  it("accepts a single-identifier prerelease without a numeric component", () => {
+    expect(resolveVersion("v0.1.0-alpha", "0.1.0")).toEqual({ version: "0.1.0", prerelease: true });
+  });
+
+  it("still rejects prerelease tags whose base version differs from the manifest", () => {
+    expect(() => resolveVersion("v0.2.0-alpha.1", "0.1.0")).toThrow("does not match");
+  });
+
+  it("rejects nonsense prerelease suffixes like an empty identifier", () => {
+    expect(() => resolveVersion("v0.1.0--", "0.1.0")).toThrow("not a v-prefixed semver release tag");
+  });
+
+  it("accepts uppercase prerelease identifiers case-sensitively as alnum words", () => {
+    expect(resolveVersion("v0.1.0-RC", "0.1.0")).toEqual({ version: "0.1.0", prerelease: true });
+  });
+
   it("rejects tags without a v prefix", () => {
     expect(() => resolveVersion("0.2.0", "0.2.0")).toThrow("not a v-prefixed semver release tag");
   });
@@ -97,6 +121,25 @@ describe("release-version-check main (env export)", () => {
 
       const exported = await readFile(envFile, "utf8");
       expect(exported).toContain("PRERELEASE=false\n");
+    } finally {
+      await rm(conf.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("exports PRERELEASE=true for alpha dev tags end-to-end", async () => {
+    const conf = await confFixture("0.1.0");
+    let result;
+    try {
+      await conf.writeFileMaybe();
+      const envFile = join(conf.dir, "github-env");
+
+      result = await main(["v0.1.0-alpha.1"], { confPath: conf.path, envFile });
+
+      expect(result).toEqual({ version: "0.1.0", prerelease: true });
+      const exported = await readFile(envFile, "utf8");
+      expect(exported).toContain("RELEASE_TAG=v0.1.0-alpha.1\n");
+      expect(exported).toContain("APP_VERSION=0.1.0\n");
+      expect(exported).toContain("PRERELEASE=true\n");
     } finally {
       await rm(conf.dir, { recursive: true, force: true });
     }
