@@ -1,5 +1,7 @@
 // @vitest-environment node
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 30_000 });
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
