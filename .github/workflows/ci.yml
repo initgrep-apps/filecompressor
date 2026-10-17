@@ -105,10 +105,10 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           cd src-tauri
-          if cargo test --lib -- --nocapture; then
-            echo "lib-test harness launched — loader accepted the exe"
+          if cargo test --lib -- --list; then
+            echo "loader accepted the test exe (harness enumerated its tests)"
           else
-            echo "lib-test harness died before running tests — loader failure confirmed pre-main"
+            echo "lib-test harness died — loader failure confirmed pre-main"
           fi
         shell: bash
       - name: gate (build + tests + cargo tests)
