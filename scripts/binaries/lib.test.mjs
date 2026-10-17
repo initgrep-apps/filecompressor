@@ -397,6 +397,57 @@ describe("validateLock libStagedSha256", () => {
   });
 });
 
+describe("validateLock extra staged-package rows", () => {
+  const gsUrlEntry = (extra) => ({
+    source: "url",
+    version: "10.08.0",
+    url: "https://x/gs.pkg.tar.zst",
+    sha256: "a".repeat(64),
+    date: "2026-01-01T00:00:00.000Z",
+    ...extra,
+  });
+
+  const goodExtraRow = () => ({
+    name: "zlib",
+    url: "https://x/zlib.pkg.tar.zst",
+    sha256: "c".repeat(64),
+    stagedSha256s: { "ucrt64/bin/zlib1.dll": "d".repeat(64) },
+    date: "2026-01-01T00:00:00.000Z",
+  });
+
+  it("accepts an extra array with per-member staged digests and its absence", () => {
+    expect(() =>
+      validateLock({
+        targets: { "x86_64-pc-windows-msvc": { gs: gsUrlEntry({ extra: [goodExtraRow()] }) } },
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateLock({ targets: { "x86_64-pc-windows-msvc": { gs: gsUrlEntry() } } }),
+    ).not.toThrow();
+  });
+
+  it("rejects broken extra rows", () => {
+    const wrap = (extra) =>
+      validateLock({
+        targets: { "x86_64-pc-windows-msvc": { gs: gsUrlEntry({ extra }) } },
+      });
+    expect(() => wrap([])).toThrow(/extra list must be non-empty/);
+    expect(() => wrap("zlib")).toThrow(/must be an array of package rows/);
+    expect(() => wrap([{ ...goodExtraRow(), sha256: "nothex" }])).toThrow(/64-hex sha256/);
+    expect(() => wrap([{ ...goodExtraRow(), name: 42 }])).toThrow(/name/);
+    expect(() => wrap([{ ...goodExtraRow(), url: "" }])).toThrow(/requires a url/);
+    expect(() => wrap([{ ...goodExtraRow(), stagedSha256s: {} }])).toThrow(/non-empty object/);
+    expect(() => wrap([{ ...goodExtraRow(), stagedSha256s: { "/abs.dll": "d".repeat(64) } }])).toThrow(
+      /relative path/,
+    );
+    expect(() => wrap([{ ...goodExtraRow(), stagedSha256s: { "x.dll": "nothex" } }])).toThrow(/64-hex sha256/);
+    expect(() => wrap([{ ...goodExtraRow(), date: null }])).toThrow(/date/);
+    expect(() =>
+      wrap([goodExtraRow(), { ...goodExtraRow() }]),
+    ).toThrow(/duplicate package name 'zlib'/);
+  });
+});
+
 describe("writeJson", () => {
   it("is atomic — tmp+rename, no torn lock on failure", async () => {
     const root = await tempRoot("lib-test-");

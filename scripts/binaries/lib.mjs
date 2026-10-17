@@ -34,6 +34,7 @@ const MANIFEST_URL_KEYS = [
   "resources",
   "assetPattern",
   "static",
+  "extraPackages",
 ];
 const MANIFEST_BREW_KEYS = ["source", "formula", "binary", "dest", "expectVersion", "resources", "static"];
 const DOWNLOAD_TIMEOUT_MS = 120000;
@@ -103,6 +104,93 @@ export async function writeJson(path, obj) {
   } catch (error) {
     await rm(tmp, { force: true }).catch(() => {});
     throw error;
+  }
+}
+
+function validateExtraPackages(triple, name, extraPackages) {
+  if (extraPackages === undefined) {
+    return;
+  }
+  const where = `${triple}/${name}`;
+  if (!Array.isArray(extraPackages)) {
+    throw new Error(
+      `manifest schema invalid: ${where} extraPackages must be an array of package objects`,
+    );
+  }
+  if (extraPackages.length === 0) {
+    throw new Error(
+      `manifest schema invalid: ${where} extraPackages list must be non-empty when present (drop the field instead)`,
+    );
+  }
+  const seen = new Set();
+  for (const [index, extra] of extraPackages.entries()) {
+    const extraName = typeof extra?.name === "string" ? extra.name : "";
+    const where2 = extraName ? `extraPackages: ${extraName}` : `extraPackages[${index}]`;
+    if (typeof extraName !== "string" || extraName.length === 0) {
+      throw new Error(`manifest schema invalid: ${where} ${where2} is missing a name`);
+    }
+    if (seen.has(extraName)) {
+      throw new Error(
+        `manifest schema invalid: ${where} extraPackages: duplicate package name '${extraName}'`,
+      );
+    }
+    seen.add(extraName);
+    if (extra.source !== "url") {
+      throw new Error(
+        `manifest schema invalid: ${where} ${where2} must be source 'url' (extra packages are fetched, never staged from brew)`,
+      );
+    }
+    const unknownKeys = Object.keys(extra).filter((key) => !["name", "source", "url", "sha256", "member"].includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(
+        `manifest schema invalid: ${where} ${where2} has unknown key(s) ${unknownKeys.join(", ")} (allowed: name, source, url, sha256, member)`,
+      );
+    }
+    if (typeof extra.url !== "string" || extra.url.length === 0) {
+      throw new Error(`manifest schema invalid: ${where} ${where2} requires a url`);
+    }
+    try {
+      new URL(extra.url);
+    } catch {
+      throw new Error(`manifest schema invalid: ${where} ${where2} has an unparseable url '${extra.url}'`);
+    }
+    if (typeof extra.sha256 !== "string" || !SHA256_PATTERN.test(extra.sha256)) {
+      throw new Error(
+        `manifest schema invalid: ${where} ${where2} requires a 64-hex sha256 pin (unpinned extra packages would install unverified binaries)`,
+      );
+    }
+    validateExtraMember(triple, name, extra.name, extra.member);
+  }
+}
+
+function validateExtraMember(triple, name, extraName, member) {
+  const where = `manifest schema invalid: ${triple}/${name} extraPackages: ${extraName}`;
+  if (member === undefined) {
+    return;
+  }
+  const isString = typeof member === "string";
+  const isArray = Array.isArray(member);
+  if (!isString && !isArray && member !== null) {
+    throw new Error(
+      `${where} member must be a non-empty string, a non-empty array of non-empty strings, or null when present (null stages every *.dll the package carries)`,
+    );
+  }
+  if (isString && member.length === 0) {
+    throw new Error(`${where} member must be a non-empty string, ... or null when present`);
+  }
+  if (isArray) {
+    if (member.length === 0) {
+      throw new Error(`${where} member list must be non-empty when present`);
+    }
+    for (const item of member) {
+      if (typeof item !== "string" || item.length === 0) {
+        throw new Error(`${where} member list entries must be non-empty strings`);
+      }
+    }
+    const seen = new Set(member.map((item) => item.toLowerCase()));
+    if (seen.size !== member.length) {
+      throw new Error(`${where} has a duplicate member`);
+    }
   }
 }
 
@@ -188,6 +276,7 @@ export function validateManifest(manifest) {
             );
           }
         }
+        validateExtraPackages(triple, name, entry.extraPackages);
       }
     }
   }
@@ -244,7 +333,66 @@ export function validateLock(lock) {
             }
           }
         }
+        if (entry.extra !== undefined) {
+          validateLockExtra(triple, name, entry.extra);
+        }
       }
+    }
+  }
+}
+
+function validateLockExtra(triple, name, extra) {
+  const where = `lock schema invalid: ${triple}/${name}`;
+  if (!Array.isArray(extra)) {
+    throw new Error(`${where} extra must be an array of package rows`);
+  }
+  if (extra.length === 0) {
+    throw new Error(`${where} extra list must be non-empty when present`);
+  }
+  const seen = new Set();
+  for (const row of extra) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      throw new Error(`${where} extra rows must be objects`);
+    }
+    const extraName = row.name;
+    if (typeof extraName !== "string" || extraName.length === 0) {
+      throw new Error(`${where} extra requires a non-empty name`);
+    }
+    if (seen.has(extraName)) {
+      throw new Error(`${where} extra: duplicate package name '${extraName}'`);
+    }
+    seen.add(extraName);
+    if (typeof row.url !== "string" || row.url.length === 0) {
+      throw new Error(`${where} extra: ${extraName} requires a url`);
+    }
+    if (typeof row.sha256 !== "string" || !SHA256_PATTERN.test(row.sha256)) {
+      throw new Error(`${where} extra: ${extraName} requires a 64-hex sha256 pin`);
+    }
+    const stagedSha256s = row.stagedSha256s;
+    if (
+      !stagedSha256s ||
+      typeof stagedSha256s !== "object" ||
+      Array.isArray(stagedSha256s) ||
+      Object.keys(stagedSha256s).length === 0
+    ) {
+      throw new Error(
+        `${where} extra: ${extraName} stagedSha256s must be a non-empty object of path -> sha256`,
+      );
+    }
+    for (const [file, digest] of Object.entries(stagedSha256s)) {
+      if (typeof file !== "string" || file.length === 0 || file.startsWith("/") || file.includes("..")) {
+        throw new Error(
+          `${where} extra: ${extraName} stagedSha256s key '${file}' must be a relative path inside the staged package`,
+        );
+      }
+      if (!SHA256_PATTERN.test(String(digest))) {
+        throw new Error(
+          `${where} extra: ${extraName} stagedSha256s['${file}'] must be a 64-hex sha256`,
+        );
+      }
+    }
+    if (typeof row.date !== "string" || row.date.length === 0) {
+      throw new Error(`${where} extra: ${extraName} is missing date`);
     }
   }
 }

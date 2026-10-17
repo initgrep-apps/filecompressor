@@ -226,6 +226,104 @@ describe("manifest schema", () => {
     ).toThrow(/static/);
   });
 
+  describe("extraPackages", () => {
+    function gsEntryWithExtras(extraPackages) {
+      return {
+        source: "url",
+        url: "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-ghostscript-10.08.0-2-any.pkg.tar.zst",
+        sha256: "c".repeat(64),
+        member: "ucrt64/bin/gswin64c.exe",
+        dest: "gs",
+        expectVersion: "10.08.0",
+        extraPackages,
+      };
+    }
+
+    function extra(name = "zlib", member = "ucrt64/bin/zlib1.dll") {
+      return {
+        name,
+        source: "url",
+        url: `https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-${name}-1.0-1-any.pkg.tar.zst`,
+        sha256: "d".repeat(64),
+        member,
+      };
+    }
+
+    it("accepts a url-sourced engine with well-formed extraPackages rows", () => {
+      expect(() =>
+        validateManifest({
+          targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras([extra()]) } },
+        }),
+      ).not.toThrow();
+      expect(() =>
+        validateManifest({
+          targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras([extra("brotli", null)]) } },
+        }),
+      ).not.toThrow();
+      expect(() =>
+        validateManifest({
+          targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras([extra("brotli", ["ucrt64/bin/libbrotlidec.dll", "ucrt64/bin/libbrotlicommon.dll"])]) } },
+        }),
+      ).not.toThrow();
+    });
+
+    it("rejects extras whose rows are missing required pins", () => {
+      const bad = extra("zlib");
+      delete bad.sha256;
+      expect(() =>
+        validateManifest({ targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras([bad]) } } }),
+      ).toThrow(/extraPackages: zlib requires a 64-hex sha256 pin/);
+    });
+
+    it("rejects extras with unparsed urls, unknown keys, bad names or empty member lists", () => {
+      expect(() =>
+        validateManifest({
+          targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras([extra("zlib", { nope: true })]) } },
+        }),
+      ).toThrow(/member/);
+      expect(() =>
+        validateManifest({
+          targets: {
+            "x86_64-pc-windows-msvc": {
+              gs: gsEntryWithExtras([{ ...extra(), unexplained: 1 }]),
+            },
+          },
+        }),
+      ).toThrow(/extraPackages: zlib has unknown key/);
+      expect(() =>
+        validateManifest({ targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras([{ ...extra(), name: "" }]) } } }),
+      ).toThrow(/name/);
+      expect(() =>
+        validateManifest({ targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras([{ ...extra(), url: "not-a-url" }]) } } }),
+      ).toThrow(/unparseable url/);
+      expect(() =>
+        validateManifest({ targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras([extra("x", [])]) } } }),
+      ).toThrow(/member list must be non-empty/);
+      expect(() =>
+        validateManifest({ targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras([extra("x", ["a.dll", "a.dll"])]) } } }),
+      ).toThrow(/duplicate member/);
+    });
+
+    it("rejects duplicate extra names within one engine", () => {
+      expect(() =>
+        validateManifest({
+          targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras([extra("zlib"), extra("zlib")]) } },
+        }),
+      ).toThrow(/extraPackages: duplicate package name 'zlib'/);
+    });
+
+    it("rejects a malformed extraPackages field on the entry itself", () => {
+      expect(() =>
+        validateManifest({
+          targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras("zlib") } },
+        }),
+      ).toThrow(/extraPackages must be an array of package objects/);
+      expect(() =>
+        validateManifest({ targets: { "x86_64-pc-windows-msvc": { gs: gsEntryWithExtras([]) } } }),
+      ).toThrow(/extraPackages list must be non-empty/);
+    });
+  });
+
   itDarwin("accepts the shipping mac arm64 manifest", () => {
     const shipping = JSON.parse(
       execFileSync("cat", [join(SCRIPTS, "..", "binaries.manifest.json")]).toString(),
