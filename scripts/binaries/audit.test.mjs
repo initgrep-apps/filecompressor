@@ -55,7 +55,11 @@ function compileFixture(arch, outPath) {
 #include <stdio.h>
 int main(void) { printf("ffmpeg version 9.0.2\\n"); return 0; }
 EOF`]);
-  execFileSync("clang", ["-arch", arch, source, "-o", outPath]);
+  const archArgs = arch === "universal" ? ["-arch", "arm64", "-arch", "x86_64"] : ["-arch", arch];
+  execFileSync("clang", [...archArgs, source, "-o", outPath]);
+  if (arch === "universal") {
+    execFileSync("codesign", ["--force", "--sign", "-", outPath]);
+  }
 }
 
 const GS_FIXTURE_C = `
@@ -150,7 +154,11 @@ function compileGsFixture(arch, outPath, exitCode = 0) {
     `gs-fixture-${exitCode}-${arch}-${process.pid}-${Math.random().toString(36).slice(2)}.c`,
   );
   execFileSync("sh", ["-c", `cat > '${source}' <<'EOF'\n${GS_FIXTURE_C}\nEOF`]);
-  execFileSync("clang", [`-DGS_EXIT_CODE=${exitCode}`, "-arch", arch, source, "-o", outPath]);
+  const archArgs = arch === "universal" ? ["-arch", "arm64", "-arch", "x86_64"] : ["-arch", arch];
+  execFileSync("clang", [`-DGS_EXIT_CODE=${exitCode}`, ...archArgs, source, "-o", outPath]);
+  if (arch === "universal") {
+    execFileSync("codesign", ["--force", "--sign", "-", outPath]);
+  }
 }
 
 const SENTINEL = "fso-sidecar-acceptance-sentinel.ps";
@@ -216,7 +224,11 @@ function compileGsRomFixture(arch, outPath, exitCode = 0) {
     `gs-rom-fixture-${exitCode}-${arch}-${process.pid}-${Math.random().toString(36).slice(2)}.c`,
   );
   execFileSync("sh", ["-c", `cat > '${source}' <<'EOF'\n${GS_ROM_FIXTURE_C}\nEOF`]);
-  execFileSync("clang", [`-DROM_EXIT_CODE=${exitCode}`, "-arch", arch, source, "-o", outPath]);
+  const archArgs = arch === "universal" ? ["-arch", "arm64", "-arch", "x86_64"] : ["-arch", arch];
+  execFileSync("clang", [`-DROM_EXIT_CODE=${exitCode}`, ...archArgs, source, "-o", outPath]);
+  if (arch === "universal") {
+    execFileSync("codesign", ["--force", "--sign", "-", outPath]);
+  }
 }
 
 async function makeGsRoot({
@@ -273,16 +285,16 @@ async function makeGsRoot({
   );
   if (stageGs) {
     if (romFixture) {
-      compileGsRomFixture("arm64", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, romFlatExitCode ?? romExitCode);
+      compileGsRomFixture("universal", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, romFlatExitCode ?? romExitCode);
     } else {
-      compileGsFixture("arm64", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`);
+      compileGsFixture("universal", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`);
     }
     const dest = manifestEntry.dest ?? "gs";
     if (stageEngines && triple.includes("windows")) {
       const enginesExe = `${root}/src-tauri/binaries/engines/${dest}/${dest}.exe`;
       await mkdir(dirname(enginesExe), { recursive: true });
       if (romFixture) {
-        compileGsRomFixture("arm64", enginesExe, romExitCode);
+        compileGsRomFixture("universal", enginesExe, romExitCode);
       } else {
         await copyFile(`${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, enginesExe);
       }
@@ -379,7 +391,7 @@ describeDarwin("audit-sidecars.sh", () => {
 
   it("passes for a correct arm64 fixture and keeps the summary line", async () => {
     const root = await makeRoot();
-    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`);
+    compileFixture("universal", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`);
 
     const result = await runAudit(root, "aarch64-apple-darwin");
     expect(result.code).toBe(0);
@@ -484,7 +496,7 @@ describeDarwin("audit-sidecars.sh", () => {
 
   it("fails the clean-room gs smoke when gs exits non-zero", async () => {
     const root = await makeGsRoot();
-    compileGsFixture("arm64", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, 1);
+    compileGsFixture("universal", `${root}/src-tauri/binaries/gs-aarch64-apple-darwin`, 1);
     const stubBrew = await makeStubBrew();
 
     const result = await runAudit(root, "aarch64-apple-darwin", {

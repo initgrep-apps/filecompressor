@@ -167,7 +167,7 @@ audit_macho() {
   deps=""
   deps_status=0
   err_trap_active=1
-  deps="$(otool -L "$file" | tail -n +2 | awk '{print $1}' | sort -u)" || deps_status=$?
+  deps="$(otool -L "$file" | awk '/^\t/ {print $1}' | sort -u)" || deps_status=$?
   err_trap_active=0
   if [ "$deps_status" -ne 0 ]; then
     printf 'FAIL %s: could not read the dylib load commands (the otool -L pipeline failed)\n' "$file" >&2
