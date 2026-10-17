@@ -371,6 +371,158 @@ describe("freeze.sh", () => {
     });
   });
 
+  const WIN_STATIC_MANIFEST = {
+    targets: {
+      [WINDOWS_TRIPLE]: {
+        ffmpeg: {
+          source: "url",
+          url: "https://fixtures.invalid/ffmpeg.zip",
+          sha256: "0".repeat(64),
+          member: "ffmpeg-n9.0-latest-win64-gpl-9.0/bin/ffmpeg.exe",
+          dest: "ffmpeg",
+          expectVersion: "9.0.2",
+          static: true,
+        },
+        ffprobe: {
+          source: "url",
+          url: "https://fixtures.invalid/ffprobe.zip",
+          sha256: "0".repeat(64),
+          member: "ffmpeg-n9.0-latest-win64-gpl-9.0/bin/ffprobe.exe",
+          dest: "ffprobe",
+          expectVersion: "9.0.2",
+          static: true,
+        },
+        qpdf: {
+          source: "url",
+          url: "https://fixtures.invalid/qpdf.zip",
+          sha256: "0".repeat(64),
+          member: "qpdf-12.4.2-msvc64/bin/qpdf.exe",
+          dest: "qpdf",
+          expectVersion: "12.4.2",
+        },
+      },
+    },
+  };
+
+  async function stageManifest(root, manifest) {
+    await mkdir(join(root, "scripts"), { recursive: true });
+    await writeFile(
+      join(root, "scripts", "binaries.manifest.json"),
+      JSON.stringify(manifest, null, 2),
+    );
+  }
+
+  async function stageStaticShapeTree(root) {
+    const bin = join(root, "src-tauri", "binaries");
+    await mkdir(bin, { recursive: true });
+    for (const exe of ["ffmpeg", "ffprobe", "qpdf"]) {
+      await writeFile(join(bin, `${exe}-${WINDOWS_TRIPLE}.exe`), `${exe} flat payload\n`);
+    }
+    for (const engine of ["qpdf"]) {
+      const enginesDir = join(bin, "engines", engine);
+      await mkdir(enginesDir, { recursive: true });
+      await writeFile(join(enginesDir, `${engine}.exe`), `${engine} engine payload\n`);
+      await writeFile(join(enginesDir, `${engine}-support.dll`), `${engine} dll payload\n`);
+    }
+    const init = join(root, "src-tauri", "gs-resources", "Resource", "Init");
+    await mkdir(init, { recursive: true });
+    await writeFile(join(init, "gs_init.ps"), "ghostscript init payload\n");
+  }
+
+  it("requires_engines_dirs_only_for_non_static_manifest_entries_and_every_entry_as_a_flat_exe", async () => {
+    await withRoot(async (root) => {
+      await stageManifest(root, WIN_STATIC_MANIFEST);
+      await stageStaticShapeTree(root);
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+      const listed = await runTool("tar", ["-tzf", bundlePath(root, WINDOWS_TRIPLE)]);
+      const entries = listed.stdout.split("\n").filter(Boolean);
+      expect(entries).toContain("binaries/engines/qpdf/qpdf.exe");
+      for (const exe of ["ffmpeg", "ffprobe", "qpdf"]) {
+        expect(entries).toContain(`binaries/${exe}-${WINDOWS_TRIPLE}.exe`);
+      }
+      expect(
+        entries.some((entry) => /^binaries\/engines\/(ffmpeg|ffprobe)\//.test(entry)),
+        "static entries never stage an engines/ payload dir, so the bundle must not carry one",
+      ).toBe(false);
+    });
+  });
+
+  it("refuses_a_windows_freeze_when_a_non_static_manifest_engine_dir_is_missing", async () => {
+    await withRoot(async (root) => {
+      await stageManifest(root, WIN_STATIC_MANIFEST);
+      await stageStaticShapeTree(root);
+      await rm(join(root, "src-tauri", "binaries", "engines", "qpdf"), { recursive: true });
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("missing staged payload dir src-tauri/binaries/engines/qpdf");
+      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+    });
+  });
+
+  it("still_requires_the_flat_exe_of_a_static_manifest_entry", async () => {
+    await withRoot(async (root) => {
+      await stageManifest(root, WIN_STATIC_MANIFEST);
+      await stageStaticShapeTree(root);
+      await unlink(join(root, "src-tauri", "binaries", `ffmpeg-${WINDOWS_TRIPLE}.exe`));
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain(`binaries/ffmpeg-${WINDOWS_TRIPLE}.exe`);
+      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+    });
+  });
+
+  it("does_not_run_the_dll_guard_for_a_static_entry_engines_dir", async () => {
+    await withRoot(async (root) => {
+      await stageManifest(root, WIN_STATIC_MANIFEST);
+      await stageStaticShapeTree(root);
+      const leftover = join(root, "src-tauri", "binaries", "engines", "ffmpeg");
+      await mkdir(leftover, { recursive: true });
+      await writeFile(join(leftover, "ffmpeg.exe"), "bare leftover");
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(
+        result.code,
+        `a bare static engines dir must not trip the DLL-less guard: stdout: ${result.stdout}\nstderr: ${result.stderr}`,
+      ).toBe(0);
+    });
+  });
+
+  it("refuses_a_windows_freeze_when_the_manifest_has_no_row_for_the_triple", async () => {
+    await withRoot(async (root) => {
+      await stageManifest(root, { targets: { "aarch64-pc-windows-msvc": {} } });
+      await stageStaticShapeTree(root);
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("binaries.manifest.json");
+      expect(result.stderr).toContain(WINDOWS_TRIPLE);
+      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+    });
+  });
+
+  it("refuses_a_windows_freeze_when_the_manifest_is_unreadable", async () => {
+    await withRoot(async (root) => {
+      await stageManifest(root, WIN_STATIC_MANIFEST);
+      await writeFile(join(root, "scripts", "binaries.manifest.json"), "{not json");
+      await stageStaticShapeTree(root);
+
+      const result = await runScript(FREEZE, ["--triple", WINDOWS_TRIPLE, "--root", root]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("binaries.manifest.json");
+      expect(existsSync(bundlePath(root, WINDOWS_TRIPLE))).toBe(false);
+    });
+  });
+
   it("refuses_when_an_engine_binary_is_missing_from_the_staged_tree", async () => {
     await withRoot(async (root) => {
       await stageTree(root, MAC_TRIPLE);

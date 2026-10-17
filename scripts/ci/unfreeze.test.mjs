@@ -699,6 +699,161 @@ describe("unfreeze.sh", () => {
     });
   });
 
+  const WIN_MANIFEST_TRIPLE = "x86_64-pc-windows-msvc";
+  const UNFREEZE_WIN_MANIFEST = {
+    targets: {
+      [WIN_MANIFEST_TRIPLE]: {
+        ffmpeg: {
+          source: "url",
+          url: "https://fixtures.invalid/ffmpeg.zip",
+          sha256: "0".repeat(64),
+          member: "ffmpeg-n9.0-latest-win64-gpl-9.0/bin/ffmpeg.exe",
+          dest: "ffmpeg",
+          expectVersion: "9.0.2",
+          static: true,
+        },
+        vips: {
+          source: "url",
+          url: "https://fixtures.invalid/vips.zip",
+          sha256: "0".repeat(64),
+          member: "vips-dev-8.18/bin/vips.exe",
+          dest: "vips",
+          expectVersion: "8.18.7",
+        },
+      },
+    },
+  };
+
+  async function writeDestManifest(root, manifest = UNFREEZE_WIN_MANIFEST) {
+    await mkdir(join(root, "scripts"), { recursive: true });
+    await writeFile(join(root, "scripts", "binaries.manifest.json"), JSON.stringify(manifest, null, 2));
+  }
+
+  async function stageManifestShapeBundle(destRoot, { dropEnginesDir = null, dropFlatExe = null } = {}) {
+    const payload = join(destRoot, "payload");
+    const bin = join(payload, "binaries");
+    await mkdir(bin, { recursive: true });
+    for (const exe of ["ffmpeg", "vips"]) {
+      await writeFile(join(bin, `${exe}-${WIN_MANIFEST_TRIPLE}.exe`), `${exe} flat payload\n`);
+    }
+    for (const engine of ["vips"]) {
+      const enginesDir = join(bin, "engines", engine);
+      if (dropEnginesDir === engine) {
+        await rm(enginesDir, { recursive: true, force: true });
+        continue;
+      }
+      await mkdir(enginesDir, { recursive: true });
+      await writeFile(join(enginesDir, `${engine}.exe`), `${engine} engine payload\n`);
+      await writeFile(join(enginesDir, `${engine}-support.dll`), `${engine} dll payload\n`);
+    }
+    const init = join(payload, "gs-resources", "Resource", "Init");
+    await mkdir(init, { recursive: true });
+    await writeFile(join(init, "gs_init.ps"), "ghostscript init payload\n");
+    if (dropFlatExe) {
+      await rm(join(bin, `${dropFlatExe}-${WIN_MANIFEST_TRIPLE}.exe`));
+    }
+    const name = dropEnginesDir ?? dropFlatExe ?? "full";
+    return tarWindowsTree(payload, join(destRoot, `${name}-bundle.tar.gz`));
+  }
+
+  it("fails_closed_when_a_non_static_manifest_engine_dir_is_absent_from_the_bundle", async () => {
+    await withRoot(async (destRoot) => {
+      await mkdir(join(destRoot, "src-tauri"));
+      await writeDestManifest(destRoot);
+      const bundle = await stageManifestShapeBundle(destRoot, { dropEnginesDir: "vips" });
+
+      const result = await runScript(UNFREEZE, [
+        "--triple",
+        WIN_MANIFEST_TRIPLE,
+        "--archive",
+        bundle,
+        "--root",
+        destRoot,
+      ]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toMatch(/binaries\/engines\/vips/);
+      expect(
+        existsSync(join(destRoot, "src-tauri", "binaries")),
+        "a bundle missing a required engines dir must never swap",
+      ).toBe(false);
+      await expectCleanFreezeDir(destRoot);
+    });
+  });
+
+  it("restores_a_static_only_manifest_bundle_without_requiring_engines_dirs", async () => {
+    await withRoot(async (destRoot) => {
+      await mkdir(join(destRoot, "src-tauri"));
+      await writeDestManifest(destRoot);
+      const bundle = await stageManifestShapeBundle(destRoot);
+
+      const result = await runScript(UNFREEZE, [
+        "--triple",
+        WIN_MANIFEST_TRIPLE,
+        "--archive",
+        bundle,
+        "--root",
+        destRoot,
+      ]);
+
+      expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+      expect(
+        await readFile(join(destRoot, "src-tauri", "binaries", `ffmpeg-${WIN_MANIFEST_TRIPLE}.exe`), "utf8"),
+      ).toBe("ffmpeg flat payload\n");
+      expect(
+        await readFile(join(destRoot, "src-tauri", "binaries", "engines", "vips", "vips.exe"), "utf8"),
+      ).toBe("vips engine payload\n");
+      expect(existsSync(join(destRoot, "src-tauri", "binaries", "engines", "ffmpeg"))).toBe(false);
+      await expectCleanFreezeDir(destRoot);
+    });
+  });
+
+  it("refuses_a_windows_bundle_when_the_dest_manifest_has_no_row_for_the_triple", async () => {
+    await withRoot(async (destRoot) => {
+      await mkdir(join(destRoot, "src-tauri"));
+      await writeDestManifest(destRoot, { targets: { "aarch64-pc-windows-msvc": {} } });
+      const bundle = await stageManifestShapeBundle(destRoot);
+
+      const result = await runScript(UNFREEZE, [
+        "--triple",
+        WIN_MANIFEST_TRIPLE,
+        "--archive",
+        bundle,
+        "--root",
+        destRoot,
+      ]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("binaries.manifest.json");
+      expect(result.stderr).toContain(WIN_MANIFEST_TRIPLE);
+      expect(existsSync(join(destRoot, "src-tauri", "binaries"))).toBe(false);
+      await expectCleanFreezeDir(destRoot);
+    });
+  });
+
+  it("refuses_a_windows_bundle_when_the_dest_manifest_is_unreadable", async () => {
+    await withRoot(async (destRoot) => {
+      await mkdir(join(destRoot, "src-tauri"));
+      await mkdir(join(destRoot, "scripts"), { recursive: true });
+      await writeFile(join(destRoot, "scripts", "binaries.manifest.json"), "{nope");
+      const bundle = await stageManifestShapeBundle(destRoot);
+
+      const result = await runScript(UNFREEZE, [
+        "--triple",
+        WIN_MANIFEST_TRIPLE,
+        "--archive",
+        bundle,
+        "--root",
+        destRoot,
+      ]);
+
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("binaries.manifest.json");
+      expect(existsSync(join(destRoot, "src-tauri", "binaries"))).toBe(false);
+      await expectCleanFreezeDir(destRoot);
+    });
+  });
+
   it("fails_closed_when_the_windows_bundle_has_no_dll_anywhere_under_an_engines_dir", async () => {
     await withRoot(async (destRoot) => {
       await mkdir(join(destRoot, "src-tauri"));
@@ -1501,6 +1656,7 @@ describe("unfreeze.sh", () => {
                 sha256: "0".repeat(64),
                 dest: name,
                 expectVersion: FIXTURE_VERSION,
+                ...(name === "ffmpeg" || name === "ffprobe" ? { static: true } : {}),
               },
             ]),
           ),

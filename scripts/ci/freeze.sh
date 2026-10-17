@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # freeze.sh — package the staged sidecar engines into a release bundle (ADR
 # 0001). macOS triple: binaries/<engine>-<triple> plus frameworks/ and
-# gs-resources/. Windows triple: binaries/engines/<engine>/ payload dirs, the
-# five flat exes binaries/ffmpeg-<triple>.exe ffprobe- qpdf- vips- gs- —
-# ffmpeg/ffprobe are the tauri externalBin pair, the vips/qpdf/gs flat copies
-# exist so the verify.mjs content-arch and audit-sidecars gate holds after
-# unfreeze — and gs-resources/: everything a windows tauri build needs
+# gs-resources/. Windows triple: binaries/engines/<engine>/ payload dirs for
+# the non-static manifest entries, the flat exes binaries/<dest>-<triple>.exe
+# for every manifest entry (ffmpeg/ffprobe are the tauri externalBin pair,
+# the vips/qpdf/gs flat copies exist so the verify.mjs content-arch and
+# audit-sidecars gate holds after unfreeze; static:true entries ship as the
+# flat exe only) — and gs-resources/: everything a windows tauri build needs
 # (tauri.windows.conf.json). Both shapes extract directly into src-tauri/.
 # The bundle is built under a temp name and the pair is
 # published with the .sha256 first, then the bundle, so a torn publish reads
@@ -19,6 +20,16 @@ set -euo pipefail
 
 fail() { echo "freeze: FAIL — $*" >&2; exit 1; }
 info() { echo "freeze: $*"; }
+
+case "$0" in
+  */*) manifest_lists_sh="${0%/*}/windows-manifest-lists.sh" ;;
+  *) manifest_lists_sh="windows-manifest-lists.sh" ;;
+esac
+if [ -f "$manifest_lists_sh" ]; then
+  . "$manifest_lists_sh"
+else
+  fail "cannot load ./windows-manifest-lists.sh — it must sit beside freeze.sh"
+fi
 
 dll_scan() {
   local dir="$1" errors status listing
@@ -82,7 +93,8 @@ if [ "$MODE" = "mac" ]; then
   [ -f "$SRC/gs-resources/Resource/Init/gs_init.ps" ] || \
     fail "missing src-tauri/gs-resources/Resource/Init/gs_init.ps — the ghostscript resources are not staged"
 else
-  for engine in vips qpdf gs; do
+  derive_windows_lists "$ROOT" "$TRIPLE"
+  for engine in $WINDOWS_ENGINE_LIST; do
     [ -d "$SRC/binaries/engines/$engine" ] || \
       fail "missing staged payload dir src-tauri/binaries/engines/$engine — run 'yarn binaries:all --target $TRIPLE' first"
     [ -f "$SRC/binaries/engines/$engine/$engine.exe" ] || \
@@ -91,7 +103,7 @@ else
       fail "src-tauri/binaries/engines/$engine carries no DLL anywhere under it — run 'yarn binaries:all --target $TRIPLE' to restage the engine: a windows engine without its DLL siblings fails only at compression time"
     fi
   done
-  for exe in ffmpeg ffprobe qpdf vips gs; do
+  for exe in $WINDOWS_ALL_LIST; do
     [ -f "$SRC/binaries/${exe}-${TRIPLE}.exe" ] || \
       fail "missing staged external binary src-tauri/binaries/${exe}-${TRIPLE}.exe — run 'yarn binaries:all --target $TRIPLE' first"
   done
@@ -181,14 +193,15 @@ if [ "$MODE" = "mac" ]; then
   done
   tar -czf "$TMP_BUNDLE" -C "$SRC" "${tar_args[@]}" frameworks gs-resources
 else
-  tar -czf "$TMP_BUNDLE" -C "$SRC" \
-    binaries/engines \
-    "binaries/ffmpeg-${TRIPLE}.exe" \
-    "binaries/ffprobe-${TRIPLE}.exe" \
-    "binaries/qpdf-${TRIPLE}.exe" \
-    "binaries/vips-${TRIPLE}.exe" \
-    "binaries/gs-${TRIPLE}.exe" \
-    gs-resources
+  tar_args=()
+  if [ -n "$WINDOWS_ENGINE_LIST" ]; then
+    tar_args+=(binaries/engines)
+  fi
+  for exe in $WINDOWS_ALL_LIST; do
+    tar_args+=("binaries/${exe}-${TRIPLE}.exe")
+  done
+  tar_args+=(gs-resources)
+  tar -czf "$TMP_BUNDLE" -C "$SRC" "${tar_args[@]}"
 fi
 (cd "$FREEZE_DIR" && compute_sha "$TMP_NAME" > "${TMP_NAME}.sha256")
 mv -f "$TMP_SHA" "$BUNDLE.sha256"

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# unfreeze.sh — restore a frozen sidecar bundle (ADR 0001) into src-tauri/.
+# Verification (ADR 0001) — restore a frozen sidecar bundle into src-tauri/.
 # With --archive <tarball>: verify the sibling .sha256, then extract. Without
 # it: select and download the newest sidecars-* release bundle for the triple
 # via gh (requires GH_TOKEN). macOS bundles restore binaries/, frameworks/,
-# gs-resources/; windows bundles restore binaries/engines/, the five flat
-# exes binaries/{ffmpeg,ffprobe,vips,qpdf,gs}-<triple>.exe — ffmpeg/ffprobe
-# are the tauri externalBin pair, the vips/qpdf/gs flat copies exist so the
-# verify.mjs content-arch and audit-sidecars gate holds after unfreeze —
-# and gs-resources/. The bundle verifies and validates in a
+# gs-resources/; windows bundles restore binaries/engines/ for the non-static
+# manifest entries, the flat exes binaries/<dest>-<triple>.exe for every
+# manifest entry (ffmpeg/ffprobe are the tauri externalBin pair, the
+# vips/qpdf/gs flat copies exist so the verify.mjs content-arch and
+# audit-sidecars gate holds after unfreeze), and gs-resources/. The bundle
+# verifies and validates in a
 # temp workspace while the current tree is backed up OUTSIDE that workspace,
 # so workspace cleanup can never destroy the only copy; every interrupted or
 # failed install restores the pre-swap tree, and signals mid-swap always leave
@@ -18,6 +19,16 @@ set -euo pipefail
 
 fail() { echo "unfreeze: FAIL — $*" >&2; exit 1; }
 info() { echo "unfreeze: $*"; }
+
+case "$0" in
+  */*) manifest_lists_sh="${0%/*}/windows-manifest-lists.sh" ;;
+  *) manifest_lists_sh="windows-manifest-lists.sh" ;;
+esac
+if [ -f "$manifest_lists_sh" ]; then
+  . "$manifest_lists_sh"
+else
+  fail "cannot load ./windows-manifest-lists.sh — it must sit beside unfreeze.sh"
+fi
 
 dll_scan() {
   local dir="$1" errors status listing
@@ -188,7 +199,8 @@ validate_payload() {
     [ -n "$(ls -A "$extracted/frameworks" 2>/dev/null)" ] || \
       fail "bundle has an empty or missing frameworks/ after extraction — refusing to swap in a partial bundle"
   else
-    for engine in vips qpdf gs; do
+    derive_windows_lists "$ROOT" "$TRIPLE"
+    for engine in $WINDOWS_ENGINE_LIST; do
       [ -d "$extracted/binaries/engines/$engine" ] || \
         fail "bundle is missing binaries/engines/$engine after extraction — refusing to swap in a partial bundle"
       [ -f "$extracted/binaries/engines/$engine/$engine.exe" ] || \
@@ -197,7 +209,7 @@ validate_payload() {
         fail "bundle carries no DLL anywhere under binaries/engines/$engine after extraction — refusing to swap in a partial bundle; re-freeze from a freshly staged tree ('yarn binaries:all --target $TRIPLE', then bash scripts/ci/freeze.sh)"
       fi
     done
-    for exe in ffmpeg ffprobe qpdf vips gs; do
+    for exe in $WINDOWS_ALL_LIST; do
       [ -f "$extracted/binaries/${exe}-${TRIPLE}.exe" ] || \
         fail "bundle is missing binaries/${exe}-${TRIPLE}.exe after extraction — refusing to swap in a partial bundle"
     done
