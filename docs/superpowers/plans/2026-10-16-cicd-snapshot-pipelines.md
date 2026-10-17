@@ -78,10 +78,10 @@
 - release.yml: 4 rows `{macos-15, aarch64}` `{macos-15-intel, x86_64}` `{windows-2025, x64}` `{windows-11-arm, arm64}` (+ rustup target on the arm row); gate job (ubuntu): version-check + sidecars-availability preflight (8 assets) + draft pre-creation (numeric `databaseId`); rows: unfreeze → audit → gate → tauri-action; per-row app-asset check; SBOM from aarch64 row + 2-asset post-verify. 90-min rows. **No cross-compile step — x86 builds natively on macos-15-intel.**
 - workflows.test.mjs: matrices exact; no `-latest`/no local-only assumptions; consumer-no-brew assertion; invariants intact.
 
-- [ ] Step 1: RED workflow tests
-- [ ] Step 2: implement workflows + conf change
-- [ ] Step 3: full gate green
-- [ ] Step 4: commit `ci: native 2x2 release matrix; ad-hoc signing; tauri-action final`
+- [x] Step 1: RED workflow tests
+- [x] Step 2: implement workflows + conf change
+- [x] Step 3: full gate green
+- [x] Step 4: commit `ci: native 2x2 release matrix; ad-hoc signing; tauri-action final`
 
 ### Task 4: First real tag = the live verification of release.yml
 
