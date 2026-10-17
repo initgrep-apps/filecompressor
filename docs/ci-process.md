@@ -62,6 +62,15 @@ Static entries (`ffmpeg`/`ffprobe`, `static: true`) ship as the flat exe only: n
 5. Tag `v<version>` (or dispatch release.yml). Expect 4 green rows building into the draft, the sidecars preflight requiring all 8 bundle assets, and the SBOM + third-party notices from the aarch64 row.
 6. Operator verifies the draft and clicks publish. Never publish the `sidecars-*` release by hand.
 
+**Version bump + changelog automation (release-please, live 2026-10-17)**
+
+`release-please.yml` runs on every push to main: it reads squash-merged Conventional Commit PRs, maintains a **draft** Release PR that bumps `package.json` + `src-tauri/tauri.conf.json` and appends to `CHANGELOG.md`, and merges as `v<next>` (tags stay bare-`v`-prefixed via `include-component-in-tag: false`, so the existing `release.yml` trigger fires unchanged). Rules of the road:
+
+- Merging a PR into main does **not** release; only merging the draft Release PR creates the tag and burns a release run (~135 billed min). Close the Release PR if the build is unwanted — release-please aggregates everything into the next proposal.
+- The baseline is seeded at `0.1.0-alpha.1` (`.release-please-manifest.json` = the live tag); everything predating it is the hand-written first `CHANGELOG.md` entry, never imported.
+- Prerelease strategy: every proposal bumps the alpha suffix (`0.1.0-alpha.2`, …). To cut the first stable, set the manifest to `0.1.0` in an ordinary PR (the documented manual-baseline move); release-please then continues from stable.
+- Squash-merge only (repo settings enforce it; merge commits are disabled) — one PR = one changelog entry; a PR title is the changelog line, so write them for humans.
+
 **Windows-target compile gate (developer-time, runs on the mac)**
 
 The CI windows row compiles the `src-tauri` tests as `cargo test` on `x86_64-pc-windows-msvc`; the mac can catch every one of those compile errors before push. `cargo check --all-targets --target aarch64-pc-windows-msvc` compiles + typechecks without linking (no MSVC needed). Making the tauri-build build script pass is all that is required:

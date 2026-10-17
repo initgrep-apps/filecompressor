@@ -1,0 +1,32 @@
+name: release-please
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: release-please-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release-please:
+    name: Release Please
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    timeout-minutes: 15
+    steps:
+      - name: maintain the release PR + changelog
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7
+        with:
+          release-type: node
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
