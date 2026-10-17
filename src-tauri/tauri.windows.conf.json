@@ -6,7 +6,7 @@
     ],
     "resources": {
       "binaries/engines/": "engines/",
-      "gs-resources/": "gs-resources/"
+      "gs-resources/": null
     }
   }
 }

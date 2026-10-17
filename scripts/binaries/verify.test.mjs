@@ -17,6 +17,29 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const VERIFY = join(HERE, "verify.mjs");
 const GS_SENTINELS = gsSentinelPaths();
 
+function mergePatch(target, patch) {
+  if (patch === null) {
+    return null;
+  }
+  if (typeof patch !== "object" || Array.isArray(patch)) {
+    return structuredClone(patch);
+  }
+  if (typeof target !== "object" || target === null || Array.isArray(target)) {
+    target = {};
+  }
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) {
+      delete target[key];
+    } else {
+      target[key] = mergePatch(target[key] ?? null, value);
+      if (target[key] === null) {
+        delete target[key];
+      }
+    }
+  }
+  return target;
+}
+
 async function stageGsResources(root, { sentinels = true } = {}) {
   const base = join(root, "src-tauri", "gs-resources");
   for (const [dir, files] of [
@@ -754,6 +777,56 @@ describe("the shipped manifest", () => {
       intel.gs.resources,
       "the Intel gs row must declare the same resource tree the clean-room smoke proves",
     ).toEqual(manifest.targets["aarch64-apple-darwin"].gs.resources);
+  });
+});
+
+describe("the shipped windows gs rows and platform config", () => {
+  const REPO_ROOT = join(HERE, "..", "..");
+  const manifest = JSON.parse(
+    readFileSync(join(REPO_ROOT, "scripts", "binaries.manifest.json"), "utf8"),
+  );
+  const baseConf = JSON.parse(
+    readFileSync(join(REPO_ROOT, "src-tauri", "tauri.conf.json"), "utf8"),
+  );
+  const windowsConf = JSON.parse(
+    readFileSync(join(REPO_ROOT, "src-tauri", "tauri.windows.conf.json"), "utf8"),
+  );
+
+  it.each(["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"])(
+    "%s_gs_row_declares_no_resources",
+    (triple) => {
+      expect(
+        manifest.targets[triple].gs,
+        "msys2 ships no resource payload for gs (ROM model) — the row must not stage gs-resources",
+      ).not.toHaveProperty("resources");
+    },
+  );
+
+  it("keeps_the_mac_gs_resource_declarations_intact", () => {
+    expect(
+      manifest.targets["aarch64-apple-darwin"].gs.resources,
+      "the arm64 gs row must declare the four staged resource dirs",
+    ).toEqual(["Resource", "lib", "iccprofiles", "fonts"]);
+  });
+
+  it("merges_the_windows_conf_into_a_resources_map_without_gs_resources", () => {
+    const merged = mergePatch(structuredClone(baseConf), windowsConf);
+    expect(
+      merged.bundle.resources,
+      "tauri-build copies the resolved resources map on every cargo run — a gs-resources key today would demand a tree windows never stages",
+    ).toEqual({ "binaries/engines/": "engines/" });
+  });
+
+  it("merges_the_windows_conf_into_the_two_entry_externalBin", () => {
+    const merged = mergePatch(structuredClone(baseConf), windowsConf);
+    expect(merged.bundle.externalBin).toEqual([
+      "binaries/ffmpeg",
+      "binaries/ffprobe",
+    ]);
+  });
+
+  it("keeps_the_base_conf_gs_resources_mapping_for_mac", () => {
+    expect(baseConf.bundle.resources).toEqual({ "gs-resources/": "gs-resources/" });
   });
 });
 

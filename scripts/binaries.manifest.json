@@ -92,13 +92,7 @@
         "sha256": "f2cf05482407de57b0ab3de7b3daf7c7d442eeae73de6ffc4ced75894bc94367",
         "member": "ucrt64/bin/gswin64c.exe",
         "dest": "gs",
-        "expectVersion": "10.08.0",
-        "resources": [
-          "share/ghostscript/10.08.0/Resource",
-          "share/ghostscript/10.08.0/lib",
-          "share/ghostscript/10.08.0/iccprofiles",
-          "share/ghostscript/10.08.0/fonts"
-        ]
+        "expectVersion": "10.08.0"
       }
     },
     "aarch64-pc-windows-msvc": {
@@ -146,13 +140,7 @@
         "sha256": "ade0e912a306bca8add436d188b4006d86eae5e1635151b1b1d7df563fbe316e",
         "member": "clangarm64/bin/gswin64c.exe",
         "dest": "gs",
-        "expectVersion": "10.08.0",
-        "resources": [
-          "share/ghostscript/10.08.0/Resource",
-          "share/ghostscript/10.08.0/lib",
-          "share/ghostscript/10.08.0/iccprofiles",
-          "share/ghostscript/10.08.0/fonts"
-        ]
+        "expectVersion": "10.08.0"
       }
     },
     "x86_64-apple-darwin": {

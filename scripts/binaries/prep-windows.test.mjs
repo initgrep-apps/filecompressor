@@ -164,6 +164,27 @@ describe("prep-windows engine folders", () => {
     );
   });
 
+  it("prep_stages_the_gs_engine_with_dlls_and_no_resources_when_none_are_declared", async () => {
+    const root = await tempRoot("prep-win-gs-rom-");
+    await stageEntry(root, "gs", X64, {
+      [GS_MEMBER]: "gswin64c",
+      "ucrt64/bin/libgs-10.dll": "dll",
+    });
+
+    const staged = await prepWindows(root, X64, {
+      gs: { member: GS_MEMBER, dest: "gs" },
+    });
+
+    const engine = join(root, "src-tauri", "binaries", "engines", "gs");
+    expect(staged).toContain(engine);
+    expect(existsSync(join(engine, "gs.exe"))).toBe(true);
+    expect(existsSync(join(engine, "libgs-10.dll"))).toBe(true);
+    expect(
+      existsSync(join(root, "src-tauri", "gs-resources")),
+      "no declared resources means no gs-resources tree may be staged",
+    ).toBe(false);
+  });
+
   it("refuses a resource tree with no Resource/Init/gs_init.ps", async () => {
     const root = await tempRoot("prep-win-gs-noinit-");
     const files = gsResourceFiles();
