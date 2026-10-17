@@ -47,7 +47,11 @@ async function checkVersion(binPath, expectVersion, triple, root) {
           return;
         }
         if (error && !combined) {
-          resolvePromise({ ok: false, detail: `failed to execute: ${error.message ?? error}` });
+          const execDetail = `failed to execute: ${error.message ?? error}`;
+          resolvePromise({
+            ok: false,
+            detail: /binaries[\\/]/.test(execDetail) ? execDetail : `${execDetail} (the exe used was ${binPath})`,
+          });
           return;
         }
         if (combined.includes(expectVersion)) {
@@ -364,7 +368,11 @@ export async function verifyTarget(target, root) {
       }
 
       const version = await checkVersion(execPath, entry.expectVersion, triple, root).catch(
-        (error) => ({ ok: false, detail: `failed to execute: ${error.message ?? error}` }),
+        (error) => {
+          const detail = `${error.message ?? error}`;
+          const withPath = /binaries[\\/]/.test(detail) ? detail : `failed to execute ${binPath}: ${detail}`;
+          return { ok: false, detail: withPath };
+        },
       );
       if (!version.ok) {
         problems.push(`${dest}: version check failed — ${version.detail}`);

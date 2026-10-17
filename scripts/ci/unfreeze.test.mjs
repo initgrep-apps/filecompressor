@@ -15,6 +15,19 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const FREEZE = join(HERE, "freeze.sh");
 const UNFREEZE = join(HERE, "unfreeze.sh");
 
+function toBashPath(p) {
+  if (process.platform !== "win32") {
+    return p;
+  }
+  return p.replace(/\\/g, "/").replace(/^([A-Za-z]):/, "/$1");
+}
+
+function asBashArgs(args) {
+  return args.map((arg) =>
+    typeof arg === "string" && /^[A-Za-z]:[\\/]/.test(arg) ? toBashPath(arg) : arg,
+  );
+}
+
 const ENGINES = ["ffmpeg", "ffprobe", "qpdf", "vips", "gs"];
 const MAC_TRIPLE = "aarch64-apple-darwin";
 const WIN_TRIPLE = "x86_64-pc-windows-msvc";
@@ -28,7 +41,7 @@ const GH_STUB_PAYLOADS = Object.fromEntries(
 
 function runScript(script, args, options = {}) {
   return new Promise((resolvePromise) => {
-    execFile("bash", [script, ...args], { encoding: "utf8", timeout: 60_000, ...options }, (error, stdout, stderr) => {
+    execFile("bash", [script, ...asBashArgs(args)], { encoding: "utf8", timeout: 60_000, ...options }, (error, stdout, stderr) => {
       const code = error?.code ?? (error?.signal ? 255 : 0);
       resolvePromise({ code, stdout, stderr, signal: error?.signal ?? null });
     });
@@ -69,7 +82,7 @@ async function stageSidecarTree(base, payloads) {
 
 async function tarTree(base, bundlePath) {
   await new Promise((resolvePromise, reject) => {
-    execFile("tar", ["-czf", bundlePath, "-C", base, "binaries", "frameworks", "gs-resources"], (error) =>
+    execFile("tar", ["-czf", toBashPath(bundlePath), "-C", toBashPath(base), "binaries", "frameworks", "gs-resources"], (error) =>
       error ? reject(error) : resolvePromise(),
     );
   });
@@ -97,7 +110,7 @@ async function stageWindowsTree(base, triple, exePayloads = {}) {
 
 async function tarWindowsTree(base, bundlePath, roots = ["binaries"]) {
   await new Promise((resolvePromise, reject) => {
-    execFile("tar", ["-czf", bundlePath, "-C", base, ...roots], (error) =>
+    execFile("tar", ["-czf", toBashPath(bundlePath), "-C", toBashPath(base), ...roots], (error) =>
       error ? reject(error) : resolvePromise(),
     );
   });
@@ -429,7 +442,7 @@ async function stubEnv(destRoot, { mode, ghList, repo, triple, roots } = {}) {
     '      prev="$arg"',
     "    done",
     '    tar -czf "$dir/sidecar-bundle-$GH_STUB_TRIPLE.tar.gz" -C "$GH_STUB_PAYLOAD" $GH_STUB_ROOTS',
-    '    (cd "$dir" && shasum -a 256 "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz" > "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz.sha256")',
+    '    (cd "$dir" && { if command -v shasum >/dev/null 2>&1; then shasum -a 256 "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz"; else sha256sum "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz"; fi; } > "sidecar-bundle-$GH_STUB_TRIPLE.tar.gz.sha256")',
     "    ;;",
     "esac",
   ].join("\n");
@@ -441,10 +454,10 @@ async function stubEnv(destRoot, { mode, ghList, repo, triple, roots } = {}) {
     PATH: `${stubDir}:${process.env.PATH ?? ""}`,
     GH_TOKEN: "stub-token",
     GH_STUB_LIST: ghList ?? GH_LIST,
-    GH_STUB_LIST_MARKER: markerList,
-    GH_STUB_DOWNLOAD_MARKER: markerDownload,
-    GH_STUB_TAG_MARKER: join(destRoot, "stub-tag.txt"),
-    GH_STUB_PAYLOAD: payload,
+    GH_STUB_LIST_MARKER: toBashPath(markerList),
+    GH_STUB_DOWNLOAD_MARKER: toBashPath(markerDownload),
+    GH_STUB_TAG_MARKER: toBashPath(join(destRoot, "stub-tag.txt")),
+    GH_STUB_PAYLOAD: toBashPath(payload),
     GH_STUB_TRIPLE: stubTriple,
     GH_STUB_ROOTS: roots ?? "binaries frameworks gs-resources",
     ...(repo ? { GITHUB_REPOSITORY: repo } : {}),
@@ -671,7 +684,7 @@ describe("unfreeze.sh", () => {
       await rm(join(payload, "gs-resources"), { recursive: true });
       const bundle = join(destRoot, "handmade.tar.gz");
       await new Promise((resolvePromise, reject) => {
-        execFile("tar", ["-czf", bundle, "-C", payload, "binaries", "frameworks"], (error) =>
+        execFile("tar", ["-czf", toBashPath(bundle), "-C", toBashPath(payload), "binaries", "frameworks"], (error) =>
           error ? reject(error) : resolvePromise(),
         );
       });

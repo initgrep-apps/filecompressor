@@ -451,11 +451,20 @@ describe("validateLock extra staged-package rows", () => {
 
 describe("run", () => {
   it("carries_the_child_stdout_and_stderr_on_a_failing_spawns_error", async () => {
-    const dir = await tempRoot("run-capture-");
-    const emitter = join(dir, "emitter.sh");
-    await writeFile(emitter, "#!/bin/sh\necho out-line\necho err-line >&2\nexit 3\n", { mode: 0o755 });
+    const winDirect = process.platform === "win32";
+    let tool;
+    let args;
+    if (winDirect) {
+      tool = process.execPath;
+      args = ["-e", "console.log('out-line'); console.error('err-line'); process.exit(3)"];
+    } else {
+      const dir = await tempRoot("run-capture-");
+      tool = join(dir, "emitter.sh");
+      await writeFile(tool, "#!/bin/sh\necho out-line\necho err-line >&2\nexit 3\n", { mode: 0o755 });
+      args = [];
+    }
 
-    const thrown = await run(emitter, []).then(
+    const thrown = await run(tool, args).then(
       () => {
         throw new Error("run resolved but the tool exits nonzero");
       },

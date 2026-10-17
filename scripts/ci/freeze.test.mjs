@@ -14,12 +14,25 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FREEZE = join(HERE, "freeze.sh");
 
+function toBashPath(p) {
+  if (process.platform !== "win32") {
+    return p;
+  }
+  return p.replace(/\\/g, "/").replace(/^([A-Za-z]):/, "/$1");
+}
+
+function asBashArgs(args) {
+  return args.map((arg) =>
+    typeof arg === "string" && /^[A-Za-z]:[\\/]/.test(arg) ? toBashPath(arg) : arg,
+  );
+}
+
 const ENGINES = ["ffmpeg", "ffprobe", "qpdf", "vips", "gs"];
 const MAC_TRIPLE = "aarch64-apple-darwin";
 
 function runScript(script, args, options = {}) {
   return new Promise((resolvePromise) => {
-    execFile("bash", [script, ...args], { encoding: "utf8", timeout: 60_000, ...options }, (error, stdout, stderr) => {
+    execFile("bash", [script, ...asBashArgs(args)], { encoding: "utf8", timeout: 60_000, ...options }, (error, stdout, stderr) => {
       const code = error?.code ?? (error?.signal ? 255 : 0);
       resolvePromise({ code, stdout, stderr, signal: error?.signal ?? null });
     });
@@ -28,7 +41,7 @@ function runScript(script, args, options = {}) {
 
 function runTool(tool, args) {
   return new Promise((resolvePromise, reject) => {
-    execFile(tool, args, { encoding: "utf8" }, (error, stdout, stderr) => {
+    execFile(tool, asBashArgs(args), { encoding: "utf8" }, (error, stdout, stderr) => {
       if (error) {
         error.stdout = stdout;
         error.stderr = stderr;

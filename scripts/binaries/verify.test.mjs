@@ -1253,7 +1253,7 @@ describe("no arm64 assumption hides in the script logic", () => {
 
     const offences = [];
     for (const file of files) {
-      const relativePath = relative(scriptsDir, file);
+      const relativePath = relative(scriptsDir, file).replace(/\\/g, "/");
       if (relativePath === "binaries/lib.mjs" || relativePath === "binaries/pe-imports.mjs") {
         continue;
       }
@@ -1270,7 +1270,7 @@ describe("no arm64 assumption hides in the script logic", () => {
         if (inParser(offset)) {
           return;
         }
-        offences.push(`${relative}:${index + 1}: ${line.trim()}`);
+        offences.push(`${relativePath}:${index + 1}: ${line.trim()}`);
       });
 
       for (const [start, end] of parserSpans) {
@@ -1281,7 +1281,7 @@ describe("no arm64 assumption hides in the script logic", () => {
         const missing = arches.filter((arch) => !new RegExp(`\\b${arch}\\b`).test(body));
         expect(
           missing,
-          `${relative}: an arch parser that does not handle ${missing.join(", ")} is a \
+          `${relativePath}: an arch parser that does not handle ${missing.join(", ")} is a \
                per-arch assumption in waiting — it would pass every arm64 target and fail Intel`,
         ).toEqual([]);
       }

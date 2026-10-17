@@ -1092,7 +1092,7 @@ const EARLY_ANCHOR = '  local gs="$1"\n';
 const LATE_ANCHOR = '  local fixture="$work/font-fixture.ps"\n';
 const MACHO_LOOP_ANCHOR = 'for f in "$BIN_DIR"/*; do\n';
 const VERIFY_ANCHOR = 'if ! node "$SCRIPT_DIR/binaries/verify.mjs" --target "$TARGET" --root "$ROOT"; then\n';
-const MACHO_FN_ANCHOR = '  if ! deps="$(otool -L "$file"';
+const MACHO_FN_ANCHOR = '  err_trap_active=1\n  deps="$(otool -L "$file"';
 
 function runPatchedAudit(root, anchor, extraEnv = {}) {
   const patched = `${root}/scripts/audit-sidecars-injected.sh`;
