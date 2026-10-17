@@ -246,6 +246,84 @@ describe("verify.mjs", () => {
     await rm(root, { recursive: true, force: true });
   });
 
+  itDarwin("skips_the_stagedSha256_lock_comparison_when_the_restore_provenance_marker_matches_the_target", async () => {
+    const root = await makeRoot(FFMPEG_MANIFEST);
+    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2");
+    await writeFile(
+      `${root}/scripts/binaries.lock.json`,
+      JSON.stringify({
+        generated: new Date().toISOString(),
+        targets: {
+          "aarch64-apple-darwin": {
+            ffmpeg: {
+              source: "url",
+              version: "9.0.2",
+              url: "https://x/ffmpeg.zip",
+              sha256: "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+              stagedSha256: "0000000000000000000000000000000000000000000000000000000000000000",
+              date: new Date().toISOString(),
+            },
+          },
+        },
+      }),
+    );
+    await writeFile(
+      `${root}/src-tauri/.sidecars-restored.json`,
+      JSON.stringify({
+        triple: "aarch64-apple-darwin",
+        bundleSha256: "a".repeat(64),
+        restoredAt: new Date().toISOString(),
+      }),
+    );
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
+
+    expect(result.code).toBe(0);
+    expect(result.stdout, "the disabled digest gate must be visible in the audit report").toContain(
+      "stagedSha256 lock comparison disabled",
+    );
+    expect(result.stdout).toContain("verify: PASS");
+    expect(result.stderr, "no sha mismatch may surface for a marker-governed restore").not.toContain("sha256 mismatch");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  itDarwin("keeps_enforcing_the_stagedSha256_lock_comparison_when_the_marker_records_a_different_triple", async () => {
+    const root = await makeRoot(FFMPEG_MANIFEST);
+    compileFixture("arm64", `${root}/src-tauri/binaries/ffmpeg-aarch64-apple-darwin`, "ffmpeg version 9.0.2");
+    await writeFile(
+      `${root}/scripts/binaries.lock.json`,
+      JSON.stringify({
+        generated: new Date().toISOString(),
+        targets: {
+          "aarch64-apple-darwin": {
+            ffmpeg: {
+              source: "url",
+              version: "9.0.2",
+              url: "https://x/ffmpeg.zip",
+              sha256: "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+              stagedSha256: "0000000000000000000000000000000000000000000000000000000000000000",
+              date: new Date().toISOString(),
+            },
+          },
+        },
+      }),
+    );
+    await writeFile(
+      `${root}/src-tauri/.sidecars-restored.json`,
+      JSON.stringify({
+        triple: "x86_64-apple-darwin",
+        bundleSha256: "a".repeat(64),
+        restoredAt: new Date().toISOString(),
+      }),
+    );
+
+    const result = await runVerify(["--target", "aarch64-apple-darwin", "--root", root]);
+
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("sha256 mismatch");
+    await rm(root, { recursive: true, force: true });
+  });
+
   itDarwin("does not gate a brew row on a machine-local staged digest", async () => {
     const root = await makeRoot({
       targets: {

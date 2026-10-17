@@ -510,6 +510,57 @@ describe("unfreeze.sh", () => {
     });
   });
 
+  it("writes_a_provenance_marker_with_triple_bundle_sha_and_iso_timestamp_after_a_successful_restore", async () => {
+    await withFrozenSource(async (srcRoot) => {
+      await withBareDest(async (destRoot) => {
+        const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", frozenBundle(srcRoot), "--root", destRoot]);
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+        const markerPath = join(destRoot, "src-tauri", ".sidecars-restored.json");
+        expect(existsSync(markerPath), "the consumer audit needs the provenance marker to govern the stagedSha256 lock comparison — without it the restored-vs-lock hash drift fails the row").toBe(true);
+        const marker = JSON.parse(await readFile(markerPath, "utf8"));
+        expect(marker.triple).toBe(MAC_TRIPLE);
+        expect(marker.bundleSha256, "the marker pins the sha256 of the bundle that was actually restored").toBe(shaOf(await readFile(frozenBundle(srcRoot))));
+        expect(marker.restoredAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+        expect(new Date(marker.restoredAt).getTime(), "restoredAt must parse as ISO-8601 UTC on every host").not.toBeNaN();
+        await expectCleanFreezeDir(destRoot);
+      });
+    });
+  });
+
+  it("writes_the_provenance_marker_for_windows_restores_too", async () => {
+    await withWindowsFrozenSource(async (srcRoot) => {
+      await withBareDest(async (destRoot) => {
+        const result = await runScript(UNFREEZE, ["--triple", WIN_TRIPLE, "--archive", frozenWindowsBundle(srcRoot), "--root", destRoot]);
+
+        expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+        const marker = JSON.parse(await readFile(join(destRoot, "src-tauri", ".sidecars-restored.json"), "utf8"));
+        expect(marker.triple).toBe(WIN_TRIPLE);
+        expect(marker.bundleSha256).toBe(shaOf(await readFile(frozenWindowsBundle(srcRoot))));
+      });
+    });
+  });
+
+  it("leaves_no_provenance_marker_when_the_restore_fails", async () => {
+    await withFrozenSource(async (srcRoot) => {
+      await withBareDest(async (destRoot) => {
+        const bundle = join(destRoot, "tampered.tar.gz");
+        await copyFile(frozenBundle(srcRoot), bundle);
+        await copyFile(`${frozenBundle(srcRoot)}.sha256`, `${bundle}.sha256`);
+        await writeFile(bundle, "\0", { flag: "a" });
+
+        const result = await runScript(UNFREEZE, ["--triple", MAC_TRIPLE, "--archive", bundle, "--root", destRoot]);
+
+        expect(result.code).toBe(1);
+        expect(result.stderr).toMatch(/sha256 mismatch/i);
+        expect(
+          existsSync(join(destRoot, "src-tauri", ".sidecars-restored.json")),
+          "a failed restore must not leave a provenance marker — the marker would disable the stagedSha256 gate for a tree it never restored",
+        ).toBe(false);
+      });
+    });
+  });
+
   it("restores_the_frozen_tree_into_a_clean_src_tauri_with_no_extraction_litter", async () => {
     await withFrozenSource(async (srcRoot) => {
       await withBareDest(async (destRoot) => {

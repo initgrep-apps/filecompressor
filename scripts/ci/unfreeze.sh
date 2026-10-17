@@ -339,4 +339,11 @@ fi
 verify_sha "$source_archive"
 extract_and_restore "$source_archive"
 
+restore_marker="$SRC/.sidecars-restored.json"
+restore_marker_sha="$(sha256_of "$source_archive")" || \
+  fail "cannot hash the bundle for the restore provenance marker"
+restore_marker_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '{\n  "triple": "%s",\n  "bundleSha256": "%s",\n  "restoredAt": "%s"\n}\n' "$TRIPLE" "$restore_marker_sha" "$restore_marker_at" > "$restore_marker" || \
+  fail "cannot write the restore provenance marker $restore_marker — the consumer audit needs it to govern the stagedSha256 lock comparison; check that src-tauri is writable and re-run"
+
 info "restored $TRIPLE sidecars into src-tauri/"

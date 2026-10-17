@@ -264,6 +264,24 @@ export async function verifyTarget(target, root) {
 
   const bins = binaryDir(root);
   let checked = 0;
+  let restoredBundleSha = null;
+  const restoredMarkerFile = join(root, "src-tauri", ".sidecars-restored.json");
+  if (await exists(restoredMarkerFile)) {
+    try {
+      const marker = readJson(restoredMarkerFile);
+      if (marker?.triple === triple) {
+        restoredBundleSha = String(marker.bundleSha256 ?? "");
+        console.log(
+          `note: stagedSha256 lock comparison disabled — src-tauri/.sidecars-restored.json pins restored bundle ${restoredBundleSha || "with an undisclosed sha256"} for ${triple}, so tree bytes are governed by the bundle sha256 verified at unfreeze instead (ADR 0001)`,
+        );
+      }
+    } catch {
+      console.error(
+        `FAIL unreadable restore marker at ${restoredMarkerFile}: expected {triple, bundleSha256, restoredAt} JSON written by unfreeze`,
+      );
+      return false;
+    }
+  }
 
   const lockFile = lockPath(root);
   let lockTarget = {};
@@ -311,7 +329,7 @@ export async function verifyTarget(target, root) {
     }
 
     const lockEntry = lockTarget[name];
-    if (lockEntry?.stagedSha256 && entry.source !== "brew") {
+    if (lockEntry?.stagedSha256 && entry.source !== "brew" && restoredBundleSha === null) {
       const stagedSha = await sha256File(binPath);
       if (stagedSha !== lockEntry.stagedSha256) {
         problems.push(
