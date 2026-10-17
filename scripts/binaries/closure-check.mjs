@@ -1,4 +1,4 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parsePeImports } from "./pe-imports.mjs";
 
@@ -62,8 +62,7 @@ function dllFilesOf(entries) {
   return entries.filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".dll"));
 }
 
-export async function assertEngineImportsClosed(engineDir, { label = null } = {}) {
-  const dirEntries = await readdir(engineDir, { withFileTypes: true });
+export async function assertEngineImportsClosed(engineDir, { label = null } = {}) {  const dirEntries = await readdir(engineDir, { withFileTypes: true });
   const engineName = label ?? basename(engineDir);
   const exeName = `${engineName}.exe`;
   if (!dirEntries.some((entry) => entry.isFile() && entry.name === exeName)) {
@@ -123,17 +122,4 @@ export async function assertEngineImportsClosed(engineDir, { label = null } = {}
       ].join("\n"),
     );
   }
-}
-
-export async function stagedEngineDirs(root, dests) {
-  const enginesRoot = join(root, "src-tauri", "binaries", "engines");
-  const out = [];
-  for (const dest of dests) {
-    const dir = join(enginesRoot, dest);
-    const info = await stat(dir).catch(() => null);
-    if (info?.isDirectory()) {
-      out.push(dir);
-    }
-  }
-  return out;
 }
