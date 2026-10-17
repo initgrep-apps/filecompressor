@@ -578,7 +578,7 @@ describe("freeze.yml freeze workflow", () => {
     expect(countStep.shell).toBe("bash");
   });
 
-  it("finalize publishes draft-first (draft → upload → verify 8 assets → publish) in one step", async () => {
+  it("finalize publishes draft-first (draft → upload → verify 8 assets retried → publish) in one step", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     const publish = stepsOf(jobsOf(doc).finalize).find((s) => stepRuns(s).includes('gh release create "$tag"'));
     expect(publish, "publish step must exist").toBeDefined();
@@ -592,7 +592,7 @@ describe("freeze.yml freeze workflow", () => {
       'gh release create "$tag" release-assets',
     );
     expect(run).toContain('gh release upload "$tag" release-assets/* --clobber');
-    expect(run).toContain("n=\"$(gh release view \"$tag\" --json assets --jq 'length')\"");
+    expect(run).toContain("n=\"$(gh release view \"$tag\" --json assets --jq '.assets | length')\"");
     expect(run).toContain('[ "$n" -ne 8 ]');
     expect(run).toContain("::error::$tag has $n/8 assets — draft left in place, not published");
     expect(run).toContain("gh release delete $tag --cleanup-tag --yes");
@@ -603,7 +603,7 @@ describe("freeze.yml freeze workflow", () => {
     const order = [
       run.indexOf('gh release create "$tag" --draft'),
       run.indexOf('gh release upload "$tag" release-assets/* --clobber'),
-      run.indexOf("--json assets --jq 'length'"),
+      run.indexOf("--json assets --jq '.assets | length'"),
       run.indexOf('gh release edit "$tag" --draft=false'),
     ];
     for (const [i, idx] of order.entries()) {
@@ -612,6 +612,52 @@ describe("freeze.yml freeze workflow", () => {
     for (let i = 1; i < order.length; i++) {
       expect(order[i], `draft-first stage ${i} out of order`).toBeGreaterThan(order[i - 1]);
     }
+
+    const loopIdx = run.indexOf("for attempt in 1 2 3 4");
+    expect(loopIdx, "the verify must retry the asset read: 4 attempts with a gap between them").toBeGreaterThanOrEqual(0);
+    const countedIdx = run.indexOf("n=\"$(gh release view \"$tag\" --json assets --jq '.assets | length')\"");
+    expect(countedIdx, "the counted asset query must run inside the retry loop").toBeGreaterThan(loopIdx);
+    const namesIdx = run.indexOf("names=\"$(gh release view \"$tag\" --json assets --jq '.assets[].name')\"");
+    expect(namesIdx, "the exact-8-name set check must run in the same retried pass as the count").toBeGreaterThan(countedIdx);
+    expect(
+      run,
+      "the expected-8-name loop must iterate all four triples",
+    ).toContain("for t in aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc");
+    expect(run, "each expected tarball name must be asserted present in the retried pass").toContain(
+      'grep -Fxq "sidecar-bundle-$t.tar.gz"',
+    );
+    expect(run, "each expected digest name must be asserted present in the retried pass").toContain(
+      'grep -Fxq "sidecar-bundle-$t.tar.gz.sha256"',
+    );
+    const guardIdx = run.indexOf("if [ \"$attempt\" -lt 4 ]; then");
+    const sleepIdx = run.indexOf("sleep 10");
+    expect(guardIdx, "the inter-attempt gap must be guarded so the final attempt does not sleep").toBeGreaterThan(namesIdx);
+    expect(sleepIdx).toBeGreaterThan(guardIdx);
+    expect(
+      run.indexOf("::error::$tag has $n/8 assets — draft left in place, not published"),
+      "the mismatch annotation must fire only after the retry loop is exhausted",
+    ).toBeGreaterThan(sleepIdx);
+  });
+
+  it("finalize is idempotent for re-run failed jobs: an existing draft at the tag is reused and a published one fails loud", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const publish = stepsOf(jobsOf(doc).finalize).find((s) => stepRuns(s).includes('gh release create "$tag"'));
+    expect(publish, "publish step must exist").toBeDefined();
+    const run = publish.run;
+
+    const probeIdx = run.indexOf("draft=\"$(gh release view \"$tag\" --json isDraft --jq '.isDraft' 2>/dev/null)\"");
+    expect(probeIdx, "finalize must probe the existing tag state before gh release create").toBeGreaterThanOrEqual(0);
+    const createIdx = run.indexOf('gh release create "$tag" --draft');
+    expect(createIdx, "gh release create must be decided after the tag-state probe").toBeGreaterThan(probeIdx);
+    const reuseIdx = run.indexOf("reusing existing draft $tag");
+    expect(reuseIdx, "reusing an existing draft must be logged").toBeGreaterThan(probeIdx);
+    expect(reuseIdx, "the reuse branch must sit inside the probe's if, before the create falls into its else").toBeLessThan(createIdx);
+    expect(run, "a published release at the tag must fail loud, never be reused").toContain(
+      "::error::release $tag already exists and is published",
+    );
+    expect(run, "the published-release error must carry the delete-and-re-run recovery").toContain(
+      "gh release delete $tag --cleanup-tag --yes",
+    );
   });
 
   it("mac rows derive the tauri.conf.json frameworks list from the staged tree after staging; windows rows skip it", async () => {

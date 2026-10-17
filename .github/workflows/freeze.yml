@@ -182,11 +182,46 @@ jobs:
         run: |-
           set -euo pipefail
           tag="sidecars-$(date -u +%Y%m%d)"
-          gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag"
+          if draft="$(gh release view "$tag" --json isDraft --jq '.isDraft' 2>/dev/null)"; then
+            if [ "$draft" != "true" ]; then
+              echo "::error::release $tag already exists and is published — recovery: run 'gh release delete $tag --cleanup-tag --yes' to discard today's sidecars release only if you intend to freeze the engines again, then re-run the failed freeze jobs"
+              exit 1
+            fi
+            echo "reusing existing draft $tag"
+          else
+            gh release create "$tag" --draft --target "$GITHUB_SHA" --title "$tag"
+          fi
           gh release upload "$tag" release-assets/* --clobber
-          n="$(gh release view "$tag" --json assets --jq 'length')"
-          if [ "$n" -ne 8 ]; then
-            echo "::error::$tag has $n/8 assets — draft left in place, not published; recovery: 'gh release delete $tag --cleanup-tag --yes' to discard the draft, then re-run finalize"
+          n=0
+          missing=""
+          ok=""
+          for attempt in 1 2 3 4; do
+            n="$(gh release view "$tag" --json assets --jq '.assets | length')"
+            if [ "$n" -eq 8 ]; then
+              names="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+              missing=""
+              for t in aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc aarch64-pc-windows-msvc; do
+                printf '%s\n' "$names" | grep -Fxq "sidecar-bundle-$t.tar.gz" || missing="$missing sidecar-bundle-$t.tar.gz"
+                printf '%s\n' "$names" | grep -Fxq "sidecar-bundle-$t.tar.gz.sha256" || missing="$missing sidecar-bundle-$t.tar.gz.sha256"
+              done
+              if [ -z "$missing" ]; then
+                ok=1
+                break
+              fi
+              echo "attempt $attempt: 8 assets but the exact-8 name set is incomplete (missing:$missing) — GitHub may still be indexing; re-checking"
+            else
+              echo "attempt $attempt: $n/8 assets — GitHub asset indexing may lag the upload; re-checking"
+            fi
+            if [ "$attempt" -lt 4 ]; then
+              sleep 10
+            fi
+          done
+          if [ "$ok" != "1" ]; then
+            if [ "$n" -ne 8 ]; then
+              echo "::error::$tag has $n/8 assets — draft left in place, not published; recovery: 'gh release delete $tag --cleanup-tag --yes' to discard the draft, then re-run finalize"
+              exit 1
+            fi
+            echo "::error::$tag carries 8 assets but not the exact-8 name set (missing:$missing) — draft left in place, not published; recovery: 'gh release delete $tag --cleanup-tag --yes' to discard the draft, then re-run finalize"
             exit 1
           fi
           gh release edit "$tag" --draft=false
