@@ -53,6 +53,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: bash scripts/ci/unfreeze.sh --triple "$TRIPLE"
         shell: bash
+      - name: derive macOS frameworks list from the restored tree (${{ matrix.triple }})
+        if: runner.os == 'macOS'
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: node scripts/binaries/sync-macos-frameworks.mjs --target "$TRIPLE"
+        shell: bash
       - name: clean-room audit of restored engines (macos)
         if: runner.os == 'macOS'
         env:

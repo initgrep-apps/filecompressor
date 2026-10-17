@@ -939,6 +939,17 @@ describe("release.yml release workflow", () => {
       expect(steps.findIndex((s) => s === audit), "audit must run after unfreeze").toBeGreaterThan(unfreezeIdx);
     }
 
+    const syncStep = steps.find((s) => stepRuns(s).includes("scripts/binaries/sync-macos-frameworks.mjs"));
+    expect(syncStep, "the restored mac bundle carries tauri.conf.json dylib entries that the tree's actual dylibs must re-derive before the audit").toBeDefined();
+    expect(syncStep["if"]).toBe("runner.os == 'macOS'");
+    expect(syncStep.env?.TRIPLE).toBe("${{ matrix.triple }}");
+    expect(syncStep.run).toContain('node scripts/binaries/sync-macos-frameworks.mjs --target "$TRIPLE"');
+    expect(syncStep.shell).toBe("bash");
+    const syncIdx = steps.findIndex((s) => s === syncStep);
+    for (const audit of audits) {
+      expect(steps.findIndex((s) => s === audit), "audit must run after the mac frameworks sync").toBeGreaterThan(syncIdx);
+    }
+
     const runsText = steps.map((s) => stepRuns(s)).join("\n");
     for (const row of RELEASE_MATRIX_ROWS) {
       expect(
@@ -1186,6 +1197,32 @@ describe("ci.yml PR gate workflow", () => {
     expect(unfreezeStep.env?.TRIPLE).toBe("${{ matrix.triple }}");
     expect(unfreezeStep.env?.GH_TOKEN).toBe("${{ github.token }}");
     expect(unfreezeStep.env?.GH_REPO).toBe("${{ github.repository }}");
+
+    const syncStep = stepsOf(jobsOf(doc).gate).find((s) =>
+      stepRuns(s).includes("scripts/binaries/sync-macos-frameworks.mjs"),
+    );
+    expect(syncStep, "mac bundles carry tauri.conf.json dylib entries that the restored arm tree must re-derive — the sync must run on consumer rows or the clean-room audit dies with 'tauri.conf.json lists missing dylib' (CI run 39011908076)").toBeDefined();
+    expect(syncStep["if"]).toBe("runner.os == 'macOS'");
+    expect(syncStep.env?.TRIPLE, "the target must flow through env, not interpolated into the run string").toBe("${{ matrix.triple }}");
+    expect(syncStep.run).toContain('node scripts/binaries/sync-macos-frameworks.mjs --target "$TRIPLE"');
+    expect(syncStep.shell).toBe("bash");
+
+    const unfreezeIdx2 = stepsOf(jobsOf(doc).gate).findIndex((s) => s === unfreezeStep);
+    const syncIdx2 = stepsOf(jobsOf(doc).gate).findIndex((s) => s === syncStep);
+    const macAuditIdx2 = stepsOf(jobsOf(doc).gate).findIndex(
+      (s) => s["if"] === "runner.os == 'macOS'" && stepRuns(s).includes("yarn binaries:audit"),
+    );
+    expect(syncIdx2, "the sync must read the restored frameworks tree, so it runs after unfreeze").toBeGreaterThan(unfreezeIdx2);
+    expect(macAuditIdx2, "the audit's conf cross-check must see the derived list, so it runs after the sync").toBeGreaterThan(syncIdx2);
+
+    for (const s of stepsOf(jobsOf(doc).gate)) {
+      if (stepRuns(s).includes("sync-macos-frameworks.mjs")) {
+        expect(
+          s["if"],
+          "windows staging never creates src-tauri/frameworks — windows rows must skip the sync via the mac runner gate",
+        ).toBe("runner.os == 'macOS'");
+      }
+    }
 
     expect(
       stepsOf(jobsOf(doc).gate).filter((s) => stepRuns(s).includes("scripts/binaries/all.mjs")),
