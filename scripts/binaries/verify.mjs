@@ -174,6 +174,8 @@ export async function checkBrewVersion(name, entry, problems) {
     const detail = `${error.stdout ?? ""}${error.stderr ?? ""}${error.message ?? error}`.trim();
     if (/no such keg|not installed/i.test(detail)) {
       notInstalled = `'brew list --versions ${entry.formula}' failed: ${detail} — the formula is not installed`;
+    } else if (process.env[ALLOW_INACTIVE_BREW] === "1") {
+      notInstalled = `'brew list --versions ${entry.formula}' failed on this host: ${detail || "(brew printed nothing)"} — the formula's install state is unknown here (brew 7.x prints nothing for a missing keg)`;
     } else {
       problems.push(
         `${name}: 'brew list --versions ${entry.formula}' failed: ${error.message ?? error} — run 'brew install ${entry.formula}' then re-run 'yarn binaries:prep'`,
