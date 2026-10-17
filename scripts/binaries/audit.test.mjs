@@ -231,6 +231,7 @@ async function makeGsRoot({
   triple = "aarch64-apple-darwin",
   romFixture = false,
   romExitCode = 0,
+  romFlatExitCode = null,
 } = {}) {
   await mkdir(`${tmpdir()}/audit-test-roots`, { recursive: true });
   const root = await mkdtemp(`${tmpdir()}/audit-test-roots/r`);
@@ -270,7 +271,7 @@ async function makeGsRoot({
   );
   if (stageGs) {
     if (romFixture) {
-      compileGsRomFixture("arm64", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, romExitCode);
+      compileGsRomFixture("arm64", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, romFlatExitCode ?? romExitCode);
     } else {
       compileGsFixture("arm64", `${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`);
     }
@@ -278,7 +279,11 @@ async function makeGsRoot({
     if (triple.includes("windows")) {
       const enginesExe = `${root}/src-tauri/binaries/engines/${dest}/${dest}.exe`;
       await mkdir(dirname(enginesExe), { recursive: true });
-      await copyFile(`${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, enginesExe);
+      if (romFixture) {
+        compileGsRomFixture("arm64", enginesExe, romExitCode);
+      } else {
+        await copyFile(`${root}/src-tauri/binaries/gs-${triple}${exeSuffix}`, enginesExe);
+      }
     }
   }
   if (resources) {
@@ -717,6 +722,24 @@ describeDarwin("audit-sidecars.sh", () => {
       romFixture: true,
     });
     expect(existsSync(`${root}/src-tauri/gs-resources`), "the fixture ships engines only").toBe(false);
+  });
+
+  it("runs_the_windows_rom_smoke_on_the_engines_gs_exe_not_the_flat_launcher_stub", async () => {
+    const root = await makeGsRoot({
+      triple: "aarch64-pc-windows-msvc",
+      resources: false,
+      manifestEntry: GS_ROM_MANIFEST_ENTRY,
+      romFixture: true,
+      romFlatExitCode: 1,
+    });
+
+    const result = await runAudit(root, "aarch64-pc-windows-msvc");
+
+    expect(result.code, `stdout: ${result.stdout}\nstderr: ${result.stderr}`).toBe(0);
+    expect(result.stderr).not.toMatch(/FAIL gs/);
+    expect(result.stdout).toContain("gs clean-room smoke: PASS");
+    expect(result.stdout).toMatch(/\b0 staged resource flags\b/);
+    expect(result.stdout).not.toContain("sentinel resolved");
   });
 
   it("runs_a_rom_smoke_when_an_explicit_target_declares_no_resources", async () => {

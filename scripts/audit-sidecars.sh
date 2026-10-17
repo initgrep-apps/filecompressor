@@ -675,6 +675,8 @@ gs_smoke_required=0
 gs_smoke_binary=""
 if [ -f "$BIN_DIR/gs-$TARGET" ]; then
   gs_smoke_binary="$BIN_DIR/gs-$TARGET"
+elif [ -n "$TARGET" ] && [ -f "$BIN_DIR/engines/gs/gs.exe" ]; then
+  gs_smoke_binary="$BIN_DIR/engines/gs/gs.exe"
 elif [ -n "$TARGET" ] && [ -f "$BIN_DIR/gs-$TARGET.exe" ]; then
   gs_smoke_binary="$BIN_DIR/gs-$TARGET.exe"
 fi
