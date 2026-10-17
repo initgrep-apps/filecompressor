@@ -40,6 +40,7 @@
         "binaries/ffprobe"
       ],
       "macOS": {
+        "signingIdentity": "-",
         "frameworks": [
           "frameworks/libIex-3_5.34.dylib",
           "frameworks/libIlmThread-3_5.34.dylib",

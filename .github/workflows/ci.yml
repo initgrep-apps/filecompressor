@@ -18,16 +18,15 @@ jobs:
     name: gate (${{ matrix.triple }})
     permissions:
       contents: read
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - triple: aarch64-apple-darwin
             os: macos-15
-            stage: freeze
           - triple: x86_64-pc-windows-msvc
             os: windows-2025
-            stage: manifest
     runs-on: ${{ matrix.os }}
     steps:
       - name: checkout (v7.0.1)
@@ -48,24 +47,21 @@ jobs:
           key: ${{ matrix.os }}
           workspaces: src-tauri
       - name: restore frozen engines (${{ matrix.triple }})
-        if: matrix.stage == 'freeze'
         env:
           TRIPLE: ${{ matrix.triple }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: bash scripts/ci/unfreeze.sh --triple "$TRIPLE"
         shell: bash
-      - name: clean-room audit of restored engines
-        if: matrix.stage == 'freeze'
+      - name: clean-room audit of restored engines (macos)
+        if: runner.os == 'macOS'
         env:
           BINARIES_ALLOW_INACTIVE_BREW: "1"
         run: yarn binaries:audit
         shell: bash
-      - name: stage engines from manifest (${{ matrix.triple }})
-        if: matrix.stage == 'manifest'
-        env:
-          TRIPLE: ${{ matrix.triple }}
-        run: node scripts/binaries/all.mjs --target "$TRIPLE"
+      - name: clean-room audit of restored engines (windows)
+        if: runner.os == 'Windows'
+        run: yarn binaries:audit
         shell: bash
       - name: gate (build + tests + cargo tests)
         run: yarn build && yarn test && cd src-tauri && cargo test
