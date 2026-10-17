@@ -14,6 +14,7 @@ const EXPECTED_WORKFLOWS = [
   { file: "freeze.yml", status: "current" },
   { file: "release.yml", status: "current" },
   { file: "ci.yml", status: "current" },
+  { file: "release-please.yml", status: "current" },
 ];
 
 const FREEZE_MATRIX_ROWS = [
@@ -164,6 +165,71 @@ describe("workflows validation (all files)", () => {
       expect(text.includes("brew install"), `${file}: brew installs belong to freeze.yml only`).toBe(false);
       expect(text.includes("brew update"), `${file}: brew updates belong to freeze.yml only`).toBe(false);
     }
+  });
+});
+
+describe("release-please.yml changelog automation", () => {
+  const FILENAME = "release-please.yml";
+  const RELEASE_PLEASE_SHA = "45996ed1f6d02564a971a2fa1b5860e934307cf7";
+
+  it("is listed current and exists on disk", () => {
+    expect(EXPECTED_WORKFLOWS.find((wf) => wf.file === FILENAME)?.status).toBe("current");
+    expect(existsSync(join(WORKFLOWS_DIR, FILENAME)), `${FILENAME} must exist`).toBe(true);
+  });
+
+  it("runs on pushes to main and manual dispatch only (release PRs must not re-trigger it)", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    expect(Object.keys(doc.on ?? {})).toEqual(["push", "workflow_dispatch"]);
+    expect(doc.on.push.branches).toEqual(["main"]);
+    expect(doc.on.push.tags).toBeUndefined();
+  });
+
+  it("scopes permissions: read default, the release-please job writes contents + pull-requests", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    expect(doc.permissions).toEqual({ contents: "read" });
+    expect(jobsOf(doc)["release-please"].permissions).toEqual({
+      contents: "write",
+      "pull-requests": "write",
+    });
+  });
+
+  it("runs the SHA-pinned release-please-action against the committed config + manifest", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const job = jobsOf(doc)["release-please"];
+    expect(job["runs-on"]).toBe("ubuntu-24.04");
+    expect(job["timeout-minutes"]).toBe(15);
+    expect(stepUses(stepsOf(job)[0])).toBe(
+      `googleapis/release-please-action@${RELEASE_PLEASE_SHA}`,
+    );
+    expect(stepsOf(job)[0].with["config-file"]).toBe("release-please-config.json");
+    expect(stepsOf(job)[0].with["manifest-file"]).toBe(".release-please-manifest.json");
+    expect(stepsOf(job)[0].env?.GITHUB_TOKEN).toBe("${{ secrets.GITHUB_TOKEN }}");
+  });
+
+  it("config keeps tags v-prefixed (release.yml trigger intact), automates alpha bumps, drafts the release PR, and syncs tauri.conf.json", async () => {
+    const config = JSON.parse(await readFile(join(HERE, "..", "..", "release-please-config.json"), "utf8"));
+    const pkg = config.packages["."];
+    expect(pkg["release-type"]).toBe("node");
+    expect(pkg["include-component-in-tag"]).toBe(false);
+    expect(pkg.prerelease).toBe(true);
+    expect(pkg["prerelease-type"]).toBe("alpha");
+    expect(pkg["draft-pull-request"]).toBe(true);
+    expect(pkg["extra-files"]).toEqual([
+      { type: "json", path: "src-tauri/tauri.conf.json", jsonpath: "$.version" },
+    ]);
+  });
+
+  it("manifest is seeded at the live v0.1.0-alpha.1 tag so no history predating the first release enters the changelog", async () => {
+    const manifest = JSON.parse(
+      await readFile(join(HERE, "..", "..", ".release-please-manifest.json"), "utf8"),
+    );
+    expect(manifest["."]).toBe("0.1.0-alpha.1");
+  });
+
+  it("CHANGELOG.md is seeded with the hand-written first entry, not a historic commit dump", async () => {
+    const changelog = await readFile(join(HERE, "..", "..", "CHANGELOG.md"), "utf8");
+    expect(changelog).toMatch(/## 0\.1\.0-alpha\.1 \(2026-10-17\)/);
+    expect(changelog).not.toMatch(/### Bug Fixes[\s\S]*#1[12][0-9]\b/);
   });
 });
 
