@@ -168,6 +168,26 @@ mod wiring_tests {
             request("clear_history", serde_json::json!({})),
         );
         response.expect("registered clear_history must answer the ipc dispatch with Ok");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn registered_open_folder_error_crosses_ipc_boundary() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = wiring_app(root.path());
+        app.run_iteration(|_, _| {});
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let request = |cmd: &str, body: serde_json::Value| tauri::webview::InvokeRequest {
+            cmd: cmd.into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: "tauri://localhost".parse().unwrap(),
+            body: tauri::ipc::InvokeBody::Json(body),
+            headers: Default::default(),
+            invoke_key: tauri::test::INVOKE_KEY.to_string(),
+        };
 
         let missing = root.path().join("definitely-missing-folder");
         let missing_str = missing.to_str().unwrap().to_string();

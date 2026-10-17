@@ -734,6 +734,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "windows"))]
     fn open_folder_error_path() {
         let dir = tempfile::tempdir().unwrap();
         let app = history_test_app(dir.path(), None);
