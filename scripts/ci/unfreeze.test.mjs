@@ -716,8 +716,8 @@ describe("unfreeze.sh", () => {
         }
         expect(
           new Set(await readdir(join(destRoot, "src-tauri"))),
-          "a windows restore swaps binaries only: no gs-resources dir, no frameworks dir",
-        ).toEqual(new Set(["binaries", ".freeze"]));
+          "a windows restore swaps binaries only: no gs-resources dir, no frameworks dir — the restore provenance marker records the bundle sha",
+        ).toEqual(new Set(["binaries", ".freeze", ".sidecars-restored.json"]));
         expect(existsSync(join(destRoot, "src-tauri", "frameworks")), "windows restore never creates frameworks/").toBe(false);
         await expectCleanFreezeDir(destRoot);
       });
@@ -1070,8 +1070,8 @@ describe("unfreeze.sh", () => {
         }
         expect(
           new Set(await readdir(join(destRoot, "src-tauri"))),
-          "the gh-path windows restore swaps binaries only",
-        ).toEqual(new Set(["binaries", ".freeze"]));
+          "the gh-path windows restore swaps binaries only plus the restore provenance marker",
+        ).toEqual(new Set(["binaries", ".freeze", ".sidecars-restored.json"]));
         await expectCleanFreezeDir(destRoot);
       } finally {
         await stubbed.cleanup();

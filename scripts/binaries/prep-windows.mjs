@@ -19,6 +19,11 @@ import { gsSentinelPaths } from "./gs-sentinels.mjs";
 export const GS_RESOURCES_DIR = "gs-resources";
 export const ENGINES_DIR = "engines";
 const GS_INIT_MARKER = join("Resource", "Init", "gs_init.ps");
+const GS_INIT_MARKER_POSIX = "Resource/Init/gs_init.ps";
+
+function manifestKeyPath(...parts) {
+  return parts.join("/").replace(/\/{2,}/g, "/");
+}
 
 export class PrepWindowsError extends Error {
   constructor(message) {
@@ -200,7 +205,7 @@ async function stageGsResources(root, name, entry, triple) {
     if (!(await exists(source))) {
       await rm(work, { recursive: true, force: true });
       throw new PrepWindowsError(
-        `${name} (${triple}): ghostscript resource dir '${join(packageRoot, relative)}' is missing ` +
+        `${name} (${triple}): ghostscript resource dir '${manifestKeyPath(packageRoot, relative)}' is missing ` +
           `from the staged package. Without it gs resolves fonts and ICC profiles from whatever the ` +
           `machine has, so PDF output silently differs per machine — the exact failure the staged ` +
           `tree exists to prevent. Check the resources pin in scripts/binaries.manifest.json against ` +
@@ -226,7 +231,7 @@ async function stageGsResources(root, name, entry, triple) {
   if (!(await exists(marker))) {
     await rm(work, { recursive: true, force: true });
     throw new PrepWindowsError(
-      `${name} (${triple}): staged gs-resources has no ${GS_INIT_MARKER} — gs cannot start without it. ` +
+      `${name} (${triple}): staged gs-resources has no ${GS_INIT_MARKER_POSIX} — gs cannot start without it. ` +
         `Run 'yarn binaries:prep' after checking the resources pin`,
     );
   }

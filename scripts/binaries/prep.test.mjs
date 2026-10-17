@@ -500,12 +500,12 @@ describe("assertGsResourcesStaged", () => {
     const root = await makeRoot(WITH_BREW);
     await stageResources(root, { fonts: false });
     await expect(assertGsResourcesStaged(root, entry)).rejects.toThrow(
-      /has no files anywhere under it: .*\/fonts/,
+      /has no files anywhere under it: .*[\\/]fonts/,
     );
     const other = await makeRoot(WITH_BREW);
     await stageResources(other, { icc: false });
     await expect(assertGsResourcesStaged(other, entry)).rejects.toThrow(
-      /has no files anywhere under it: .*\/iccprofiles/,
+      /has no files anywhere under it: .*[\\/]iccprofiles/,
     );
   });
 
@@ -515,7 +515,7 @@ describe("assertGsResourcesStaged", () => {
     await rm(join(base, "fonts"), { recursive: true, force: true });
     await mkdir(join(base, "fonts", "default"), { recursive: true });
     await expect(assertGsResourcesStaged(root, entry)).rejects.toThrow(
-      /has no files anywhere under it: .*\/fonts/,
+      /has no files anywhere under it: .*[\\/]fonts/,
     );
   });
 

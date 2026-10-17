@@ -7,7 +7,7 @@ import { execFileSync, execFile } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { knownTriples, sha256File, validateManifest } from "./lib.mjs";
 import { gsSentinelPaths } from "./gs-sentinels.mjs";
@@ -1253,8 +1253,8 @@ describe("no arm64 assumption hides in the script logic", () => {
 
     const offences = [];
     for (const file of files) {
-      const relative = file.replace(`${scriptsDir}/`, "");
-      if (relative === "binaries/lib.mjs" || relative === "binaries/pe-imports.mjs") {
+      const relativePath = relative(scriptsDir, file);
+      if (relativePath === "binaries/lib.mjs" || relativePath === "binaries/pe-imports.mjs") {
         continue;
       }
       const source = readFileSync(file, "utf8");
