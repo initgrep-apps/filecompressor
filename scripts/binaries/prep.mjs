@@ -28,6 +28,7 @@ import {
   validateManifest,
   writeJson,
 } from "./lib.mjs";
+import { assertEngineImportsClosed } from "./closure-check.mjs";
 
 const BUNDLE_SCRIPTS = ["bundle-vips-macos.sh", "bundle-pdf-macos.sh"];
 const GS_INIT_MARKER = join("Resource", "Init", "gs_init.ps");
@@ -399,8 +400,60 @@ export async function writeBrewLockEntries(lock, target, root, entries) {
   return lock;
 }
 
-export async function assertFetchedEntriesUntouched(lock, target, root, entries) {
+export async function assertStagedExtrasPinned(lock, target, root, entries) {
   for (const [name, entry] of entries) {
+    const extras = Array.isArray(entry.extraPackages) ? entry.extraPackages : [];
+    if (extras.length === 0) {
+      continue;
+    }
+    const lockRows = lock.targets[target]?.[name]?.extra ?? [];
+    for (const extra of extras) {
+      const remedy = `run 'yarn binaries:fetch --target ${target}'`;
+      const row = lockRows.find((candidate) => candidate.name === extra.name);
+      if (!row) {
+        fail(
+          `${name}: extraPackages: ${extra.name} has no lock row for ${target}, so a staged extra DLL set could ship unevidenced`,
+          remedy,
+        );
+      }
+      if (row.url !== extra.url || row.sha256 !== extra.sha256) {
+        fail(
+          `${name}: extraPackages: ${extra.name} lock row drifts from the manifest pins (url ${row.url} / sha ${row.sha256.slice(0, 12)} vs manifest ${extra.url} / ${extra.sha256.slice(0, 12)})`,
+          remedy,
+        );
+      }
+      const { extraMembersOf, stagedDigestsForMembers } = await import("./fetch.mjs");
+      const staging = stagingDir(root, extra.name, target);
+      const { digests, error } = await stagedDigestsForMembers(staging, extraMembersOf(extra));
+      if (error) {
+        fail(
+          `${name}: extraPackages: ${extra.name} ${error}`,
+          remedy,
+        );
+      }
+      for (const [member, digest] of Object.entries(digests)) {
+        if (row.stagedSha256s[member] !== digest) {
+          fail(
+            `${name}: extraPackages: ${extra.name} staged ${member} sha256 ${digest.slice(0, 12)} does not match the lock pin ${String(row.stagedSha256s[member] ?? "(absent)").slice(0, 12)}; it was modified outside this pipeline or the manifest member pins changed`,
+            remedy,
+          );
+        }
+      }
+      const lockedMembers = Object.keys(row.stagedSha256s);
+      const claimedMembers = Object.keys(digests);
+      for (const lockedMember of lockedMembers) {
+        if (!claimedMembers.includes(lockedMember)) {
+          fail(
+            `${name}: extraPackages: ${extra.name} lock pins ${lockedMember} which the current member selection no longer stages — the manifest member pins changed; re-run 'yarn binaries:fetch --target ${target}' to rebuild the lock rows`,
+            remedy,
+          );
+        }
+      }
+    }
+  }
+}
+
+export async function assertFetchedEntriesUntouched(lock, target, root, entries) {  for (const [name, entry] of entries) {
     if (entry.source === "brew") {
       continue;
     }
@@ -468,7 +521,15 @@ async function prepWindowsTarget(target, root, targetEntries) {
   lock.targets[target] = lock.targets[target] ?? {};
   const fetched = Object.entries(targetEntries).filter(([, entry]) => entry.source !== "brew");
   await assertFetchedEntriesUntouched(lock, target, root, fetched);
+  await assertStagedExtrasPinned(lock, target, root, fetched);
   const staged = await prepWindowsEngines(root, target, targetEntries);
+  for (const dir of staged) {
+    await assertEngineImportsClosed(dir).catch((error) => {
+      throw new PipelinesError(
+        `${error.message ?? error} — staged from 'yarn binaries:fetch --target ${target}'; if a dependency DLL is absent from every foundation package, declare a new extraPackages row on this engine in scripts/binaries.manifest.json and re-run fetch`,
+      );
+    });
+  }
   lock.generated = new Date().toISOString();
   await writeJson(lockPath(root), lock);
   for (const dir of staged) {

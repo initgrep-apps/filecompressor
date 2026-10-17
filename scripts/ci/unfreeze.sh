@@ -1,21 +1,46 @@
 #!/usr/bin/env bash
-# unfreeze.sh — restore a frozen macOS sidecar bundle (ADR 0001) into src-tauri/.
-# With --archive <tarball>: verify the sibling .sha256, then extract. Without it:
-# select and download the newest sidecars-* release bundle for the triple via gh
-# (requires GH_TOKEN). The bundle verifies and validates in a temp workspace
-# while the current tree is backed up OUTSIDE that workspace, so workspace
-# cleanup can never destroy the only copy; every interrupted or failed install
-# restores the pre-swap tree, and signals mid-swap always leave the original
-# tree bytes recoverable at a named backup path. Only a fully validated payload
-# is swapped in.
+# Verification (ADR 0001) — restore a frozen sidecar bundle into src-tauri/.
+# With --archive <tarball>: verify the sibling .sha256, then extract. Without
+# it: select and download the newest sidecars-* release bundle for the triple
+# via gh (requires GH_TOKEN). macOS bundles restore binaries/, frameworks/,
+# gs-resources/; windows bundles restore binaries/ only: binaries/engines/ for
+# the non-static manifest entries and the flat exes binaries/<dest>-<triple>.exe
+# for every manifest entry (ffmpeg/ffprobe are the tauri externalBin pair, the
+# vips/qpdf/gs flat copies exist so the verify.mjs content-arch and
+# audit-sidecars gate holds after unfreeze). The bundle
+# verifies and validates in a
+# temp workspace while the current tree is backed up OUTSIDE that workspace,
+# so workspace cleanup can never destroy the only copy; every interrupted or
+# failed install restores the pre-swap tree, and signals mid-swap always leave
+# the original tree bytes recoverable at a named backup path. Only a fully
+# validated payload is swapped in.
 # Usage: bash scripts/ci/unfreeze.sh --triple <triple> [--archive <tarball>] [--root <repo-root>]
 set -euo pipefail
 
 fail() { echo "unfreeze: FAIL — $*" >&2; exit 1; }
 info() { echo "unfreeze: $*"; }
 
-ENGINES="ffmpeg ffprobe qpdf vips gs"
-DIR_NAMES="binaries frameworks gs-resources"
+case "$0" in
+  */*) manifest_lists_sh="${0%/*}/windows-manifest-lists.sh" ;;
+  *) manifest_lists_sh="windows-manifest-lists.sh" ;;
+esac
+if [ -f "$manifest_lists_sh" ]; then
+  . "$manifest_lists_sh"
+else
+  fail "cannot load ./windows-manifest-lists.sh — it must sit beside unfreeze.sh"
+fi
+
+dll_scan() {
+  local dir="$1" errors status listing
+  errors="$(mktemp -t dll-scan-errors-XXXXXX)" || fail "cannot create a temp file for the DLL scan of $dir — check free disk space and permissions"
+  status=0
+  listing="$(find "$dir" -type f -name '*.dll' -print -quit 2>"$errors")" || status=$?
+  if [ "$status" -ne 0 ]; then
+    fail "could not read $dir to scan for DLLs: $(tr '\n' ' ' <"$errors") — a read error is not an empty tree, and restaging will not fix a permissions problem"
+  fi
+  rm -f "$errors" || echo "unfreeze: WARN — could not remove temp file $errors" >&2
+  [ -n "$listing" ]
+}
 
 TRIPLE=""
 ROOT=""
@@ -44,14 +69,28 @@ while [ $# -gt 0 ]; do
 done
 [ -n "$TRIPLE" ] || fail "--triple is required"
 
-case "$TRIPLE" in
-  aarch64-apple-darwin|x86_64-apple-darwin) ;;
-  *) fail "unsupported target triple '$TRIPLE' — unfreeze restores macOS freeze bundles only (ADR 0001); windows engines stage from the manifest" ;;
+case " aarch64-apple-darwin x86_64-apple-darwin " in
+  *" $TRIPLE "*) MODE="mac" ;;
+  *)
+    case " x86_64-pc-windows-msvc aarch64-pc-windows-msvc " in
+      *" $TRIPLE "*) MODE="windows" ;;
+      *) fail "unsupported target triple '$TRIPLE' — unfreeze restores macOS or Windows freeze bundles only (ADR 0001)" ;;
+    esac
+    ;;
 esac
 
 ROOT="${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 SRC="$ROOT/src-tauri"
 [ -d "$SRC" ] || fail "repo root '$ROOT' has no src-tauri directory"
+
+command -v tar >/dev/null 2>&1 || \
+  fail "tar is not on PATH — unfreeze extracts the bundle with tar; make sure the GNU/bsdtar binary is installed and reachable (macOS: 'xcode-select --install'; git-bash: run inside the bundled shell tools), then re-run"
+
+if [ "$MODE" = "mac" ]; then
+  DIR_NAMES="binaries frameworks gs-resources"
+else
+  DIR_NAMES="binaries"
+fi
 
 WORK=""
 LOCK_DIR=""
@@ -126,7 +165,11 @@ trap cleanup EXIT
 trap 'exit 143' HUP INT TERM
 
 sha256_of() {
-  shasum -a 256 "$1" | awk '{print $1}'
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    sha256sum "$1" | awk '{print $1}'
+  fi
 }
 
 verify_sha() {
@@ -144,16 +187,33 @@ verify_sha() {
 
 validate_payload() {
   extracted="$1"
-  [ -f "$extracted/gs-resources/Resource/Init/gs_init.ps" ] || \
-    fail "bundle is missing gs-resources/Resource/Init/gs_init.ps after extraction — refusing to swap in a partial bundle"
-  for engine in $ENGINES; do
-    [ -f "$extracted/binaries/${engine}-${TRIPLE}" ] || \
-      fail "bundle is missing binaries/${engine}-${TRIPLE} after extraction — refusing to swap in a partial bundle"
-  done
-  [ -d "$extracted/frameworks" ] || \
-    fail "bundle has an empty or missing frameworks/ after extraction — refusing to swap in a partial bundle"
-  [ -n "$(ls -A "$extracted/frameworks" 2>/dev/null)" ] || \
-    fail "bundle has an empty or missing frameworks/ after extraction — refusing to swap in a partial bundle"
+  if [ "$MODE" = "mac" ]; then
+    [ -f "$extracted/gs-resources/Resource/Init/gs_init.ps" ] || \
+      fail "bundle is missing gs-resources/Resource/Init/gs_init.ps after extraction — refusing to swap in a partial bundle"
+    for engine in ffmpeg ffprobe qpdf vips gs; do
+      [ -f "$extracted/binaries/${engine}-${TRIPLE}" ] || \
+        fail "bundle is missing binaries/${engine}-${TRIPLE} after extraction — refusing to swap in a partial bundle"
+    done
+    [ -d "$extracted/frameworks" ] || \
+      fail "bundle has an empty or missing frameworks/ after extraction — refusing to swap in a partial bundle"
+    [ -n "$(ls -A "$extracted/frameworks" 2>/dev/null)" ] || \
+      fail "bundle has an empty or missing frameworks/ after extraction — refusing to swap in a partial bundle"
+  else
+    derive_windows_lists "$ROOT" "$TRIPLE"
+    for engine in $WINDOWS_ENGINE_LIST; do
+      [ -d "$extracted/binaries/engines/$engine" ] || \
+        fail "bundle is missing binaries/engines/$engine after extraction — refusing to swap in a partial bundle"
+      [ -f "$extracted/binaries/engines/$engine/$engine.exe" ] || \
+        fail "bundle is missing binaries/engines/$engine/$engine.exe after extraction — refusing to swap in a partial bundle"
+      if ! dll_scan "$extracted/binaries/engines/$engine"; then
+        fail "bundle carries no DLL anywhere under binaries/engines/$engine after extraction — refusing to swap in a partial bundle; re-freeze from a freshly staged tree ('yarn binaries:all --target $TRIPLE', then bash scripts/ci/freeze.sh)"
+      fi
+    done
+    for exe in $WINDOWS_ALL_LIST; do
+      [ -f "$extracted/binaries/${exe}-${TRIPLE}.exe" ] || \
+        fail "bundle is missing binaries/${exe}-${TRIPLE}.exe after extraction — refusing to swap in a partial bundle"
+    done
+  fi
 }
 
 restore_from_backup() {
@@ -210,7 +270,7 @@ install_payload() {
 extract_and_restore() {
   archive="$1"
   mkdir -p "$WORK/root" || fail "cannot create the extraction dir $WORK/root — check free disk space"
-  tar -xzf "$archive" -C "$WORK/root" || fail "tar extraction failed for '$archive' — the bundle may be corrupt"
+  tar -xzf "$archive" -C "$WORK/root" || fail "tar extraction failed for '$archive' — the raw tar error is printed above; it may be a truncated, corrupt or tampered bundle (integrity), a volume out of free disk space under '$WORK', or the destination not being writable (permissions); rule those out or re-download the bundle, then re-run — a real integrity break should already have failed the .sha256 check above"
   validate_payload "$WORK/root"
   set_aside_existing
   install_payload

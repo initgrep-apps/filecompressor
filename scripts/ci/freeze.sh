@@ -1,21 +1,50 @@
 #!/usr/bin/env bash
-# freeze.sh — package the staged macOS sidecar engines into a release bundle
-# (ADR 0001): binaries/, frameworks/, gs-resources/ are tarred with paths rooted
-# for src-tauri/ into src-tauri/.freeze/sidecar-bundle-<triple>.tar.gz plus a
-# sibling .sha256. The bundle is built under a temp name and the pair is
-# published with the .sha256 first, then the bundle, so a torn publish reads as
-# a digest mismatch rather than a complete-looking stale pair; the final pair
-# is re-verified before success. A failed freeze keeps the previous bundle and
-# its digest intact, and the shared src-tauri/.freeze lock keeps freeze and
-# unfreeze from mutating .freeze concurrently. Refuses non-mac triples and
-# incomplete trees.
-# Usage: bash scripts/ci/freeze.sh --triple <mac-triple> [--root <repo-root>]
+# freeze.sh — package the staged sidecar engines into a release bundle (ADR
+# 0001). macOS triple: binaries/<engine>-<triple> plus frameworks/ and
+# gs-resources/. Windows triple: binaries/engines/<engine>/ payload dirs for
+# the non-static manifest entries, the flat exes binaries/<dest>-<triple>.exe
+# for every manifest entry (ffmpeg/ffprobe are the tauri externalBin pair,
+# the vips/qpdf/gs flat copies exist so the verify.mjs content-arch and
+# audit-sidecars gate holds after unfreeze; static:true entries ship as the
+# flat exe only) — everything tauri.windows.conf.json consumes; windows gs
+# runs on its compiled-in resources, so no gs-resources/ is bundled. Both
+# shapes extract directly into src-tauri/. The bundle is built under a temp
+# name and the pair is published with the .sha256 first, then the bundle, so a
+# torn publish reads as a digest mismatch rather than a complete-looking stale
+# pair; the final pair is re-verified before success. A failed freeze keeps
+# the previous bundle and its digest intact, and the shared src-tauri/.freeze
+# lock keeps freeze and unfreeze from mutating .freeze concurrently. Refuses
+# triples without a frozen-bundle design and incomplete trees.
+# Usage: bash scripts/ci/freeze.sh --triple <mac-or-windows-triple> [--root <repo-root>]
 set -euo pipefail
 
 fail() { echo "freeze: FAIL — $*" >&2; exit 1; }
 info() { echo "freeze: $*"; }
 
-ENGINES="ffmpeg ffprobe qpdf vips gs"
+case "$0" in
+  */*) manifest_lists_sh="${0%/*}/windows-manifest-lists.sh" ;;
+  *) manifest_lists_sh="windows-manifest-lists.sh" ;;
+esac
+if [ -f "$manifest_lists_sh" ]; then
+  . "$manifest_lists_sh"
+else
+  fail "cannot load ./windows-manifest-lists.sh — it must sit beside freeze.sh"
+fi
+
+dll_scan() {
+  local dir="$1" errors status listing
+  errors="$(mktemp -t dll-scan-errors-XXXXXX)" || fail "cannot create a temp file for the DLL scan of $dir — check free disk space and permissions"
+  status=0
+  listing="$(find "$dir" -type f -name '*.dll' -print -quit 2>"$errors")" || status=$?
+  if [ "$status" -ne 0 ]; then
+    fail "could not read $dir to scan for DLLs: $(tr '\n' ' ' <"$errors") — a read error is not an empty tree, and restaging will not fix a permissions problem"
+  fi
+  rm -f "$errors" || echo "freeze: WARN — could not remove temp file $errors" >&2
+  [ -n "$listing" ]
+}
+
+MAC_TRIPLES="aarch64-apple-darwin x86_64-apple-darwin"
+WINDOWS_TRIPLES="x86_64-pc-windows-msvc aarch64-pc-windows-msvc"
 
 TRIPLE=""
 ROOT=""
@@ -32,31 +61,53 @@ while [ $# -gt 0 ]; do
       shift 2
       ;;
     *)
-      fail "unknown argument '$1' — supported: --triple <mac-triple> [--root <repo-root>]"
+      fail "unknown argument '$1' — supported: --triple <mac-or-windows-triple> [--root <repo-root>]"
       ;;
   esac
 done
 [ -n "$TRIPLE" ] || fail "--triple is required"
 
-case "$TRIPLE" in
-  aarch64-apple-darwin|x86_64-apple-darwin) ;;
-  *) fail "unsupported target triple '$TRIPLE' — freeze bundles macOS engines only (ADR 0001)" ;;
+case " $MAC_TRIPLES " in
+  *" $TRIPLE "*) MODE="mac" ;;
+  *)
+    case " $WINDOWS_TRIPLES " in
+      *" $TRIPLE "*) MODE="windows" ;;
+      *) fail "unsupported target triple '$TRIPLE' — freeze bundles macOS or Windows engines only (ADR 0001)" ;;
+    esac
+    ;;
 esac
 
 ROOT="${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 SRC="$ROOT/src-tauri"
 [ -d "$SRC" ] || fail "repo root '$ROOT' has no src-tauri directory"
 
-for engine in $ENGINES; do
-  [ -f "$SRC/binaries/${engine}-${TRIPLE}" ] || \
-    fail "missing staged binary src-tauri/binaries/${engine}-${TRIPLE} — run 'yarn binaries:all --target $TRIPLE' first"
-done
+if [ "$MODE" = "mac" ]; then
+  for engine in ffmpeg ffprobe qpdf vips gs; do
+    [ -f "$SRC/binaries/${engine}-${TRIPLE}" ] || \
+      fail "missing staged binary src-tauri/binaries/${engine}-${TRIPLE} — run 'yarn binaries:all --target $TRIPLE' first"
+  done
 
-[ -d "$SRC/frameworks" ] || fail "missing src-tauri/frameworks — the staged tree has no dylib directory"
-[ -n "$(ls -A "$SRC/frameworks" 2>/dev/null)" ] || fail "src-tauri/frameworks is empty — the vips dylibs are not staged"
+  [ -d "$SRC/frameworks" ] || fail "missing src-tauri/frameworks — the staged tree has no dylib directory"
+  [ -n "$(ls -A "$SRC/frameworks" 2>/dev/null)" ] || fail "src-tauri/frameworks is empty — the vips dylibs are not staged"
 
-[ -f "$SRC/gs-resources/Resource/Init/gs_init.ps" ] || \
-  fail "missing src-tauri/gs-resources/Resource/Init/gs_init.ps — the ghostscript resources are not staged"
+  [ -f "$SRC/gs-resources/Resource/Init/gs_init.ps" ] || \
+    fail "missing src-tauri/gs-resources/Resource/Init/gs_init.ps — the ghostscript resources are not staged"
+else
+  derive_windows_lists "$ROOT" "$TRIPLE"
+  for engine in $WINDOWS_ENGINE_LIST; do
+    [ -d "$SRC/binaries/engines/$engine" ] || \
+      fail "missing staged payload dir src-tauri/binaries/engines/$engine — run 'yarn binaries:all --target $TRIPLE' first"
+    [ -f "$SRC/binaries/engines/$engine/$engine.exe" ] || \
+      fail "missing staged engine binary src-tauri/binaries/engines/$engine/$engine.exe — run 'yarn binaries:all --target $TRIPLE' first"
+    if ! dll_scan "$SRC/binaries/engines/$engine"; then
+      fail "src-tauri/binaries/engines/$engine carries no DLL anywhere under it — run 'yarn binaries:all --target $TRIPLE' to restage the engine: a windows engine without its DLL siblings fails only at compression time"
+    fi
+  done
+  for exe in $WINDOWS_ALL_LIST; do
+    [ -f "$SRC/binaries/${exe}-${TRIPLE}.exe" ] || \
+      fail "missing staged external binary src-tauri/binaries/${exe}-${TRIPLE}.exe — run 'yarn binaries:all --target $TRIPLE' first"
+  done
+fi
 
 LOCK_DIR=""
 OWN_LOCK=0
@@ -121,21 +172,41 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 143' HUP INT TERM
 
+compute_sha() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1"
+  else
+    sha256sum "$1"
+  fi
+}
+
 mkdir -p "$FREEZE_DIR" || fail "cannot create $FREEZE_DIR — make src-tauri writable and check free disk space"
 acquire_lock
 
-tar_args=()
-for engine in $ENGINES; do
-  tar_args+=("binaries/${engine}-${TRIPLE}")
-done
-
-tar -czf "$TMP_BUNDLE" -C "$SRC" "${tar_args[@]}" frameworks gs-resources
-(cd "$FREEZE_DIR" && shasum -a 256 "$TMP_NAME" > "${TMP_NAME}.sha256")
+if [ "$MODE" = "mac" ]; then
+  tar_args=()
+  for engine in ffmpeg ffprobe qpdf vips gs; do
+    tar_args+=("binaries/${engine}-${TRIPLE}")
+  done
+  tar -czf "$TMP_BUNDLE" -C "$SRC" "${tar_args[@]}" frameworks gs-resources
+else
+  tar_args=()
+  if [ -n "$WINDOWS_ENGINE_LIST" ]; then
+    tar_args+=(binaries/engines)
+  fi
+  for exe in $WINDOWS_ALL_LIST; do
+    tar_args+=("binaries/${exe}-${TRIPLE}.exe")
+  done
+  tar -czf "$TMP_BUNDLE" -C "$SRC" "${tar_args[@]}"
+fi
+(cd "$FREEZE_DIR" && compute_sha "$TMP_NAME" > "${TMP_NAME}.sha256")
 mv -f "$TMP_SHA" "$BUNDLE.sha256"
 mv -f "$TMP_BUNDLE" "$BUNDLE"
 
-published_sha="$(shasum -a 256 "$BUNDLE" | awk '{print $1}')" || \
+published_sha="$(compute_sha "$BUNDLE" | awk '{print $1}')" || \
   fail "cannot compute sha256 of the published bundle $BUNDLE"
+printf '%s  %s\n' "$published_sha" "$(basename "$BUNDLE")" > "$BUNDLE.sha256" || \
+  fail "cannot rewrite $BUNDLE.sha256 with the final bundle filename"
 expected_sha="$(awk 'NR==1 {print tolower($1); exit}' "$BUNDLE.sha256")" || \
   fail "published .sha256 $BUNDLE.sha256 is unreadable"
 [ "$published_sha" = "$expected_sha" ] || \

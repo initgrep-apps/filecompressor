@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildPe } from "./fixtures/pe-fixture.mjs";
 import { sha256File } from "./lib.mjs";
 import {
   assertAllEnginesStaged,
@@ -24,9 +25,17 @@ import {
   stageBrewBinary,
   writeBrewLockEntries,
 } from "./prep.mjs";
+import { describeDarwin, itDarwin } from "../test-platform.mjs";
 
 const cleanupRoots = [];
 const originalPath = process.env.PATH;
+
+const KERNEL32 = { dll: "KERNEL32.dll", functions: [{ name: "LoadLibraryExW" }] };
+const REAL_VIPS_EXE = () =>
+  buildPe({ importSpecs: [KERNEL32, { dll: "libglib-2.0-0.dll", functions: [] }] });
+const REAL_LEAF_DLL = () => buildPe({ importSpecs: [KERNEL32] });
+const REAL_GS_EXE = () => buildPe({ importSpecs: [KERNEL32, { dll: "libgs-10.dll", functions: [] }] });
+const REAL_GS_DLL = () => buildPe({ importSpecs: [KERNEL32, { dll: "zlib1.dll", functions: [] }] });
 
 function withPath(value, body) {
   const previous = process.env.PATH;
@@ -177,25 +186,25 @@ describe("parseBrewVersion", () => {
 });
 
 describe("brewVersion", () => {
-  it("reads the installed version from brew", async () => {
+  itDarwin("reads the installed version from brew", async () => {
     useStubBrew(await makeStubBrew(stubBrewScript("/opt/homebrew/opt/ghostscript", "10.08.0")));
     await expect(brewVersion("ghostscript")).resolves.toBe("10.08.0");
   });
 
-  it("names the install command when the formula is absent", async () => {
+  itDarwin("names the install command when the formula is absent", async () => {
     useStubBrew(await makeStubBrew("#!/bin/sh\nexit 1\n"));
     const error = await brewVersion("ghostscript").catch((thrown) => thrown);
     expect(error.message).toMatch(/brew list --versions ghostscript failed/);
     expect(error.remedy).toMatch(/brew install ghostscript/);
   });
 
-  it("reads the installed version for a brew formula that matches its pin", async () => {
+  itDarwin("reads the installed version for a brew formula that matches its pin", async () => {
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
     await expect(brewVersion("vips")).resolves.toBe("8.18.7");
   });
 
-  it("exposes a structured remedy instead of embedding it in the message", async () => {
+  itDarwin("exposes a structured remedy instead of embedding it in the message", async () => {
     useStubBrew(await makeStubBrew("#!/bin/sh\nexit 1\n"));
     await expect(brewVersion("ghostscript")).rejects.toMatchObject({
       name: "PipelinesError",
@@ -218,7 +227,7 @@ describe("brewVersion", () => {
   });
 });
 
-describe("assertBrewVersionsPinned", () => {
+describeDarwin("assertBrewVersionsPinned", () => {
   it("passes when every formula matches its pin", async () => {
     useStubBrew(await makeStubBrew(stubBrewScript("/opt/homebrew/opt/vips", "8.18.7")));
     await expect(assertBrewVersionsPinned([["vips", VIPS_ENTRY]])).resolves.toBeUndefined();
@@ -233,7 +242,7 @@ describe("assertBrewVersionsPinned", () => {
   });
 });
 
-describe("stageBrewBinary", () => {
+describeDarwin("stageBrewBinary", () => {
   it("copies the formula binary to the triple-suffixed staged path", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
@@ -272,7 +281,7 @@ describe("stageBrewBinary", () => {
   });
 });
 
-describe("assertStagedArch", () => {
+describeDarwin("assertStagedArch", () => {
   it("accepts the host arch and rejects a foreign-arch formula build", async () => {
     const root = await makeRoot(WITH_BREW);
     const armPrefix = await makeFormulaPrefix("vips", "arm64");
@@ -289,7 +298,7 @@ describe("assertStagedArch", () => {
   });
 });
 
-describe("writeBrewLockEntries", () => {
+describeDarwin("writeBrewLockEntries", () => {
   it("records the brew version and the staged sha for each brew engine", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
@@ -578,8 +587,8 @@ describe("prepTarget", () => {
     });
     const staging = join(root, "src-tauri", ".staging", "vips-x86_64-pc-windows-msvc", "vips-dev-8.18", "bin");
     await mkdir(staging, { recursive: true });
-    await writeFile(join(staging, "vips.exe"), "exe");
-    await writeFile(join(staging, "libglib-2.0-0.dll"), "dll");
+    await writeFile(join(staging, "vips.exe"), REAL_VIPS_EXE());
+    await writeFile(join(staging, "libglib-2.0-0.dll"), REAL_LEAF_DLL());
 
     await prepTarget("x86_64-pc-windows-msvc", root);
 
@@ -589,6 +598,157 @@ describe("prepTarget", () => {
       existsSync(join(root, "src-tauri", "frameworks")),
       "the macOS bundle scripts must not run for a Windows target",
     ).toBe(false);
+  });
+
+  it("refuses a windows engine whose staged DLLs leave a non-system import dangling", async () => {
+    const { mkdir, mkdtemp, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(join(tmpdir(), "prep-win-dangling-"));
+    const root = await makeRoot({
+      targets: {
+        "x86_64-pc-windows-msvc": {
+          gs: {
+            source: "url",
+            url: "https://example.invalid/gs.pkg.tar.zst",
+            sha256: "a".repeat(64),
+            member: "ucrt64/bin/gswin64c.exe",
+            dest: "gs",
+            expectVersion: "10.08.0",
+          },
+        },
+      },
+    });
+    const staging = join(root, "src-tauri", ".staging", "gs-x86_64-pc-windows-msvc", "ucrt64", "bin");
+    await mkdir(staging, { recursive: true });
+    await writeFile(join(staging, "gswin64c.exe"), REAL_GS_EXE());
+    await writeFile(join(staging, "libgs-10.dll"), REAL_GS_DLL());
+
+    await expect(prepTarget("x86_64-pc-windows-msvc", root)).rejects.toThrow(/zlib1\.dll/);
+  });
+
+  describe("windows prepTarget extraPackages lock gate", () => {
+    const extraGsEntry = () => ({
+      source: "url",
+      url: "https://example.invalid/gs.pkg.tar.zst",
+      sha256: "a".repeat(64),
+      member: "ucrt64/bin/gswin64c.exe",
+      dest: "gs",
+      expectVersion: "10.08.0",
+      extraPackages: [
+        {
+          name: "zlib",
+          source: "url",
+          url: "https://example.invalid/zlib.pkg.tar.zst",
+          sha256: "b".repeat(64),
+          member: "ucrt64/bin/zlib1.dll",
+        },
+      ],
+    });
+
+    async function stageWholeGsTreeWithExtras(root, { zlibBytes = null } = {}) {
+      const gsStaging = join(root, "src-tauri", ".staging", "gs-x86_64-pc-windows-msvc", "ucrt64", "bin");
+      await mkdir(gsStaging, { recursive: true });
+      await writeFile(join(gsStaging, "gswin64c.exe"), REAL_GS_EXE());
+      await writeFile(join(gsStaging, "libgs-10.dll"), REAL_GS_DLL());
+      const zlibStaging = join(root, "src-tauri", ".staging", "zlib-x86_64-pc-windows-msvc", "ucrt64", "bin");
+      await mkdir(zlibStaging, { recursive: true });
+      await writeFile(join(zlibStaging, "zlib1.dll"), zlibBytes ?? REAL_LEAF_DLL());
+    }
+
+    async function lockFor(root, options = {}) {
+      const zlibStaging = join(root, "src-tauri", ".staging", "zlib-x86_64-pc-windows-msvc", "ucrt64", "bin");
+      const { sha256File } = await import("./lib.mjs");
+      if (options.stagedMain) {
+        const binaryDir = join(root, "src-tauri", "binaries");
+        await mkdir(binaryDir, { recursive: true });
+        await writeFile(join(binaryDir, "gs-x86_64-pc-windows-msvc.exe"), "staged-main");
+      }
+      const zlibSha = options.zlibSha ?? (await sha256File(join(zlibStaging, "zlib1.dll")));
+      const gsEntry = extraGsEntry();
+      const lock = {
+        generated: "2026-01-01T00:00:00.000Z",
+        targets: {
+          "x86_64-pc-windows-msvc": {
+            gs: {
+              source: "url",
+              version: "10.08.0",
+              url: gsEntry.url,
+              sha256: gsEntry.sha256,
+              stagedSha256: options.stagedMain
+                ? await sha256File(`${root}/src-tauri/binaries/gs-x86_64-pc-windows-msvc.exe`)
+                : undefined,
+              extra: [
+                {
+                  name: "zlib",
+                  url: gsEntry.extraPackages[0].url,
+                  sha256: gsEntry.extraPackages[0].sha256,
+                  stagedSha256s: { "ucrt64/bin/zlib1.dll": zlibSha },
+                  date: "2026-01-01T00:00:00.000Z",
+                },
+              ],
+              date: "2026-01-01T00:00:00.000Z",
+            },
+          },
+        },
+      };
+      await writeFile(`${root}/scripts/binaries.lock.json`, JSON.stringify(lock));
+      return lock;
+    }
+
+    it("stages the extras beside the engine when lock rows and staged sha agree", async () => {
+      const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const dir = await mkdtemp(join(tmpdir(), "prep-win-extras-ok-"));
+      const root = await makeRoot({ targets: { "x86_64-pc-windows-msvc": { gs: extraGsEntry() } } });
+      await stageWholeGsTreeWithExtras(root);
+      const manifest = JSON.parse(await readFile(`${root}/scripts/binaries.manifest.json`, "utf8"));
+      manifest.targets["x86_64-pc-windows-msvc"].gs.extraPackages[0].member = "ucrt64/bin/zlib1.dll";
+      await writeFile(`${root}/scripts/binaries.manifest.json`, JSON.stringify(manifest));
+      await lockFor(root, { stagedMain: true });
+
+      await prepTarget("x86_64-pc-windows-msvc", root);
+
+      const engine = join(root, "src-tauri", "binaries", "engines", "gs");
+      expect(existsSync(join(engine, "gs.exe"))).toBe(true);
+      expect(existsSync(join(engine, "libgs-10.dll"))).toBe(true);
+      expect(existsSync(join(engine, "zlib1.dll"))).toBe(true);
+    });
+
+    it("requires a lock row for every declared extra", async () => {
+      const { mkdtemp, mkdir, writeFile, readFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const dir = await mkdtemp(join(tmpdir(), "prep-win-extras-nolock-"));
+      const root = await makeRoot({ targets: { "x86_64-pc-windows-msvc": { gs: extraGsEntry() } } });
+      await stageWholeGsTreeWithExtras(root);
+      const manifest = JSON.parse(await readFile(`${root}/scripts/binaries.manifest.json`, "utf8"));
+      manifest.targets["x86_64-pc-windows-msvc"].gs.extraPackages[0].member = "ucrt64/bin/zlib1.dll";
+      await writeFile(`${root}/scripts/binaries.manifest.json`, JSON.stringify(manifest));
+      await writeFile(`${root}/scripts/binaries.lock.json`, JSON.stringify({ generated: null, targets: {} }));
+
+      await expect(prepTarget("x86_64-pc-windows-msvc", root)).rejects.toThrow(
+        /extraPackages: zlib has no lock row/,
+      );
+    });
+
+    it("refuses a staged extra whose bytes drift from its lock digest", async () => {
+      const { mkdtemp, mkdir, writeFile, readFile } = await import("node:fs/promises");
+      const { createHash } = await import("node:crypto");
+      const { tmpdir } = await import("node:os");
+      const dir = await mkdtemp(join(tmpdir(), "prep-win-extras-drift-"));
+      const root = await makeRoot({ targets: { "x86_64-pc-windows-msvc": { gs: extraGsEntry() } } });
+      await stageWholeGsTreeWithExtras(root, { zlibBytes: "drifted" });
+      const manifest = JSON.parse(await readFile(`${root}/scripts/binaries.manifest.json`, "utf8"));
+      manifest.targets["x86_64-pc-windows-msvc"].gs.extraPackages[0].member = "ucrt64/bin/zlib1.dll";
+      await writeFile(`${root}/scripts/binaries.manifest.json`, JSON.stringify(manifest));
+      await lockFor(root, {
+        stagedMain: true,
+        zlibSha: createHash("sha256").update("real-zlib").digest("hex"),
+      });
+
+      await expect(prepTarget("x86_64-pc-windows-msvc", root)).rejects.toThrow(
+        /extraPackages: zlib staged ucrt64\/bin\/zlib1\.dll sha256/,
+      );
+    });
   });
 
   it("still refuses an unknown target before doing any work", async () => {
@@ -609,7 +769,7 @@ describe("prepTarget", () => {
     ).rejects.toThrow(/not staged and executable/);
   });
 
-  it("accepts a fully staged and executable engine set", async () => {
+  itDarwin("accepts a fully staged and executable engine set", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
@@ -619,7 +779,7 @@ describe("prepTarget", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("rejects a staged engine that lost its executable bit", async () => {
+  itDarwin("rejects a staged engine that lost its executable bit", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
@@ -643,7 +803,7 @@ describe("prepTarget", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("accepts any mode with at least one execute bit", async () => {
+  itDarwin("accepts any mode with at least one execute bit", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
@@ -672,7 +832,7 @@ describe("prepTarget", () => {
     expect(process.env.PATH, "withPath must restore the process PATH").toBe(originalPath);
   });
 
-  it("leaves the staged tree untouched when brew has drifted", async () => {
+  itDarwin("leaves the staged tree untouched when brew has drifted", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix, "8.19.0")));
@@ -692,7 +852,7 @@ describe("prepTarget", () => {
     expect(await readFile(destPath, "utf8")).toBe("previously staged bytes");
   });
 
-  it("reports the drift without creating binaries/ at all", async () => {
+  itDarwin("reports the drift without creating binaries/ at all", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix, "8.19.0")));
@@ -724,7 +884,7 @@ describe("prepTarget guard wiring", () => {
     expect(error.message).toMatch(/^gs: gs resources dir missing/);
   });
 
-  it("aborts when the bundle step leaves a staged engine non-executable", async () => {
+  itDarwin("aborts when the bundle step leaves a staged engine non-executable", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix)));
@@ -820,7 +980,7 @@ exit 0
     await expect(stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("reports brew drift before any bundle script mutates frameworks", async () => {
+  itDarwin("reports brew drift before any bundle script mutates frameworks", async () => {
     const root = await makeRoot(WITH_BREW);
     const prefix = await makeFormulaPrefix("vips");
     useStubBrew(await makeStubBrew(stubBrewScript(prefix, "8.19.0")));

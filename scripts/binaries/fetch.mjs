@@ -26,6 +26,13 @@ function fail(message) {
   process.exit(1);
 }
 
+export function extraMembersOf(extra) {
+  if (extra.member === null || extra.member === undefined) {
+    return null;
+  }
+  return typeof extra.member === "string" ? [extra.member] : [...extra.member];
+}
+
 async function loadManifest(root) {
   const path = manifestPath(root);
   if (!(await exists(path))) {
@@ -101,6 +108,139 @@ async function libStagingIntact(entry, staging, lockEntry) {
     return false;
   }
   return names.every((name) => digests[name] === pinned[name]);
+}
+
+export async function stagedDigestsForMembers(staging, members) {
+  const digests = {};
+  if (members === null) {
+    const entries = await readdir(staging, { recursive: true, withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!(entry.isFile() && entry.name.toLowerCase().endsWith(".dll"))) {
+        continue;
+      }
+      const parent = entry.parentPath ?? entry.path;
+      const relativeDir = typeof parent === "string" && parent.startsWith(staging) ? parent.slice(staging.length + 1) : "";
+      const relativePath = (relativeDir ? `${relativeDir}/${entry.name}` : entry.name).replace(/\\/g, "/");
+      digests[relativePath] = await sha256File(join(parent, entry.name));
+    }
+    return { digests, error: null };
+  }
+  for (const member of members) {
+    const path = join(staging, member);
+    if (!(await exists(path))) {
+      const listing = await readdir(staging, { recursive: true }).catch((error) => [
+        `<listing unavailable: ${error.message ?? error}>`,
+      ]);
+      return { digests: null, error: `member '${member}' missing from the staged extra package — extracted files: ${listing.slice(0, 20).join(", ") || "(empty)"}` };
+    }
+    digests[member.replace(/\\/g, "/")] = await sha256File(path);
+  }
+  return { digests, error: null };
+}
+
+async function stagedExtrasIntact(staging, members, pinned) {
+  const { digests, error } = await stagedDigestsForMembers(staging, members);
+  if (error) {
+    return { intact: false, error };
+  }
+  const names = Object.keys(digests).sort();
+  if (names.length === 0) {
+    return { intact: false, error: "the staging holds no downloadable member for this extra package" };
+  }
+  if (names.join(",") !== Object.keys(pinned).sort().join(",")) {
+    return { intact: false, error: null, digests };
+  }
+  for (const name of names) {
+    if (digests[name] !== pinned[name]) {
+      return { intact: false, error: null, digests };
+    }
+  }
+  return { intact: true, error: null, digests };
+}
+
+async function fetchExtra(engineName, extra, triple, root, previous) {
+  const staging = stagingDir(root, extra.name, triple);
+  const archivePath = archiveArtifactPath(root, extra.name, triple, extra.url);
+  const members = extraMembersOf(extra);
+  if (previous && previous.sha256 === extra.sha256 && previous.url === extra.url) {
+    const status = await stagedExtrasIntact(staging, members, previous.stagedSha256s);
+    if (status.intact) {
+      console.log(`fetch: ${engineName} extra ${extra.name} unchanged (lock + staged digests match)`);
+      return null;
+    }
+    if (status.error) {
+      console.warn(
+        `WARN re-fetching ${engineName} extra ${extra.name}: ${status.error}`,
+      );
+    }
+  }
+
+  try {
+    await mkdir(dirname(archivePath), { recursive: true });
+    await download(extra.url, archivePath);
+  } catch (error) {
+    await removeStaging(staging);
+    await rm(archivePath, { force: true }).catch(() => {});
+    if (/\bHTTP 4(04|10)\b/.test(`${error.message ?? error}`)) {
+      fail(
+        `extraPackages: ${extra.name} artifact unavailable (vendor may have pruned it): ${extra.url} — download the archive manually, update url + sha256 in scripts/binaries.manifest.json, then re-run 'yarn binaries:fetch'`,
+      );
+    }
+    fail(`extraPackages: ${extra.name} download failed: ${error.message ?? error}`);
+  }
+
+  const actualSha = await sha256File(archivePath);
+  if (actualSha !== extra.sha256) {
+    await removeStaging(staging);
+    await rm(archivePath, { force: true }).catch(() => {});
+    fail(
+      `extraPackages: ${extra.name} sha256 mismatch: manifest pins ${extra.sha256}, downloaded artifact is ${actualSha} — the download may be corrupt or the pin stale; update url + sha256 in scripts/binaries.manifest.json for the current package release, then re-run`,
+    );
+  }
+
+  try {
+    await rm(staging, { recursive: true, force: true });
+  } catch (error) {
+    fail(`cannot clear stale staging for extra ${extra.name} (${triple}) at ${staging}: ${error.message ?? error}`);
+  }
+  await extract(archivePath, staging);
+  await rm(archivePath, { force: true });
+
+  const status = await stagedDigestsForMembers(staging, members);
+  if (status.error) {
+    await removeStaging(staging);
+    fail(`extraPackages: ${extra.name} ${status.error}`);
+  }
+  const digests = status.digests;
+  if (Object.keys(digests).length === 0) {
+    await removeStaging(staging);
+    fail(`extraPackages: ${extra.name} staged tree holds no *.dll to stage beside ${engineName} — check the package layout against the member pin`);
+  }
+  return { name: extra.name, url: extra.url, sha256: extra.sha256, stagedSha256s: digests, date: new Date().toISOString() };
+}
+
+async function fetchEntryExtras(lockTarget, name, entry, triple, root) {
+  const engineName = entry.dest ?? name;
+  const declared = entry.extraPackages ?? [];
+  const rows = [];
+  let changed = false;
+  for (const extra of declared) {
+    const previous = lockTarget[name]?.extra?.find((row) => row.name === extra.name);
+    const fresh = await fetchExtra(engineName, extra, triple, root, previous);
+    if (fresh) {
+      rows.push(fresh);
+      changed = true;
+      console.log(`fetch: ${engineName} extra ${extra.name} staged from ${extra.url}`);
+    } else {
+      rows.push(previous);
+    }
+  }
+  const previousCount = (lockTarget[name]?.extra ?? []).length;
+  if (changed || rows.length !== previousCount) {
+    lockTarget[name] = { ...(lockTarget[name] ?? {}), extra: rows.sort((a, b) => (a.name < b.name ? -1 : 1)) };
+    return true;
+  }
+  return false;
 }
 
 async function fetchOne(name, entry, triple, root, lockEntry) {
@@ -226,6 +366,10 @@ export async function fetchTarget(target, root) {
     if (result) {
       lockTarget[name] = result.lockEntry;
       changed = true;
+    }
+    if (entry.extraPackages) {
+      const extrasChanged = await fetchEntryExtras(lockTarget, name, entry, target, root);
+      changed = changed || extrasChanged;
     }
   }
 
