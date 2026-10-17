@@ -22,7 +22,11 @@ fail() { echo "freeze: FAIL — $*" >&2; exit 1; }
 info() { echo "freeze: $*"; }
 
 case "$0" in
-  */*) manifest_lists_sh="${0%/*}/windows-manifest-lists.sh" ;;
+  *\\*) arg0="${0//\\//}" ;;
+  *) arg0="$0" ;;
+esac
+case "$arg0" in
+  */*) manifest_lists_sh="${arg0%/*}/windows-manifest-lists.sh" ;;
   *) manifest_lists_sh="windows-manifest-lists.sh" ;;
 esac
 if [ -f "$manifest_lists_sh" ]; then
@@ -77,7 +81,7 @@ case " $MAC_TRIPLES " in
     ;;
 esac
 
-ROOT="${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+ROOT="${ROOT:-$(cd "$(dirname "$arg0")/../.." && pwd)}"
 SRC="$ROOT/src-tauri"
 [ -d "$SRC" ] || fail "repo root '$ROOT' has no src-tauri directory"
 

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.setConfig({ testTimeout: 30_000 });
 
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -461,6 +461,14 @@ async function stubEnv(destRoot, { mode, ghList, repo, triple, roots } = {}) {
 }
 
 describe("unfreeze.sh", () => {
+  it("resolves_windows_backslash_script_paths_for_the_sibling_manifest_lists_and_root", () => {
+    const source = readFileSync(join(HERE, "unfreeze.sh"), "utf8");
+    expect(
+      source.includes("${0//\\\\//}"),
+      "the sibling windows-manifest-lists.sh lookup and the fallback repo-root derivation must normalize Windows backslash argv[0] (execFile passes D:\\... so ${0%/*} never sees a slash and every fixture freeze/unfreeze dies with 'cannot load ./windows-manifest-lists.sh')",
+    ).toBe(true);
+  });
+
   it("survives_gnu_mktemp_semantics_when_scanning_window_engine_dirs_for_dlls", async () => {
     await withWindowsFrozenSource(async (srcRoot) => {
       await withBareDest(async (destRoot) => {

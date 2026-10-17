@@ -21,7 +21,11 @@ fail() { echo "unfreeze: FAIL — $*" >&2; exit 1; }
 info() { echo "unfreeze: $*"; }
 
 case "$0" in
-  */*) manifest_lists_sh="${0%/*}/windows-manifest-lists.sh" ;;
+  *\\*) arg0="${0//\\//}" ;;
+  *) arg0="$0" ;;
+esac
+case "$arg0" in
+  */*) manifest_lists_sh="${arg0%/*}/windows-manifest-lists.sh" ;;
   *) manifest_lists_sh="windows-manifest-lists.sh" ;;
 esac
 if [ -f "$manifest_lists_sh" ]; then
@@ -79,7 +83,7 @@ case " aarch64-apple-darwin x86_64-apple-darwin " in
     ;;
 esac
 
-ROOT="${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+ROOT="${ROOT:-$(cd "$(dirname "$arg0")/../.." && pwd)}"
 SRC="$ROOT/src-tauri"
 [ -d "$SRC" ] || fail "repo root '$ROOT' has no src-tauri directory"
 
