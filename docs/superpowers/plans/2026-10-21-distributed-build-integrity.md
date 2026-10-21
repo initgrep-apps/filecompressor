@@ -52,6 +52,7 @@ Five failure modes the spec implies that no step's assertions obviously cover. E
 | File | Change |
 |---|---|
 | `src-tauri/tauri.conf.json` | `bundle.macOS.entitlements` → `"Entitlements.plist"`. |
+| `src-tauri/Cargo.toml` | `plist = "1"` in `[dev-dependencies]` for the entitlements config test (already in `Cargo.lock` via `tauri`). |
 | `src-tauri/tauri.windows.conf.json` | `bundle.resources["binaries/engines/"]` → `"resources/engines/"`. |
 | `src-tauri/src/sidecar.rs` | One new candidate line in `sidecar_candidates` (Task 2b) and three new tests in the existing `#[cfg(test)] mod tests`: the entitlements config test (Task 1), the Windows engine-folder contract test (Task 2), and the externalBin stripped-name contract test (Task 2b). |
 | `src-tauri/src/engine/processor.rs` | One new test: `resolve_for_finds_every_engine_in_a_bundled_package` (Task 3). |
@@ -70,6 +71,7 @@ Five failure modes the spec implies that no step's assertions obviously cover. E
 **Files:**
 - Create: `src-tauri/Entitlements.plist`
 - Modify: `src-tauri/tauri.conf.json` (`bundle.macOS`, currently line 42-43)
+- Modify: `src-tauri/Cargo.toml` — add `plist = "1"` to `[dev-dependencies]` (already in `Cargo.lock` as a `tauri` transitive dependency at 1.10.1; no new crate is fetched)
 - Test: `src-tauri/src/sidecar.rs` (existing `#[cfg(test)] mod tests`)
 
 **Interfaces:**
@@ -86,25 +88,49 @@ fn tauri_conf_json_references_a_readable_macos_entitlements_file() {
     let manifest = env!("CARGO_MANIFEST_DIR");
     let conf = std::fs::read_to_string(format!("{manifest}/tauri.conf.json"))
         .expect("tauri.conf.json readable from src-tauri");
-    let value: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
+    let value: serde_json::Value =
+        serde_json::from_str(&conf).expect("tauri.conf.json parses as JSON");
     let entitlements = value["bundle"]["macOS"]["entitlements"]
         .as_str()
-        .expect("bundle.macOS.entitlements must name an entitlements file");
+        .unwrap_or_else(|| {
+            panic!(
+                "bundle.macOS.entitlements must be a string, got {:?}",
+                value["bundle"]["macOS"]["entitlements"]
+            )
+        });
+    assert_ne!(
+        value["bundle"]["macOS"]["hardenedRuntime"],
+        serde_json::Value::Bool(false),
+        "the hardened runtime must stay on: the entitlement route exists precisely to keep the \
+         notarization path open (ADR 0002)"
+    );
     let path = format!("{manifest}/{entitlements}");
-    let body = std::fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("the entitlements file must exist and be readable: {path} ({error})"));
-    assert!(
-        body.contains("com.apple.security.cs.disable-library-validation"),
-        "{path} must grant com.apple.security.cs.disable-library-validation — without it the hardened \
-         runtime rejects the ad-hoc-signed dylibs the helpers ship with"
+    let plist = plist::Value::from_file(&path)
+        .unwrap_or_else(|error| panic!("{path} must be a well-formed plist: {error}"));
+    let dict = plist
+        .as_dictionary()
+        .unwrap_or_else(|| panic!("{path} must contain a top-level dictionary"));
+    assert_eq!(
+        dict.len(),
+        1,
+        "{path} must carry exactly the one narrow exemption ADR 0002 records, got {:?}",
+        dict.keys().collect::<Vec<_>>()
+    );
+    assert_eq!(
+        dict.get("com.apple.security.cs.disable-library-validation"),
+        Some(&plist::Value::Boolean(true)),
+        "{path} must grant com.apple.security.cs.disable-library-validation = true — without \
+         it the hardened runtime rejects the ad-hoc-signed dylibs the helpers ship with"
     );
 }
 ```
 
+Parse the plist rather than matching text: CF's last-wins duplicate handling, XML comments, and keys nested in an inner `<dict>` all pass a substring check while leaving the entitlement off, and the single-key assertion keeps the exemption as narrow as ADR 0002 records it.
+
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cd src-tauri && cargo test --lib tauri_conf_json_references_a_readable_macos_entitlements_file`
-Expected: FAIL — `bundle.macOS.entitlements` is absent, so `.as_str()` returns `None` and the `expect` panics.
+Expected: FAIL — `bundle.macOS.entitlements` is absent, so `.as_str()` returns `None` and the `unwrap_or_else` panics.
 
 - [ ] **Step 3: Create the entitlements file**
 
@@ -186,7 +212,7 @@ If `yarn tauri build` fails for a reason unrelated to signing (missing staged en
 - [ ] **Step 9: Commit**
 
 ```bash
-git add src-tauri/Entitlements.plist src-tauri/tauri.conf.json src-tauri/src/sidecar.rs
+git add src-tauri/Entitlements.plist src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/src/sidecar.rs
 git commit -m "fix(macos): let the ad-hoc-signed helpers load their dylibs
 
 The released app signs the sidecars with the hardened runtime while the 71
