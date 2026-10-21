@@ -1307,4 +1307,23 @@ mod tests {
             resources
         );
     }
+
+    #[test]
+    fn tauri_conf_json_references_a_readable_macos_entitlements_file() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let conf = std::fs::read_to_string(format!("{manifest}/tauri.conf.json"))
+            .expect("tauri.conf.json readable from src-tauri");
+        let value: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
+        let entitlements = value["bundle"]["macOS"]["entitlements"]
+            .as_str()
+            .expect("bundle.macOS.entitlements must name an entitlements file");
+        let path = format!("{manifest}/{entitlements}");
+        let body = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("the entitlements file must exist and be readable: {path} ({error})"));
+        assert!(
+            body.contains("com.apple.security.cs.disable-library-validation"),
+            "{path} must grant com.apple.security.cs.disable-library-validation — without it the hardened \
+             runtime rejects the ad-hoc-signed dylibs the helpers ship with"
+        );
+    }
 }
