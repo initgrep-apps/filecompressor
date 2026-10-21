@@ -1313,15 +1313,17 @@ mod tests {
         let manifest = env!("CARGO_MANIFEST_DIR");
         let conf = std::fs::read_to_string(format!("{manifest}/tauri.conf.json"))
             .expect("tauri.conf.json readable from src-tauri");
-        let value: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
+        let value: serde_json::Value =
+            serde_json::from_str(&conf).expect("tauri.conf.json parses as JSON");
         let entitlements = value["bundle"]["macOS"]["entitlements"]
             .as_str()
             .expect("bundle.macOS.entitlements must name an entitlements file");
         let path = format!("{manifest}/{entitlements}");
         let body = std::fs::read_to_string(&path)
             .unwrap_or_else(|error| panic!("the entitlements file must exist and be readable: {path} ({error})"));
+        let compact: String = body.split_whitespace().collect();
         assert!(
-            body.contains("com.apple.security.cs.disable-library-validation"),
+            compact.contains("<key>com.apple.security.cs.disable-library-validation</key><true/>"),
             "{path} must grant com.apple.security.cs.disable-library-validation — without it the hardened \
              runtime rejects the ad-hoc-signed dylibs the helpers ship with"
         );
