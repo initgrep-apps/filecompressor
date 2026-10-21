@@ -1317,15 +1317,35 @@ mod tests {
             serde_json::from_str(&conf).expect("tauri.conf.json parses as JSON");
         let entitlements = value["bundle"]["macOS"]["entitlements"]
             .as_str()
-            .expect("bundle.macOS.entitlements must name an entitlements file");
+            .unwrap_or_else(|| {
+                panic!(
+                    "bundle.macOS.entitlements must be a string, got {:?}",
+                    value["bundle"]["macOS"]["entitlements"]
+                )
+            });
+        assert_ne!(
+            value["bundle"]["macOS"]["hardenedRuntime"],
+            serde_json::Value::Bool(false),
+            "the hardened runtime must stay on: the entitlement route exists precisely to keep the \
+             notarization path open (ADR 0002)"
+        );
         let path = format!("{manifest}/{entitlements}");
-        let body = std::fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("the entitlements file must exist and be readable: {path} ({error})"));
-        let compact: String = body.split_whitespace().collect();
-        assert!(
-            compact.contains("<key>com.apple.security.cs.disable-library-validation</key><true/>"),
-            "{path} must grant com.apple.security.cs.disable-library-validation — without it the hardened \
-             runtime rejects the ad-hoc-signed dylibs the helpers ship with"
+        let plist = plist::Value::from_file(&path)
+            .unwrap_or_else(|error| panic!("{path} must be a well-formed plist: {error}"));
+        let dict = plist
+            .as_dictionary()
+            .unwrap_or_else(|| panic!("{path} must contain a top-level dictionary"));
+        assert_eq!(
+            dict.len(),
+            1,
+            "{path} must carry exactly the one narrow exemption ADR 0002 records, got {:?}",
+            dict.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            dict.get("com.apple.security.cs.disable-library-validation"),
+            Some(&plist::Value::Boolean(true)),
+            "{path} must grant com.apple.security.cs.disable-library-validation = true — without \
+             it the hardened runtime rejects the ad-hoc-signed dylibs the helpers ship with"
         );
     }
 }

@@ -973,6 +973,7 @@ dependencies = [
  "dirs",
  "filetime",
  "libc",
+ "plist",
  "serde",
  "serde_json",
  "tauri",
