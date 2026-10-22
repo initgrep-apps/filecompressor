@@ -1327,7 +1327,7 @@ mod tests {
             value["bundle"]["macOS"]["hardenedRuntime"],
             serde_json::Value::Bool(false),
             "the hardened runtime must stay on: the entitlement route exists precisely to keep the \
-             notarization path open (ADR 0002)"
+             notarization path open"
         );
         let path = format!("{manifest}/{entitlements}");
         let plist = plist::Value::from_file(&path)
@@ -1338,7 +1338,7 @@ mod tests {
         assert_eq!(
             dict.len(),
             1,
-            "{path} must carry exactly the one narrow exemption ADR 0002 records, got {:?}",
+            "{path} must carry exactly the one narrow exemption this app allows, got {:?}",
             dict.keys().collect::<Vec<_>>()
         );
         assert_eq!(

@@ -102,7 +102,7 @@ fn tauri_conf_json_references_a_readable_macos_entitlements_file() {
         value["bundle"]["macOS"]["hardenedRuntime"],
         serde_json::Value::Bool(false),
         "the hardened runtime must stay on: the entitlement route exists precisely to keep the \
-         notarization path open (ADR 0002)"
+         notarization path open"
     );
     let path = format!("{manifest}/{entitlements}");
     let plist = plist::Value::from_file(&path)
@@ -113,7 +113,7 @@ fn tauri_conf_json_references_a_readable_macos_entitlements_file() {
     assert_eq!(
         dict.len(),
         1,
-        "{path} must carry exactly the one narrow exemption ADR 0002 records, got {:?}",
+        "{path} must carry exactly the one narrow exemption this app allows, got {:?}",
         dict.keys().collect::<Vec<_>>()
     );
     assert_eq!(
@@ -125,7 +125,7 @@ fn tauri_conf_json_references_a_readable_macos_entitlements_file() {
 }
 ```
 
-Parse the plist rather than matching text: CF's last-wins duplicate handling, XML comments, and keys nested in an inner `<dict>` all pass a substring check while leaving the entitlement off, and the single-key assertion keeps the exemption as narrow as ADR 0002 records it.
+Parse the plist rather than matching text: CF's last-wins duplicate handling, XML comments, and keys nested in an inner `<dict>` all pass a substring check while leaving the entitlement off, and the single-key assertion keeps the exemption as narrow as the app allows (one entitlement).
 
 - [ ] **Step 2: Run the test to verify it fails**
 
