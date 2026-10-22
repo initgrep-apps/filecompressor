@@ -395,26 +395,26 @@ mod tests {
     }
 
     #[test]
-    fn resolve_for_windows_still_resolves_exe_dir_binaries() {
+    fn resolve_for_finds_the_flat_sidecars_the_windows_bundle_ships() {
         let dir = tempfile::TempDir::new().unwrap();
-        let exe_dir = dir.path().join("Contents").join("MacOS");
+        let exe_dir = dir.path().join("app");
         std::fs::create_dir_all(&exe_dir).unwrap();
         for name in ["ffmpeg", "ffprobe", "qpdf"] {
-            let filename = crate::sidecar::sidecar_filename(name).unwrap();
-            std::fs::write(exe_dir.join(filename), b"stub").unwrap();
+            std::fs::write(exe_dir.join(format!("{name}.exe")), b"stub").unwrap();
         }
 
         let paths = SidecarPaths::resolve_for(&exe_dir);
 
         assert!(
             paths.ffmpeg.is_some(),
-            "ffmpeg ships as an externalBin beside the app binary, not in an engine folder"
+            "ffmpeg ships as a stripped-name externalBin beside the app binary, not in an engine \
+             folder"
         );
         assert!(paths.ffprobe.is_some());
         assert!(
             paths.qpdf.is_some(),
-            "qpdf must still resolve from the flat exe-dir candidates when no engine folder \
-             exists, so existing layouts keep working"
+            "qpdf must still resolve from the flat stripped-name exe-dir candidate when no engine \
+             folder exists, so existing layouts keep working"
         );
     }
 

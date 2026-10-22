@@ -547,8 +547,9 @@ mod tests {
         assert_eq!(
             candidates.len(),
             3,
-            "the exe-dir candidate list is exactly the triple-suffixed name, then the bare name, \
-             then the stripped .exe name the windows bundler produces"
+            "the exe-dir candidate list for externalBin sidecars (ffmpeg/ffprobe) is exactly the \
+             triple-suffixed name, then the bare name, then the stripped .exe name the windows \
+             bundler produces"
         );
         assert_eq!(candidates[0], dir.join(triple_name));
         assert_eq!(candidates[1], dir.join("vips"));
@@ -1431,10 +1432,10 @@ mod tests {
         let candidates = sidecar_candidates(&exe_dir, "ffmpeg");
         assert!(
             candidates.contains(&exe_dir.join("ffmpeg.exe")),
-            "the windows bundler strips the -{{target_triple}} suffix and keeps the .exe \
-             (tauri-bundler copy_binaries), so the shipped ffmpeg.exe is only found through the \
-             stripped-name candidate — v0.1.0-alpha.1 shipped ffmpeg.exe beside the app and video \
-             compression failed with 'Engine error: ffmpeg not available'"
+            "the windows bundler strips the -{{target_triple}} suffix and keeps the .exe, so the \
+             shipped ffmpeg.exe is only found through the stripped-name candidate — \
+             v0.1.0-alpha.1 shipped ffmpeg.exe beside the app and video compression failed with \
+             'Engine error: ffmpeg not available'"
         );
     }
 }
