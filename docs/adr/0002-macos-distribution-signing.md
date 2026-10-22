@@ -10,7 +10,7 @@ We ship macOS builds ad-hoc signed (`bundle.macOS.signingIdentity = "-"`) with `
 
 ## Ruling (2026-10-21): entitlement, not a disabled hardened runtime
 
-`src-tauri/Entitlements.plist` grants exactly one entitlement, `com.apple.security.cs.disable-library-validation = true`, and `bundle.macOS.entitlements` points at it. Tauri applies the entitlement to every signed target — the app, the `externalBin` sidecars, and the framework dylibs — while signing the executables with `--options runtime`.
+`src-tauri/Entitlements.plist` grants exactly one entitlement, `com.apple.security.cs.disable-library-validation = true`, and `bundle.macOS.entitlements` points at it. Tauri passes the entitlements to the app and its `externalBin` sidecars while signing the executables with `--options runtime`. The framework dylibs are signed ad-hoc without entitlements; the entitlement on the executables is what lets them load those dylibs.
 
 The defect this fixes: ad-hoc signing plus the hardened runtime made macOS library validation reject the ad-hoc-signed dylibs the helpers ship with ("mapping process and mapped file have different Team IDs"). In the shipped `v0.1.0-alpha.1` build, `vips`, `qpdf` and `gs` died with `Library not loaded`, so image, PDF and document compression failed. `ffmpeg`/`ffprobe` are statically linked and kept working.
 
@@ -21,7 +21,8 @@ The entitlement is verified at three levels: a Rust test parses the plist and as
 1. Apple issues a **Developer ID Application** certificate and a Team ID.
 2. Export the certificate as a `.p12`, base64 it, and store it as a GitHub secret.
 3. Add to both macOS rows of `release.yml`: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, plus `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password) and `APPLE_TEAM_ID` — or the App Store Connect API key form (`APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`).
-4. Tauri then signs with the real certificate and submits the app to Apple's notary automatically. **No code change.** The hardened runtime stays on; every dylib carries the same Team ID, so the entitlement becomes unnecessary and may be deleted.
+4. **Change the config**: `bundle.macOS.signingIdentity` is pinned to `"-"` today, and a pinned identity overrides the environment. Remove the key or set it to the Developer ID identity; otherwise the bundler rejects the imported certificate (`certificate from APPLE_CERTIFICATE … does not match provided identity "-"`).
+5. Tauri then signs with the real certificate and submits the app to Apple's notary automatically. No Rust or workflow logic changes — the config step above is the only edit. The hardened runtime stays on; every dylib is signed with the same Developer ID, so the entitlement becomes unnecessary and may be deleted.
 
 ## Consequences
 

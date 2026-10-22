@@ -38,11 +38,11 @@ hdiutil detach /Volumes/<volume-name>
 
 ## Verifying a release
 
-`node scripts/ci/package-gate.mjs --triple <triple>` proves the engines are present, startable and usable inside the built package. The 4-platform × 4-file-type matrix in `docs/distribution-acceptance.md` covers the UI layer, which CI cannot.
+`node scripts/ci/package-gate.mjs --triple <triple>` proves the engines are present, startable and usable inside the built package. The platform × file-type matrix in `docs/distribution-acceptance.md` covers the UI layer, which CI cannot.
 
 ## For users
 
-Download the installer for your platform from the latest release, or build from source (see **For developers**). Then:
+Download the installer for your platform from the Releases page once a release is published, or build from source (see **For developers**). Then:
 
 1. Open the app and drag files onto the drop zone (or click it to browse).
 2. Press **Compress**. Progress shows per file; you can cancel any file or the whole batch.

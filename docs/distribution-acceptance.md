@@ -49,3 +49,5 @@ A screenshot of the app's error is enough if it contains the text. Add the row t
 ## Where the automated half lives
 
 `node scripts/ci/package-gate.mjs --triple <triple>` (also run by every release row in `.github/workflows/release.yml`). Run it locally against a built package with `--bundle-dir <path>` when the package is not in the default `src-tauri/target/<triple>/release/bundle/` location.
+
+What the gate opens: the built `.app` on macOS and the NSIS installer payload on Windows. It does not open the `.dmg`, the `.app.tar.gz`, or the MSI — `hdiutil attach` plus the documented install is the manual check for the macOS download, and the MSI row above is the manual check for that installer.
