@@ -349,9 +349,9 @@ How history queries work (`history.rs`): `get_history` reads and **parses the en
 ## 9. Build, packaging, and sidecar supply chain
 
 - **Manifest = intention, lock = truth.** `scripts/binaries.manifest.json` (edited by hand: download URL, sha256, expected version for each tool and target) → `yarn binaries:fetch` verifies checksums, stages the files, and writes `scripts/binaries.lock.json`. `binaries:prep` collects macOS dylibs (sets rpath, ad-hoc signs) and prepares Windows engine folders. `binaries:verify` checks CPU architecture vs file name and version vs lock. `binaries:audit` includes a clean-room Ghostscript test (runs with an empty environment + sentinel files).
-- **Bundle layout:** macOS ships flat `externalBin` files + 71 framework dylibs listed in `tauri.conf.json:43-115` + `gs-resources/`. Windows ships ffmpeg/ffprobe flat + vips/gs/qpdf as `binaries/engines/{name}/` resource folders with DLLs (the Windows config overrides `externalBin` with an array replace, per RFC 7396).
-- **Size:** about 150 MB per platform (spec §2); roughly ~150 MB macOS / ~177 MB Windows once all engine folders and DLLs are staged.
-- **CI/CD:** none exists yet. `docs/superpowers/specs/2026-10-02-cicd-devops-tbd.md` is a placeholder. The `slice-9-devops-cicd-hardening` plan has 0 of 28 steps done. Known blocker: on a fresh clone, `cargo test` fails before `yarn binaries:all` runs, because `bundle.externalBin` requires binaries that only the fetch step creates.
+- **Bundle layout:** macOS ships flat `externalBin` files + 71 framework dylibs listed under `bundle.macOS.frameworks` in `tauri.conf.json` + `gs-resources/`. Windows ships ffmpeg/ffprobe flat + vips/gs/qpdf as one resource folder per engine (source `binaries/engines/{name}/`; the destination is set in `tauri.windows.conf.json`) with DLLs (the Windows config overrides `externalBin` with an array replace, per RFC 7396).
+- **Size:** spec §2 targets about 150 MB per platform; the measured aarch64 release `.app` is ~214 MiB of files (~215 MiB on disk) with all sidecars and framework dylibs staged.
+- **CI/CD:** four workflows exist — `ci.yml` (PR/push gate on macOS arm64 + Windows x64), `freeze.yml` (manual engine freeze into `sidecars-*` releases), `release.yml` (`v*` tag → four native platform builds, draft upload) and `release-please.yml` (release PRs from conventional commits). Known blocker: on a fresh clone, `cargo test` fails before `yarn binaries:all` runs, because `bundle.externalBin` requires binaries that only the fetch step creates.
 
 ---
 
@@ -364,7 +364,7 @@ How history queries work (`history.rs`): `get_history` reads and **parses the en
 | Item | Status |
 |---|---|
 | Windows Ghostscript resource tree | **Blocker** — the pinned MSYS2 package has no `Resource/`, `fonts/`, or `iccprofiles/`. PDF compression would fail on Windows. `prep-windows.mjs` fails loudly on purpose (`docs/bugs.md`). |
-| CI/CD | Not started (spec is a placeholder). |
+| CI/CD | `ci.yml`, `freeze.yml`, `release.yml`, `release-please.yml` exist; release rows not yet proven end-to-end (see `docs/ci-followups.md`). |
 | Windows/Intel sidecar end-to-end verification | Waiting for a Windows machine or CI runner. |
 | GUI manual tests (parallel + history acceptance tables) | Pending — several acceptance rows are marked PENDING-MANUAL. |
 | Frontend rendering at scale | No virtualization, memoization, or throttling on progress events (see `docs/CAPACITY.md` §6). |
