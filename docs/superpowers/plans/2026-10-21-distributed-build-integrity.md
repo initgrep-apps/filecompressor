@@ -1040,13 +1040,13 @@ Content it must carry:
 
 Content it must carry:
 
-- **Install on macOS** (the quarantine mark is added by the browser at download time and must be removed recursively, because the helper programs inside the bundle are marked too):
+- **Install on macOS** (the DMG mounts read-only; the quarantine mark lands on the copy, including the helper programs inside the bundle — copy first, then strip it recursively):
 
   ```bash
   hdiutil attach ~/Downloads/file-compressor_<version>_aarch64.dmg
-  xattr -dr com.apple.quarantine /Volumes/<volume-name>/
   cp -R /Volumes/<volume-name>/*.app /Applications/
   hdiutil detach /Volumes/<volume-name>
+  xattr -dr com.apple.quarantine /Applications/<app-name>.app
   ```
 
   Note that "Open Anyway" in System Settings → Privacy & Security is the alternative, and that on macOS 15+ it is the only route when the command is not used.

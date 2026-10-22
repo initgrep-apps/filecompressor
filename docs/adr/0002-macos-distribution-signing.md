@@ -10,11 +10,11 @@ We ship macOS builds ad-hoc signed (`bundle.macOS.signingIdentity = "-"`) with `
 
 ## Ruling (2026-10-21): entitlement, not a disabled hardened runtime
 
-`src-tauri/Entitlements.plist` grants exactly one entitlement, `com.apple.security.cs.disable-library-validation = true`, and `bundle.macOS.entitlements` points at it. Tauri passes the entitlements to the app and its `externalBin` sidecars while signing the executables with `--options runtime`. The framework dylibs are signed ad-hoc without entitlements; the entitlement on the executables is what lets them load those dylibs.
+`src-tauri/Entitlements.plist` grants exactly one entitlement, `com.apple.security.cs.disable-library-validation = true`, and `bundle.macOS.entitlements` points at it. Tauri passes the entitlements to the app and its `externalBin` sidecars while signing the executables with `--options runtime`. The framework dylibs are signed ad-hoc without the hardened runtime; the entitlement carried by the executables is what lets them load those dylibs.
 
 The defect this fixes: ad-hoc signing plus the hardened runtime made macOS library validation reject the ad-hoc-signed dylibs the helpers ship with ("mapping process and mapped file have different Team IDs"). In the `v0.1.0-alpha.1` release build (an unpublished draft), `vips`, `qpdf` and `gs` died with `Library not loaded`, so image, PDF and document compression failed. `ffmpeg`/`ffprobe` carry no bundled dylibs — they link only Apple system frameworks — so they kept working.
 
-The entitlement is verified at three levels: a Rust test parses the plist and asserts exactly one top-level boolean-true entitlement while `hardenedRuntime` is not explicitly false; the release package gate runs every helper from the built `.app`; and the release gate fails if a helper cannot start.
+The entitlement is verified at two levels: a Rust test parses the plist and asserts exactly one top-level boolean-true entitlement while `hardenedRuntime` is not explicitly false, and the release package gate runs every helper from the built `.app` (a helper that cannot start fails the row).
 
 ## What changes when an Apple Developer Program membership is added
 

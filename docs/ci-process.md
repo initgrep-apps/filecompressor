@@ -118,7 +118,7 @@ First local reproduction (2026-10-17): gate run 39022660502's full windows cargo
 | tauri-action row: no app assets | build/upload skipped | check tauri-action logs, re-run release |
 | package gate: `FAIL <engine> — file not found` | the built package does not carry that engine where the app looks | check the bundle resource map for that platform and the engine's `dest` name in `scripts/binaries.manifest.json` |
 | package gate: `FAIL <engine> — Library not loaded` (macOS) | the helper cannot load the dylibs it ships with | check the ad-hoc signature and `src-tauri/Entitlements.plist`; `codesign -dvvv` and `codesign -d --entitlements -` on the helper and a bundled dylib |
-| package gate: `FAIL <engine> — expected version X, got Y` | the package carries a stale or wrong engine | re-run the freeze, then the release (ADR 0001) |
+| package gate: `FAIL <engine> — expected 'X' in version output, got: …` | the package carries a stale or wrong engine | re-run the freeze, then the release (ADR 0001) |
 | package gate: `FAIL gs-resources` | the macOS package's `Contents/Resources/gs-resources` is missing, partial, or hollow | restage the tree (`yarn binaries:prep`) and re-freeze; never publish with gs unable to find its own fonts |
 | package gate: `7z not found` (Windows rows) | the runner image no longer ships 7-Zip at the expected path | install 7-Zip in the row or pin `SEVEN_ZIP`; the gate names the expected path in its error |
 
