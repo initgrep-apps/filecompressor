@@ -29,22 +29,24 @@ async function contentArchWindows(path) {
   }
 }
 
-async function checkVersion(binPath, expectVersion, triple, root) {
-  const env = { ...process.env };
-  if (!isWindowsTriple(triple)) {
-    env.DYLD_LIBRARY_PATH = join(root, "src-tauri", "frameworks");
+export async function checkVersion(binPath, expectVersion, triple, root, { env, args } = {}) {
+  const runEnv = env ? { ...env } : { ...process.env };
+  if (!env && !isWindowsTriple(triple)) {
+    runEnv.DYLD_LIBRARY_PATH = join(root, "src-tauri", "frameworks");
   }
+  const versionArgs = args ?? (/(^|[\\/])(ffmpeg|ffprobe)([.-]|$)/.test(binPath) ? ["-version"] : ["--version"]);
   return new Promise((resolvePromise) => {
     execFile(
       binPath,
-      ["--version"],
-      { encoding: "utf8", timeout: 20000, env },
+      versionArgs,
+      { encoding: "utf8", timeout: 20000, env: runEnv },
       (error, stdout, stderr) => {
         const combined = `${stdout ?? ""}${stderr ?? ""}`;
+        const tail = combined.trim().slice(0, 300);
         if (error && (error.killed || error.signal)) {
           resolvePromise({
             ok: false,
-            detail: `execution timed out or was killed before reporting a version (${error.signal ?? "timeout"})`,
+            detail: `execution timed out or was killed before reporting a version (${error.signal ?? "timeout"})${tail ? `: ${tail}` : ""}`,
           });
           return;
         }
@@ -53,6 +55,13 @@ async function checkVersion(binPath, expectVersion, triple, root) {
           resolvePromise({
             ok: false,
             detail: /binaries[\\/]/.test(execDetail) ? execDetail : `${execDetail} (the exe used was ${binPath})`,
+          });
+          return;
+        }
+        if (error) {
+          resolvePromise({
+            ok: false,
+            detail: `exited ${error.code ?? "nonzero"} after printing a version — the binary must run cleanly: ${tail}`,
           });
           return;
         }

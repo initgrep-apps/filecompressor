@@ -617,39 +617,50 @@ resolver against a real package layout via FSO_BUNDLE_EXE_DIR."
 **Files:**
 - Create: `scripts/ci/package-gate.mjs`
 - Create: `scripts/ci/package-gate.test.mjs`
+- Create: `scripts/ci/package-gate.cli.test.mjs` (spawns the real script, no `execFile` mock, to pin the process exit code)
 - Modify: `scripts/binaries/verify.mjs` (export `checkVersion` with an optional `env` override, line 32)
 - Modify: `.github/workflows/release.yml` (new step after the `fail-closed app-asset check for this triple` step, which ends at line 236)
 - Modify: `scripts/ci/workflows.test.mjs` (one new case pinning the package-gate step — Step 10)
 
 **Interfaces:**
-- Consumes: `FSO_BUNDLE_EXE_DIR` plus the `FSO_BUNDLE_GATE=1` sentinel (Task 3) — the gate sets both when it spawns the resolver test, and passes only when that command exits 0 **and** its output contains the `fso-bundle-resolver-ok` marker; a skipped or filtered-out test also exits 0, and a skipped test never prints the marker. Also consumes `scripts/binaries.manifest.json` → `targets[triple][name].expectVersion`, `scripts/binaries/verify.mjs` → `checkVersion` (called with `{ env: process.env }` so the staging-tree `DYLD_LIBRARY_PATH` at `verify.mjs:33-36` never shadows the package's own dylibs), `scripts/binaries/lib.mjs` → `isMain`, `readJson`, `exists`, `parseArgs`, `run`, `isWindowsTriple`, `manifestPath`.
+- Consumes: `FSO_BUNDLE_EXE_DIR` plus the `FSO_BUNDLE_GATE=1` sentinel (Task 3) — the gate sets both when it spawns the resolver test, and passes only when that command exits 0 **and** its output contains the `fso-bundle-resolver-ok` marker; a skipped or filtered-out test also exits 0, and a skipped test never prints the marker. Also consumes `scripts/binaries.manifest.json` → `targets[triple][name].expectVersion`, `scripts/binaries/verify.mjs` → `checkVersion` (called with `{ env }`, a copy of `process.env` with `DYLD_LIBRARY_PATH` deleted, so the staging-tree injection at `verify.mjs:38-41` never shadows the package's own dylibs), `scripts/binaries/lib.mjs` → `isMain`, `readJson`, `exists`, `run`, `isWindowsTriple`, `manifestPath`.
 - Produces: `node scripts/ci/package-gate.mjs --triple <triple>` — exit 0 when every check passes, exit 1 with a per-check report otherwise.
 
 **Exports of `scripts/ci/package-gate.mjs` (the surface the vitest file pins):**
 
 ```js
-export function parseGateArgs(argv)                    // → { triple, bundleDir }; throws on a missing/unsupported --triple
+export const ENGINES                                      // the gate's engine order — ffmpeg before ffprobe
+export class SevenZipMissingError extends Error           // thrown when the Windows NSIS extractor is unavailable
+export { knownTriples }                                   // re-exported from lib.mjs for the CLI's triple list
+export function parseGateArgs(argv)                       // → { triple, bundleDir }; throws on a missing/unsupported --triple
 export function expectedEnginePaths({ triple, exeDir, manifest, baseConf, windowsConf })  // → Map<engineName, absolutePath>
-export function expectedVersions({ triple, manifest }) // → Map<engineName, expectVersion>, read from the manifest
-export function enginePlan()                          // → Map<engineName, { versionArgs, fixtures, steps }>
-export function gsRunArgs({ exeDir, triple })          // → string[]; macOS: package -I flags + gs step args; Windows: bare gs step args
-export function locateBundle({ root, triple })        // → { kind: "app" | "nsis", path } | null
-export async function extractNsisInstaller({ setupExe, destDir })  // → destDir; throws a named error when 7z is missing
-export function checkStepOutput({ step, workDir, stdout })  // → { ok, detail }; rejects an empty output file
-export async function main(argv)                       // → exit code (0 pass, 1 fail)
+export function expectedVersions({ triple, manifest })    // → Map<engineName, expectVersion>, read from the manifest
+export function enginePlan()                              // → Map<engineName, { fixtures, steps }>; every produced step declares `magic`
+export async function gsResourcesCheck({ exeDir, triple }) // → { ok, detail }; macOS: gs_init.ps plus real non-sentinel files in BOTH font dirs; Windows: ROM model, ok
+export function gsRunArgs({ exeDir, triple, stepArgs })   // → string[]; macOS: -I flags for the search dirs that exist (the app's own filter) + the caller's gs step args; Windows: the step args unchanged
+export async function checkEngine({ name, binPath, expectVersion, triple, root, exeDir, plan, workDir, run, checkVersion })  // → { ok, details }; exists → version → steps for one engine
+export function validateBundleDir({ bundleDir, triple })  // → the resolved absolute path when it is an existing .app directory / .exe file; throws naming the value otherwise
+export function locateBundle({ root, triple })            // → { kind: "app" | "nsis", path } from the triple's own bundle dir, or null (no fallback)
+export async function extractNsisInstaller({ setupExe, destDir })  // → destDir; throws SevenZipMissingError naming C:\Program Files\7-Zip\7z.exe
+export function checkStepOutput({ step, workDir, stdout }) // → { ok, detail }; rejects a missing/empty output file and wrong magic bytes
+export function resolverCheck({ code, stdout, stderr, killed, signal, errorCode })  // → { ok, detail }; timeout/signal/spawn-failure labels
+export function resolverCommand({ root, exeDir })         // → { tool: "cargo", args, options } for the resolver test
+export async function main(argv, deps = {})               // → exit code (0 pass, 1 fail); `deps` injects checkEngine/gsResourcesCheck/locateBundle/extractNsisInstaller/run
 ```
 
 **Path construction.** Every path is built with `node:path`'s `join`, never by string concatenation, so the same expectations hold on the macOS and Windows release rows. The vitest file below compares against `join(...)` for the same reason.
 
-**The operation plan (`enginePlan()`), one entry per engine.** A step passes when the command exits 0 **and** (it produces no file **or** the produced file exists and is non-empty) **and** (it declares no stdout expectation **or** stdout contains it).
+**The operation plan (`enginePlan()`), one entry per engine.** A step must declare `produces` or `expectStdout` — a step that declares neither fails, because exit 0 alone would pass a step that did nothing. A step passes when the command exits 0 **and** (it declares no `produces` or the produced file exists, is non-empty, and starts with the step's `magic` bytes) **and** (it declares no stdout expectation or stdout contains it). The magic bytes reject a non-empty file with the wrong first bytes (e.g. an HTML error page): `%PDF-` for qpdf/gs, the PNG signature for ffmpeg's `out.png`, `FF D8` for vips' `out.jpg`, and vips' native magic for `in.v`.
 
-| engine | `versionArgs` | `fixtures` (written into the work dir first) | `steps` |
-|---|---|---|---|
-| vips | `["--version"]` | — | `["black","in.v","64","64"]` (no output); `["thumbnail","in.v","out.jpg","32"]` → produces `out.jpg` |
-| qpdf | `["--version"]` | — | `["--empty","out.pdf"]` → produces `out.pdf`; `["out.pdf","out-rewritten.pdf"]` → produces `out-rewritten.pdf` |
-| gs | `["--version"]` | `in.ps` (four lines: `%!PS`, `/Helvetica findfont 16 scalefont setfont`, `72 700 moveto (gate) show`, `showpage`) | `["-q","-dNOPAUSE","-dBATCH","-sDEVICE=pdfwrite","-sOutputFile=out.pdf","in.ps"]` → produces `out.pdf` |
-| ffmpeg | `["--version"]` | — | `["-y","-f","lavfi","-i","color=c=red:s=64x64:d=1","-frames:v","1","out.png"]` → produces `out.png` |
-| ffprobe | `["--version"]` | — | `["-v","error","-show_entries","stream=width,height","-of","csv","out.png"]` → expects stdout containing `64,64` |
+| engine | `fixtures` (written into the work dir first) | `steps` |
+|---|---|---|
+| vips | — | `["black","in.v","64","64"]` → produces `in.v`; `["thumbnail","in.v","out.jpg","32"]` → produces `out.jpg` |
+| qpdf | — | `["--empty","out.pdf"]` → produces `out.pdf`; `["out.pdf","out-rewritten.pdf"]` → produces `out-rewritten.pdf` |
+| gs | `in.ps` (four lines: `%!PS`, `/Helvetica findfont 16 scalefont setfont`, `72 700 moveto (gate) show`, `showpage`) | `["-q","-dNOPAUSE","-dBATCH","-sDEVICE=pdfwrite","-sOutputFile=out.pdf","in.ps"]` → produces `out.pdf` |
+| ffmpeg | — | `["-y","-f","lavfi","-i","color=c=red:s=64x64:d=1","-frames:v","1","out.png"]` → produces `out.png` |
+| ffprobe | — | `["-v","error","-show_entries","stream=width,height","-of","csv","out.png"]` → expects stdout containing `64,64` |
+
+The version command is not plan data: `checkVersion` runs every engine with a version flag and matches the manifest's `expectVersion` in the output. It uses `-version` for ffmpeg/ffprobe (they reject `--version`; the binary exits nonzero while still printing its banner) and `--version` for the rest.
 
 The qpdf recipe uses `--empty` alone: the page-selection form `--empty --pages . 1 -- out.pdf` segfaults (exit 139, no output file) on the pinned qpdf 12.4.2, and `--linearize` on a zero-page PDF exits 2 with `part 6 has other than exactly one object (first page dictionary)`, leaving a 0-byte output. Both replacements were run against the staged `qpdf-aarch64-apple-darwin` 12.4.2: `--empty` writes a 315-byte PDF (exit 0) and the parse+rewrite writes a 315-byte PDF (exit 0).
 
@@ -667,7 +678,7 @@ The ffprobe step depends on the PNG the ffmpeg step produced, so ffmpeg and ffpr
 
 The macOS column comes from `bundle.externalBin` in `tauri.conf.json` (Tauri writes those under their plain names). The Windows column comes from `bundle.externalBin` in `tauri.windows.conf.json` plus the `bundle.resources["binaries/engines/"]` target and the manifest's `dest` names.
 
-- [ ] **Step 1: Export `checkVersion` from verify.mjs with an env override**
+- [x] **Step 1: Export `checkVersion` from verify.mjs with an env override**
 
 In `scripts/binaries/verify.mjs`, change line 32 from:
 
@@ -682,16 +693,17 @@ async function checkVersion(binPath, expectVersion, triple, root) {
 to:
 
 ```js
-export async function checkVersion(binPath, expectVersion, triple, root, { env } = {}) {
-  const runEnv = env ?? { ...process.env };
-  if (env === undefined && !isWindowsTriple(triple)) {
+export async function checkVersion(binPath, expectVersion, triple, root, { env, args } = {}) {
+  const runEnv = env ? { ...env } : { ...process.env };
+  if (!env && !isWindowsTriple(triple)) {
     runEnv.DYLD_LIBRARY_PATH = join(root, "src-tauri", "frameworks");
   }
+  const versionArgs = args ?? (/(^|[\\/])(ffmpeg|ffprobe)([.-]|$)/.test(binPath) ? ["-version"] : ["--version"]);
 ```
 
-and rename the `env` in the `execFile` options to `runEnv` (`{ encoding: "utf8", timeout: 20000, env: runEnv }`). The existing caller (`verify.mjs:372`) passes four arguments, so its behavior is unchanged: default env plus the staging `DYLD_LIBRARY_PATH`. The gate passes five, with `{ env: process.env }` — inherits the ambient env, **no** `DYLD_LIBRARY_PATH` injection, so the bundled engines must load their own dylibs from the package.
+and rename the `env` in the `execFile` options to `runEnv` (`{ encoding: "utf8", timeout: 20000, env: runEnv }`) and the hardcoded `["--version"]` to `versionArgs`. A falsy `env` (absent, `undefined` or `null`) means "no override", so the staging `DYLD_LIBRARY_PATH` is injected; any truthy object is used as-is. The existing four-argument caller keeps its behavior: default env plus the staging `DYLD_LIBRARY_PATH`. The gate passes five, with `{ env }` = a copy of `process.env` minus `DYLD_LIBRARY_PATH` — inherits the ambient env, **no** staging injection, so the bundled engines must load their own dylibs from the package. `args` overrides the version flag; by default ffmpeg/ffprobe get `-version` (they exit nonzero on `--version` while still printing the banner) and every other engine gets `--version`.
 
-- [ ] **Step 2: Write the failing vitest file**
+- [x] **Step 2: Write the failing vitest file**
 
 Create `scripts/ci/package-gate.test.mjs` with these cases. Line 1 is `// @vitest-environment node`, like all 19 existing script test files — the repo default is jsdom plus the React setup files, which a pure-node script must not drag in. The `vi.mock` of `node:child_process` follows the `scripts/binaries/all.test.mjs` pattern: mock-based tests live in their own file, never inside `verify.test.mjs`, which compiles real fixtures with `clang` through the real `execFile`. The mock also lets the file pin the `checkVersion` env-override contract from Step 1:
 
@@ -709,8 +721,14 @@ import {
   expectedVersions,
   enginePlan,
   gsRunArgs,
+  gsResourcesCheck,
   locateBundle,
   checkStepOutput,
+  checkEngine,
+  validateBundleDir,
+  resolverCheck,
+  resolverCommand,
+  main,
 } from "./package-gate.mjs";
 
 vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
@@ -775,19 +793,29 @@ describe("enginePlan", () => {
   it("covers all five engines", () => {
     expect([...enginePlan().keys()].sort()).toEqual(["ffmpeg", "ffprobe", "gs", "qpdf", "vips"]);
   });
-  it("gives every engine a version check and at least one operation", () => {
+  it("gives every engine at least one operation, each with a declared check", () => {
     for (const [name, plan] of enginePlan()) {
-      expect(plan.versionArgs.length, name).toBeGreaterThan(0);
       expect(plan.steps.length, name).toBeGreaterThan(0);
+      for (const step of plan.steps) {
+        expect(Boolean(step.produces) || step.expectStdout !== undefined, name).toBe(true);
+      }
     }
   });
 });
 
 describe("gsRunArgs", () => {
   it("prepends the package's own gs-resources -I flags on macOS", () => {
-    const exeDir = join("/app", "Contents", "MacOS");
-    const tree = join(exeDir, "..", "Resources", "gs-resources");
-    const args = gsRunArgs({ exeDir, triple: "aarch64-apple-darwin" });
+    const app = mkdtempSync(join(tmpdir(), "gate-gs-"));
+    const exeDir = join(app, "Contents", "MacOS");
+    const tree = join(app, "Contents", "Resources", "gs-resources");
+    for (const dir of ["Resource/Init", "lib", "Resource/Font", "fonts"]) {
+      mkdirSync(join(tree, ...dir.split("/")), { recursive: true });
+    }
+    mkdirSync(exeDir, { recursive: true });
+    writeFileSync(join(tree, "Resource", "Init", "gs_init.ps"), "%!PS\n");
+    writeFileSync(join(tree, "fonts", "font.pfb"), "font");
+    const stepArgs = enginePlan().get("gs").steps[0].args;
+    const args = gsRunArgs({ exeDir, triple: "aarch64-apple-darwin", stepArgs });
     expect(args[0]).toBe("-I");
     expect(args[1]).toBe(join(tree, "Resource", "Init"));
     expect(args[2]).toBe("-I");
@@ -799,7 +827,8 @@ describe("gsRunArgs", () => {
     expect(args).toContain("-sOutputFile=out.pdf");
   });
   it("passes no -I flags on Windows (ROM model)", () => {
-    const args = gsRunArgs({ exeDir: join("C:", "app"), triple: "x86_64-pc-windows-msvc" });
+    const stepArgs = enginePlan().get("gs").steps[0].args;
+    const args = gsRunArgs({ exeDir: join("C:", "app"), triple: "x86_64-pc-windows-msvc", stepArgs });
     expect(args.some((arg) => arg.startsWith("-I"))).toBe(false);
     expect(args).toContain("-sOutputFile=out.pdf");
     expect(args).toContain("in.ps");
@@ -859,7 +888,7 @@ describe("checkVersion env override (the gate's no-staging-DYLD contract)", () =
     expect(options.env).toEqual(env);
     expect(
       options.env.DYLD_LIBRARY_PATH,
-      "the gate passes { env: process.env } so the package must load its own dylibs — the staging-tree injection must never reach it",
+      "the gate passes { env } with DYLD_LIBRARY_PATH deleted so the package must load its own dylibs — the staging-tree injection must never reach it",
     ).toBeUndefined();
   });
 
@@ -872,41 +901,42 @@ describe("checkVersion env override (the gate's no-staging-DYLD contract)", () =
 ```
 
 
-- [ ] **Step 3: Run the vitest file to verify it fails**
+- [x] **Step 3: Run the vitest file to verify it fails**
 
 Run: `yarn vitest run scripts/ci/package-gate.test.mjs`
 Expected: FAIL — `Cannot find module './package-gate.mjs'`.
 
-- [ ] **Step 4: Implement `scripts/ci/package-gate.mjs`**
+- [x] **Step 4: Implement `scripts/ci/package-gate.mjs`**
 
 The script must:
 
 - Derive `REPO_ROOT` from `import.meta.url` (style reference: `scripts/ci/release-version-check.mjs`).
-- Guard its entry point with `isMain(import.meta.url)` so the vitest file can import it without side effects.
-- Implement the eight exports listed in the Interfaces block with the exact behaviours above, building every path with `join` from `node:path`.
-- `locateBundle({ root, triple })` must **prefer the triple-specific build**: look first for `src-tauri/target/<triple>/release/bundle/macos/*.app` (macOS) or `src-tauri/target/<triple>/release/bundle/nsis/*.exe` (Windows). Only if that exact directory holds nothing may it fall back to a broader `src-tauri/target/**/bundle/...` search, and when it does it must print which path it chose. A stale `src-tauri/target/release/bundle/macos/*.app` from an older build must never be silently preferred over the triple's own output — the local checkout can hold both.
+- Guard its entry point with `isMain(import.meta.url)` so the vitest file can import it without side effects, and set `process.exitCode = await main(...)`; the top-level catch prints `error.stack` and sets exit code 1.
+- Implement the exports listed in the Interfaces block with the exact behaviours above, building every path with `join` from `node:path`.
+- `locateBundle({ root, triple })` returns **only the triple-specific build**: `src-tauri/target/<triple>/release/bundle/macos/*.app` (macOS) or `src-tauri/target/<triple>/release/bundle/nsis/*.exe` (Windows), and `null` otherwise. There is no fallback search: a stale `src-tauri/target/release/bundle/macos/*.app` or another triple's package must never masquerade as this row's build, so the gate fails closed on every row (local overrides go through `--bundle-dir`). `--bundle-dir` is `resolve()`d to an absolute path before use, because the Rust resolver asserts an absolute `FSO_BUNDLE_EXE_DIR`; the error names both the value as typed and the resolved path.
 - `expectedVersions({ triple, manifest })` reads `manifest.targets[triple][name].expectVersion` for the five engines and throws when a triple or an engine is missing — never fall back to a hardcoded version.
-- `gsRunArgs({ exeDir, triple })` returns the full gs argument list for the operation step. On macOS it prepends the package's own resource tree: `-I` pairs for `Resource/Init`, `lib`, `Resource/Font`, `fonts` (the `GS_RESOURCE_SEARCH_DIRS` order, `sidecar.rs:190`) rooted at `join(exeDir, "..", "Resources", "gs-resources")` (the `../Resources/gs-resources` bundle candidate, `sidecar.rs:214`), plus `-uICCProfilesDir=<that tree>/iccprofiles` when that directory exists — then the gs step args from `enginePlan()`. On Windows it returns `enginePlan()`'s gs step args unchanged (ROM model — `docs/ci-process.md:44`). Without the `-I` flags the brew-built gs falls back to a compiled-in prefix that does not exist on the macOS release runners, and the gs operation would red every macOS row. Same shape as `scripts/audit-sidecars.sh:589-599`.
-- `checkStepOutput({ step, workDir, stdout })` returns `{ ok: false, detail: "..." }` when the step's `produces` file is missing **or is empty** (detail must contain the word "empty"), and when the step's `expectStdout` is not present in `stdout`.
-- In `main`:
+- `gsRunArgs({ exeDir, triple, stepArgs })` returns the full gs argument list for one operation step. On macOS it prepends the package's own resource tree: `-I` pairs for the `Resource/Init`, `lib`, `Resource/Font`, `fonts` search dirs that **exist** (the same filter the app applies in `sidecar.rs:316-320`), rooted at `join(exeDir, "..", "Resources", "gs-resources")` (the `../Resources/gs-resources` bundle candidate, `sidecar.rs:214`), plus `-uICCProfilesDir=<that tree>/iccprofiles` when that path is a directory — then the caller's gs step args. On Windows it returns those step args unchanged (ROM model — `docs/ci-process.md:44`). Without the `-I` flags the brew-built gs falls back to a compiled-in prefix that does not exist on the macOS release runners, and the gs operation would red every macOS row. Same shape as `scripts/audit-sidecars.sh:589-599`.
+- `gsResourcesCheck({ exeDir, triple })` is async and mirrors the app's runtime predicate in `build_gs_resources` (`sidecar.rs:287-329`): `Resource/Init/gs_init.ps` must be a file **and** `Resource/Font` and `fonts` must each hold at least one real file, using `treeHasFile` from `verify.mjs` so audit sentinels do not count. A tree with empty or sentinel-only font dirs fails the gate even though four directories exist, because the app would resolve `gs_resources: None` and PDF compression would fail on a clean machine. A non-directory named `iccprofiles` counts as absent.
+- `checkStepOutput({ step, workDir, stdout })` returns `{ ok: false, detail: "..." }` when the step's `produces` file is missing **or is empty** (detail must contain the word "empty"), when its first bytes do not match the step's `magic` (so a non-empty HTML error page fails), and when the step's `expectStdout` is not present in `stdout`.
+- In `main(argv, deps = {})` (the deps seam injects `checkEngine`, `gsResourcesCheck`, `locateBundle`, `extractNsisInstaller` and `run` so the success and failure exit codes are testable without a real package):
   1. `parseGateArgs(argv)`.
-  2. `locateBundle({ root, triple })` — return `null` when nothing matches; `main` then fails with: `cannot find the built package for <triple> under src-tauri/target — this gate must run after tauri-action builds`.
-  3. macOS: `exeDir = <app>/Contents/MacOS`. Windows: `extractNsisInstaller({ setupExe, destDir })` using `7z x -y <setupExe> -o<destDir>` (`7z` is in the GitHub Windows image at `C:\Program Files\7-Zip\7z.exe`); `exeDir = destDir`. When `7z` is missing, throw an error naming the expected path. On the first `windows-11-arm` release, confirm the same 7-Zip path exists on that runner image — the error names the path, so a changed image fails loudly instead of skipping.
-  4. Compute `expectedEnginePaths` and, for each engine: assert the file exists → run `checkVersion(binPath, expectVersion, triple, root, { env: process.env })` (the env override keeps verify.mjs's staging `DYLD_LIBRARY_PATH` out — the package must load its own dylibs) → run each step from `enginePlan()` in a work dir per engine group — vips, qpdf and gs each get their own; ffmpeg and ffprobe share one, because ffprobe reads the PNG ffmpeg produced in that same dir (for gs, use the argument list from `gsRunArgs({ exeDir, triple })` instead of the static step args) → evaluate the step with `checkStepOutput`.
+  2. `locateBundle({ root, triple })` — returns `null` when nothing matches; `main` then **records one** failure with: `cannot find the built package for <triple> under src-tauri/target — this gate must run after tauri-action builds`.
+  3. macOS: `exeDir = <app>/Contents/MacOS`. Windows: `extractNsisInstaller({ setupExe, destDir })` using `7z x -y <setupExe> -o<destDir>` (`7z` is in the GitHub Windows image at `C:\Program Files\7-Zip\7z.exe`; `SEVEN_ZIP` overrides it); `exeDir = destDir`. When `7z` is missing, throw `SevenZipMissingError` naming the expected path. On the first `windows-11-arm` release, confirm the same 7-Zip path exists on that runner image — the error names the path, so a changed image fails loudly instead of skipping.
+  4. Compute `expectedEnginePaths` and, for each engine: assert the file exists → run `checkVersion(binPath, expectVersion, triple, root, { env })` where `env` is `process.env` with `DYLD_LIBRARY_PATH` deleted (the package must load its own dylibs) → run each step from `enginePlan()` in a work dir per engine group — vips, qpdf and gs each get their own; ffmpeg and ffprobe share one, because ffprobe reads the PNG ffmpeg produced in that same dir (for gs, use `gsRunArgs({ exeDir, triple, stepArgs })` instead of the static step args) → evaluate the step with `checkStepOutput`. A timeout/signal reads "timed out or was killed"; a spawn `ENOENT` reads "could not start <engine>", never a bare `exited 1`/`exited ENOENT`.
   5. Spawn `cargo test --lib resolve_for_finds_every_engine_in_a_bundled_package -- --nocapture` with `cwd = src-tauri`, `FSO_BUNDLE_EXE_DIR` set to `exeDir`, **and** `FSO_BUNDLE_GATE=1`. The check passes only when the command exits 0 **and** its output contains the `fso-bundle-resolver-ok` marker: `cargo test --lib <filter>` exits 0 when the filter matches nothing, and a skipped test also exits 0 with `1 passed`, so exit 0 alone (or a `1 passed` count) proves nothing — only the marker says the test really ran the resolver. `--nocapture` is required because libtest swallows stdout otherwise. The sentinel turns a gate that forgets `FSO_BUNDLE_EXE_DIR` into a hard failure rather than a silent skip.
-  6. Print one line per check (`PASS`/`FAIL` + detail) and exit 1 if any check failed.
+  6. Print one line per check (`PASS`/`FAIL` + detail) and return 0 when every check passed, 1 otherwise.
 
-- [ ] **Step 5: Run the vitest file to verify it passes**
+- [x] **Step 5: Run the vitest file to verify it passes**
 
 Run: `yarn vitest run scripts/ci/package-gate.test.mjs`
 Expected: PASS — all cases green.
 
-- [ ] **Step 6: Run the full test suite**
+- [x] **Step 6: Run the full test suite**
 
 Run: `yarn test`
 Expected: PASS — the existing suite stays green, plus the new `package-gate.test.mjs` cases.
 
-- [ ] **Step 7: Run the gate end-to-end against a locally built macOS package**
+- [x] **Step 7: Run the gate end-to-end against a locally built macOS package**
 
 Task 1 produced the package. Run:
 
@@ -916,9 +946,9 @@ node scripts/ci/package-gate.mjs --triple aarch64-apple-darwin
 
 Expected: every check PASS — five engines found, five version matches, five real operations producing non-empty output, and the resolver test passing. The output must name each engine and its detail line.
 
-If the gate cannot find the package, pass the path explicitly: `--bundle-dir src-tauri/target/aarch64-apple-darwin/release/bundle/macos/file-compressor.app`.
+If the gate cannot find the package, pass the path explicitly: `--bundle-dir src-tauri/target/aarch64-apple-darwin/release/bundle/macos/file-compressor.app`. A relative `--bundle-dir` is resolved to an absolute path before it reaches the Rust resolver.
 
-- [ ] **Step 8: Prove the gate can fail (the negative case)**
+- [x] **Step 8: Prove the gate can fail (the negative case)**
 
 Copy the built package, delete one engine from the copy, and run the gate against it:
 
@@ -930,19 +960,19 @@ node scripts/ci/package-gate.mjs --triple aarch64-apple-darwin --bundle-dir /tmp
 
 Expected: exit 1 with a `FAIL` line naming vips. Also break a *library* rather than a binary — re-sign `Contents/MacOS/vips` with `codesign --force --options runtime --sign -` after removing the entitlement — and confirm the gate reports the loader's own error text (`Library not loaded`) rather than "file not found". This is Review Focus item 1.
 
-- [ ] **Step 9: Wire the gate into the release workflow**
+- [x] **Step 9: Wire the gate into the release workflow**
 
 In `.github/workflows/release.yml`, insert this step **immediately after** the `fail-closed app-asset check for this triple` step (the one ending at line 236) and before the `upload sbom + third-party notices + verify upload` step:
 
 ```yaml
-      - name: package gate (engines present, startable, and usable from the built package)
+      - name: package gate (engines present and usable from the built package)
         env:
           TRIPLE: ${{ matrix.triple }}
         run: node scripts/ci/package-gate.mjs --triple "$TRIPLE"
         shell: bash
 ```
 
-- [ ] **Step 10: Pin the new step in `scripts/ci/workflows.test.mjs`**
+- [x] **Step 10: Pin the new step in `scripts/ci/workflows.test.mjs`**
 
 That file exists to pin the release workflow's shape — the app-asset check is pinned with existence, ordering after tauri-action, no `if`, and env-passed values (`workflows.test.mjs:1105-1113`). Add one case to the same `FILENAME = "release.yml"` describe, right after the `fail-closes each row ...` case:
 
@@ -951,11 +981,14 @@ it("runs the package gate on every row after the app-asset check", async () => {
   const { doc } = await loadWorkflow(FILENAME);
   const steps = stepsOf(jobsOf(doc).release);
   const checkIdx = steps.findIndex((s) => stepRuns(s).includes('grep -Eic -- "$pattern"'));
+  expect(checkIdx, "the anchoring app-asset check must exist — an ordering compare against -1 passes vacuously").toBeGreaterThanOrEqual(0);
   const gate = steps.find((s) => stepRuns(s).startsWith("node scripts/ci/package-gate.mjs"));
   expect(gate, "the package-gate step must exist").toBeDefined();
+  expect(gate.name, "the step name must not claim the app binary is started").toBe("package gate (engines present and usable from the built package)");
   const gateIdx = steps.findIndex((s) => s === gate);
   expect(gateIdx, "the package gate must run after the app-asset check").toBeGreaterThan(checkIdx);
   expect(gate["if"], "the package gate must run on every matrix row").toBeUndefined();
+  expect(gate["continue-on-error"], "the package gate is a release blocker — a soft failure would ship a broken package").toBeUndefined();
   expect(gate.env?.TRIPLE, "the triple must reach the step via env, not raw ${{ }} in run").toBe("${{ matrix.triple }}");
   expect(gate.shell).toBe("bash");
 });
@@ -964,10 +997,10 @@ it("runs the package gate on every row after the app-asset check", async () => {
 Run: `yarn vitest run scripts/ci/workflows.test.mjs`
 Expected: PASS.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
-git add scripts/ci/package-gate.mjs scripts/ci/package-gate.test.mjs scripts/binaries/verify.mjs .github/workflows/release.yml scripts/ci/workflows.test.mjs
+git add scripts/ci/package-gate.mjs scripts/ci/package-gate.test.mjs scripts/ci/package-gate.cli.test.mjs scripts/binaries/verify.mjs .github/workflows/release.yml scripts/ci/workflows.test.mjs
 git commit -m "feat(ci): gate the release on the built package working
 
 The release gate checked that the draft carried assets with the right
@@ -1034,7 +1067,7 @@ Content it must carry:
 
 - **What to record on failure**: the platform, the file type, the **exact error text** the app showed, and whether the helper produced any output. A screenshot of the app's error is enough if it contains the text.
 
-- **Where the automated half lives**: `node scripts/ci/package-gate.mjs --triple <triple>` proves the engines are present, startable and usable inside the built package. The matrix above proves the UI layer, which CI cannot.
+- **Where the automated half lives**: `node scripts/ci/package-gate.mjs --triple <triple>` proves the engines are present, runnable on real files and usable inside the built package. The matrix above proves the UI layer, which CI cannot.
 
 - [ ] **Step 3: Update `docs/ci-process.md`**
 
