@@ -391,10 +391,10 @@ describe("locateBundle", () => {
     const root = mkdtempSync(join(tmpdir(), "gate-root-"));
     const nsis = join(root, "src-tauri", "target", "x86_64-pc-windows-msvc", "release", "bundle", "nsis");
     mkdirSync(nsis, { recursive: true });
-    writeFileSync(join(nsis, "file-compressor_1.0.0_x64-setup.exe"), "");
+    writeFileSync(join(nsis, "yard_1.0.0_x64-setup.exe"), "");
     expect(locateBundle({ root, triple: "x86_64-pc-windows-msvc" })).toEqual({
       kind: "nsis",
-      path: join(nsis, "file-compressor_1.0.0_x64-setup.exe"),
+      path: join(nsis, "yard_1.0.0_x64-setup.exe"),
     });
   });
   it("returns null when the package was never built", () => {

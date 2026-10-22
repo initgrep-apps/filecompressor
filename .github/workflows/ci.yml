@@ -79,7 +79,7 @@ jobs:
           TRIPLE: ${{ matrix.triple }}
         run: |
           cd src-tauri
-          EXE="$(ls -t target/debug/deps/file_compressor_lib-*.exe | head -1)"
+          EXE="$(ls -t target/debug/deps/yard_lib-*.exe | head -1)"
           echo "newest lib-test exe: $EXE"
           echo "node: $(node --version)"
           echo "rustc: $(rustc --version)"

@@ -4,7 +4,7 @@ const MAX_REDIRECTS = 10;
 const REQUEST_TIMEOUT_MS = 30000;
 
 export function headersFor(url) {
-  const headers = { "user-agent": "file-compressor-binaries-refresh" };
+  const headers = { "user-agent": "yard-binaries-refresh" };
   if (new URL(url).hostname === "api.github.com") {
     headers.accept = "application/vnd.github+json";
     headers["x-github-api-version"] = "2022-11-28";

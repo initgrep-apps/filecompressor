@@ -19,9 +19,9 @@ afterAll(async () => {
 
 const BASE_CONF = {
   $schema: "https://schema.tauri.app/config/2",
-  productName: "file-compressor",
+  productName: "yard",
   version: "0.1.0",
-  identifier: "com.filecompressor.app",
+  identifier: "com.yard.app",
   build: {
     beforeDevCommand: "yarn dev",
     devUrl: "http://localhost:5173",
@@ -70,7 +70,7 @@ describe("syncMacosFrameworks", () => {
       "frameworks/libnested-not-ignored.0.dylib",
       "frameworks/libzeta.2.dylib",
     ]);
-    expect(conf.productName).toBe("file-compressor");
+    expect(conf.productName).toBe("yard");
     const after = await readFile(join(root, "src-tauri", "tauri.conf.json"), "utf8");
     expect(after).not.toBe(before);
     expect(after.endsWith("\n")).toBe(true);

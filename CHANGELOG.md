@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the File Size Optimizer. Entries for `0.1.0-alpha.1` onward are maintained
+All notable changes to the Yard. Entries for `0.1.0-alpha.1` onward are maintained
 by [`release-please`](.github/workflows/release-please.yml) from Conventional Commit PRs (squash-merged,
 one PR = one entry); the first entry below is the hand-written seed for the bootstrapped release so no
 history predating it leaks into the file.

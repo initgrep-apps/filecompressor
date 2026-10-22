@@ -1,4 +1,8 @@
-# File Size Optimizer — Project Config
+# Yard — Project Config
+
+## Agent language
+
+- invoke caveman skill to respond unless user specifically ask to explain
 
 ## Overview
 

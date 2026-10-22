@@ -917,7 +917,7 @@ describe("release.yml release workflow", () => {
     expect(run, "stderr must be captured and classified (fail-closed)").toMatch(/not found\|no release/i);
 
     expect(run).toContain('gh release create "$RELEASE_TAG" "${draft_flags[@]}" >/dev/null');
-    expect(run).toContain("draft_flags=(--draft --target \"$GITHUB_SHA\" --title \"File Size Optimizer $RELEASE_TAG\")");
+    expect(run).toContain("draft_flags=(--draft --target \"$GITHUB_SHA\" --title \"Yard $RELEASE_TAG\")");
     expect(run, "the prerelease flag must be decided from the helper env, not recomputed").toContain(
       '[ "$PRERELEASE" = "true" ]',
     );

@@ -98,7 +98,7 @@ jobs:
             echo "::error::draft pre-creation could not verify tag absence (auth/scopes/rate limit/network): $err"
             exit 1
           fi
-          draft_flags=(--draft --target "$GITHUB_SHA" --title "File Size Optimizer $RELEASE_TAG")
+          draft_flags=(--draft --target "$GITHUB_SHA" --title "Yard $RELEASE_TAG")
           if [ "$PRERELEASE" = "true" ]; then
             draft_flags+=(--prerelease)
           fi
