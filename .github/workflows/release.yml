@@ -235,6 +235,11 @@ jobs:
           fi
           echo "app-asset check verified: $count asset(s) matching '$pattern' for $TRIPLE on $RELEASE_TAG"
         shell: bash
+      - name: package gate (engines present, startable, and usable from the built package)
+        env:
+          TRIPLE: ${{ matrix.triple }}
+        run: node scripts/ci/package-gate.mjs --triple "$TRIPLE"
+        shell: bash
       - name: upload sbom + third-party notices + verify upload
         if: matrix.triple == 'aarch64-apple-darwin'
         env:

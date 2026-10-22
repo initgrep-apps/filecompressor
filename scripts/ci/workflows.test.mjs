@@ -1143,6 +1143,19 @@ describe("release.yml release workflow", () => {
     expect(check.env?.GH_REPO).toBe("${{ github.repository }}");
   });
 
+  it("runs the package gate on every row after the app-asset check", async () => {
+    const { doc } = await loadWorkflow(FILENAME);
+    const steps = stepsOf(jobsOf(doc).release);
+    const checkIdx = steps.findIndex((s) => stepRuns(s).includes('grep -Eic -- "$pattern"'));
+    const gate = steps.find((s) => stepRuns(s).startsWith("node scripts/ci/package-gate.mjs"));
+    expect(gate, "the package-gate step must exist").toBeDefined();
+    const gateIdx = steps.findIndex((s) => s === gate);
+    expect(gateIdx, "the package gate must run after the app-asset check").toBeGreaterThan(checkIdx);
+    expect(gate["if"], "the package gate must run on every matrix row").toBeUndefined();
+    expect(gate.env?.TRIPLE, "the triple must reach the step via env, not raw ${{ }} in run").toBe("${{ matrix.triple }}");
+    expect(gate.shell).toBe("bash");
+  });
+
   it("has no finalize job (the gate pre-creates the draft, matrix rows upload into it)", async () => {
     const { doc } = await loadWorkflow(FILENAME);
     expect(Object.keys(jobsOf(doc))).toContain("release");

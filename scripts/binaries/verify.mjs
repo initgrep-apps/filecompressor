@@ -29,16 +29,16 @@ async function contentArchWindows(path) {
   }
 }
 
-async function checkVersion(binPath, expectVersion, triple, root) {
-  const env = { ...process.env };
-  if (!isWindowsTriple(triple)) {
-    env.DYLD_LIBRARY_PATH = join(root, "src-tauri", "frameworks");
+export async function checkVersion(binPath, expectVersion, triple, root, { env } = {}) {
+  const runEnv = env ?? { ...process.env };
+  if (env === undefined && !isWindowsTriple(triple)) {
+    runEnv.DYLD_LIBRARY_PATH = join(root, "src-tauri", "frameworks");
   }
   return new Promise((resolvePromise) => {
     execFile(
       binPath,
       ["--version"],
-      { encoding: "utf8", timeout: 20000, env },
+      { encoding: "utf8", timeout: 20000, env: runEnv },
       (error, stdout, stderr) => {
         const combined = `${stdout ?? ""}${stderr ?? ""}`;
         if (error && (error.killed || error.signal)) {
