@@ -418,6 +418,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn resolve_for_finds_every_engine_in_a_bundled_package() {
+        let Ok(exe_dir) = std::env::var("FSO_BUNDLE_EXE_DIR") else {
+            eprintln!(
+                "skipping resolve_for_finds_every_engine_in_a_bundled_package: FSO_BUNDLE_EXE_DIR is \
+                 not set — the package gate sets it to the built package's executable directory"
+            );
+            return;
+        };
+        let exe_dir = std::path::PathBuf::from(exe_dir);
+        let paths = SidecarPaths::resolve_for(&exe_dir);
+        for (name, resolved) in [
+            ("vips", &paths.vips),
+            ("ffmpeg", &paths.ffmpeg),
+            ("ffprobe", &paths.ffprobe),
+            ("gs", &paths.gs),
+            ("qpdf", &paths.qpdf),
+        ] {
+            assert!(
+                resolved.is_some(),
+                "{name} did not resolve from the built package at {exe_dir:?} — the app would report \
+                 'Engine error: {name} not available' at compression time"
+            );
+        }
+    }
+
     fn empty_paths() -> SidecarPaths {
         SidecarPaths {
             vips: None,
