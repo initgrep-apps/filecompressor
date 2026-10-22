@@ -512,7 +512,7 @@ mod tests {
             candidates
                 .iter()
                 .any(|candidate| candidate.ends_with("resources/engines/vips/vips.exe")),
-            "the bundled layout puts engines/ under Resources: {:?}",
+            "the bundled layout puts engines/ under resources/engines/: {:?}",
             candidates
         );
     }
@@ -1352,9 +1352,11 @@ mod tests {
     #[test]
     fn windows_engine_candidates_match_the_bundle_resource_target() {
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
-        let conf = std::fs::read_to_string(format!("{manifest_dir}/tauri.windows.conf.json"))
-            .expect("tauri.windows.conf.json readable from src-tauri");
-        let value: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
+        let conf_path = format!("{manifest_dir}/tauri.windows.conf.json");
+        let conf = std::fs::read_to_string(&conf_path)
+            .unwrap_or_else(|error| panic!("{conf_path} must be readable: {error}"));
+        let value: serde_json::Value = serde_json::from_str(&conf)
+            .unwrap_or_else(|error| panic!("{conf_path} must parse as JSON: {error}"));
         let target = value["bundle"]["resources"]["binaries/engines/"]
             .as_str()
             .expect("the windows bundle must map binaries/engines/ to a target directory");
@@ -1365,26 +1367,34 @@ mod tests {
         )
         .unwrap_or_else(|error| panic!("{manifest_path} must be valid JSON: {error}"));
         let exe_dir = std::path::PathBuf::from("/opt/app");
-        for name in ["vips", "qpdf", "gs"] {
-            let dest = manifest["targets"]["x86_64-pc-windows-msvc"][name]["dest"]
-                .as_str()
-                .unwrap_or_else(|| {
-                    panic!("{manifest_path} must give {name} a dest for x86_64-pc-windows-msvc")
+        for triple in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
+            for name in ["vips", "qpdf", "gs"] {
+                let row = &manifest["targets"][triple][name];
+                let dest = row["dest"].as_str().unwrap_or_else(|| {
+                    panic!("{manifest_path} must give {name} a dest for {triple}")
                 });
-            assert_eq!(
-                dest, name,
-                "{manifest_path} renames {name} to {dest:?}, but the resolver probes {name:?} — \
-                 the installed folder would never resolve, so the manifest and the resolver drifted \
-                 apart"
-            );
-            let expected = exe_dir.join(target).join(name).join(format!("{name}.exe"));
-            let candidates = engine_candidates(&exe_dir, name);
-            assert_eq!(
-                candidates.first(),
-                Some(&expected),
-                "the bundled layout must be the first probe for {name}: the installer places it at \
-                 {expected:?}, got {candidates:?}"
-            );
+                assert_eq!(
+                    dest, name,
+                    "{manifest_path} renames {triple}/{name} to {dest:?}, but the resolver probes \
+                     {name:?} — the installed folder would never resolve, so the manifest and the \
+                     resolver drifted apart"
+                );
+                assert_ne!(
+                    row["static"],
+                    serde_json::Value::Bool(true),
+                    "{manifest_path} ships {triple}/{name} as a flat static binary, but the \
+                     resolver only probes {name}/ and the engine needs its sibling DLLs — \
+                     {triple}/{name} must stay a folder engine"
+                );
+                let expected = exe_dir.join(target).join(name).join(format!("{name}.exe"));
+                let candidates = engine_candidates(&exe_dir, name);
+                assert_eq!(
+                    candidates.first(),
+                    Some(&expected),
+                    "the bundled layout must be the first probe for {triple}/{name}: the \
+                     installer places it at {expected:?}, got {candidates:?}"
+                );
+            }
         }
     }
 }
