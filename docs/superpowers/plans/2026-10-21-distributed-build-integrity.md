@@ -475,7 +475,7 @@ the stripped name as its third candidate."
 
 **Interfaces:**
 - Consumes: the Windows layout `resources/engines/<name>/<name>.exe` fixed in Task 2; the stripped-name candidate `<exe_dir>/<name>.exe` added in Task 2b — Step 3's `ffmpeg.exe`/`ffprobe.exe` fixtures resolve through it on every host; the macOS flat `externalBin` layout `Contents/MacOS/<name>`.
-- Produces: an environment variable contract that Task 4's gate script drives — **`FSO_BUNDLE_EXE_DIR`**, the absolute path of the directory that contains the app executable. Inside a macOS `.app` that is `<app>/Contents/MacOS`; for the unpacked Windows installer it is the extraction root. When the variable is unset the test prints an explicit skip message and returns.
+- Produces: an environment variable contract that Task 4's gate script drives — **`FSO_BUNDLE_EXE_DIR`**, the absolute path of the directory that contains the app executable. Inside a macOS `.app` that is `<app>/Contents/MacOS`; for the unpacked Windows installer it is the extraction root. With `FSO_BUNDLE_EXE_DIR` unset and no sentinel, the test prints an explicit skip message and returns. Task 4 also sets **`FSO_BUNDLE_GATE=1`**; with that sentinel set and `FSO_BUNDLE_EXE_DIR` missing the test fails closed, because `cargo test --lib <filter>` also exits 0 when the filter matches nothing. The test also rejects a value that is not an absolute directory, an engine that resolves through a `..` component (the `../../binaries/engines` dev fallback), and a resolved file whose name does not match the engine it was resolved for.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -484,14 +484,32 @@ Append to the `#[cfg(test)] mod tests` block in `src-tauri/src/engine/processor.
 ```rust
 #[test]
 fn resolve_for_finds_every_engine_in_a_bundled_package() {
-    let Ok(exe_dir) = std::env::var("FSO_BUNDLE_EXE_DIR") else {
-        eprintln!(
-            "skipping resolve_for_finds_every_engine_in_a_bundled_package: FSO_BUNDLE_EXE_DIR is \
-             not set — the package gate sets it to the built package's executable directory"
-        );
-        return;
+    let exe_dir = match std::env::var("FSO_BUNDLE_EXE_DIR") {
+        Ok(dir) => dir,
+        Err(_) => {
+            assert!(
+                std::env::var_os("FSO_BUNDLE_GATE").is_none(),
+                "FSO_BUNDLE_GATE is set but FSO_BUNDLE_EXE_DIR is missing — the package gate must \
+                 pass the built package's executable directory"
+            );
+            eprintln!(
+                "skipping resolve_for_finds_every_engine_in_a_bundled_package: FSO_BUNDLE_EXE_DIR is \
+                 not set — the package gate sets it to the built package's executable directory"
+            );
+            return;
+        }
     };
     let exe_dir = std::path::PathBuf::from(exe_dir);
+    assert!(
+        exe_dir.is_absolute(),
+        "FSO_BUNDLE_EXE_DIR must be absolute, got {exe_dir:?} — the package gate passes the built \
+         package's executable directory"
+    );
+    assert!(
+        exe_dir.is_dir(),
+        "FSO_BUNDLE_EXE_DIR must be a directory, got {exe_dir:?} — the package gate passes the built \
+         package's executable directory"
+    );
     let paths = SidecarPaths::resolve_for(&exe_dir);
     for (name, resolved) in [
         ("vips", &paths.vips),
@@ -500,10 +518,28 @@ fn resolve_for_finds_every_engine_in_a_bundled_package() {
         ("gs", &paths.gs),
         ("qpdf", &paths.qpdf),
     ] {
+        let resolved = resolved.as_deref().unwrap_or_else(|| {
+            panic!(
+                "{name} did not resolve from the built package at {exe_dir:?} — the app would \
+                 report 'Engine error: {name} not available' at compression time"
+            )
+        });
         assert!(
-            resolved.is_some(),
-            "{name} did not resolve from the built package at {exe_dir:?} — the app would report \
-             'Engine error: {name} not available' at compression time"
+            !std::path::Path::new(resolved)
+                .components()
+                .any(|c| c == std::path::Component::ParentDir),
+            "{name} resolved to {resolved:?}, which climbs out of {exe_dir:?} — the dev-tree \
+             fallback satisfied this, so the package itself may not ship {name}"
+        );
+        let file_name = std::path::Path::new(resolved)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_else(|| panic!("{name} resolved to {resolved:?}, which has no file name"));
+        let stem = file_name.strip_suffix(".exe").unwrap_or(file_name);
+        assert!(
+            stem == name || stem.starts_with(&format!("{name}-")),
+            "{name} resolved to {resolved:?} — that file is not {name}, so the resolver returned \
+             the wrong engine"
         );
     }
 }
@@ -511,12 +547,12 @@ fn resolve_for_finds_every_engine_in_a_bundled_package() {
 
 - [ ] **Step 2: Run the test with the variable unset**
 
-Run: `cd src-tauri && cargo test --lib resolve_for_finds_every_engine_in_a_bundled_package -- --nocapture`
-Expected: PASS with the printed skip message on stdout.
+Run: `cd src-tauri && env -u FSO_BUNDLE_EXE_DIR -u FSO_BUNDLE_GATE cargo test --lib resolve_for_finds_every_engine_in_a_bundled_package -- --nocapture`
+Expected: PASS with the printed skip message. With the `FSO_BUNDLE_GATE` sentinel also unset, skipping is legitimate; an ordinary `cargo test` never sets either variable.
 
 - [ ] **Step 3: Run the test against a synthetic Windows package to see it pass**
 
-Create the layout the installer now produces, then point the test at it. Use the fixed path `/tmp/fso-bundle-fixture` — the next step re-uses it, and a plan step cannot see another step's shell variables:
+Create the layout the installer now produces, then point the test at it the way the gate does (`FSO_BUNDLE_EXE_DIR` plus the `FSO_BUNDLE_GATE=1` sentinel). Use the fixed path `/tmp/fso-bundle-fixture` — the next step re-uses it, and a plan step cannot see another step's shell variables:
 
 ```bash
 rm -rf /tmp/fso-bundle-fixture
@@ -526,7 +562,7 @@ mkdir -p /tmp/fso-bundle-fixture/resources/engines/vips /tmp/fso-bundle-fixture/
 : > /tmp/fso-bundle-fixture/resources/engines/qpdf/qpdf.exe
 : > /tmp/fso-bundle-fixture/ffmpeg.exe
 : > /tmp/fso-bundle-fixture/ffprobe.exe
-cd src-tauri && FSO_BUNDLE_EXE_DIR=/tmp/fso-bundle-fixture cargo test --lib resolve_for_finds_every_engine_in_a_bundled_package -- --nocapture
+cd src-tauri && FSO_BUNDLE_EXE_DIR=/tmp/fso-bundle-fixture FSO_BUNDLE_GATE=1 cargo test --lib resolve_for_finds_every_engine_in_a_bundled_package -- --nocapture
 ```
 
 Expected: PASS — all five resolve (vips/gs/qpdf through the `resources/engines/` candidates, ffmpeg/ffprobe through the host-independent stripped-name candidate from Task 2b).
@@ -537,7 +573,7 @@ Remove one engine from the same fixture and re-run:
 
 ```bash
 rm /tmp/fso-bundle-fixture/resources/engines/vips/vips.exe
-cd src-tauri && FSO_BUNDLE_EXE_DIR=/tmp/fso-bundle-fixture cargo test --lib resolve_for_finds_every_engine_in_a_bundled_package -- --nocapture
+cd src-tauri && FSO_BUNDLE_EXE_DIR=/tmp/fso-bundle-fixture FSO_BUNDLE_GATE=1 cargo test --lib resolve_for_finds_every_engine_in_a_bundled_package -- --nocapture
 ```
 
 Expected: FAIL with `vips did not resolve from the built package`. A test that cannot fail is not a test — confirm the failure before continuing.
@@ -582,7 +618,7 @@ resolver against a real package layout via FSO_BUNDLE_EXE_DIR."
 - Modify: `scripts/ci/workflows.test.mjs` (one new case pinning the package-gate step — Step 10)
 
 **Interfaces:**
-- Consumes: `FSO_BUNDLE_EXE_DIR` (Task 3), `scripts/binaries.manifest.json` → `targets[triple][name].expectVersion`, `scripts/binaries/verify.mjs` → `checkVersion` (called with `{ env: process.env }` so the staging-tree `DYLD_LIBRARY_PATH` at `verify.mjs:33-36` never shadows the package's own dylibs), `scripts/binaries/lib.mjs` → `isMain`, `readJson`, `exists`, `parseArgs`, `run`, `isWindowsTriple`, `manifestPath`.
+- Consumes: `FSO_BUNDLE_EXE_DIR` plus the `FSO_BUNDLE_GATE=1` sentinel (Task 3) — the gate sets both when it spawns the resolver test, and passes only when that command exits 0 **and** its output reports `1 passed`; a skipped or filtered-out test also exits 0. Also consumes `scripts/binaries.manifest.json` → `targets[triple][name].expectVersion`, `scripts/binaries/verify.mjs` → `checkVersion` (called with `{ env: process.env }` so the staging-tree `DYLD_LIBRARY_PATH` at `verify.mjs:33-36` never shadows the package's own dylibs), `scripts/binaries/lib.mjs` → `isMain`, `readJson`, `exists`, `parseArgs`, `run`, `isWindowsTriple`, `manifestPath`.
 - Produces: `node scripts/ci/package-gate.mjs --triple <triple>` — exit 0 when every check passes, exit 1 with a per-check report otherwise.
 
 **Exports of `scripts/ci/package-gate.mjs` (the surface the vitest file pins):**
@@ -853,7 +889,7 @@ The script must:
   2. `locateBundle({ root, triple })` — return `null` when nothing matches; `main` then fails with: `cannot find the built package for <triple> under src-tauri/target — this gate must run after tauri-action builds`.
   3. macOS: `exeDir = <app>/Contents/MacOS`. Windows: `extractNsisInstaller({ setupExe, destDir })` using `7z x -y <setupExe> -o<destDir>` (`7z` is in the GitHub Windows image at `C:\Program Files\7-Zip\7z.exe`); `exeDir = destDir`. When `7z` is missing, throw an error naming the expected path. On the first `windows-11-arm` release, confirm the same 7-Zip path exists on that runner image — the error names the path, so a changed image fails loudly instead of skipping.
   4. Compute `expectedEnginePaths` and, for each engine: assert the file exists → run `checkVersion(binPath, expectVersion, triple, root, { env: process.env })` (the env override keeps verify.mjs's staging `DYLD_LIBRARY_PATH` out — the package must load its own dylibs) → run each step from `enginePlan()` in a work dir per engine group — vips, qpdf and gs each get their own; ffmpeg and ffprobe share one, because ffprobe reads the PNG ffmpeg produced in that same dir (for gs, use the argument list from `gsRunArgs({ exeDir, triple })` instead of the static step args) → evaluate the step with `checkStepOutput`.
-  5. Spawn `cargo test --lib resolve_for_finds_every_engine_in_a_bundled_package` with `cwd = src-tauri` and `FSO_BUNDLE_EXE_DIR` set to `exeDir`; the check passes only when the command exits 0.
+  5. Spawn `cargo test --lib resolve_for_finds_every_engine_in_a_bundled_package` with `cwd = src-tauri`, `FSO_BUNDLE_EXE_DIR` set to `exeDir`, **and** `FSO_BUNDLE_GATE=1`. The check passes only when the command exits 0 **and** its output reports `1 passed`: `cargo test --lib <filter>` exits 0 when the filter matches nothing, and the test exits 0 when it skips, so exit 0 alone proves nothing. The sentinel turns a gate that forgets `FSO_BUNDLE_EXE_DIR` into a hard failure rather than a silent skip.
   6. Print one line per check (`PASS`/`FAIL` + detail) and exit 1 if any check failed.
 
 - [ ] **Step 5: Run the vitest file to verify it passes**

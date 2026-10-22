@@ -420,14 +420,32 @@ mod tests {
 
     #[test]
     fn resolve_for_finds_every_engine_in_a_bundled_package() {
-        let Ok(exe_dir) = std::env::var("FSO_BUNDLE_EXE_DIR") else {
-            eprintln!(
-                "skipping resolve_for_finds_every_engine_in_a_bundled_package: FSO_BUNDLE_EXE_DIR is \
-                 not set — the package gate sets it to the built package's executable directory"
-            );
-            return;
+        let exe_dir = match std::env::var("FSO_BUNDLE_EXE_DIR") {
+            Ok(dir) => dir,
+            Err(_) => {
+                assert!(
+                    std::env::var_os("FSO_BUNDLE_GATE").is_none(),
+                    "FSO_BUNDLE_GATE is set but FSO_BUNDLE_EXE_DIR is missing — the package gate must \
+                     pass the built package's executable directory"
+                );
+                eprintln!(
+                    "skipping resolve_for_finds_every_engine_in_a_bundled_package: FSO_BUNDLE_EXE_DIR is \
+                     not set — the package gate sets it to the built package's executable directory"
+                );
+                return;
+            }
         };
         let exe_dir = std::path::PathBuf::from(exe_dir);
+        assert!(
+            exe_dir.is_absolute(),
+            "FSO_BUNDLE_EXE_DIR must be absolute, got {exe_dir:?} — the package gate passes the built \
+             package's executable directory"
+        );
+        assert!(
+            exe_dir.is_dir(),
+            "FSO_BUNDLE_EXE_DIR must be a directory, got {exe_dir:?} — the package gate passes the built \
+             package's executable directory"
+        );
         let paths = SidecarPaths::resolve_for(&exe_dir);
         for (name, resolved) in [
             ("vips", &paths.vips),
@@ -436,10 +454,28 @@ mod tests {
             ("gs", &paths.gs),
             ("qpdf", &paths.qpdf),
         ] {
+            let resolved = resolved.as_deref().unwrap_or_else(|| {
+                panic!(
+                    "{name} did not resolve from the built package at {exe_dir:?} — the app would \
+                     report 'Engine error: {name} not available' at compression time"
+                )
+            });
             assert!(
-                resolved.is_some(),
-                "{name} did not resolve from the built package at {exe_dir:?} — the app would report \
-                 'Engine error: {name} not available' at compression time"
+                !std::path::Path::new(resolved)
+                    .components()
+                    .any(|c| c == std::path::Component::ParentDir),
+                "{name} resolved to {resolved:?}, which climbs out of {exe_dir:?} — the dev-tree \
+                 fallback satisfied this, so the package itself may not ship {name}"
+            );
+            let file_name = std::path::Path::new(resolved)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_else(|| panic!("{name} resolved to {resolved:?}, which has no file name"));
+            let stem = file_name.strip_suffix(".exe").unwrap_or(file_name);
+            assert!(
+                stem == name || stem.starts_with(&format!("{name}-")),
+                "{name} resolved to {resolved:?} — that file is not {name}, so the resolver returned \
+                 the wrong engine"
             );
         }
     }
