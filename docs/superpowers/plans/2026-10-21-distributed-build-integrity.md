@@ -236,7 +236,7 @@ on and leaves the notarization path open."
 - Consumes: nothing from other tasks.
 - Produces: the bundle resource target `resources/engines/` on Windows, which is the path `engine_candidates` (`src-tauri/src/sidecar.rs:68-77`) probes. Task 3's resolver test and Task 4's gate depend on this path being the real one.
 
-- [ ] **Step 1: Write the failing producer/consumer contract test**
+- [x] **Step 1: Write the failing producer/consumer contract test**
 
 This test binds the two halves that drifted apart: the folder the bundler produces and the folder the app looks in. It also pins the manifest `dest` names for both shipped Windows triples, and rejects a flip to a flat static row, so a rename on one side cannot move the installed folder away from what the resolver probes.
 
@@ -293,12 +293,12 @@ fn windows_engine_candidates_match_the_bundle_resource_target() {
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd src-tauri && cargo test --lib windows_engine_candidates_match_the_bundle_resource_target`
 Expected: FAIL — the bundled layout is not the resolver's first probe for all three engines (and the test also rejects a target that only matches the dev-checkout fallback).
 
-- [ ] **Step 3: Fix the bundle config**
+- [x] **Step 3: Fix the bundle config**
 
 In `src-tauri/tauri.windows.conf.json`, change:
 
@@ -310,12 +310,12 @@ In `src-tauri/tauri.windows.conf.json`, change:
      }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cd src-tauri && cargo test --lib windows_engine_candidates_match_the_bundle_resource_target`
 Expected: PASS.
 
-- [ ] **Step 5: Update the pinned merged-resources expectation in the JS suite**
+- [x] **Step 5: Update the pinned merged-resources expectation in the JS suite**
 
 The config change breaks a pinned vitest case: `scripts/binaries/verify.test.mjs` — `merges_the_windows_conf_into_a_resources_map_without_gs_resources` — asserts the merged Windows resources map equals `{ "binaries/engines/": "engines/" }` exactly (line 1011). Update the expected value to `{ "binaries/engines/": "resources/engines/" }`.
 
@@ -325,12 +325,12 @@ Expected: PASS — the merged-map pin now names `resources/engines/`.
 Run: `yarn test`
 Expected: PASS — no other JS pin broke.
 
-- [ ] **Step 6: Run the full Rust gate**
+- [x] **Step 6: Run the full Rust gate**
 
 Run: `cd src-tauri && cargo test`
 Expected: PASS.
 
-- [ ] **Step 7: Run the Windows-target compile gate**
+- [x] **Step 7: Run the Windows-target compile gate**
 
 The repo's documented pre-push gate for `src-tauri/src/` changes (`docs/ci-process.md` §3):
 
@@ -342,7 +342,7 @@ rm -f src-tauri/binaries/*-aarch64-pc-windows-msvc.exe
 
 Expected: the check succeeds. If `llvm` is not installed at that path, install it (`brew install llvm`) — the gate needs it to cross-compile the embedded Windows resource.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src-tauri/tauri.windows.conf.json src-tauri/src/sidecar.rs scripts/binaries/verify.test.mjs
