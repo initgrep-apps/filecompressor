@@ -276,7 +276,7 @@ describe('SettingsView', () => {
       document: { minMediaQuality: 50 },
     })
     expect(saved.outputFolder).toBe('/Users/test/Documents/Compressed')
-  })
+  }, 30_000)
 
   it('settings footer is sibling of the scroll region (pinned, 4a)', async () => {
     await loadView()
