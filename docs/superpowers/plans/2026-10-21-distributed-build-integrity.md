@@ -1024,7 +1024,7 @@ file, and runs the app's own resolver against the package."
 - Consumes: the finished behaviour of Tasks 1-4.
 - Produces: no code. This task is the record that keeps the next person from re-introducing the defects.
 
-- [ ] **Step 1: Write `docs/adr/0002-macos-distribution-signing.md`**
+- [x] **Step 1: Write `docs/adr/0002-macos-distribution-signing.md`**
 
 Follow the shape of `docs/adr/0001-sidecar-freeze-bundles.md`: title line, prose, `## Considered Options`, `## Ruling`, `## Consequences`.
 
@@ -1036,7 +1036,7 @@ Content it must carry:
 - **The notarization path.** When a membership is added: export the Developer ID certificate as a `.p12`, base64 it into a GitHub secret, and set `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` on both macOS rows of `release.yml` (or the App Store Connect API key form). Tauri then signs and notarizes automatically; no code change. The entitlement becomes unnecessary and may be deleted.
 - **Consequences.** macOS installs require one command until then (see `docs/distribution-acceptance.md`); the app is not trusted by Gatekeeper; the Windows SmartScreen banner is unaffected by this ADR.
 
-- [ ] **Step 2: Write `docs/distribution-acceptance.md`**
+- [x] **Step 2: Write `docs/distribution-acceptance.md`**
 
 Content it must carry:
 
@@ -1069,7 +1069,7 @@ Content it must carry:
 
 - **Where the automated half lives**: `node scripts/ci/package-gate.mjs --triple <triple>` proves the engines are present, runnable on real files and usable inside the built package. The matrix above proves the UI layer, which CI cannot.
 
-- [ ] **Step 3: Update `docs/ci-process.md`**
+- [x] **Step 3: Update `docs/ci-process.md`**
 
 - In the artifact-flow diagram (§1), add a line under the release rows showing `→ package gate (open the built package, run every engine)`.
 - In §2 ("Engine bundle shapes"), state that the Windows package puts the engines under `resources/engines/` (matching `GLOSSARY.md`), and that the macOS package puts them flat in `Contents/MacOS/`.
@@ -1083,11 +1083,11 @@ Content it must carry:
   | package gate: `FAIL <engine> — expected version X, got Y` | the package carries a stale engine | re-run the freeze, then the release |
   | package gate: `7z not found` (Windows rows) | the runner image no longer ships 7-Zip at the expected path | install 7-Zip in the row or pin the path; the gate names the expected path in its error |
 
-- [ ] **Step 4: Correct `docs/ARCHITECTURE.md`**
+- [x] **Step 4: Correct `docs/ARCHITECTURE.md`**
 
 Line 268 currently describes the candidate list. Rewrite it to state that on Windows the engines live under `resources/engines/<engine>/` (one folder per engine, each carrying its own DLLs), that the resolver probes `resources/engines/` first and the dev checkout `../../binaries/engines/` second, that the flat `externalBin` candidates are — in order — the triple-suffixed name (dev checkout), the bare name (macOS/Linux bundles), and the stripped `<name>.exe` (Windows bundles: the bundler strips the triple suffix and keeps the `.exe`), and that on macOS the engines are flat in `Contents/MacOS/` because they are `externalBin`.
 
-- [ ] **Step 5: Correct `README.md`**
+- [x] **Step 5: Correct `README.md`**
 
 Replace the Status block (lines 18-21). It currently claims "Windows — builds are not ready yet; PDF compression has a known Ghostscript packaging blocker (see `docs/bugs.md`)" — there is no such entry in `docs/bugs.md`, and the blocker was never Ghostscript (Windows Ghostscript is proven working by the CI audit). New text must state:
 
@@ -1097,11 +1097,11 @@ Replace the Status block (lines 18-21). It currently claims "Windows — builds 
 
 Then add a short "Installing a release" section with the two install paths from `docs/distribution-acceptance.md`, and a "Verifying a release" line pointing at `node scripts/ci/package-gate.mjs --triple <triple>` and the manual matrix.
 
-- [ ] **Step 6: Add the three defects to `docs/bugs.md`**
+- [x] **Step 6: Add the three defects to `docs/bugs.md`**
 
 Add a new section after the existing dated sections, headed with the date and naming all three defects, each with: the symptom, the exact error text, the root cause, and the fix commit reference. The three: the macOS signing defect (`Library not loaded` — mapping process and mapped file have different Team IDs), the Windows engine-folder drift (`Engine error: vips not available` etc. — `engines/` shipped, `resources/engines/` probed), and the Windows externalBin-name drift (`Engine error: ffmpeg not available` — `ffmpeg.exe` shipped, triple-suffixed and bare names probed). State explicitly that all three were found by inspecting the **shipped `v0.1.0-alpha.1` artifacts** rather than a local build, and that none was caught by CI because the release gate checked asset names and never package contents.
 
-- [ ] **Step 7: Verify the docs are consistent**
+- [x] **Step 7: Verify the docs are consistent**
 
 Run:
 
@@ -1112,7 +1112,7 @@ grep -n "shipped as" GLOSSARY.md
 
 Expected: every mention of the Windows engine location says `resources/engines/` (the only `engines/` mentions without the `resources/` prefix are the dev checkout `binaries/engines/` and the staging folder); no document still claims `engines/` is the installed path, and `GLOSSARY.md` (repo root, not `docs/`) still carries the `shipped as` contract line.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add docs/adr/0002-macos-distribution-signing.md docs/distribution-acceptance.md docs/ci-process.md docs/ARCHITECTURE.md README.md docs/bugs.md
