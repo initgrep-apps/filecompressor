@@ -140,6 +140,7 @@ fn sidecar_candidates(exe_dir: &std::path::Path, name: &str) -> Vec<std::path::P
         candidates.push(exe_dir.join(&filename));
     }
     candidates.push(exe_dir.join(name));
+    candidates.push(exe_dir.join(format!("{name}.exe")));
     candidates
 }
 
@@ -538,18 +539,45 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_candidates_prefer_triple_then_plain_name() {
+    fn sidecar_candidates_prefer_triple_then_bare_then_exe_name() {
         let dir = std::path::PathBuf::from("/opt/engine");
         let candidates = sidecar_candidates(&dir, "vips");
 
         let triple_name = sidecar_filename("vips").expect("host platform must map to a triple");
         assert_eq!(
             candidates.len(),
-            2,
-            "the exe-dir candidate list is exactly the triple-suffixed name then the plain name"
+            3,
+            "the exe-dir candidate list is name-independent and always exactly the triple-suffixed \
+             name, then the bare name, then the stripped .exe name; it serves externalBin sidecars \
+             (ffmpeg/ffprobe) and the engine-folder flat fallback alike (vips shown as a sample)"
         );
         assert_eq!(candidates[0], dir.join(triple_name));
         assert_eq!(candidates[1], dir.join("vips"));
+        assert_eq!(candidates[2], dir.join("vips.exe"));
+    }
+
+    #[test]
+    fn resolve_sidecar_candidate_falls_back_to_the_stripped_exe_name() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let exe_dir = dir.path();
+        let triple =
+            exe_dir.join(sidecar_filename("ffmpeg").expect("host platform must map to a triple"));
+        let stripped = exe_dir.join("ffmpeg.exe");
+        std::fs::write(&triple, b"stub").expect("write triple sidecar");
+        std::fs::write(&stripped, b"stub").expect("write stripped sidecar");
+        assert_eq!(
+            std::path::Path::new(
+                &resolve_sidecar_candidate(exe_dir, "ffmpeg").expect("triple name resolves")
+            ),
+            triple.as_path()
+        );
+        std::fs::remove_file(&triple).expect("remove triple sidecar");
+        assert_eq!(
+            std::path::Path::new(
+                &resolve_sidecar_candidate(exe_dir, "ffmpeg").expect("stripped name resolves")
+            ),
+            stripped.as_path()
+        );
     }
 
     #[test]
@@ -1396,5 +1424,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn sidecar_candidates_probe_the_stripped_external_bin_name() {
+        let exe_dir = std::path::PathBuf::from("/opt/app");
+        let candidates = sidecar_candidates(&exe_dir, "ffmpeg");
+        assert!(
+            candidates.contains(&exe_dir.join("ffmpeg.exe")),
+            "the windows bundler strips the -{{target_triple}} suffix and keeps the .exe, so the \
+             shipped ffmpeg.exe is only found through the stripped-name candidate — \
+             v0.1.0-alpha.1 shipped ffmpeg.exe beside the app and video compression failed with \
+             'Engine error: ffmpeg not available'"
+        );
     }
 }

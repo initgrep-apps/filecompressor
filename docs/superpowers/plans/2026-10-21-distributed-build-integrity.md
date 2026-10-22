@@ -369,9 +369,9 @@ probes the triple-suffixed and bare names."
 - Consumes: nothing from other tasks. Tasks 1 and 2 do not touch `sidecar_candidates`.
 - Produces: a third candidate in `sidecar_candidates` — `<exe_dir>/<name>.exe` — the name the Windows bundler produces when it strips the target-triple suffix from an `externalBin` sidecar (`tauri-bundler` `copy_binaries`). Task 3's resolver test and Task 4's gate depend on it: without it, `resolve_for` returns `None` for ffmpeg/ffprobe against every Windows package, and the gate fails on `ffmpeg did not resolve`.
 
-**Why this is a defect.** The shipped `v0.1.0-alpha.1` NSIS payload carries plain `ffmpeg.exe`/`ffprobe.exe` beside `file-compressor.exe` (spec §2.2). `sidecar_candidates` probes the triple-suffixed name (`ffmpeg-x86_64-pc-windows-msvc.exe` — the dev layout) and the bare name (`ffmpeg` — the macOS/Linux bundle layout). Neither names `ffmpeg.exe`, and Windows file APIs do no extension guessing, so video compression fails with `Engine error: ffmpeg not available` in every shipped Windows build.
+**Why this is a defect.** The shipped `v0.1.0-alpha.1` NSIS payload carries plain `ffmpeg.exe`/`ffprobe.exe` beside `file-compressor.exe` (spec §2.2). `sidecar_candidates` probes the triple-suffixed name (`ffmpeg-x86_64-pc-windows-msvc.exe` — the triple-suffixed staged/defensive probe, not a name the shipped package contains) and the bare name (`ffmpeg` — the macOS/Linux bundle layout). Neither names `ffmpeg.exe`, and Windows file APIs do no extension guessing, so video compression fails with `Engine error: ffmpeg not available` in every shipped Windows build.
 
-- [ ] **Step 1: Write the failing contract test**
+- [x] **Step 1: Write the failing contract test**
 
 Append to the `#[cfg(test)] mod tests` block in `src-tauri/src/sidecar.rs`:
 
@@ -382,20 +382,20 @@ fn sidecar_candidates_probe_the_stripped_external_bin_name() {
     let candidates = sidecar_candidates(&exe_dir, "ffmpeg");
     assert!(
         candidates.contains(&exe_dir.join("ffmpeg.exe")),
-        "the windows bundler strips the -{target_triple} suffix and keeps the .exe \
-         (tauri-bundler copy_binaries), so the shipped ffmpeg.exe is only found through the \
-         stripped-name candidate — v0.1.0-alpha.1 shipped ffmpeg.exe beside the app and video \
-         compression failed with 'Engine error: ffmpeg not available'"
+        "the windows bundler strips the -{{target_triple}} suffix and keeps the .exe, so the \
+         shipped ffmpeg.exe is only found through the stripped-name candidate — \
+         v0.1.0-alpha.1 shipped ffmpeg.exe beside the app and video compression failed with \
+         'Engine error: ffmpeg not available'"
     );
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd src-tauri && cargo test --lib sidecar_candidates_probe_the_stripped_external_bin_name`
 Expected: FAIL — the candidate list has only the triple-suffixed and bare names, so `contains` is false.
 
-- [ ] **Step 3: Add the stripped-name candidate**
+- [x] **Step 3: Add the stripped-name candidate**
 
 In `src-tauri/src/sidecar.rs`, in `sidecar_candidates`, after the bare-name push (current line 142):
 
@@ -406,12 +406,12 @@ In `src-tauri/src/sidecar.rs`, in `sidecar_candidates`, after the bare-name push
 
 The candidate is unconditional: `sidecar_candidates` stays a pure, host-independent list — the same shape `engine_candidates` already has (`resources/engines/…` is probed on every host though only Windows bundles produce it), so the Windows shape stays unit-testable on the dev machine. On macOS/Linux the `.exe` probe is one extra metadata call that never matches; resolution order for the paths that already hit is unchanged.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cd src-tauri && cargo test --lib sidecar_candidates_probe_the_stripped_external_bin_name`
 Expected: PASS.
 
-- [ ] **Step 5: Update the existing candidate-list test**
+- [x] **Step 5: Update the existing candidate-list test**
 
 `sidecar_candidates_prefer_triple_then_plain_name` (`sidecar.rs:541-553`) asserts `candidates.len() == 2` — now false. Update it and rename it to match the three-candidate contract:
 
@@ -437,12 +437,12 @@ fn sidecar_candidates_prefer_triple_then_bare_then_exe_name() {
 Run: `cd src-tauri && cargo test --lib sidecar_candidates_prefer_triple_then_bare_then_exe_name`
 Expected: PASS.
 
-- [ ] **Step 6: Run the full Rust gate**
+- [x] **Step 6: Run the full Rust gate**
 
 Run: `cd src-tauri && cargo test`
 Expected: PASS — no existing test regressed. (`resolve_for_windows_still_resolves_exe_dir_binaries` in `processor.rs` keeps passing: the triple-suffixed candidates still resolve first.)
 
-- [ ] **Step 7: Run the Windows-target compile gate**
+- [x] **Step 7: Run the Windows-target compile gate**
 
 The repo's documented pre-push gate for `src-tauri/src/` changes (`docs/ci-process.md` §3):
 
@@ -454,7 +454,7 @@ rm -f src-tauri/binaries/*-aarch64-pc-windows-msvc.exe
 
 Expected: the check succeeds. If `llvm` is not installed at that path, install it (`brew install llvm`) — the gate needs it to cross-compile the embedded Windows resource.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src-tauri/src/sidecar.rs
