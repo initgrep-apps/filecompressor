@@ -11,12 +11,16 @@ describe("package-gate CLI process exit code", () => {
   it("exits 1 and prints FAIL when the package has no engines", () => {
     const appDir = join(mkdtempSync(join(tmpdir(), "gate-cli-")), "empty.app");
     mkdirSync(appDir, { recursive: true });
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => key.toLowerCase() !== "path"),
+    );
+    env.PATH = "/nonexistent";
     const result = spawnSync(
       process.execPath,
       [SCRIPT, "--triple", "aarch64-apple-darwin", "--bundle-dir", appDir],
       {
         encoding: "utf8",
-        env: { ...process.env, PATH: "/nonexistent" },
+        env,
         timeout: 120_000,
       },
     );

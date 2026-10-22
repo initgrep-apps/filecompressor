@@ -623,7 +623,7 @@ resolver against a real package layout via FSO_BUNDLE_EXE_DIR."
 - Modify: `scripts/ci/workflows.test.mjs` (one new case pinning the package-gate step — Step 10)
 
 **Interfaces:**
-- Consumes: `FSO_BUNDLE_EXE_DIR` plus the `FSO_BUNDLE_GATE=1` sentinel (Task 3) — the gate sets both when it spawns the resolver test, and passes only when that command exits 0 **and** its output contains the `fso-bundle-resolver-ok` marker; a skipped or filtered-out test also exits 0, and a skipped test never prints the marker. Also consumes `scripts/binaries.manifest.json` → `targets[triple][name].expectVersion`, `scripts/binaries/verify.mjs` → `checkVersion` (called with `{ env: process.env }` so the staging-tree `DYLD_LIBRARY_PATH` at `verify.mjs:33-36` never shadows the package's own dylibs), `scripts/binaries/lib.mjs` → `isMain`, `readJson`, `exists`, `parseArgs`, `run`, `isWindowsTriple`, `manifestPath`.
+- Consumes: `FSO_BUNDLE_EXE_DIR` plus the `FSO_BUNDLE_GATE=1` sentinel (Task 3) — the gate sets both when it spawns the resolver test, and passes only when that command exits 0 **and** its output contains the `fso-bundle-resolver-ok` marker; a skipped or filtered-out test also exits 0, and a skipped test never prints the marker. Also consumes `scripts/binaries.manifest.json` → `targets[triple][name].expectVersion`, `scripts/binaries/verify.mjs` → `checkVersion` (called with `{ env }`, a copy of `process.env` with `DYLD_LIBRARY_PATH` deleted, so the staging-tree injection at `verify.mjs:38-41` never shadows the package's own dylibs), `scripts/binaries/lib.mjs` → `isMain`, `readJson`, `exists`, `run`, `isWindowsTriple`, `manifestPath`.
 - Produces: `node scripts/ci/package-gate.mjs --triple <triple>` — exit 0 when every check passes, exit 1 with a per-check report otherwise.
 
 **Exports of `scripts/ci/package-gate.mjs` (the surface the vitest file pins):**
@@ -650,7 +650,7 @@ export async function main(argv, deps = {})               // → exit code (0 pa
 
 **Path construction.** Every path is built with `node:path`'s `join`, never by string concatenation, so the same expectations hold on the macOS and Windows release rows. The vitest file below compares against `join(...)` for the same reason.
 
-**The operation plan (`enginePlan()`), one entry per engine.** A step must declare `produces` or `expectStdout` — a step that declares neither fails, because exit 0 alone would pass a step that did nothing. A step passes when the command exits 0 **and** (it declares no `produces` or the produced file exists, is non-empty, and starts with the step's `magic` bytes) **and** (it declares no stdout expectation or stdout contains it). The magic bytes reject a non-empty HTML error page or a truncated file: `%PDF-` for qpdf/gs, the PNG signature for ffmpeg's `out.png`, `FF D8` for vips' `out.jpg`, and vips' native magic for `in.v`.
+**The operation plan (`enginePlan()`), one entry per engine.** A step must declare `produces` or `expectStdout` — a step that declares neither fails, because exit 0 alone would pass a step that did nothing. A step passes when the command exits 0 **and** (it declares no `produces` or the produced file exists, is non-empty, and starts with the step's `magic` bytes) **and** (it declares no stdout expectation or stdout contains it). The magic bytes reject a non-empty file with the wrong first bytes (e.g. an HTML error page): `%PDF-` for qpdf/gs, the PNG signature for ffmpeg's `out.png`, `FF D8` for vips' `out.jpg`, and vips' native magic for `in.v`.
 
 | engine | `fixtures` (written into the work dir first) | `steps` |
 |---|---|---|
@@ -701,7 +701,7 @@ export async function checkVersion(binPath, expectVersion, triple, root, { env, 
   const versionArgs = args ?? (/(^|[\\/])(ffmpeg|ffprobe)([.-]|$)/.test(binPath) ? ["-version"] : ["--version"]);
 ```
 
-and rename the `env` in the `execFile` options to `runEnv` (`{ encoding: "utf8", timeout: 20000, env: runEnv }`) and the hardcoded `["--version"]` to `versionArgs`. A falsy `env` (absent, `undefined` or `null`) means "no override", so the staging `DYLD_LIBRARY_PATH` is injected; any truthy object is used as-is. The existing caller (`verify.mjs:372`) passes four arguments, so its behavior is unchanged: default env plus the staging `DYLD_LIBRARY_PATH`. The gate passes five, with `{ env: process.env }` — inherits the ambient env, **no** `DYLD_LIBRARY_PATH` injection, so the bundled engines must load their own dylibs from the package. `args` overrides the version flag; by default ffmpeg/ffprobe get `-version` (they exit nonzero on `--version` while still printing the banner) and every other engine gets `--version`.
+and rename the `env` in the `execFile` options to `runEnv` (`{ encoding: "utf8", timeout: 20000, env: runEnv }`) and the hardcoded `["--version"]` to `versionArgs`. A falsy `env` (absent, `undefined` or `null`) means "no override", so the staging `DYLD_LIBRARY_PATH` is injected; any truthy object is used as-is. The existing four-argument caller keeps its behavior: default env plus the staging `DYLD_LIBRARY_PATH`. The gate passes five, with `{ env }` = a copy of `process.env` minus `DYLD_LIBRARY_PATH` — inherits the ambient env, **no** staging injection, so the bundled engines must load their own dylibs from the package. `args` overrides the version flag; by default ffmpeg/ffprobe get `-version` (they exit nonzero on `--version` while still printing the banner) and every other engine gets `--version`.
 
 - [ ] **Step 2: Write the failing vitest file**
 
@@ -805,8 +805,15 @@ describe("enginePlan", () => {
 
 describe("gsRunArgs", () => {
   it("prepends the package's own gs-resources -I flags on macOS", () => {
-    const exeDir = join("/app", "Contents", "MacOS");
-    const tree = join(exeDir, "..", "Resources", "gs-resources");
+    const app = mkdtempSync(join(tmpdir(), "gate-gs-"));
+    const exeDir = join(app, "Contents", "MacOS");
+    const tree = join(app, "Contents", "Resources", "gs-resources");
+    for (const dir of ["Resource/Init", "lib", "Resource/Font", "fonts"]) {
+      mkdirSync(join(tree, ...dir.split("/")), { recursive: true });
+    }
+    mkdirSync(exeDir, { recursive: true });
+    writeFileSync(join(tree, "Resource", "Init", "gs_init.ps"), "%!PS\n");
+    writeFileSync(join(tree, "fonts", "font.pfb"), "font");
     const stepArgs = enginePlan().get("gs").steps[0].args;
     const args = gsRunArgs({ exeDir, triple: "aarch64-apple-darwin", stepArgs });
     expect(args[0]).toBe("-I");
@@ -881,7 +888,7 @@ describe("checkVersion env override (the gate's no-staging-DYLD contract)", () =
     expect(options.env).toEqual(env);
     expect(
       options.env.DYLD_LIBRARY_PATH,
-      "the gate passes { env: process.env } so the package must load its own dylibs — the staging-tree injection must never reach it",
+      "the gate passes { env } with DYLD_LIBRARY_PATH deleted so the package must load its own dylibs — the staging-tree injection must never reach it",
     ).toBeUndefined();
   });
 

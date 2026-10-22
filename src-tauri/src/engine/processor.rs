@@ -481,6 +481,15 @@ mod tests {
                 "{name} resolved to {resolved:?} — packaged engines use their plain name"
             );
         }
+        #[cfg(not(target_os = "windows"))]
+        if std::env::var_os("FSO_BUNDLE_GATE").is_some() {
+            assert!(
+                paths.gs_resources.is_some(),
+                "gs resources did not resolve from the built package at {exe_dir:?} — gs would fall \
+                 back to its compiled-in prefix and PDF compression would fail on a machine without \
+                 Ghostscript"
+            );
+        }
         println!("fso-bundle-resolver-ok: {exe_dir:?}");
     }
 

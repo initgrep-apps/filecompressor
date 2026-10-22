@@ -42,8 +42,8 @@ export async function checkVersion(binPath, expectVersion, triple, root, { env, 
       { encoding: "utf8", timeout: 20000, env: runEnv },
       (error, stdout, stderr) => {
         const combined = `${stdout ?? ""}${stderr ?? ""}`;
+        const tail = combined.trim().slice(0, 300);
         if (error && (error.killed || error.signal)) {
-          const tail = combined.trim().slice(0, 300);
           resolvePromise({
             ok: false,
             detail: `execution timed out or was killed before reporting a version (${error.signal ?? "timeout"})${tail ? `: ${tail}` : ""}`,
@@ -61,7 +61,7 @@ export async function checkVersion(binPath, expectVersion, triple, root, { env, 
         if (error) {
           resolvePromise({
             ok: false,
-            detail: `exited ${error.code ?? "nonzero"} after printing a version — the binary must run cleanly: ${combined.trim().slice(0, 300)}`,
+            detail: `exited ${error.code ?? "nonzero"} after printing a version — the binary must run cleanly: ${tail}`,
           });
           return;
         }

@@ -120,6 +120,32 @@ describe("expectedEnginePaths", () => {
       }),
     ).toThrow(/vips.*bundle\.externalBin.*tauri\.conf\.json/);
   });
+  it("throws when the Windows manifest stages a sixth engine the gate does not exercise", () => {
+    const extended = JSON.parse(JSON.stringify(manifest));
+    extended.targets["x86_64-pc-windows-msvc"]["sixth-engine"] = { dest: "sixth-engine" };
+    expect(() =>
+      expectedEnginePaths({
+        triple: "x86_64-pc-windows-msvc",
+        exeDir: join("C:", "app"),
+        manifest: extended,
+        baseConf,
+        windowsConf,
+      }),
+    ).toThrow(/sixth-engine.*ENGINES and enginePlan/);
+  });
+  it("throws when the Windows config stops null-merging gs-resources", () => {
+    const broken = JSON.parse(JSON.stringify(windowsConf));
+    broken.bundle.resources["gs-resources/"] = "gs-resources/";
+    expect(() =>
+      expectedEnginePaths({
+        triple: "x86_64-pc-windows-msvc",
+        exeDir: join("C:", "app"),
+        manifest,
+        baseConf,
+        windowsConf: broken,
+      }),
+    ).toThrow(/gs-resources/);
+  });
 });
 
 describe("expectedVersions", () => {
@@ -794,6 +820,59 @@ describe("main", () => {
       expect(packageFailures).toHaveLength(1);
     } finally {
       errors.mockRestore();
+    }
+  });
+
+  it("returns 0 on a Windows package when the NSIS extraction succeeds", async () => {
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    const setup = join(mkdtempSync(join(tmpdir(), "gate-exe-")), "app-setup.exe");
+    writeFileSync(setup, "stub");
+    try {
+      const code = await main(
+        ["--triple", "x86_64-pc-windows-msvc", "--bundle-dir", setup],
+        successDeps({ extractNsisInstaller: async () => mkdtempSync(join(tmpdir(), "gate-nsis-")) }),
+      );
+      expect(code).toBe(0);
+      expect(logs.mock.calls.flat().join("\n")).toMatch(/package gate: PASS/);
+    } finally {
+      logs.mockRestore();
+    }
+  });
+
+  it("returns 1 with one FAIL package line when 7z is missing", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const setup = join(mkdtempSync(join(tmpdir(), "gate-exe-")), "app-setup.exe");
+    writeFileSync(setup, "stub");
+    try {
+      const code = await main(
+        ["--triple", "x86_64-pc-windows-msvc", "--bundle-dir", setup],
+        successDeps({
+          extractNsisInstaller: async () => {
+            throw new SevenZipMissingError("7z not found");
+          },
+        }),
+      );
+      expect(code).toBe(1);
+      const packageFailures = errors.mock.calls
+        .flat()
+        .filter((line) => typeof line === "string" && line.startsWith("FAIL package"));
+      expect(packageFailures).toHaveLength(1);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("fails when an engine reports failure without any detail", async () => {
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const code = await main(
+        ["--triple", "aarch64-apple-darwin", "--bundle-dir", appDir()],
+        successDeps({ checkEngine: async () => ({ ok: false, details: [] }) }),
+      );
+      expect(code).toBe(1);
+      expect(logs.mock.calls.flat().join("\n")).toMatch(/engine checks reported failure without a detail/);
+    } finally {
+      logs.mockRestore();
     }
   });
 });

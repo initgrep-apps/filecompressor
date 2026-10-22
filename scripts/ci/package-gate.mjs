@@ -75,9 +75,10 @@ export function expectedEnginePaths({ triple, exeDir, manifest, baseConf, window
     return paths;
   }
   const external = new Set((windowsConf.bundle.externalBin ?? []).map((entry) => basename(entry)));
+  const targetEntries = manifest.targets?.[triple] ?? {};
   assertEveryEngineGated(
-    [...ENGINES, ...external],
-    "src-tauri/tauri.windows.conf.json bundle.externalBin (plus its engine payloads)",
+    [...new Set([...external, ...Object.keys(targetEntries)])],
+    "src-tauri/tauri.windows.conf.json bundle.externalBin plus the manifest's engine payloads",
   );
   const enginesTarget = windowsConf.bundle.resources?.["binaries/engines/"];
   if (typeof enginesTarget !== "string" || enginesTarget.length === 0) {
@@ -85,7 +86,11 @@ export function expectedEnginePaths({ triple, exeDir, manifest, baseConf, window
       "src-tauri/tauri.windows.conf.json must map bundle.resources['binaries/engines/'] to the install folder the app probes",
     );
   }
-  const targetEntries = manifest.targets?.[triple] ?? {};
+  if (windowsConf.bundle.resources?.["gs-resources/"] !== null) {
+    throw new Error(
+      "src-tauri/tauri.windows.conf.json must null-merge bundle.resources['gs-resources/'] — windows ships the ROM build, so a gs resource tree there would bypass the package gate",
+    );
+  }
   for (const name of ENGINES) {
     if (external.has(name)) {
       paths.set(name, join(exeDir, `${name}.exe`));
@@ -93,11 +98,6 @@ export function expectedEnginePaths({ triple, exeDir, manifest, baseConf, window
     }
     const dest = targetEntries[name]?.dest ?? name;
     paths.set(name, join(exeDir, ...enginesTarget.split("/").filter(Boolean), dest, `${dest}.exe`));
-  }
-  if (paths.size !== ENGINES.length) {
-    throw new Error(
-      `internal gate error: built ${paths.size} engine paths for ${ENGINES.length} engines — an engine would be skipped`,
-    );
   }
   return paths;
 }
@@ -277,7 +277,9 @@ function packageIn(bundleDir, extension) {
     }
     throw new Error(`cannot scan ${dir} for a ${extension} package: ${error.code ?? error.message ?? error}`);
   }
-  const match = entries.find((entry) => entry.name.endsWith(extension));
+  const match = entries.find((entry) =>
+    extension === ".exe" ? entry.name.endsWith("-setup.exe") : entry.name.endsWith(extension),
+  );
   return match ? join(dir, match.name) : null;
 }
 
@@ -565,6 +567,9 @@ export async function main(argv = [], deps = {}) {
       plan: plan.get(name),
       workDir: workDirFor(name),
     });
+    if (!checked.ok && checked.details.length === 0) {
+      record(false, name, "engine checks reported failure without a detail");
+    }
     for (const detail of checked.details) {
       record(detail.ok, detail.label, detail.detail);
     }
