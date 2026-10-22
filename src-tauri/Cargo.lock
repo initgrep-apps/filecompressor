@@ -967,28 +967,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "file-compressor"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "filetime",
- "libc",
- "plist",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-store",
- "tempfile",
- "tokio",
- "tokio-util",
- "uuid",
- "zip",
-]
-
-[[package]]
 name = "filetime"
 version = "0.2.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4890,6 +4868,28 @@ dependencies = [
  "libc",
  "once_cell",
  "pkg-config",
+]
+
+[[package]]
+name = "yard"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "filetime",
+ "libc",
+ "plist",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-store",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
+ "zip",
 ]
 
 [[package]]

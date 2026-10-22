@@ -1,5 +1,5 @@
-// File Size Optimizer — offline batch file compression
-// Copyright (C) 2026 File Size Optimizer Contributors
+// Yard — offline batch file compression
+// Copyright (C) 2026 Yard Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,5 +18,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    file_compressor_lib::run()
+    yard_lib::run()
 }

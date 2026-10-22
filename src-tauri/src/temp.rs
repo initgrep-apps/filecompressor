@@ -10,7 +10,7 @@ pub(crate) fn create_temp_dir<R: tauri::Runtime>(app: &AppHandle<R>) -> Result<P
         .temp_dir()
         .map_err(|e| format!("Failed to get temp dir: {}", e))?;
 
-    let app_temp = temp_base.join("file-compressor");
+    let app_temp = temp_base.join("yard");
     std::fs::create_dir_all(&app_temp).map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
     let session_temp = app_temp.join(uuid::Uuid::new_v4().to_string());
@@ -110,7 +110,7 @@ pub(crate) fn cleanup_stale_temp_files<R: tauri::Runtime>(app: &AppHandle<R>) {
             return;
         }
     };
-    cleanup_stale_temp_files_in(&temp_base.join("file-compressor"), SystemTime::now());
+    cleanup_stale_temp_files_in(&temp_base.join("yard"), SystemTime::now());
 }
 
 #[cfg(test)]
@@ -243,7 +243,7 @@ mod tests {
     #[test]
     fn cleanup_stale_temp_files_safe_when_app_temp_missing() {
         let missing = tempfile::tempdir().unwrap();
-        let app_temp = missing.path().join("file-compressor");
+        let app_temp = missing.path().join("yard");
         cleanup_stale_temp_files_in(&app_temp, SystemTime::now());
         assert!(!app_temp.exists());
     }

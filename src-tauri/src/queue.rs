@@ -1,5 +1,5 @@
-// File Size Optimizer — offline batch file compression
-// Copyright (C) 2026 File Size Optimizer Contributors
+// Yard — offline batch file compression
+// Copyright (C) 2026 Yard Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -1487,7 +1487,7 @@ mod tests {
         let rx = events_of(&app.handle(), &["file:error", "file:cancelled", "file:complete", "batch:complete"]);
         let queue = app.state::<QueueState<tauri::test::MockRuntime>>();
 
-        let app_temp = std::env::temp_dir().join("file-compressor");
+        let app_temp = std::env::temp_dir().join("yard");
         let snapshot = |dir: &std::path::Path| -> std::collections::HashSet<String> {
             std::fs::read_dir(dir)
                 .map(|entries| {

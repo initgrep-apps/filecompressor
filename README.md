@@ -1,4 +1,4 @@
-# File Size Optimizer
+# Yard
 
 An offline desktop app that compresses files to a target size. Drag files in, pick nothing, press Compress — each file gets a size limit based on its type, and the app compresses it as close to that limit as quality allows.
 
@@ -26,7 +26,7 @@ Supported inputs: JPEG, PNG, WebP, HEIC/HEIF (→ JPEG) · MP4, MOV (→ MP4) ·
 **macOS** — the DMG mounts read-only, so copy the app first and strip the quarantine mark from the installed copy:
 
 ```bash
-hdiutil attach ~/Downloads/file-compressor_<version>_<aarch64|x64>.dmg
+hdiutil attach ~/Downloads/yard_<version>_<aarch64|x64>.dmg
 cp -R /Volumes/<volume-name>/*.app /Applications/
 hdiutil detach /Volumes/<volume-name>
 xattr -dr com.apple.quarantine /Applications/<app-name>.app

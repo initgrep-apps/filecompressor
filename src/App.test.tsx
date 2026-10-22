@@ -90,7 +90,7 @@ describe('App shell', () => {
   it('breadcrumb reflects the active view and updates on navigation', async () => {
     const user = userEvent.setup()
     render(<App />)
-    expect(within(headerEl()).getByText('Optimizer')).toBeInTheDocument()
+    expect(within(headerEl()).getByText('Yard')).toBeInTheDocument()
     expect(within(headerEl()).getByText('Compress')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Settings' }))
     expect(within(headerEl()).getByText('Settings')).toBeInTheDocument()

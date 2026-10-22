@@ -1,4 +1,4 @@
-# File Size Optimizer — Language
+# Yard — Language
 
 Offline desktop app: users batch-compress files to size targets; all compression engines ship inside the app. This glossary fixes the vocabulary used across code, scripts, docs, and CI.
 

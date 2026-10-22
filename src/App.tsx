@@ -1,5 +1,5 @@
-// File Size Optimizer — offline batch file compression
-// Copyright (C) 2026 File Size Optimizer Contributors
+// Yard — offline batch file compression
+// Copyright (C) 2026 Yard Contributors
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -59,7 +59,7 @@ function App() {
             <SidebarMenuItem>
               <SidebarMenuButton
                 size="lg"
-                tooltip="Optimizer"
+                tooltip="Yard"
                 isActive={false}
                 render={<div />}
               >
@@ -68,10 +68,7 @@ function App() {
                 </div>
                 <div className="grid flex-1 text-left text-sm leading-tight">
                   <span className="truncate font-semibold text-sidebar-foreground">
-                    Optimizer
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    File Size Optimizer
+                    Yard
                   </span>
                 </div>
               </SidebarMenuButton>
@@ -116,7 +113,7 @@ function App() {
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem>
-                <BreadcrumbLink href="#">Optimizer</BreadcrumbLink>
+                <BreadcrumbLink href="#">Yard</BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
