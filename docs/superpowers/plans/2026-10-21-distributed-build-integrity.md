@@ -238,27 +238,46 @@ on and leaves the notarization path open."
 
 - [ ] **Step 1: Write the failing producer/consumer contract test**
 
-This test binds the two halves that drifted apart: the folder the bundler produces and the folder the app looks in.
+This test binds the two halves that drifted apart: the folder the bundler produces and the folder the app looks in. It also pins the manifest `dest` names, so a rename on one side cannot move the installed folder away from what the resolver probes.
 
 Append to the `#[cfg(test)] mod tests` block in `src-tauri/src/sidecar.rs`:
 
 ```rust
 #[test]
 fn windows_engine_candidates_match_the_bundle_resource_target() {
-    let manifest = env!("CARGO_MANIFEST_DIR");
-    let conf = std::fs::read_to_string(format!("{manifest}/tauri.windows.conf.json"))
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let conf = std::fs::read_to_string(format!("{manifest_dir}/tauri.windows.conf.json"))
         .expect("tauri.windows.conf.json readable from src-tauri");
     let value: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
     let target = value["bundle"]["resources"]["binaries/engines/"]
         .as_str()
         .expect("the windows bundle must map binaries/engines/ to a target directory");
+    let manifest_path = format!("{manifest_dir}/../scripts/binaries.manifest.json");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&manifest_path)
+            .unwrap_or_else(|error| panic!("{manifest_path} must be readable: {error}")),
+    )
+    .unwrap_or_else(|error| panic!("{manifest_path} must be valid JSON: {error}"));
     let exe_dir = std::path::PathBuf::from("/opt/app");
     for name in ["vips", "qpdf", "gs"] {
+        let dest = manifest["targets"]["x86_64-pc-windows-msvc"][name]["dest"]
+            .as_str()
+            .unwrap_or_else(|| {
+                panic!("{manifest_path} must give {name} a dest for x86_64-pc-windows-msvc")
+            });
+        assert_eq!(
+            dest, name,
+            "{manifest_path} renames {name} to {dest:?}, but the resolver probes {name:?} — \
+             the installed folder would never resolve, so the manifest and the resolver drifted \
+             apart"
+        );
         let expected = exe_dir.join(target).join(name).join(format!("{name}.exe"));
-        assert!(
-            engine_candidates(&exe_dir, name).contains(&expected),
-            "the windows bundle puts {name} at {expected:?}, so the resolver must probe that exact \
-             path — the two drifted apart once and every compression category failed"
+        let candidates = engine_candidates(&exe_dir, name);
+        assert_eq!(
+            candidates.first(),
+            Some(&expected),
+            "the bundled layout must be the first probe for {name}: the installer places it at \
+             {expected:?}, got {candidates:?}"
         );
     }
 }

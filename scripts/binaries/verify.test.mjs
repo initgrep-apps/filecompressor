@@ -1007,7 +1007,7 @@ describe("the shipped windows gs rows and platform config", () => {
     const merged = mergePatch(structuredClone(baseConf), windowsConf);
     expect(
       merged.bundle.resources,
-      "tauri-build copies the resolved resources map on every cargo run — a gs-resources key today would demand a tree windows never stages",
+      "tauri-build copies the resolved resources map on every cargo run — the windows engines target must stay resources/engines/ (the path engine_candidates probes), and a gs-resources key today would demand a tree windows never stages",
     ).toEqual({ "binaries/engines/": "resources/engines/" });
   });
 

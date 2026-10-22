@@ -63,7 +63,7 @@ fn resolve_sidecar_path(path: &std::path::Path, name: &str) -> Result<String, St
 /// Windows engines cannot sit next to the app binary: each one needs its own
 /// folder of sibling DLLs, which `prep-windows.mjs` stages under
 /// `binaries/engines/<name>/` and `tauri.windows.conf.json` ships as
-/// `Resources/engines/`. Resolution therefore probes the bundled layout first,
+/// `resources/engines/`. Resolution therefore probes the bundled layout first,
 /// then the repo checkout layout.
 pub(crate) fn engine_candidates(
     exe_dir: &std::path::Path,
@@ -1351,20 +1351,39 @@ mod tests {
 
     #[test]
     fn windows_engine_candidates_match_the_bundle_resource_target() {
-        let manifest = env!("CARGO_MANIFEST_DIR");
-        let conf = std::fs::read_to_string(format!("{manifest}/tauri.windows.conf.json"))
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let conf = std::fs::read_to_string(format!("{manifest_dir}/tauri.windows.conf.json"))
             .expect("tauri.windows.conf.json readable from src-tauri");
         let value: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
         let target = value["bundle"]["resources"]["binaries/engines/"]
             .as_str()
             .expect("the windows bundle must map binaries/engines/ to a target directory");
+        let manifest_path = format!("{manifest_dir}/../scripts/binaries.manifest.json");
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&manifest_path)
+                .unwrap_or_else(|error| panic!("{manifest_path} must be readable: {error}")),
+        )
+        .unwrap_or_else(|error| panic!("{manifest_path} must be valid JSON: {error}"));
         let exe_dir = std::path::PathBuf::from("/opt/app");
         for name in ["vips", "qpdf", "gs"] {
+            let dest = manifest["targets"]["x86_64-pc-windows-msvc"][name]["dest"]
+                .as_str()
+                .unwrap_or_else(|| {
+                    panic!("{manifest_path} must give {name} a dest for x86_64-pc-windows-msvc")
+                });
+            assert_eq!(
+                dest, name,
+                "{manifest_path} renames {name} to {dest:?}, but the resolver probes {name:?} — \
+                 the installed folder would never resolve, so the manifest and the resolver drifted \
+                 apart"
+            );
             let expected = exe_dir.join(target).join(name).join(format!("{name}.exe"));
-            assert!(
-                engine_candidates(&exe_dir, name).contains(&expected),
-                "the windows bundle puts {name} at {expected:?}, so the resolver must probe that exact \
-                 path — the two drifted apart once and every compression category failed"
+            let candidates = engine_candidates(&exe_dir, name);
+            assert_eq!(
+                candidates.first(),
+                Some(&expected),
+                "the bundled layout must be the first probe for {name}: the installer places it at \
+                 {expected:?}, got {candidates:?}"
             );
         }
     }
