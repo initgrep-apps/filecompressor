@@ -78,7 +78,7 @@ Five failure modes the spec implies that no step's assertions obviously cover. E
 - Consumes: nothing from other tasks.
 - Produces: `src-tauri/Entitlements.plist`, referenced by `bundle.macOS.entitlements` as the relative path `"Entitlements.plist"` (resolved against `src-tauri/`). Task 3 and Task 4 rely on the shipped `.app` actually running its helpers.
 
-- [ ] **Step 1: Write the failing config test**
+- [x] **Step 1: Write the failing config test**
 
 Append to the `#[cfg(test)] mod tests` block in `src-tauri/src/sidecar.rs`:
 
@@ -127,12 +127,12 @@ fn tauri_conf_json_references_a_readable_macos_entitlements_file() {
 
 Parse the plist rather than matching text: CF's last-wins duplicate handling, XML comments, and keys nested in an inner `<dict>` all pass a substring check while leaving the entitlement off, and the single-key assertion keeps the exemption as narrow as the app allows (one entitlement).
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd src-tauri && cargo test --lib tauri_conf_json_references_a_readable_macos_entitlements_file`
 Expected: FAIL — `bundle.macOS.entitlements` is absent, so `.as_str()` returns `None` and the `unwrap_or_else` panics.
 
-- [ ] **Step 3: Create the entitlements file**
+- [x] **Step 3: Create the entitlements file**
 
 Create `src-tauri/Entitlements.plist` with exactly this content:
 
@@ -147,7 +147,7 @@ Create `src-tauri/Entitlements.plist` with exactly this content:
 </plist>
 ```
 
-- [ ] **Step 4: Reference it from the bundle config**
+- [x] **Step 4: Reference it from the bundle config**
 
 In `src-tauri/tauri.conf.json`, change the `bundle.macOS` block from:
 
@@ -164,17 +164,17 @@ to:
       "entitlements": "Entitlements.plist",
 ```
 
-- [ ] **Step 5: Run the test to verify it passes**
+- [x] **Step 5: Run the test to verify it passes**
 
 Run: `cd src-tauri && cargo test --lib tauri_conf_json_references_a_readable_macos_entitlements_file`
 Expected: PASS.
 
-- [ ] **Step 6: Run the full Rust gate**
+- [x] **Step 6: Run the full Rust gate**
 
 Run: `cd src-tauri && cargo test`
 Expected: PASS — no existing test regressed.
 
-- [ ] **Step 7: Run the Windows-target compile gate**
+- [x] **Step 7: Run the Windows-target compile gate**
 
 The repo's documented pre-push gate for `src-tauri/src/` changes (`docs/ci-process.md` §3):
 
@@ -186,7 +186,7 @@ rm -f src-tauri/binaries/*-aarch64-pc-windows-msvc.exe
 
 Expected: the check succeeds. If `llvm` is not installed at that path, install it (`brew install llvm`) — the gate needs it to cross-compile the embedded Windows resource.
 
-- [ ] **Step 8: Verify the real artifact (the actual acceptance check)**
+- [x] **Step 8: Verify the real artifact (the actual acceptance check)**
 
 Run the framework-list sync first, then the build (the build takes several minutes):
 
@@ -209,7 +209,7 @@ Expected: `entitlement present`, then `vips-8.18.7`, `qpdf version 12.4.2`, `gs 
 
 If `yarn tauri build` fails for a reason unrelated to signing (missing staged engine, framework-list drift), run `yarn binaries:all --target aarch64-apple-darwin` first and retry.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src-tauri/Entitlements.plist src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/src/sidecar.rs
