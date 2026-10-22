@@ -467,17 +467,21 @@ mod tests {
                 "{name} resolved to {resolved:?}, which climbs out of {exe_dir:?} — the dev-tree \
                  fallback satisfied this, so the package itself may not ship {name}"
             );
+            assert!(
+                std::path::Path::new(resolved).starts_with(&exe_dir),
+                "{name} resolved to {resolved:?}, outside {exe_dir:?}"
+            );
             let file_name = std::path::Path::new(resolved)
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or_else(|| panic!("{name} resolved to {resolved:?}, which has no file name"));
             let stem = file_name.strip_suffix(".exe").unwrap_or(file_name);
             assert!(
-                stem == name || stem.starts_with(&format!("{name}-")),
-                "{name} resolved to {resolved:?} — that file is not {name}, so the resolver returned \
-                 the wrong engine"
+                stem == name,
+                "{name} resolved to {resolved:?} — packaged engines use their plain name"
             );
         }
+        println!("fso-bundle-resolver-ok: {exe_dir:?}");
     }
 
     fn empty_paths() -> SidecarPaths {
