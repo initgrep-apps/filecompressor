@@ -235,7 +235,7 @@ jobs:
           fi
           echo "app-asset check verified: $count asset(s) matching '$pattern' for $TRIPLE on $RELEASE_TAG"
         shell: bash
-      - name: package gate (engines present, startable, and usable from the built package)
+      - name: package gate (engines present and usable from the built package)
         env:
           TRIPLE: ${{ matrix.triple }}
         run: node scripts/ci/package-gate.mjs --triple "$TRIPLE"

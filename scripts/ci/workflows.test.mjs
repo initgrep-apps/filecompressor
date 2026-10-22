@@ -1150,6 +1150,9 @@ describe("release.yml release workflow", () => {
     expect(checkIdx, "the anchoring app-asset check must exist — an ordering compare against -1 passes vacuously").toBeGreaterThanOrEqual(0);
     const gate = steps.find((s) => stepRuns(s).startsWith("node scripts/ci/package-gate.mjs"));
     expect(gate, "the package-gate step must exist").toBeDefined();
+    expect(gate.name, "the step name must not claim the app binary is started").toBe(
+      "package gate (engines present and usable from the built package)",
+    );
     const gateIdx = steps.findIndex((s) => s === gate);
     expect(gateIdx, "the package gate must run after the app-asset check").toBeGreaterThan(checkIdx);
     expect(gate["if"], "the package gate must run on every matrix row").toBeUndefined();

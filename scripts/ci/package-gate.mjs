@@ -1,16 +1,18 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { exists, isMain, isWindowsTriple, knownTriples, manifestPath, readJson, run } from "../binaries/lib.mjs";
-import { checkVersion } from "../binaries/verify.mjs";
+import { checkVersion, treeHasFile } from "../binaries/verify.mjs";
+
+export { knownTriples };
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const REPO_ROOT = join(HERE, "..", "..");
+const REPO_ROOT = join(HERE, "..", "..");
 
-const ENGINES = ["vips", "qpdf", "gs", "ffmpeg", "ffprobe"];
+export const ENGINES = ["vips", "qpdf", "gs", "ffmpeg", "ffprobe"];
 const GS_RESOURCE_SEARCH_DIRS = ["Resource/Init", "lib", "Resource/Font", "fonts"];
-const PRUNED_TARGET_DIRS = new Set(["deps", "build", "incremental", ".fingerprint", "obj", "examples", "tmp"]);
+const GS_FONT_DIRS = ["Resource/Font", "fonts"];
 const SEVEN_ZIP = "C:\\Program Files\\7-Zip\\7z.exe";
 const ENGINE_TIMEOUT_MS = 60_000;
 const RESOLVER_TIMEOUT_MS = 900_000;
@@ -50,7 +52,7 @@ function assertEveryEngineGated(names, where) {
   for (const name of ENGINES) {
     if (!listed.has(name)) {
       throw new Error(
-        `${where} does not list the ${name} engine — the package gate would skip it silently; add it to ENGINES, expectedEnginePaths and enginePlan()`,
+        `${where} does not list the ${name} engine — the package gate would skip it silently; add it to bundle.externalBin in src-tauri/tauri.conf.json and to the gate's ENGINES, expectedEnginePaths and enginePlan()`,
       );
     }
   }
@@ -128,8 +130,12 @@ export function enginePlan() {
       {
         fixtures: [],
         steps: [
-          { args: ["black", "in.v", "64", "64"], produces: "in.v" },
-          { args: ["thumbnail", "in.v", "out.jpg", "32"], produces: "out.jpg" },
+          { args: ["black", "in.v", "64", "64"], produces: "in.v", magic: [0xb6, 0xa6, 0xf2, 0x08] },
+          {
+            args: ["thumbnail", "in.v", "out.jpg", "32"],
+            produces: "out.jpg",
+            magic: [0xff, 0xd8],
+          },
         ],
       },
     ],
@@ -138,8 +144,12 @@ export function enginePlan() {
       {
         fixtures: [],
         steps: [
-          { args: ["--empty", "out.pdf"], produces: "out.pdf" },
-          { args: ["out.pdf", "out-rewritten.pdf"], produces: "out-rewritten.pdf" },
+          { args: ["--empty", "out.pdf"], produces: "out.pdf", magic: "%PDF-" },
+          {
+            args: ["out.pdf", "out-rewritten.pdf"],
+            produces: "out-rewritten.pdf",
+            magic: "%PDF-",
+          },
         ],
       },
     ],
@@ -156,6 +166,7 @@ export function enginePlan() {
           {
             args: ["-q", "-dNOPAUSE", "-dBATCH", "-sDEVICE=pdfwrite", "-sOutputFile=out.pdf", "in.ps"],
             produces: "out.pdf",
+            magic: "%PDF-",
           },
         ],
       },
@@ -168,6 +179,7 @@ export function enginePlan() {
           {
             args: ["-y", "-f", "lavfi", "-i", "color=c=red:s=64x64:d=1", "-frames:v", "1", "out.png"],
             produces: "out.png",
+            magic: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
           },
         ],
       },
@@ -192,9 +204,10 @@ export function gsRunArgs({ exeDir, triple, stepArgs }) {
     return [...stepArgs];
   }
   const tree = join(exeDir, "..", "Resources", "gs-resources");
-  const args = GS_RESOURCE_SEARCH_DIRS.flatMap((dir) => ["-I", join(tree, ...dir.split("/"))]);
+  const present = GS_RESOURCE_SEARCH_DIRS.filter((dir) => statOrNull(join(tree, ...dir.split("/")))?.isDirectory());
+  const args = present.flatMap((dir) => ["-I", join(tree, ...dir.split("/"))]);
   const iccProfiles = join(tree, "iccprofiles");
-  if (existsSync(iccProfiles)) {
+  if (statOrNull(iccProfiles)?.isDirectory()) {
     args.push(`-uICCProfilesDir=${iccProfiles}`);
   }
   return [...args, ...stepArgs];
@@ -203,26 +216,39 @@ export function gsRunArgs({ exeDir, triple, stepArgs }) {
 function statOrNull(path) {
   try {
     return statSync(path);
-  } catch {
-    return null;
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") {
+      return null;
+    }
+    throw new Error(`cannot stat ${path}: ${error.code ?? error.message ?? error}`);
   }
 }
 
-export function gsResourcesCheck({ exeDir, triple }) {
+export async function gsResourcesCheck({ exeDir, triple }) {
   if (isWindowsTriple(triple)) {
     return { ok: true, detail: "windows ROM model — the gs build carries its own resources in the executable" };
   }
   const tree = join(exeDir, "..", "Resources", "gs-resources");
   const missing = [];
+  const missingDirs = new Set();
   for (const dir of GS_RESOURCE_SEARCH_DIRS) {
     const info = statOrNull(join(tree, ...dir.split("/")));
     if (!info || !info.isDirectory()) {
       missing.push(`${dir} (directory)`);
+      missingDirs.add(dir);
     }
   }
   const init = statOrNull(join(tree, "Resource", "Init", "gs_init.ps"));
   if (!init || !init.isFile()) {
     missing.push("Resource/Init/gs_init.ps (file)");
+  }
+  for (const dir of GS_FONT_DIRS) {
+    if (missingDirs.has(dir)) {
+      continue;
+    }
+    if (!(await treeHasFile(join(tree, ...dir.split("/"))))) {
+      missing.push(`${dir} (real non-sentinel font files)`);
+    }
   }
   if (missing.length > 0) {
     return {
@@ -232,11 +258,11 @@ export function gsResourcesCheck({ exeDir, triple }) {
   }
   const icc = statOrNull(join(tree, "iccprofiles"));
   const iccDetail = icc?.isDirectory()
-    ? "iccprofiles present (-uICCProfilesDir applied)"
-    : "iccprofiles absent (gs uses its compiled-in ICC profiles)";
+    ? "iccprofiles is a directory (-uICCProfilesDir applied)"
+    : "iccprofiles absent or not a directory (gs uses its compiled-in ICC profiles)";
   return {
     ok: true,
-    detail: `${GS_RESOURCE_SEARCH_DIRS.join(", ")} and Resource/Init/gs_init.ps present; ${iccDetail}`,
+    detail: `Resource/Init/gs_init.ps is a file; Resource/Init, lib, Resource/Font and fonts are directories; Resource/Font and fonts each hold real (non-sentinel) files; ${iccDetail}`,
   };
 }
 
@@ -255,75 +281,32 @@ function packageIn(bundleDir, extension) {
   return match ? join(dir, match.name) : null;
 }
 
-function bundleDirsUnder(dir, depth = 0) {
-  if (depth > 4) {
-    return [];
-  }
-  let entries;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true });
-  } catch (error) {
-    if (error.code === "ENOENT" || error.code === "ENOTDIR") {
-      return [];
-    }
-    throw new Error(`cannot scan ${dir} for bundle directories: ${error.code ?? error.message ?? error}`);
-  }
-  const found = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const full = join(dir, entry.name);
-    if (entry.name === "bundle") {
-      found.push(full);
-      continue;
-    }
-    if (PRUNED_TARGET_DIRS.has(entry.name)) {
-      continue;
-    }
-    found.push(...bundleDirsUnder(full, depth + 1));
-  }
-  return found;
-}
-
 export function locateBundle({ root, triple }) {
-  const targetDir = join(root, "src-tauri", "target");
   const extension = isWindowsTriple(triple) ? ".exe" : ".app";
-  const expected = join(targetDir, triple, "release", "bundle");
-  const exact = packageIn(expected, extension);
-  if (exact) {
-    return { kind: extension === ".app" ? "app" : "nsis", path: exact };
-  }
-  if (process.env.GITHUB_ACTIONS) {
-    console.error(
-      `FAIL package — no ${extension} package under ${expected} for ${triple}; the fallback search is disabled in CI so a stale or wrong-triple bundle cannot masquerade as this row's build`,
-    );
-    return null;
-  }
-  const preferred = join(targetDir, "release", "bundle");
-  const bundleDirs = [preferred, ...bundleDirsUnder(targetDir).filter((dir) => dir !== preferred)];
-  for (const dir of bundleDirs) {
-    const found = packageIn(dir, extension);
-    if (found) {
-      console.log(
-        `package gate: WARN no package under ${expected}; falling back to a local build at ${found} (CI refuses this fallback)`,
-      );
-      return { kind: extension === ".app" ? "app" : "nsis", path: found };
-    }
-  }
-  return null;
+  const expected = join(root, "src-tauri", "target", triple, "release", "bundle");
+  const found = packageIn(expected, extension);
+  return found ? { kind: extension === ".app" ? "app" : "nsis", path: found } : null;
 }
 
-export async function extractNsisInstaller({ setupExe, destDir }) {
-  const tool = process.env.SEVEN_ZIP || (existsSync(SEVEN_ZIP) ? SEVEN_ZIP : null);
+export async function extractNsisInstaller({
+  setupExe,
+  destDir,
+  run: runFn = run,
+  exists: existsFn = existsSync,
+}) {
+  const tool = process.env.SEVEN_ZIP || (existsFn(SEVEN_ZIP) ? SEVEN_ZIP : null);
   if (!tool) {
     throw new SevenZipMissingError(
       `7z not found at "${SEVEN_ZIP}" — the windows release runner image ships 7-Zip there; install it in the row or set SEVEN_ZIP to its executable`,
     );
   }
   mkdirSync(destDir, { recursive: true });
-  await run(tool, ["x", "-y", setupExe, `-o${destDir}`]);
+  await runFn(tool, ["x", "-y", setupExe, `-o${destDir}`]);
   return destDir;
+}
+
+function magicLabel(magic) {
+  return typeof magic === "string" ? `'${magic}'` : magic.map((byte) => byte.toString(16).padStart(2, "0")).join(" ");
 }
 
 export function checkStepOutput({ step, workDir, stdout }) {
@@ -339,13 +322,23 @@ export function checkStepOutput({ step, workDir, stdout }) {
     if (info.size === 0) {
       return { ok: false, detail: `${step.produces} is empty — the engine exited successfully but wrote 0 bytes` };
     }
+    if (step.magic !== undefined) {
+      const expected = Buffer.from(step.magic);
+      const head = readFileSync(path).subarray(0, expected.length);
+      if (!head.equals(expected)) {
+        return {
+          ok: false,
+          detail: `${step.produces} does not start with ${magicLabel(step.magic)} — the engine exited 0 but wrote something else (a truncated file or an HTML error page)`,
+        };
+      }
+    }
   }
   if (step.expectStdout !== undefined && !String(stdout ?? "").includes(step.expectStdout)) {
     const got = String(stdout ?? "").trim().slice(0, 200) || "(empty)";
     return { ok: false, detail: `stdout does not contain '${step.expectStdout}', got: ${got}` };
   }
   if (step.produces) {
-    return { ok: true, detail: `${step.produces} produced` };
+    return { ok: true, detail: `${step.produces} produced${step.magic === undefined ? "" : ` with ${magicLabel(step.magic)} signature`}` };
   }
   if (step.expectStdout !== undefined) {
     return { ok: true, detail: `stdout contains ${step.expectStdout}` };
@@ -356,10 +349,19 @@ export function checkStepOutput({ step, workDir, stdout }) {
   };
 }
 
-export function resolverCheck({ code, stdout, stderr }) {
+export function resolverCheck({ code, stdout, stderr, killed, signal, errorCode }) {
   const output = `${stdout ?? ""}${stderr ?? ""}`;
+  const tail = output.trim().split("\n").slice(-3).join(" | ") || "(no output)";
+  if (killed || signal) {
+    return {
+      ok: false,
+      detail: `resolver test timed out or was killed (${signal ?? "timeout"})${output.trim() ? `: ${tail}` : ""}`,
+    };
+  }
+  if (errorCode === "ENOENT") {
+    return { ok: false, detail: `could not start cargo — ${tail}` };
+  }
   if (code !== 0) {
-    const tail = output.trim().split("\n").slice(-3).join(" | ") || "(no output)";
     return { ok: false, detail: `resolver test exited ${code}: ${tail}` };
   }
   const marker = /^fso-bundle-resolver-ok:.*$/m.exec(output);
@@ -387,20 +389,27 @@ export function resolverCommand({ root, exeDir }) {
 
 export function validateBundleDir({ bundleDir, triple }) {
   const extension = isWindowsTriple(triple) ? ".exe" : ".app";
-  if (!bundleDir.endsWith(extension)) {
-    throw new Error(`--bundle-dir '${bundleDir}' must point at a ${extension} package for ${triple}`);
+  const path = resolve(bundleDir);
+  if (!path.endsWith(extension)) {
+    throw new Error(`--bundle-dir '${bundleDir}' must point at a ${extension} package for ${triple} — resolved to ${path}`);
   }
-  const info = statOrNull(bundleDir);
+  const info = statOrNull(path);
   if (!info) {
-    throw new Error(`--bundle-dir '${bundleDir}' does not exist — pass the built ${extension} package path`);
+    throw new Error(`--bundle-dir '${bundleDir}' does not exist — pass the built ${extension} package path (resolved to ${path})`);
   }
   if (extension === ".app" && !info.isDirectory()) {
-    throw new Error(`--bundle-dir '${bundleDir}' is not a directory — pass the built .app package`);
+    throw new Error(`--bundle-dir '${bundleDir}' is not a directory — pass the built .app package (resolved to ${path})`);
   }
   if (extension === ".exe" && !info.isFile()) {
-    throw new Error(`--bundle-dir '${bundleDir}' is not a file — pass the built setup .exe`);
+    throw new Error(`--bundle-dir '${bundleDir}' is not a file — pass the built setup .exe (resolved to ${path})`);
   }
-  return bundleDir;
+  return path;
+}
+
+function packageEnv() {
+  const env = { ...process.env };
+  delete env.DYLD_LIBRARY_PATH;
+  return env;
 }
 
 export async function checkEngine({
@@ -414,11 +423,10 @@ export async function checkEngine({
   workDir,
   run: runFn = run,
   checkVersion: checkVersionFn = checkVersion,
-  exists: existsFn = exists,
 }) {
   const details = [];
   const record = (ok, detail) => details.push({ ok, label: name, detail });
-  if (!binPath || !(await existsFn(binPath))) {
+  if (!binPath || !(await exists(binPath))) {
     record(
       false,
       `file not found at ${binPath ?? "(no expected path)"} — the app would report 'Engine error: ${name} not available'`,
@@ -427,11 +435,12 @@ export async function checkEngine({
   }
   record(true, `file found at ${binPath}`);
 
-  const version = await checkVersionFn(binPath, expectVersion, triple, root, { env: process.env });
+  const env = packageEnv();
+  const version = await checkVersionFn(binPath, expectVersion, triple, root, { env });
   if (version.ok) {
     record(true, `version ${version.detail}`);
   } else {
-    record(false, `expected version ${expectVersion}, got: ${version.detail}`);
+    record(false, version.detail);
   }
 
   for (const fixture of plan.fixtures) {
@@ -443,7 +452,7 @@ export async function checkEngine({
       const { stdout, stderr } = await runFn(binPath, stepArgs, {
         cwd: workDir,
         timeout: ENGINE_TIMEOUT_MS,
-        env: { ...process.env, DYLD_LIBRARY_PATH: undefined },
+        env,
       });
       if (stderr && stderr.trim()) {
         console.log(`${name}: stderr — ${stderr.trim().slice(0, 300)}`);
@@ -451,25 +460,48 @@ export async function checkEngine({
       const checked = checkStepOutput({ step, workDir, stdout });
       record(checked.ok, `${step.args.join(" ")} — ${checked.detail}`);
     } catch (error) {
-      const output = `${error.stderr ?? ""}${error.stdout ?? ""}`.trim() || `${error.message ?? error}`;
-      record(false, `${step.args.join(" ")} — ${output.slice(0, 300)}`);
+      const captured = `${error.stderr ?? ""}${error.stdout ?? ""}`.trim();
+      let failure;
+      if (error.killed || error.signal) {
+        failure = `timed out or was killed (${error.signal ?? "timeout"})`;
+      } else if (error.code === "ENOENT") {
+        failure = `could not start ${name}`;
+      } else {
+        failure = `exited ${error.code ?? "nonzero"}`;
+      }
+      record(false, `${step.args.join(" ")} — ${failure}${captured ? `: ${captured.slice(0, 300)}` : ""}`);
     }
   }
   return { ok: details.every((detail) => detail.ok), details };
 }
 
-export async function main(argv = []) {
+function readJsonFile(path) {
+  try {
+    return readJson(path);
+  } catch (error) {
+    throw new Error(`cannot read ${path}: ${error.message ?? error}`);
+  }
+}
+
+export async function main(argv = [], deps = {}) {
+  const {
+    checkEngine: checkEngineFn = checkEngine,
+    gsResourcesCheck: gsResourcesFn = gsResourcesCheck,
+    locateBundle: locateBundleFn = locateBundle,
+    extractNsisInstaller: extractNsisFn = extractNsisInstaller,
+    run: runFn = run,
+  } = deps;
   const args = parseGateArgs(argv);
   const root = REPO_ROOT;
-  const manifest = readJson(manifestPath(root));
-  const baseConf = readJson(join(root, "src-tauri", "tauri.conf.json"));
-  const windowsConf = readJson(join(root, "src-tauri", "tauri.windows.conf.json"));
+  const manifest = readJsonFile(manifestPath(root));
+  const baseConf = readJsonFile(join(root, "src-tauri", "tauri.conf.json"));
+  const windowsConf = readJsonFile(join(root, "src-tauri", "tauri.windows.conf.json"));
   const located = args.bundleDir
     ? {
         kind: isWindowsTriple(args.triple) ? "nsis" : "app",
         path: validateBundleDir({ bundleDir: args.bundleDir, triple: args.triple }),
       }
-    : locateBundle({ root, triple: args.triple });
+    : locateBundleFn({ root, triple: args.triple });
   if (!located) {
     console.error(
       `FAIL package — cannot find the built package for ${args.triple} under src-tauri/target — this gate must run after tauri-action builds`,
@@ -481,7 +513,7 @@ export async function main(argv = []) {
   let exeDir;
   if (located.kind === "nsis") {
     try {
-      exeDir = await extractNsisInstaller({
+      exeDir = await extractNsisFn({
         setupExe: located.path,
         destDir: mkdtempSync(join(tmpdir(), "fso-nsis-")),
       });
@@ -519,11 +551,11 @@ export async function main(argv = []) {
     return workDirs.get(key);
   };
 
-  const gsResources = gsResourcesCheck({ exeDir, triple: args.triple });
+  const gsResources = await gsResourcesFn({ exeDir, triple: args.triple });
   record(gsResources.ok, "gs-resources", gsResources.detail);
 
   for (const name of ENGINES) {
-    const checked = await checkEngine({
+    const checked = await checkEngineFn({
       name,
       binPath: paths.get(name),
       expectVersion: versions.get(name),
@@ -540,7 +572,7 @@ export async function main(argv = []) {
 
   const command = resolverCommand({ root, exeDir });
   try {
-    const { stdout, stderr } = await run(command.tool, command.args, command.options);
+    const { stdout, stderr } = await runFn(command.tool, command.args, command.options);
     if (stderr && stderr.trim()) {
       console.log(`resolver: stderr — ${stderr.trim().slice(0, 300)}`);
     }
@@ -548,9 +580,12 @@ export async function main(argv = []) {
     record(checked.ok, "resolver", checked.detail);
   } catch (error) {
     const checked = resolverCheck({
-      code: error.code ?? 1,
+      code: typeof error.code === "number" ? error.code : 1,
       stdout: error.stdout ?? "",
       stderr: error.stderr ?? error.message ?? "",
+      killed: error.killed,
+      signal: error.signal,
+      errorCode: error.code,
     });
     record(false, "resolver", checked.detail);
   }
@@ -567,7 +602,7 @@ if (isMain(import.meta.url)) {
   try {
     process.exitCode = await main(process.argv.slice(2));
   } catch (error) {
-    console.error(`::error::package-gate: ${error.message ?? error}`);
+    console.error(`::error::package-gate: ${error.stack ?? error.message ?? error}`);
     process.exitCode = 1;
   }
 }

@@ -29,15 +29,16 @@ async function contentArchWindows(path) {
   }
 }
 
-export async function checkVersion(binPath, expectVersion, triple, root, { env } = {}) {
-  const runEnv = env ?? { ...process.env };
-  if (env === undefined && !isWindowsTriple(triple)) {
+export async function checkVersion(binPath, expectVersion, triple, root, { env, args } = {}) {
+  const runEnv = env ? { ...env } : { ...process.env };
+  if (!env && !isWindowsTriple(triple)) {
     runEnv.DYLD_LIBRARY_PATH = join(root, "src-tauri", "frameworks");
   }
+  const versionArgs = args ?? (/(^|[\\/])(ffmpeg|ffprobe)([.-]|$)/.test(binPath) ? ["-version"] : ["--version"]);
   return new Promise((resolvePromise) => {
     execFile(
       binPath,
-      ["--version"],
+      versionArgs,
       { encoding: "utf8", timeout: 20000, env: runEnv },
       (error, stdout, stderr) => {
         const combined = `${stdout ?? ""}${stderr ?? ""}`;
@@ -54,6 +55,13 @@ export async function checkVersion(binPath, expectVersion, triple, root, { env }
           resolvePromise({
             ok: false,
             detail: /binaries[\\/]/.test(execDetail) ? execDetail : `${execDetail} (the exe used was ${binPath})`,
+          });
+          return;
+        }
+        if (error) {
+          resolvePromise({
+            ok: false,
+            detail: `exited ${error.code ?? "nonzero"} after printing a version — the binary must run cleanly: ${combined.trim().slice(0, 300)}`,
           });
           return;
         }
