@@ -556,6 +556,30 @@ mod tests {
     }
 
     #[test]
+    fn resolve_sidecar_candidate_falls_back_to_the_stripped_exe_name() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let exe_dir = dir.path();
+        let triple =
+            exe_dir.join(sidecar_filename("ffmpeg").expect("host platform must map to a triple"));
+        let stripped = exe_dir.join("ffmpeg.exe");
+        std::fs::write(&triple, b"stub").expect("write triple sidecar");
+        std::fs::write(&stripped, b"stub").expect("write stripped sidecar");
+        assert_eq!(
+            std::path::Path::new(
+                &resolve_sidecar_candidate(exe_dir, "ffmpeg").expect("triple name resolves")
+            ),
+            triple.as_path()
+        );
+        std::fs::remove_file(&triple).expect("remove triple sidecar");
+        assert_eq!(
+            std::path::Path::new(
+                &resolve_sidecar_candidate(exe_dir, "ffmpeg").expect("stripped name resolves")
+            ),
+            stripped.as_path()
+        );
+    }
+
+    #[test]
     fn get_sidecar_path_from_returns_path_for_existing_sidecar() {
         let dir = tempfile::TempDir::new().unwrap();
         let full = dir.path().join(sidecar_filename("vips").unwrap());
