@@ -9,6 +9,7 @@ Built with Tauri 2 (Rust) + React 19 + TypeScript. GPLv3.
 - **Category-based targets** — images ≤ 200 KB, videos ≤ 10 MB, PDF ≤ 2 MB, documents ≤ 1 MB by default. Editable in Settings.
 - **Real engines, bundled** — libvips (images), FFmpeg (video), qpdf + Ghostscript (PDF). No internet needed, ever. Your files never leave your machine.
 - **Originals are safe** — the app never modifies source files. Results go to a separate output folder (`~/Documents/Compressed` by default).
+- **Normalized copies** — metadata (EXIF/GPS/ICC) is stripped to save size, HEIC/HEIF becomes JPEG, MOV becomes MP4.
 - **Batch workflow** — parallel compression with per-file progress, per-file cancel, and a history log (90-day retention by default).
 
 Supported inputs: JPEG, PNG, WebP, HEIC/HEIF (→ JPEG) · MP4, MOV (→ MP4) · PDF · DOCX, XLSX, PPTX (embedded media recompressed).
@@ -20,6 +21,18 @@ Supported inputs: JPEG, PNG, WebP, HEIC/HEIF (→ JPEG) · MP4, MOV (→ MP4) ·
 - **Linux** — not packaged yet.
 - macOS builds are ad-hoc signed and not notarized, so install needs a manual quarantine removal — see **Installing a release** below and `docs/distribution-acceptance.md`.
 - Windows builds are unsigned, so SmartScreen shows a warning: choose **More info** → **Run anyway**.
+
+## System requirements
+
+| | Minimum | Recommended | Power |
+|---|---|---|---|
+| CPU | 2 cores | 6–8 logical cores | 10+ cores |
+| RAM | 4 GB | 16 GB | 32 GB |
+| Disk | SSD, ~2× largest file + 2 GB free | SSD, 30 GB free | NVMe, 64 GB free |
+| GPU | not needed | not needed | not needed |
+| OS | macOS 11+ / Windows 10+ | same | same |
+
+RAM matters most: documents are processed in memory (~8–12× their compressed size). A 500 MB PPTX needs about 5 GB; a 2 GB PPTX needs about 20 GB. Disk matters second: attempt files stay on disk until each job ends, so a batch of very large documents can spike temp usage.
 
 ## Installing a release
 
@@ -54,7 +67,7 @@ Targets, quality floors, output folder, and parallelism are configurable in **Se
 
 ### Prerequisites
 
-- Node.js 20+ and [yarn](https://yarnpkg.com/)
+- Node.js 22 LTS and [yarn](https://yarnpkg.com/)
 - Rust stable
 - Tauri 2 system dependencies for your platform: https://v2.tauri.app/start/prerequisites/
 
@@ -93,17 +106,20 @@ yarn build && yarn test && (cd src-tauri && cargo test)
 src/                  Frontend — UI only, no compression logic
 src-tauri/src/        Rust core — commands, queue, scheduler, processors, history
 scripts/binaries/     Sidecar supply chain (manifest → lock → fetch → prep → audit)
-docs/                 Architecture, capacity, bug log, specs and plans
+scripts/ci/           Freeze/unfreeze, package gate, workflow tests
+docs/                 Architecture, features, ADRs, CI runbook, known gaps
 ```
 
 Rule: `src/` renders and calls IPC; everything else lives in Rust.
 
 ### Documentation
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the app works, as implemented (diagrams, IPC surface, algorithms)
-- [`docs/CAPACITY.md`](docs/CAPACITY.md) — resource usage at peak load + hardware requirements
-- [`docs/superpowers/specs/`](docs/superpowers/specs/) — design specs · [`docs/superpowers/plans/`](docs/superpowers/plans/) — implementation plans
-- [`docs/bugs.md`](docs/bugs.md) — bug triage log
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the app works today (components, IPC, algorithms, limits)
+- [`docs/FEATURES.md`](docs/FEATURES.md) — what shipped, slice by slice, plus the research backlog
+- [`docs/adr/`](docs/adr/) — decisions and rejected alternatives
+- [`docs/ci-process.md`](docs/ci-process.md) — CI model, runbook, failure table
+- [`docs/bugs.md`](docs/bugs.md) — open bugs, known gaps, deferred CI work
+- [`GLOSSARY.md`](GLOSSARY.md) — project vocabulary
 
 ## License
 

@@ -88,7 +88,7 @@ The CI windows row compiles the `src-tauri` tests as `cargo test` on `x86_64-pc-
    rm -f src-tauri/binaries/*-aarch64-pc-windows-msvc.exe
    ```
 
-First local reproduction (2026-10-17): gate run 39022660502's full windows cargo failure = 36 E0425 in `sidecar.rs` + `processors/document.rs`, fixed by extending the repo `#[cfg(unix)]` precedent to the consuming fns/tests. Gate before every push touching `src-tauri/src/`. The windows ci row additionally carries loader diagnostics steps (cargo-test link probe, PE-imports probe, test-enumeration loader probe) for the fixed 0xc0000139 loader class — kept until the removal decision tracked in `docs/ci-followups.md`.
+First local reproduction (2026-10-17): gate run 39022660502's full windows cargo failure = 36 E0425 in `sidecar.rs` + `processors/document.rs`, fixed by extending the repo `#[cfg(unix)]` precedent to the consuming fns/tests. Gate before every push touching `src-tauri/src/`. The windows ci row additionally carries loader diagnostics steps (cargo-test link probe, PE-imports probe, test-enumeration loader probe) for the fixed 0xc0000139 loader class — kept until the removal decision tracked in `docs/bugs.md`.
 
 **Recovery**
 
@@ -129,4 +129,4 @@ First local reproduction (2026-10-17): gate run 39022660502's full windows cargo
 3. **Releases are always draft-first** — `sidecars-*` and app drafts publish only after verified assets; finalize counts assets live via `--json assets --jq` and reuses (never replaces) a leftover draft.
 4. **Every job carries `timeout-minutes`** — freeze 40, release rows 90, gate rows 60, cheap jobs 10–15.
 5. **No raw `${{ }}` in run strings** — untrusted context enters via step `env`; actions stay SHA-pinned; `shell: bash` everywhere.
-6. **Restore provenance governs verification** — the unfreeze marker pins tree bytes to the verified bundle sha; staging clears stale markers. Open CI follow-ups (mv-shim cygpath, win32 lock-suite skips, SBOM DLL licenses, staging litter, diagnostics removal): `docs/ci-followups.md`.
+6. **Restore provenance governs verification** — the unfreeze marker pins tree bytes to the verified bundle sha; staging clears stale markers. Open CI follow-ups (mv-shim cygpath, win32 lock-suite skips, SBOM DLL licenses, staging litter, diagnostics removal): `docs/bugs.md`.
