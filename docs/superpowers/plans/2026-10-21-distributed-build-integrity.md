@@ -631,8 +631,11 @@ resolver against a real package layout via FSO_BUNDLE_EXE_DIR."
 export function parseGateArgs(argv)                    // → { triple, bundleDir }; throws on a missing/unsupported --triple
 export function expectedEnginePaths({ triple, exeDir, manifest, baseConf, windowsConf })  // → Map<engineName, absolutePath>
 export function expectedVersions({ triple, manifest }) // → Map<engineName, expectVersion>, read from the manifest
-export function enginePlan()                          // → Map<engineName, { versionArgs, fixtures, steps }>
-export function gsRunArgs({ exeDir, triple })          // → string[]; macOS: package -I flags + gs step args; Windows: bare gs step args
+export function enginePlan()                          // → Map<engineName, { fixtures, steps }>; the version command is checkVersion's `--version`
+export function gsResourcesCheck({ exeDir, triple })   // → { ok, detail }; macOS: the package's gs-resources tree must be complete; Windows: ROM model, ok
+export function gsRunArgs({ exeDir, triple, stepArgs }) // → string[]; macOS: package -I flags + the caller's gs step args; Windows: the step args unchanged
+export async function checkEngine({ name, binPath, expectVersion, triple, root, exeDir, plan, workDir, run, checkVersion })  // → { ok, details }; exists → version → steps for one engine
+export function validateBundleDir({ bundleDir, triple })  // → the path when it is an existing .app directory / .exe file; throws naming the value otherwise
 export function locateBundle({ root, triple })        // → { kind: "app" | "nsis", path } | null
 export async function extractNsisInstaller({ setupExe, destDir })  // → destDir; throws a named error when 7z is missing
 export function checkStepOutput({ step, workDir, stdout })  // → { ok, detail }; rejects an empty output file
@@ -643,13 +646,15 @@ export async function main(argv)                       // → exit code (0 pass,
 
 **The operation plan (`enginePlan()`), one entry per engine.** A step passes when the command exits 0 **and** (it produces no file **or** the produced file exists and is non-empty) **and** (it declares no stdout expectation **or** stdout contains it).
 
-| engine | `versionArgs` | `fixtures` (written into the work dir first) | `steps` |
-|---|---|---|---|
-| vips | `["--version"]` | — | `["black","in.v","64","64"]` (no output); `["thumbnail","in.v","out.jpg","32"]` → produces `out.jpg` |
-| qpdf | `["--version"]` | — | `["--empty","out.pdf"]` → produces `out.pdf`; `["out.pdf","out-rewritten.pdf"]` → produces `out-rewritten.pdf` |
-| gs | `["--version"]` | `in.ps` (four lines: `%!PS`, `/Helvetica findfont 16 scalefont setfont`, `72 700 moveto (gate) show`, `showpage`) | `["-q","-dNOPAUSE","-dBATCH","-sDEVICE=pdfwrite","-sOutputFile=out.pdf","in.ps"]` → produces `out.pdf` |
-| ffmpeg | `["--version"]` | — | `["-y","-f","lavfi","-i","color=c=red:s=64x64:d=1","-frames:v","1","out.png"]` → produces `out.png` |
-| ffprobe | `["--version"]` | — | `["-v","error","-show_entries","stream=width,height","-of","csv","out.png"]` → expects stdout containing `64,64` |
+| engine | `fixtures` (written into the work dir first) | `steps` |
+|---|---|---|
+| vips | — | `["black","in.v","64","64"]` → produces `in.v`; `["thumbnail","in.v","out.jpg","32"]` → produces `out.jpg` |
+| qpdf | — | `["--empty","out.pdf"]` → produces `out.pdf`; `["out.pdf","out-rewritten.pdf"]` → produces `out-rewritten.pdf` |
+| gs | `in.ps` (four lines: `%!PS`, `/Helvetica findfont 16 scalefont setfont`, `72 700 moveto (gate) show`, `showpage`) | `["-q","-dNOPAUSE","-dBATCH","-sDEVICE=pdfwrite","-sOutputFile=out.pdf","in.ps"]` → produces `out.pdf` |
+| ffmpeg | — | `["-y","-f","lavfi","-i","color=c=red:s=64x64:d=1","-frames:v","1","out.png"]` → produces `out.png` |
+| ffprobe | — | `["-v","error","-show_entries","stream=width,height","-of","csv","out.png"]` → expects stdout containing `64,64` |
+
+The version command is not plan data: `checkVersion` runs every engine with `--version` and matches the manifest's `expectVersion` in the output.
 
 The qpdf recipe uses `--empty` alone: the page-selection form `--empty --pages . 1 -- out.pdf` segfaults (exit 139, no output file) on the pinned qpdf 12.4.2, and `--linearize` on a zero-page PDF exits 2 with `part 6 has other than exactly one object (first page dictionary)`, leaving a 0-byte output. Both replacements were run against the staged `qpdf-aarch64-apple-darwin` 12.4.2: `--empty` writes a 315-byte PDF (exit 0) and the parse+rewrite writes a 315-byte PDF (exit 0).
 
@@ -775,10 +780,12 @@ describe("enginePlan", () => {
   it("covers all five engines", () => {
     expect([...enginePlan().keys()].sort()).toEqual(["ffmpeg", "ffprobe", "gs", "qpdf", "vips"]);
   });
-  it("gives every engine a version check and at least one operation", () => {
+  it("gives every engine at least one operation, each with a declared check", () => {
     for (const [name, plan] of enginePlan()) {
-      expect(plan.versionArgs.length, name).toBeGreaterThan(0);
       expect(plan.steps.length, name).toBeGreaterThan(0);
+      for (const step of plan.steps) {
+        expect(Boolean(step.produces) || step.expectStdout !== undefined, name).toBe(true);
+      }
     }
   });
 });

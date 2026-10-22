@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,10 +11,14 @@ import {
   expectedVersions,
   enginePlan,
   gsRunArgs,
+  gsResourcesCheck,
   locateBundle,
   checkStepOutput,
+  checkEngine,
+  validateBundleDir,
   resolverCheck,
   resolverCommand,
+  main,
 } from "./package-gate.mjs";
 
 vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
@@ -56,6 +60,19 @@ describe("expectedEnginePaths", () => {
     expect(paths.get("vips")).toBe(join(exeDir, "resources", "engines", "vips", "vips.exe"));
     expect(paths.get("ffmpeg")).toBe(join(exeDir, "ffmpeg.exe"));
   });
+  it("throws instead of silently leaving a sixth bundled engine ungated", () => {
+    const extended = JSON.parse(JSON.stringify(baseConf));
+    extended.bundle.externalBin.push("binaries/sixth-engine");
+    expect(() =>
+      expectedEnginePaths({
+        triple: "aarch64-apple-darwin",
+        exeDir: join("/app", "Contents", "MacOS"),
+        manifest,
+        baseConf: extended,
+        windowsConf,
+      }),
+    ).toThrow(/sixth-engine/);
+  });
 });
 
 describe("expectedVersions", () => {
@@ -86,10 +103,15 @@ describe("enginePlan", () => {
   it("covers all five engines", () => {
     expect([...enginePlan().keys()].sort()).toEqual(["ffmpeg", "ffprobe", "gs", "qpdf", "vips"]);
   });
-  it("gives every engine a version check and at least one operation", () => {
+  it("gives every engine at least one operation, each with a declared check", () => {
     for (const [name, plan] of enginePlan()) {
-      expect(plan.versionArgs.length, name).toBeGreaterThan(0);
       expect(plan.steps.length, name).toBeGreaterThan(0);
+      for (const step of plan.steps) {
+        expect(
+          Boolean(step.produces) || step.expectStdout !== undefined,
+          `${name}: '${step.args.join(" ")}' declares no produces and no expectStdout`,
+        ).toBe(true);
+      }
     }
   });
 });
@@ -98,7 +120,8 @@ describe("gsRunArgs", () => {
   it("prepends the package's own gs-resources -I flags on macOS", () => {
     const exeDir = join("/app", "Contents", "MacOS");
     const tree = join(exeDir, "..", "Resources", "gs-resources");
-    const args = gsRunArgs({ exeDir, triple: "aarch64-apple-darwin" });
+    const stepArgs = enginePlan().get("gs").steps[0].args;
+    const args = gsRunArgs({ exeDir, triple: "aarch64-apple-darwin", stepArgs });
     expect(args[0]).toBe("-I");
     expect(args[1]).toBe(join(tree, "Resource", "Init"));
     expect(args[2]).toBe("-I");
@@ -107,13 +130,61 @@ describe("gsRunArgs", () => {
     expect(args[5]).toBe(join(tree, "Resource", "Font"));
     expect(args[6]).toBe("-I");
     expect(args[7]).toBe(join(tree, "fonts"));
+    expect(args.slice(-stepArgs.length)).toEqual(stepArgs);
     expect(args).toContain("-sOutputFile=out.pdf");
   });
   it("passes no -I flags on Windows (ROM model)", () => {
-    const args = gsRunArgs({ exeDir: join("C:", "app"), triple: "x86_64-pc-windows-msvc" });
+    const stepArgs = enginePlan().get("gs").steps[0].args;
+    const args = gsRunArgs({ exeDir: join("C:", "app"), triple: "x86_64-pc-windows-msvc", stepArgs });
     expect(args.some((arg) => arg.startsWith("-I"))).toBe(false);
     expect(args).toContain("-sOutputFile=out.pdf");
     expect(args).toContain("in.ps");
+  });
+  it("uses the caller's step args instead of re-reading the engine plan", () => {
+    const stepArgs = ["-sDEVICE=pdfwrite", "-sOutputFile=custom.pdf", "custom.ps"];
+    const args = gsRunArgs({ exeDir: join("/app", "Contents", "MacOS"), triple: "aarch64-apple-darwin", stepArgs });
+    expect(args.slice(-stepArgs.length)).toEqual(stepArgs);
+  });
+});
+
+describe("gsResourcesCheck", () => {
+  it("passes on a complete package resource tree", () => {
+    const app = mkdtempSync(join(tmpdir(), "gate-app-"));
+    const tree = join(app, "Contents", "Resources", "gs-resources");
+    for (const dir of ["Resource/Init", "lib", "Resource/Font", "fonts"]) {
+      mkdirSync(join(tree, ...dir.split("/")), { recursive: true });
+    }
+    writeFileSync(join(tree, "Resource", "Init", "gs_init.ps"), "%!\n");
+    const result = gsResourcesCheck({ exeDir: join(app, "Contents", "MacOS"), triple: "aarch64-apple-darwin" });
+    expect(result.ok).toBe(true);
+    expect(result.detail).toMatch(/iccprofiles absent/i);
+  });
+  it("notes when iccprofiles is present", () => {
+    const app = mkdtempSync(join(tmpdir(), "gate-app-"));
+    const tree = join(app, "Contents", "Resources", "gs-resources");
+    for (const dir of ["Resource/Init", "lib", "Resource/Font", "fonts", "iccprofiles"]) {
+      mkdirSync(join(tree, ...dir.split("/")), { recursive: true });
+    }
+    writeFileSync(join(tree, "Resource", "Init", "gs_init.ps"), "%!\n");
+    const result = gsResourcesCheck({ exeDir: join(app, "Contents", "MacOS"), triple: "aarch64-apple-darwin" });
+    expect(result.ok).toBe(true);
+    expect(result.detail).toContain("-uICCProfilesDir applied");
+  });
+  it("fails when the tree is missing, naming every required piece", () => {
+    const result = gsResourcesCheck({
+      exeDir: join(mkdtempSync(join(tmpdir(), "gate-app-")), "Contents", "MacOS"),
+      triple: "aarch64-apple-darwin",
+    });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("Resource/Init");
+    expect(result.detail).toContain("Resource/Font");
+    expect(result.detail).toContain("gs_init.ps");
+    expect(result.detail).toMatch(/compiled-in prefix/);
+  });
+  it("passes on Windows (ROM model)", () => {
+    const result = gsResourcesCheck({ exeDir: join("C:", "app"), triple: "x86_64-pc-windows-msvc" });
+    expect(result.ok).toBe(true);
+    expect(result.detail).toMatch(/ROM/);
   });
 });
 
@@ -135,9 +206,26 @@ describe("checkStepOutput", () => {
     const result = checkStepOutput({ step: { expectStdout: "64,64" }, workDir: "/tmp", stdout: "1,1" });
     expect(result.ok).toBe(false);
   });
+  it("rejects a directory masquerading as the produced file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gate-"));
+    mkdirSync(join(dir, "out.pdf"));
+    const result = checkStepOutput({ step: { produces: "out.pdf" }, workDir: dir, stdout: "" });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/not a regular file/i);
+  });
+  it("rejects a step that declares neither an output file nor a stdout expectation", () => {
+    const result = checkStepOutput({ step: { args: ["--noop"] }, workDir: "/tmp", stdout: "" });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/neither produces nor expectStdout/);
+  });
 });
 
 describe("locateBundle", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
   it("prefers the triple-specific bundle over a stale one", () => {
     const root = mkdtempSync(join(tmpdir(), "gate-root-"));
     const stale = join(root, "src-tauri", "target", "release", "bundle", "macos");
@@ -148,6 +236,29 @@ describe("locateBundle", () => {
     writeFileSync(join(fresh, "fresh.app"), "");
     const found = locateBundle({ root, triple: "aarch64-apple-darwin" });
     expect(found.path).toBe(join(fresh, "fresh.app"));
+  });
+  it("refuses the broad fallback in CI so a wrong-triple bundle cannot pass", () => {
+    const root = mkdtempSync(join(tmpdir(), "gate-root-"));
+    const stale = join(root, "src-tauri", "target", "release", "bundle", "macos");
+    mkdirSync(stale, { recursive: true });
+    writeFileSync(join(stale, "arm64.app"), "");
+    vi.stubEnv("GITHUB_ACTIONS", "true");
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(locateBundle({ root, triple: "x86_64-apple-darwin" })).toBe(null);
+    const printed = errors.mock.calls.flat().join("\n");
+    expect(printed).toContain(join("x86_64-apple-darwin", "release", "bundle"));
+    expect(printed).toMatch(/fallback search is disabled in CI/);
+  });
+  it("falls back locally and prints which bundle it chose", () => {
+    const root = mkdtempSync(join(tmpdir(), "gate-root-"));
+    const stale = join(root, "src-tauri", "target", "release", "bundle", "macos");
+    mkdirSync(stale, { recursive: true });
+    writeFileSync(join(stale, "local.app"), "");
+    vi.stubEnv("GITHUB_ACTIONS", "");
+    const logs = vi.spyOn(console, "log").mockImplementation(() => {});
+    const found = locateBundle({ root, triple: "x86_64-apple-darwin" });
+    expect(found.path).toBe(join(stale, "local.app"));
+    expect(logs.mock.calls.flat().join("\n")).toContain(join(stale, "local.app"));
   });
   it("returns null when the package was never built", () => {
     const root = mkdtempSync(join(tmpdir(), "gate-root-"));
@@ -204,6 +315,7 @@ describe("resolverCommand", () => {
       "--nocapture",
     ]);
     expect(command.options.cwd).toBe(join("/repo", "src-tauri"));
+    expect(command.options.timeout).toBe(900_000);
     expect(command.options.env.FSO_BUNDLE_EXE_DIR).toBe(exeDir);
     expect(command.options.env.FSO_BUNDLE_GATE).toBe("1");
   });
@@ -232,5 +344,143 @@ describe("checkVersion env override (the gate's no-staging-DYLD contract)", () =
     await checkVersion("/staging/vips", "8.18.7", "aarch64-apple-darwin", "/repo");
     const options = execFile.mock.calls[0][2];
     expect(options.env.DYLD_LIBRARY_PATH).toBe(join("/repo", "src-tauri", "frameworks"));
+  });
+
+  it("fails a mismatched version, naming the expected and the observed output", async () => {
+    execFile.mockImplementation((_bin, _args, _options, callback) =>
+      callback(null, "Ghostscript 10.07.1\n", ""),
+    );
+    const result = await checkVersion("/pkg/gs", "10.08.0", "aarch64-apple-darwin", "/repo", {
+      env: { PATH: "/usr/bin:/bin" },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("10.08.0");
+    expect(result.detail).toContain("10.07.1");
+  });
+
+  it("surfaces the loader's own error text when the engine dies on a signal", async () => {
+    const error = Object.assign(new Error("Command failed"), { signal: "SIGABRT", killed: false });
+    execFile.mockImplementation((_bin, _args, _options, callback) =>
+      callback(
+        error,
+        "",
+        "dyld[1234]: Library not loaded: @rpath/libvips.42.dylib\n  Referenced from: /pkg/Contents/MacOS/vips",
+      ),
+    );
+    const result = await checkVersion("/pkg/vips", "8.18.7", "aarch64-apple-darwin", "/repo", {
+      env: { PATH: "/usr/bin:/bin" },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("SIGABRT");
+    expect(result.detail).toContain("Library not loaded");
+  });
+});
+
+describe("checkEngine", () => {
+  const plan = { fixtures: [], steps: [{ args: ["--empty", "out.pdf"], produces: "out.pdf" }] };
+  const options = (overrides) => ({
+    name: "qpdf",
+    expectVersion: "12.4.2",
+    triple: "aarch64-apple-darwin",
+    root: "/repo",
+    exeDir: join("/app", "Contents", "MacOS"),
+    plan,
+    workDir: mkdtempSync(join(tmpdir(), "gate-engine-")),
+    ...overrides,
+  });
+  const existingBinary = () => {
+    const binPath = join(mkdtempSync(join(tmpdir(), "gate-bin-")), "qpdf");
+    writeFileSync(binPath, "binary");
+    return binPath;
+  };
+
+  it("fails when the binary is missing and never runs the version check", async () => {
+    const checkVersionFn = vi.fn();
+    const result = await checkEngine(
+      options({ binPath: join(tmpdir(), "gate-no-such-qpdf"), checkVersion: checkVersionFn }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.details[0].detail).toMatch(/file not found/);
+    expect(checkVersionFn).not.toHaveBeenCalled();
+  });
+
+  it("fails on a version mismatch", async () => {
+    const result = await checkEngine(
+      options({
+        binPath: existingBinary(),
+        checkVersion: async () => ({ ok: false, detail: "expected '12.4.2', got: 12.4.1" }),
+      }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.details.some((detail) => !detail.ok && detail.detail.includes("12.4.1"))).toBe(true);
+  });
+
+  it("fails when a step exits 0 but writes an empty file", async () => {
+    const runFn = vi.fn(async (_bin, _args, { cwd }) => {
+      writeFileSync(join(cwd, "out.pdf"), "");
+      return { stdout: "", stderr: "" };
+    });
+    const result = await checkEngine(
+      options({
+        binPath: existingBinary(),
+        checkVersion: async () => ({ ok: true, detail: "qpdf version 12.4.2" }),
+        run: runFn,
+      }),
+    );
+    expect(result.ok).toBe(false);
+    expect(result.details.some((detail) => /empty/i.test(detail.detail))).toBe(true);
+  });
+
+  it("passes when the step produces a non-empty file", async () => {
+    const runFn = vi.fn(async (_bin, _args, { cwd }) => {
+      writeFileSync(join(cwd, "out.pdf"), "%PDF-1.7");
+      return { stdout: "", stderr: "" };
+    });
+    const result = await checkEngine(
+      options({
+        binPath: existingBinary(),
+        checkVersion: async () => ({ ok: true, detail: "qpdf version 12.4.2" }),
+        run: runFn,
+      }),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.details.every((detail) => detail.ok)).toBe(true);
+  });
+
+  it("asks checkVersion for the package env and strips DYLD_LIBRARY_PATH from the operations", async () => {
+    const checkVersionFn = vi.fn(async () => ({ ok: true, detail: "qpdf version 12.4.2" }));
+    const runFn = vi.fn(async (_bin, _args, { cwd }) => {
+      writeFileSync(join(cwd, "out.pdf"), "%PDF-1.7");
+      return { stdout: "", stderr: "" };
+    });
+    await checkEngine(options({ binPath: existingBinary(), checkVersion: checkVersionFn, run: runFn }));
+    expect(checkVersionFn.mock.calls[0][4]).toEqual({ env: process.env });
+    const runOptions = runFn.mock.calls[0][2];
+    expect(runOptions.timeout).toBe(60_000);
+    expect(runOptions.env.DYLD_LIBRARY_PATH).toBeUndefined();
+  });
+});
+
+describe("validateBundleDir", () => {
+  it("rejects a path that is not a .app directory, naming the value", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gate-bdir-"));
+    expect(() => validateBundleDir({ bundleDir: dir, triple: "aarch64-apple-darwin" })).toThrow(
+      `--bundle-dir '${dir}' must point at a .app package`,
+    );
+    expect(() =>
+      validateBundleDir({ bundleDir: join(dir, "missing.app"), triple: "aarch64-apple-darwin" }),
+    ).toThrow(/does not exist/);
+  });
+});
+
+describe("main", () => {
+  it("returns 1 when the package carries no engines", async () => {
+    const appDir = join(mkdtempSync(join(tmpdir(), "gate-empty-")), "empty.app");
+    mkdirSync(appDir, { recursive: true });
+    execFile.mockImplementation((_bin, _args, _options, callback) =>
+      callback(null, 'fso-bundle-resolver-ok: "/nowhere"\n', ""),
+    );
+    const code = await main(["--triple", "aarch64-apple-darwin", "--bundle-dir", appDir]);
+    expect(code).toBe(1);
   });
 });

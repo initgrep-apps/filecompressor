@@ -12,6 +12,8 @@ const ENGINES = ["vips", "qpdf", "gs", "ffmpeg", "ffprobe"];
 const GS_RESOURCE_SEARCH_DIRS = ["Resource/Init", "lib", "Resource/Font", "fonts"];
 const PRUNED_TARGET_DIRS = new Set(["deps", "build", "incremental", ".fingerprint", "obj", "examples", "tmp"]);
 const SEVEN_ZIP = "C:\\Program Files\\7-Zip\\7z.exe";
+const ENGINE_TIMEOUT_MS = 60_000;
+const RESOLVER_TIMEOUT_MS = 900_000;
 
 export class SevenZipMissingError extends Error {
   constructor(message) {
@@ -43,6 +45,23 @@ export function parseGateArgs(argv) {
   return args;
 }
 
+function assertEveryEngineGated(names, where) {
+  const listed = new Set(names);
+  for (const name of ENGINES) {
+    if (!listed.has(name)) {
+      throw new Error(
+        `${where} does not list the ${name} engine — the package gate would skip it silently; add it to ENGINES, expectedEnginePaths and enginePlan()`,
+      );
+    }
+  }
+  const extra = [...listed].filter((name) => !ENGINES.includes(name));
+  if (extra.length > 0) {
+    throw new Error(
+      `${where} lists ${extra.join(", ")} but the package gate only exercises ${ENGINES.join(", ")} — add each new engine to ENGINES and enginePlan(), or it ships ungated`,
+    );
+  }
+}
+
 export function expectedEnginePaths({ triple, exeDir, manifest, baseConf, windowsConf }) {
   const paths = new Map();
   if (!isWindowsTriple(triple)) {
@@ -50,9 +69,14 @@ export function expectedEnginePaths({ triple, exeDir, manifest, baseConf, window
       const name = basename(entry);
       paths.set(name, join(exeDir, name));
     }
+    assertEveryEngineGated([...paths.keys()], "src-tauri/tauri.conf.json bundle.externalBin");
     return paths;
   }
   const external = new Set((windowsConf.bundle.externalBin ?? []).map((entry) => basename(entry)));
+  assertEveryEngineGated(
+    [...ENGINES, ...external],
+    "src-tauri/tauri.windows.conf.json bundle.externalBin (plus its engine payloads)",
+  );
   const enginesTarget = windowsConf.bundle.resources?.["binaries/engines/"];
   if (typeof enginesTarget !== "string" || enginesTarget.length === 0) {
     throw new Error(
@@ -67,6 +91,11 @@ export function expectedEnginePaths({ triple, exeDir, manifest, baseConf, window
     }
     const dest = targetEntries[name]?.dest ?? name;
     paths.set(name, join(exeDir, ...enginesTarget.split("/").filter(Boolean), dest, `${dest}.exe`));
+  }
+  if (paths.size !== ENGINES.length) {
+    throw new Error(
+      `internal gate error: built ${paths.size} engine paths for ${ENGINES.length} engines — an engine would be skipped`,
+    );
   }
   return paths;
 }
@@ -97,10 +126,9 @@ export function enginePlan() {
     [
       "vips",
       {
-        versionArgs: ["--version"],
         fixtures: [],
         steps: [
-          { args: ["black", "in.v", "64", "64"] },
+          { args: ["black", "in.v", "64", "64"], produces: "in.v" },
           { args: ["thumbnail", "in.v", "out.jpg", "32"], produces: "out.jpg" },
         ],
       },
@@ -108,7 +136,6 @@ export function enginePlan() {
     [
       "qpdf",
       {
-        versionArgs: ["--version"],
         fixtures: [],
         steps: [
           { args: ["--empty", "out.pdf"], produces: "out.pdf" },
@@ -119,7 +146,6 @@ export function enginePlan() {
     [
       "gs",
       {
-        versionArgs: ["--version"],
         fixtures: [
           {
             name: "in.ps",
@@ -137,7 +163,6 @@ export function enginePlan() {
     [
       "ffmpeg",
       {
-        versionArgs: ["--version"],
         fixtures: [],
         steps: [
           {
@@ -150,7 +175,6 @@ export function enginePlan() {
     [
       "ffprobe",
       {
-        versionArgs: ["--version"],
         fixtures: [],
         steps: [
           {
@@ -163,8 +187,7 @@ export function enginePlan() {
   ]);
 }
 
-export function gsRunArgs({ exeDir, triple }) {
-  const stepArgs = enginePlan().get("gs").steps[0].args;
+export function gsRunArgs({ exeDir, triple, stepArgs }) {
   if (isWindowsTriple(triple)) {
     return [...stepArgs];
   }
@@ -177,13 +200,56 @@ export function gsRunArgs({ exeDir, triple }) {
   return [...args, ...stepArgs];
 }
 
+function statOrNull(path) {
+  try {
+    return statSync(path);
+  } catch {
+    return null;
+  }
+}
+
+export function gsResourcesCheck({ exeDir, triple }) {
+  if (isWindowsTriple(triple)) {
+    return { ok: true, detail: "windows ROM model — the gs build carries its own resources in the executable" };
+  }
+  const tree = join(exeDir, "..", "Resources", "gs-resources");
+  const missing = [];
+  for (const dir of GS_RESOURCE_SEARCH_DIRS) {
+    const info = statOrNull(join(tree, ...dir.split("/")));
+    if (!info || !info.isDirectory()) {
+      missing.push(`${dir} (directory)`);
+    }
+  }
+  const init = statOrNull(join(tree, "Resource", "Init", "gs_init.ps"));
+  if (!init || !init.isFile()) {
+    missing.push("Resource/Init/gs_init.ps (file)");
+  }
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      detail: `gs resource tree incomplete under ${tree} — missing ${missing.join(", ")}; gs silently falls back to a compiled-in prefix, so a clean machine cannot compress PDFs (run freeze.yml to restage the bundle)`,
+    };
+  }
+  const icc = statOrNull(join(tree, "iccprofiles"));
+  const iccDetail = icc?.isDirectory()
+    ? "iccprofiles present (-uICCProfilesDir applied)"
+    : "iccprofiles absent (gs uses its compiled-in ICC profiles)";
+  return {
+    ok: true,
+    detail: `${GS_RESOURCE_SEARCH_DIRS.join(", ")} and Resource/Init/gs_init.ps present; ${iccDetail}`,
+  };
+}
+
 function packageIn(bundleDir, extension) {
   const dir = join(bundleDir, extension === ".app" ? "macos" : "nsis");
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return null;
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") {
+      return null;
+    }
+    throw new Error(`cannot scan ${dir} for a ${extension} package: ${error.code ?? error.message ?? error}`);
   }
   const match = entries.find((entry) => entry.name.endsWith(extension));
   return match ? join(dir, match.name) : null;
@@ -196,8 +262,11 @@ function bundleDirsUnder(dir, depth = 0) {
   let entries;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return [];
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") {
+      return [];
+    }
+    throw new Error(`cannot scan ${dir} for bundle directories: ${error.code ?? error.message ?? error}`);
   }
   const found = [];
   for (const entry of entries) {
@@ -220,16 +289,25 @@ function bundleDirsUnder(dir, depth = 0) {
 export function locateBundle({ root, triple }) {
   const targetDir = join(root, "src-tauri", "target");
   const extension = isWindowsTriple(triple) ? ".exe" : ".app";
-  const exact = packageIn(join(targetDir, triple, "release", "bundle"), extension);
+  const expected = join(targetDir, triple, "release", "bundle");
+  const exact = packageIn(expected, extension);
   if (exact) {
     return { kind: extension === ".app" ? "app" : "nsis", path: exact };
+  }
+  if (process.env.GITHUB_ACTIONS) {
+    console.error(
+      `FAIL package — no ${extension} package under ${expected} for ${triple}; the fallback search is disabled in CI so a stale or wrong-triple bundle cannot masquerade as this row's build`,
+    );
+    return null;
   }
   const preferred = join(targetDir, "release", "bundle");
   const bundleDirs = [preferred, ...bundleDirsUnder(targetDir).filter((dir) => dir !== preferred)];
   for (const dir of bundleDirs) {
     const found = packageIn(dir, extension);
     if (found) {
-      console.log(`package gate: no ${triple}/release/bundle package; falling back to ${found}`);
+      console.log(
+        `package gate: WARN no package under ${expected}; falling back to a local build at ${found} (CI refuses this fallback)`,
+      );
       return { kind: extension === ".app" ? "app" : "nsis", path: found };
     }
   }
@@ -251,10 +329,14 @@ export async function extractNsisInstaller({ setupExe, destDir }) {
 export function checkStepOutput({ step, workDir, stdout }) {
   if (step.produces) {
     const path = join(workDir, step.produces);
-    if (!existsSync(path)) {
+    const info = statOrNull(path);
+    if (!info) {
       return { ok: false, detail: `${step.produces} was not produced` };
     }
-    if (statSync(path).size === 0) {
+    if (!info.isFile()) {
+      return { ok: false, detail: `${step.produces} exists but is not a regular file` };
+    }
+    if (info.size === 0) {
       return { ok: false, detail: `${step.produces} is empty — the engine exited successfully but wrote 0 bytes` };
     }
   }
@@ -268,7 +350,10 @@ export function checkStepOutput({ step, workDir, stdout }) {
   if (step.expectStdout !== undefined) {
     return { ok: true, detail: `stdout contains ${step.expectStdout}` };
   }
-  return { ok: true, detail: "ok" };
+  return {
+    ok: false,
+    detail: "step declares neither produces nor expectStdout — exit 0 alone would pass a step that did nothing",
+  };
 }
 
 export function resolverCheck({ code, stdout, stderr }) {
@@ -294,9 +379,83 @@ export function resolverCommand({ root, exeDir }) {
     args: ["test", "--lib", "resolve_for_finds_every_engine_in_a_bundled_package", "--", "--nocapture"],
     options: {
       cwd: join(root, "src-tauri"),
+      timeout: RESOLVER_TIMEOUT_MS,
       env: { ...process.env, FSO_BUNDLE_EXE_DIR: exeDir, FSO_BUNDLE_GATE: "1" },
     },
   };
+}
+
+export function validateBundleDir({ bundleDir, triple }) {
+  const extension = isWindowsTriple(triple) ? ".exe" : ".app";
+  if (!bundleDir.endsWith(extension)) {
+    throw new Error(`--bundle-dir '${bundleDir}' must point at a ${extension} package for ${triple}`);
+  }
+  const info = statOrNull(bundleDir);
+  if (!info) {
+    throw new Error(`--bundle-dir '${bundleDir}' does not exist — pass the built ${extension} package path`);
+  }
+  if (extension === ".app" && !info.isDirectory()) {
+    throw new Error(`--bundle-dir '${bundleDir}' is not a directory — pass the built .app package`);
+  }
+  if (extension === ".exe" && !info.isFile()) {
+    throw new Error(`--bundle-dir '${bundleDir}' is not a file — pass the built setup .exe`);
+  }
+  return bundleDir;
+}
+
+export async function checkEngine({
+  name,
+  binPath,
+  expectVersion,
+  triple,
+  root,
+  exeDir,
+  plan,
+  workDir,
+  run: runFn = run,
+  checkVersion: checkVersionFn = checkVersion,
+  exists: existsFn = exists,
+}) {
+  const details = [];
+  const record = (ok, detail) => details.push({ ok, label: name, detail });
+  if (!binPath || !(await existsFn(binPath))) {
+    record(
+      false,
+      `file not found at ${binPath ?? "(no expected path)"} — the app would report 'Engine error: ${name} not available'`,
+    );
+    return { ok: false, details };
+  }
+  record(true, `file found at ${binPath}`);
+
+  const version = await checkVersionFn(binPath, expectVersion, triple, root, { env: process.env });
+  if (version.ok) {
+    record(true, `version ${version.detail}`);
+  } else {
+    record(false, `expected version ${expectVersion}, got: ${version.detail}`);
+  }
+
+  for (const fixture of plan.fixtures) {
+    writeFileSync(join(workDir, fixture.name), fixture.content);
+  }
+  for (const step of plan.steps) {
+    const stepArgs = name === "gs" ? gsRunArgs({ exeDir, triple, stepArgs: step.args }) : step.args;
+    try {
+      const { stdout, stderr } = await runFn(binPath, stepArgs, {
+        cwd: workDir,
+        timeout: ENGINE_TIMEOUT_MS,
+        env: { ...process.env, DYLD_LIBRARY_PATH: undefined },
+      });
+      if (stderr && stderr.trim()) {
+        console.log(`${name}: stderr — ${stderr.trim().slice(0, 300)}`);
+      }
+      const checked = checkStepOutput({ step, workDir, stdout });
+      record(checked.ok, `${step.args.join(" ")} — ${checked.detail}`);
+    } catch (error) {
+      const output = `${error.stderr ?? ""}${error.stdout ?? ""}`.trim() || `${error.message ?? error}`;
+      record(false, `${step.args.join(" ")} — ${output.slice(0, 300)}`);
+    }
+  }
+  return { ok: details.every((detail) => detail.ok), details };
 }
 
 export async function main(argv = []) {
@@ -306,7 +465,10 @@ export async function main(argv = []) {
   const baseConf = readJson(join(root, "src-tauri", "tauri.conf.json"));
   const windowsConf = readJson(join(root, "src-tauri", "tauri.windows.conf.json"));
   const located = args.bundleDir
-    ? { kind: args.bundleDir.endsWith(".exe") ? "nsis" : "app", path: args.bundleDir }
+    ? {
+        kind: isWindowsTriple(args.triple) ? "nsis" : "app",
+        path: validateBundleDir({ bundleDir: args.bundleDir, triple: args.triple }),
+      }
     : locateBundle({ root, triple: args.triple });
   if (!located) {
     console.error(
@@ -357,43 +519,31 @@ export async function main(argv = []) {
     return workDirs.get(key);
   };
 
+  const gsResources = gsResourcesCheck({ exeDir, triple: args.triple });
+  record(gsResources.ok, "gs-resources", gsResources.detail);
+
   for (const name of ENGINES) {
-    const binPath = paths.get(name);
-    if (!binPath || !(await exists(binPath))) {
-      record(false, name, `file not found at ${binPath ?? "(no expected path)"} — the app would report 'Engine error: ${name} not available'`);
-      continue;
-    }
-    record(true, name, `file found at ${binPath}`);
-
-    const expectVersion = versions.get(name);
-    const version = await checkVersion(binPath, expectVersion, args.triple, root, { env: { ...process.env } });
-    if (version.ok) {
-      record(true, name, `version ${expectVersion}`);
-    } else {
-      record(false, name, `expected version ${expectVersion}, got: ${version.detail}`);
-    }
-
-    const engine = plan.get(name);
-    const workDir = workDirFor(name);
-    for (const fixture of engine.fixtures) {
-      writeFileSync(join(workDir, fixture.name), fixture.content);
-    }
-    for (const step of engine.steps) {
-      const stepArgs = name === "gs" ? gsRunArgs({ exeDir, triple: args.triple }) : step.args;
-      try {
-        const { stdout } = await run(binPath, stepArgs, { cwd: workDir });
-        const checked = checkStepOutput({ step, workDir, stdout });
-        record(checked.ok, name, `${step.args.join(" ")} — ${checked.detail}`);
-      } catch (error) {
-        const output = `${error.stderr ?? ""}${error.stdout ?? ""}`.trim() || `${error.message ?? error}`;
-        record(false, name, `${step.args.join(" ")} — ${output.slice(0, 300)}`);
-      }
+    const checked = await checkEngine({
+      name,
+      binPath: paths.get(name),
+      expectVersion: versions.get(name),
+      triple: args.triple,
+      root,
+      exeDir,
+      plan: plan.get(name),
+      workDir: workDirFor(name),
+    });
+    for (const detail of checked.details) {
+      record(detail.ok, detail.label, detail.detail);
     }
   }
 
   const command = resolverCommand({ root, exeDir });
   try {
     const { stdout, stderr } = await run(command.tool, command.args, command.options);
+    if (stderr && stderr.trim()) {
+      console.log(`resolver: stderr — ${stderr.trim().slice(0, 300)}`);
+    }
     const checked = resolverCheck({ code: 0, stdout, stderr });
     record(checked.ok, "resolver", checked.detail);
   } catch (error) {
@@ -415,10 +565,9 @@ export async function main(argv = []) {
 
 if (isMain(import.meta.url)) {
   try {
-    const code = await main(process.argv.slice(2));
-    process.exit(code);
+    process.exitCode = await main(process.argv.slice(2));
   } catch (error) {
     console.error(`::error::package-gate: ${error.message ?? error}`);
-    process.exit(1);
+    process.exitCode = 1;
   }
 }

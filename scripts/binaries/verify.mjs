@@ -42,9 +42,10 @@ export async function checkVersion(binPath, expectVersion, triple, root, { env }
       (error, stdout, stderr) => {
         const combined = `${stdout ?? ""}${stderr ?? ""}`;
         if (error && (error.killed || error.signal)) {
+          const tail = combined.trim().slice(0, 300);
           resolvePromise({
             ok: false,
-            detail: `execution timed out or was killed before reporting a version (${error.signal ?? "timeout"})`,
+            detail: `execution timed out or was killed before reporting a version (${error.signal ?? "timeout"})${tail ? `: ${tail}` : ""}`,
           });
           return;
         }
