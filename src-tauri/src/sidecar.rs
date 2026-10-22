@@ -547,9 +547,9 @@ mod tests {
         assert_eq!(
             candidates.len(),
             3,
-            "the exe-dir candidate list for externalBin sidecars (ffmpeg/ffprobe) is exactly the \
-             triple-suffixed name, then the bare name, then the stripped .exe name the windows \
-             bundler produces"
+            "the exe-dir candidate list is name-independent and always exactly the triple-suffixed \
+             name, then the bare name, then the stripped .exe name; it serves externalBin sidecars \
+             (ffmpeg/ffprobe) and the engine-folder flat fallback alike (vips shown as a sample)"
         );
         assert_eq!(candidates[0], dir.join(triple_name));
         assert_eq!(candidates[1], dir.join("vips"));

@@ -395,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_for_finds_the_flat_sidecars_the_windows_bundle_ships() {
+    fn resolve_for_finds_flat_stripped_exe_names_and_falls_back_without_an_engine_folder() {
         let dir = tempfile::TempDir::new().unwrap();
         let exe_dir = dir.path().join("app");
         std::fs::create_dir_all(&exe_dir).unwrap();
