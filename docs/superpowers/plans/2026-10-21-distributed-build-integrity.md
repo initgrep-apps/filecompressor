@@ -236,40 +236,69 @@ on and leaves the notarization path open."
 - Consumes: nothing from other tasks.
 - Produces: the bundle resource target `resources/engines/` on Windows, which is the path `engine_candidates` (`src-tauri/src/sidecar.rs:68-77`) probes. Task 3's resolver test and Task 4's gate depend on this path being the real one.
 
-- [ ] **Step 1: Write the failing producer/consumer contract test**
+- [x] **Step 1: Write the failing producer/consumer contract test**
 
-This test binds the two halves that drifted apart: the folder the bundler produces and the folder the app looks in.
+This test binds the two halves that drifted apart: the folder the bundler produces and the folder the app looks in. It also pins the manifest `dest` names for both shipped Windows triples, and rejects a flip to a flat static row, so a rename on one side cannot move the installed folder away from what the resolver probes.
 
 Append to the `#[cfg(test)] mod tests` block in `src-tauri/src/sidecar.rs`:
 
 ```rust
 #[test]
 fn windows_engine_candidates_match_the_bundle_resource_target() {
-    let manifest = env!("CARGO_MANIFEST_DIR");
-    let conf = std::fs::read_to_string(format!("{manifest}/tauri.windows.conf.json"))
-        .expect("tauri.windows.conf.json readable from src-tauri");
-    let value: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let conf_path = format!("{manifest_dir}/tauri.windows.conf.json");
+    let conf = std::fs::read_to_string(&conf_path)
+        .unwrap_or_else(|error| panic!("{conf_path} must be readable: {error}"));
+    let value: serde_json::Value = serde_json::from_str(&conf)
+        .unwrap_or_else(|error| panic!("{conf_path} must parse as JSON: {error}"));
     let target = value["bundle"]["resources"]["binaries/engines/"]
         .as_str()
         .expect("the windows bundle must map binaries/engines/ to a target directory");
+    let manifest_path = format!("{manifest_dir}/../scripts/binaries.manifest.json");
+    let manifest: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(&manifest_path)
+            .unwrap_or_else(|error| panic!("{manifest_path} must be readable: {error}")),
+    )
+    .unwrap_or_else(|error| panic!("{manifest_path} must be valid JSON: {error}"));
     let exe_dir = std::path::PathBuf::from("/opt/app");
-    for name in ["vips", "qpdf", "gs"] {
-        let expected = exe_dir.join(target).join(name).join(format!("{name}.exe"));
-        assert!(
-            engine_candidates(&exe_dir, name).contains(&expected),
-            "the windows bundle puts {name} at {expected:?}, so the resolver must probe that exact \
-             path — the two drifted apart once and every compression category failed"
-        );
+    for triple in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
+        for name in ["vips", "qpdf", "gs"] {
+            let row = &manifest["targets"][triple][name];
+            let dest = row["dest"].as_str().unwrap_or_else(|| {
+                panic!("{manifest_path} must give {name} a dest for {triple}")
+            });
+            assert_eq!(
+                dest, name,
+                "{manifest_path} renames {triple}/{name} to {dest:?}, but the resolver probes \
+                 {name:?} — the installed folder would never resolve, so the manifest and the \
+                 resolver drifted apart"
+            );
+            assert_ne!(
+                row["static"],
+                serde_json::Value::Bool(true),
+                "{manifest_path} ships {triple}/{name} as a flat static binary, but the \
+                 resolver only probes {name}/ and the engine needs its sibling DLLs — \
+                 {triple}/{name} must stay a folder engine"
+            );
+            let expected = exe_dir.join(target).join(name).join(format!("{name}.exe"));
+            let candidates = engine_candidates(&exe_dir, name);
+            assert_eq!(
+                candidates.first(),
+                Some(&expected),
+                "the bundled layout must be the first probe for {triple}/{name}: the \
+                 installer places it at {expected:?}, got {candidates:?}"
+            );
+        }
     }
 }
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd src-tauri && cargo test --lib windows_engine_candidates_match_the_bundle_resource_target`
-Expected: FAIL — the config maps to `engines/`, the resolver probes `resources/engines/`, so `contains(&expected)` is false for all three engines.
+Expected: FAIL — the bundled layout is not the resolver's first probe for all three engines (and the test also rejects a target that only matches the dev-checkout fallback).
 
-- [ ] **Step 3: Fix the bundle config**
+- [x] **Step 3: Fix the bundle config**
 
 In `src-tauri/tauri.windows.conf.json`, change:
 
@@ -281,12 +310,12 @@ In `src-tauri/tauri.windows.conf.json`, change:
      }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `cd src-tauri && cargo test --lib windows_engine_candidates_match_the_bundle_resource_target`
 Expected: PASS.
 
-- [ ] **Step 5: Update the pinned merged-resources expectation in the JS suite**
+- [x] **Step 5: Update the pinned merged-resources expectation in the JS suite**
 
 The config change breaks a pinned vitest case: `scripts/binaries/verify.test.mjs` — `merges_the_windows_conf_into_a_resources_map_without_gs_resources` — asserts the merged Windows resources map equals `{ "binaries/engines/": "engines/" }` exactly (line 1011). Update the expected value to `{ "binaries/engines/": "resources/engines/" }`.
 
@@ -296,12 +325,12 @@ Expected: PASS — the merged-map pin now names `resources/engines/`.
 Run: `yarn test`
 Expected: PASS — no other JS pin broke.
 
-- [ ] **Step 6: Run the full Rust gate**
+- [x] **Step 6: Run the full Rust gate**
 
 Run: `cd src-tauri && cargo test`
 Expected: PASS.
 
-- [ ] **Step 7: Run the Windows-target compile gate**
+- [x] **Step 7: Run the Windows-target compile gate**
 
 The repo's documented pre-push gate for `src-tauri/src/` changes (`docs/ci-process.md` §3):
 
@@ -313,7 +342,7 @@ rm -f src-tauri/binaries/*-aarch64-pc-windows-msvc.exe
 
 Expected: the check succeeds. If `llvm` is not installed at that path, install it (`brew install llvm`) — the gate needs it to cross-compile the embedded Windows resource.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src-tauri/tauri.windows.conf.json src-tauri/src/sidecar.rs scripts/binaries/verify.test.mjs

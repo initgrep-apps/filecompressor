@@ -63,7 +63,7 @@ fn resolve_sidecar_path(path: &std::path::Path, name: &str) -> Result<String, St
 /// Windows engines cannot sit next to the app binary: each one needs its own
 /// folder of sibling DLLs, which `prep-windows.mjs` stages under
 /// `binaries/engines/<name>/` and `tauri.windows.conf.json` ships as
-/// `Resources/engines/`. Resolution therefore probes the bundled layout first,
+/// `resources/engines/`. Resolution therefore probes the bundled layout first,
 /// then the repo checkout layout.
 pub(crate) fn engine_candidates(
     exe_dir: &std::path::Path,
@@ -512,7 +512,7 @@ mod tests {
             candidates
                 .iter()
                 .any(|candidate| candidate.ends_with("resources/engines/vips/vips.exe")),
-            "the bundled layout puts engines/ under Resources: {:?}",
+            "the bundled layout puts engines/ under resources/engines/: {:?}",
             candidates
         );
     }
@@ -1347,5 +1347,54 @@ mod tests {
             "{path} must grant com.apple.security.cs.disable-library-validation = true — without \
              it the hardened runtime rejects the ad-hoc-signed dylibs the helpers ship with"
         );
+    }
+
+    #[test]
+    fn windows_engine_candidates_match_the_bundle_resource_target() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let conf_path = format!("{manifest_dir}/tauri.windows.conf.json");
+        let conf = std::fs::read_to_string(&conf_path)
+            .unwrap_or_else(|error| panic!("{conf_path} must be readable: {error}"));
+        let value: serde_json::Value = serde_json::from_str(&conf)
+            .unwrap_or_else(|error| panic!("{conf_path} must parse as JSON: {error}"));
+        let target = value["bundle"]["resources"]["binaries/engines/"]
+            .as_str()
+            .expect("the windows bundle must map binaries/engines/ to a target directory");
+        let manifest_path = format!("{manifest_dir}/../scripts/binaries.manifest.json");
+        let manifest: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&manifest_path)
+                .unwrap_or_else(|error| panic!("{manifest_path} must be readable: {error}")),
+        )
+        .unwrap_or_else(|error| panic!("{manifest_path} must be valid JSON: {error}"));
+        let exe_dir = std::path::PathBuf::from("/opt/app");
+        for triple in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
+            for name in ["vips", "qpdf", "gs"] {
+                let row = &manifest["targets"][triple][name];
+                let dest = row["dest"].as_str().unwrap_or_else(|| {
+                    panic!("{manifest_path} must give {name} a dest for {triple}")
+                });
+                assert_eq!(
+                    dest, name,
+                    "{manifest_path} renames {triple}/{name} to {dest:?}, but the resolver probes \
+                     {name:?} — the installed folder would never resolve, so the manifest and the \
+                     resolver drifted apart"
+                );
+                assert_ne!(
+                    row["static"],
+                    serde_json::Value::Bool(true),
+                    "{manifest_path} ships {triple}/{name} as a flat static binary, but the \
+                     resolver only probes {name}/ and the engine needs its sibling DLLs — \
+                     {triple}/{name} must stay a folder engine"
+                );
+                let expected = exe_dir.join(target).join(name).join(format!("{name}.exe"));
+                let candidates = engine_candidates(&exe_dir, name);
+                assert_eq!(
+                    candidates.first(),
+                    Some(&expected),
+                    "the bundled layout must be the first probe for {triple}/{name}: the \
+                     installer places it at {expected:?}, got {candidates:?}"
+                );
+            }
+        }
     }
 }

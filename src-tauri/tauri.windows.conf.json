@@ -5,7 +5,7 @@
       "binaries/ffprobe"
     ],
     "resources": {
-      "binaries/engines/": "engines/",
+      "binaries/engines/": "resources/engines/",
       "gs-resources/": null
     }
   }
