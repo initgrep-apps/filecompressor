@@ -21,7 +21,8 @@ click freeze   │         ↓                                 unfreeze --triple
                │   finalize (15 min): preflight 8           → tauri-action into the draft
                │     create-or-reuse today's draft          (numeric releaseId)
                │     upload 8 assets → verify 4×10s         → per-row app-asset check
-               │     retry through asset-index lag
+               │     retry through asset-index lag          → package gate (open the built
+               │                                              package, run every engine)
                │       ↓
                └──→  sidecars-<date> release (published)
                        ↓
@@ -48,6 +49,8 @@ Static entries (`ffmpeg`/`ffprobe`, `static: true`) ship as the flat exe only: n
 - `src-tauri/tauri.windows.conf.json` drops the base conf's gs-resources mapping with RFC 7396 null-merge (`"gs-resources/": null`) — windows bundles never stage a Resource tree;
 - the audit's gs smoke runs in ROM mode: no `-I` flags, only proof that the binary renders complete PDFs from the compiled-in tree.
 
+**Installed layout.** The macOS package puts the five engines flat in `Contents/MacOS/` (Tauri `externalBin`). The Windows packages put vips/gs/qpdf under `<install root>/resources/engines/<name>/<name>.exe` with their DLLs — matching `GLOSSARY.md` — and ffmpeg/ffprobe flat beside the app as `ffmpeg.exe`/`ffprobe.exe` (the bundler strips the target-triple suffix). The resolver probes exactly those paths (`src-tauri/src/sidecar.rs`), and the release package gate asserts them in the real package.
+
 ## 3. Operating runbook
 
 **Version bump = one flow** (manifest/pins edit → gate → merge → freeze → tag; there is no separate "local snapshot" path — the local machine is development only).
@@ -61,6 +64,8 @@ Static entries (`ffmpeg`/`ffprobe`, `static: true`) ship as the flat exe only: n
 4. Click **Freeze sidecar engines** (workflow_dispatch). Expect 4 green rows + finalize publishing `sidecars-<date>` with 8 assets. Finalize verifies with `gh release view --json assets --jq '.assets | length'`, retrying 4×10 s through GitHub's asset-indexing lag; it reuses a leftover same-day draft idempotently and never publishes anything short of the exact-8 name set.
 5. Tag `v<version>` (or dispatch release.yml). Expect 4 green rows building into the draft, the sidecars preflight requiring all 8 bundle assets, and the SBOM + third-party notices from the aarch64 row.
 6. Operator verifies the draft and clicks publish. Never publish the `sidecars-*` release by hand.
+
+**Package gate (release rows).** After `tauri-action` populates the draft and the per-row app-asset check passes, every release row runs `node scripts/ci/package-gate.mjs --triple <triple>`. It opens that row's own package, asserts every engine exists where the app resolves it, checks the manifest version, runs one real operation per engine, verifies the gs resource tree, and runs the app's own resolver against the package. A row that fails it leaves the draft unpublished — investigate the failing engine, never publish around it.
 
 **Version bump + changelog automation (release-please, live 2026-10-17)**
 
@@ -111,6 +116,11 @@ First local reproduction (2026-10-17): gate run 39022660502's full windows cargo
 | windows loader probe: lib-test exe refuses to launch (ENOENT) | libuv resolves the child from the CHILD env PATH | resolve `bash` absolutely from the parent PATH on win32 (`where bash`), POSIX side byte-identical |
 | gate rows red beyond staging | code broken | normal dev-fix flow |
 | tauri-action row: no app assets | build/upload skipped | check tauri-action logs, re-run release |
+| package gate: `FAIL <engine> — file not found` | the built package does not carry that engine where the app looks | check the bundle resource map for that platform and the engine's `dest` name in `scripts/binaries.manifest.json` |
+| package gate: `FAIL <engine> — Library not loaded` (macOS) | the helper cannot load the dylibs it ships with | check the ad-hoc signature and `src-tauri/Entitlements.plist`; `codesign -dvvv` and `codesign -d --entitlements -` on the helper and a bundled dylib |
+| package gate: `FAIL <engine> — expected 'X' in version output, got: …` | the package carries a stale or wrong engine | re-run the freeze, then the release (ADR 0001) |
+| package gate: `FAIL gs-resources` | the macOS package's `Contents/Resources/gs-resources` is missing, partial, or hollow | restage the tree (`yarn binaries:prep`) and re-freeze; never publish with gs unable to find its own fonts |
+| package gate: `7z not found` (Windows rows) | the runner image no longer ships 7-Zip at the expected path | install 7-Zip in the row or pin `SEVEN_ZIP`; the gate names the expected path in its error |
 
 ## 5. Invariants
 

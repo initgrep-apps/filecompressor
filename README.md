@@ -15,14 +15,34 @@ Supported inputs: JPEG, PNG, WebP, HEIC/HEIF (→ JPEG) · MP4, MOV (→ MP4) ·
 
 ## Status
 
-- **macOS (Apple Silicon)** — verified end-to-end, including bundled engines.
-- **Windows** — builds are not ready yet; PDF compression has a known Ghostscript packaging blocker (see `docs/bugs.md`).
+- **macOS** — arm64 and Intel builds are produced by CI.
+- **Windows** — x64 and arm64 builds are produced by CI.
 - **Linux** — not packaged yet.
-- No pre-built releases yet (CI/CD is still being set up). Build from source below.
+- macOS builds are ad-hoc signed and not notarized, so install needs a manual quarantine removal — see **Installing a release** below and `docs/distribution-acceptance.md`.
+- Windows builds are unsigned, so SmartScreen shows a warning: choose **More info** → **Run anyway**.
+
+## Installing a release
+
+**macOS** — the DMG mounts read-only, so copy the app first and strip the quarantine mark from the installed copy:
+
+```bash
+hdiutil attach ~/Downloads/file-compressor_<version>_<aarch64|x64>.dmg
+cp -R /Volumes/<volume-name>/*.app /Applications/
+hdiutil detach /Volumes/<volume-name>
+xattr -dr com.apple.quarantine /Applications/<app-name>.app
+```
+
+**System Settings → Privacy & Security → Open Anyway** is the alternative (on macOS 15+ it is the only route when the command is not used).
+
+**Windows** — run the installer; when SmartScreen warns, choose **More info** → **Run anyway**.
+
+## Verifying a release
+
+`node scripts/ci/package-gate.mjs --triple <triple>` proves the engines are present, startable and usable inside the built package. The platform × file-type matrix in `docs/distribution-acceptance.md` covers the UI layer, which CI cannot.
 
 ## For users
 
-Until installers are published, build from source (see next section). Then:
+Download the installer for your platform from the Releases page once a release is published, or build from source (see **For developers**). Then:
 
 1. Open the app and drag files onto the drop zone (or click it to browse).
 2. Press **Compress**. Progress shows per file; you can cancel any file or the whole batch.
