@@ -56,3 +56,31 @@ A dedicated GitHub Release (tag prefix `sidecars-`) holding freeze bundles for a
 **Gate**:
 The required pre-build test command (`yarn build && yarn test && cd src-tauri && cargo test`) that must pass on every platform.
 _Avoid_: tests, checks
+
+**Batch**:
+One Compress action: the files staged when the user presses Compress, processed as one unit. Batches never overlap.
+_Avoid_: run, job, queue (a job is one file inside a batch)
+
+**Session**:
+A batch as recorded in history: a start record, one record per file, an end record. A session with no end record is `interrupted`.
+_Avoid_: batch (in history context), log
+
+**Staging list**:
+The pre-batch file list the user builds by dropping or browsing files. Cleared by "New batch".
+_Avoid_: queue, pending list
+
+**Lane**:
+The per-category queue inside a batch (image, video, pdf, document, other). One job runs per lane at a time.
+_Avoid_: queue, pool
+
+**Slot**:
+A unit of the parallelism budget (`maxConcurrent`). Most jobs cost 1 slot; a video costs 2 so two encodes never overlap.
+_Avoid_: thread, worker
+
+**Target**:
+The per-category size cap a batch aims for (image 200 KB, video 10 MB, PDF 2 MB, document 1 MB by default).
+_Avoid_: limit, max size
+
+**Quality floors**:
+The user's minimum acceptable quality per category (image Q30, video CRF 28 at 480p, PDF 72 dpi / JPEGQ 15, document media Q40). The compressor stops here and delivers best effort rather than degrading further.
+_Avoid_: limits, thresholds

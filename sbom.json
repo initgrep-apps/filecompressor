@@ -1,95 +1,155 @@
 {
-  "generated": "2026-10-04T22:54:04.822Z",
+  "generated": "2026-10-17T04:54:30.517Z",
   "components": [
     {
       "name": "ffmpeg",
       "version": "9.0.2",
       "license": "GPL-2.0-or-later",
-      "source": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
-      "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+      "source": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip | https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip | https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-winarm64-gpl-9.0.zip",
+      "sha256": null,
       "targets": [
-        "aarch64-apple-darwin"
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc"
       ],
       "artifacts": [
         {
           "triple": "aarch64-apple-darwin",
           "source": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
           "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924"
+        },
+        {
+          "triple": "x86_64-pc-windows-msvc",
+          "source": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip",
+          "sha256": "177bec2e8c3397c5e9739901993dadc1cad0954de97d2604a2704c8531a59e32"
+        },
+        {
+          "triple": "aarch64-pc-windows-msvc",
+          "source": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-winarm64-gpl-9.0.zip",
+          "sha256": "d99dafe91825139d6fd8ad237c9217cff290277585899a95d1e69a009aaa275d"
         }
       ],
-      "sha256Agrees": true
+      "sha256Agrees": false
     },
     {
       "name": "ffprobe",
       "version": "9.0.2",
       "license": "GPL-2.0-or-later",
-      "source": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip",
-      "sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6",
+      "source": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip | https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip | https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-winarm64-gpl-9.0.zip",
+      "sha256": null,
       "targets": [
-        "aarch64-apple-darwin"
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc"
       ],
       "artifacts": [
         {
           "triple": "aarch64-apple-darwin",
           "source": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffprobe.zip",
           "sha256": "fcbe839537485eaee7a7a8bc5cbc0f90d53617e80943e8a5b2e31cb851197ea6"
+        },
+        {
+          "triple": "x86_64-pc-windows-msvc",
+          "source": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-gpl-9.0.zip",
+          "sha256": "177bec2e8c3397c5e9739901993dadc1cad0954de97d2604a2704c8531a59e32"
+        },
+        {
+          "triple": "aarch64-pc-windows-msvc",
+          "source": "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-winarm64-gpl-9.0.zip",
+          "sha256": "d99dafe91825139d6fd8ad237c9217cff290277585899a95d1e69a009aaa275d"
         }
       ],
-      "sha256Agrees": true
+      "sha256Agrees": false
     },
     {
       "name": "gs",
       "version": "10.08.0",
       "license": "AGPL-3.0",
-      "source": "brew (Homebrew formula: ghostscript)",
+      "source": "brew (Homebrew formula: ghostscript) | https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-ghostscript-10.08.0-2-any.pkg.tar.zst | https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-ghostscript-10.08.0-2-any.pkg.tar.zst",
       "sha256": null,
       "targets": [
-        "aarch64-apple-darwin"
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc"
       ],
       "artifacts": [
         {
           "triple": "aarch64-apple-darwin",
           "source": "brew (Homebrew formula: ghostscript)",
           "sha256": null
+        },
+        {
+          "triple": "x86_64-pc-windows-msvc",
+          "source": "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-ghostscript-10.08.0-2-any.pkg.tar.zst",
+          "sha256": "f2cf05482407de57b0ab3de7b3daf7c7d442eeae73de6ffc4ced75894bc94367"
+        },
+        {
+          "triple": "aarch64-pc-windows-msvc",
+          "source": "https://repo.msys2.org/mingw/clangarm64/mingw-w64-clang-aarch64-ghostscript-10.08.0-2-any.pkg.tar.zst",
+          "sha256": "ade0e912a306bca8add436d188b4006d86eae5e1635151b1b1d7df563fbe316e"
         }
       ],
-      "sha256Agrees": true
+      "sha256Agrees": false
     },
     {
       "name": "qpdf",
       "version": "12.4.2",
       "license": "Apache-2.0",
-      "source": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-bin-macos-arm64.zip",
-      "sha256": "62e46987a30ea167cbc530ccb22690aec3d8c812ed09979a941bcee92e504b79",
+      "source": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-bin-macos-arm64.zip | https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-msvc64.zip | https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-msvc-arm64.zip",
+      "sha256": null,
       "targets": [
-        "aarch64-apple-darwin"
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc"
       ],
       "artifacts": [
         {
           "triple": "aarch64-apple-darwin",
           "source": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-bin-macos-arm64.zip",
           "sha256": "62e46987a30ea167cbc530ccb22690aec3d8c812ed09979a941bcee92e504b79"
+        },
+        {
+          "triple": "x86_64-pc-windows-msvc",
+          "source": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-msvc64.zip",
+          "sha256": "db87077e683630c1217e0e8f9a20a9749d952ab676e881c3689187763a5de25d"
+        },
+        {
+          "triple": "aarch64-pc-windows-msvc",
+          "source": "https://github.com/qpdf/qpdf/releases/download/v12.4.2/qpdf-12.4.2-msvc-arm64.zip",
+          "sha256": "2b5d7740a2513d8a841116692dc2cf7efe83f35262386ebab18bed35fbf15ab1"
         }
       ],
-      "sha256Agrees": true
+      "sha256Agrees": false
     },
     {
       "name": "vips",
       "version": "8.18.7",
       "license": "LGPL-3.0",
-      "source": "brew (Homebrew formula: vips)",
+      "source": "brew (Homebrew formula: vips) | https://github.com/libvips/build-win64-mxe/releases/download/v8.18.7/vips-dev-x64-all-8.18.7.zip | https://github.com/libvips/build-win64-mxe/releases/download/v8.18.7/vips-dev-arm64-all-8.18.7.zip",
       "sha256": null,
       "targets": [
-        "aarch64-apple-darwin"
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc"
       ],
       "artifacts": [
         {
           "triple": "aarch64-apple-darwin",
           "source": "brew (Homebrew formula: vips)",
           "sha256": null
+        },
+        {
+          "triple": "x86_64-pc-windows-msvc",
+          "source": "https://github.com/libvips/build-win64-mxe/releases/download/v8.18.7/vips-dev-x64-all-8.18.7.zip",
+          "sha256": "78e56ba30c267ba32ff965200534bd5721364cadbead8c4d595e44b58dfeff15"
+        },
+        {
+          "triple": "aarch64-pc-windows-msvc",
+          "source": "https://github.com/libvips/build-win64-mxe/releases/download/v8.18.7/vips-dev-arm64-all-8.18.7.zip",
+          "sha256": "8f2d3a94bbc485a8226cdea012d3a76ac660a373a154fabcd772226978e56f4a"
         }
       ],
-      "sha256Agrees": true
+      "sha256Agrees": false
     }
   ]
 }

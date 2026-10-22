@@ -9,7 +9,7 @@ Run it against the artifacts from a tagged release, on real machines.
 macOS builds are ad-hoc signed and not notarized (ADR 0002), so Gatekeeper quarantines the download. The DMG mounts read-only and the mounted files carry no per-file quarantine mark; the mark lands on the copy, including the helper programs inside the bundle. Copy first, then strip it recursively from the installed app:
 
 ```bash
-hdiutil attach ~/Downloads/file-compressor_<version>_aarch64.dmg
+hdiutil attach ~/Downloads/*.dmg
 cp -R /Volumes/<volume-name>/*.app /Applications/
 hdiutil detach /Volumes/<volume-name>
 xattr -dr com.apple.quarantine /Applications/<app-name>.app
