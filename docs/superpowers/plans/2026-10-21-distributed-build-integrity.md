@@ -477,7 +477,7 @@ the stripped name as its third candidate."
 - Consumes: the Windows layout `resources/engines/<name>/<name>.exe` fixed in Task 2; the stripped-name candidate `<exe_dir>/<name>.exe` added in Task 2b — Step 3's `ffmpeg.exe`/`ffprobe.exe` fixtures resolve through it on every host; the macOS flat `externalBin` layout `Contents/MacOS/<name>`.
 - Produces: an environment variable contract that Task 4's gate script drives — **`FSO_BUNDLE_EXE_DIR`**, the absolute path of the directory that contains the app executable. Inside a macOS `.app` that is `<app>/Contents/MacOS`; for the unpacked Windows installer it is the extraction root. With `FSO_BUNDLE_EXE_DIR` unset and no sentinel, the test prints an explicit skip message and returns. Task 4 also sets **`FSO_BUNDLE_GATE=1`**; with that sentinel set and `FSO_BUNDLE_EXE_DIR` missing the test fails closed, because `cargo test --lib <filter>` also exits 0 when the filter matches nothing. The test also rejects a value that is not an absolute directory, an engine that resolves through a `..` component or outside `FSO_BUNDLE_EXE_DIR` (the `../../binaries/engines` dev fallback), and a resolved file whose name is not exactly the engine's plain name after stripping `.exe` — a triple-suffixed `vips-aarch64-apple-darwin` from `target/<triple>/debug` is not a packaged engine. On success the test prints **`fso-bundle-resolver-ok: <exe_dir>`**; Task 4 requires that marker in the output, because a skipped test also exits 0.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to the `#[cfg(test)] mod tests` block in `src-tauri/src/engine/processor.rs`:
 
@@ -549,12 +549,12 @@ fn resolve_for_finds_every_engine_in_a_bundled_package() {
 }
 ```
 
-- [ ] **Step 2: Run the test with the variable unset**
+- [x] **Step 2: Run the test with the variable unset**
 
 Run: `cd src-tauri && env -u FSO_BUNDLE_EXE_DIR -u FSO_BUNDLE_GATE cargo test --lib resolve_for_finds_every_engine_in_a_bundled_package -- --nocapture`
 Expected: PASS with the printed skip message. With the `FSO_BUNDLE_GATE` sentinel also unset, skipping is legitimate; an ordinary `cargo test` never sets either variable.
 
-- [ ] **Step 3: Run the test against a synthetic Windows package to see it pass**
+- [x] **Step 3: Run the test against a synthetic Windows package to see it pass**
 
 Create the layout the installer now produces, then point the test at it the way the gate does (`FSO_BUNDLE_EXE_DIR` plus the `FSO_BUNDLE_GATE=1` sentinel). Use the fixed path `/tmp/fso-bundle-fixture` — the next step re-uses it, and a plan step cannot see another step's shell variables:
 
@@ -571,7 +571,7 @@ cd src-tauri && FSO_BUNDLE_EXE_DIR=/tmp/fso-bundle-fixture FSO_BUNDLE_GATE=1 car
 
 Expected: PASS — all five resolve (vips/gs/qpdf through the `resources/engines/` candidates, ffmpeg/ffprobe through the host-independent stripped-name candidate from Task 2b).
 
-- [ ] **Step 4: Prove the test can fail (the negative case)**
+- [x] **Step 4: Prove the test can fail (the negative case)**
 
 Remove one engine from the same fixture and re-run:
 
@@ -582,12 +582,12 @@ cd src-tauri && FSO_BUNDLE_EXE_DIR=/tmp/fso-bundle-fixture FSO_BUNDLE_GATE=1 car
 
 Expected: FAIL with `vips did not resolve from the built package`. A test that cannot fail is not a test — confirm the failure before continuing.
 
-- [ ] **Step 5: Run the full Rust gate**
+- [x] **Step 5: Run the full Rust gate**
 
 Run: `cd src-tauri && cargo test`
 Expected: PASS.
 
-- [ ] **Step 6: Run the Windows-target compile gate**
+- [x] **Step 6: Run the Windows-target compile gate**
 
 The repo's documented pre-push gate for `src-tauri/src/` changes (`docs/ci-process.md` §3):
 
@@ -599,7 +599,7 @@ rm -f src-tauri/binaries/*-aarch64-pc-windows-msvc.exe
 
 Expected: the check succeeds. If `llvm` is not installed at that path, install it (`brew install llvm`) — the gate needs it to cross-compile the embedded Windows resource.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src-tauri/src/engine/processor.rs
