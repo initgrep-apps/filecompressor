@@ -1348,4 +1348,24 @@ mod tests {
              it the hardened runtime rejects the ad-hoc-signed dylibs the helpers ship with"
         );
     }
+
+    #[test]
+    fn windows_engine_candidates_match_the_bundle_resource_target() {
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let conf = std::fs::read_to_string(format!("{manifest}/tauri.windows.conf.json"))
+            .expect("tauri.windows.conf.json readable from src-tauri");
+        let value: serde_json::Value = serde_json::from_str(&conf).expect("valid JSON");
+        let target = value["bundle"]["resources"]["binaries/engines/"]
+            .as_str()
+            .expect("the windows bundle must map binaries/engines/ to a target directory");
+        let exe_dir = std::path::PathBuf::from("/opt/app");
+        for name in ["vips", "qpdf", "gs"] {
+            let expected = exe_dir.join(target).join(name).join(format!("{name}.exe"));
+            assert!(
+                engine_candidates(&exe_dir, name).contains(&expected),
+                "the windows bundle puts {name} at {expected:?}, so the resolver must probe that exact \
+                 path — the two drifted apart once and every compression category failed"
+            );
+        }
+    }
 }

@@ -1008,7 +1008,7 @@ describe("the shipped windows gs rows and platform config", () => {
     expect(
       merged.bundle.resources,
       "tauri-build copies the resolved resources map on every cargo run — a gs-resources key today would demand a tree windows never stages",
-    ).toEqual({ "binaries/engines/": "engines/" });
+    ).toEqual({ "binaries/engines/": "resources/engines/" });
   });
 
   it("merges_the_windows_conf_into_the_two_entry_externalBin", () => {
