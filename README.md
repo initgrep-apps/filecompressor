@@ -18,18 +18,18 @@ Supported inputs: JPEG, PNG, WebP, HEIC/HEIF (→ JPEG) · MP4, MOV (→ MP4) ·
 - **macOS** — arm64 and Intel builds are produced by CI.
 - **Windows** — x64 and arm64 builds are produced by CI.
 - **Linux** — not packaged yet.
-- macOS builds are ad-hoc signed and not notarized, so install needs one command — see **Installing a release** below and `docs/distribution-acceptance.md`.
+- macOS builds are ad-hoc signed and not notarized, so install needs a manual quarantine removal — see **Installing a release** below and `docs/distribution-acceptance.md`.
 - Windows builds are unsigned, so SmartScreen shows a warning: choose **More info** → **Run anyway**.
 
 ## Installing a release
 
-**macOS** — the quarantine mark must be removed recursively because the helper programs inside the bundle are marked too:
+**macOS** — the DMG mounts read-only, so copy the app first and strip the quarantine mark from the installed copy:
 
 ```bash
 hdiutil attach ~/Downloads/file-compressor_<version>_<arch>.dmg
-xattr -dr com.apple.quarantine /Volumes/<volume-name>/
 cp -R /Volumes/<volume-name>/*.app /Applications/
 hdiutil detach /Volumes/<volume-name>
+xattr -dr com.apple.quarantine /Applications/<app-name>.app
 ```
 
 **System Settings → Privacy & Security → Open Anyway** is the alternative (on macOS 15+ it is the only route when the command is not used).

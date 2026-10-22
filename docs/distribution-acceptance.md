@@ -6,13 +6,13 @@ Run it against the artifacts from a tagged release, on real machines.
 
 ## Install on macOS
 
-macOS builds are ad-hoc signed and not notarized (ADR 0002), so Gatekeeper quarantines the download. The quarantine mark is added to every file in the bundle at download time and must be removed recursively, because the helper programs inside the bundle are marked too:
+macOS builds are ad-hoc signed and not notarized (ADR 0002), so Gatekeeper quarantines the download. The DMG mounts read-only and the mounted files carry no per-file quarantine mark; the mark lands on the copy, including the helper programs inside the bundle. Copy first, then strip it recursively from the installed app:
 
 ```bash
 hdiutil attach ~/Downloads/file-compressor_<version>_aarch64.dmg
-xattr -dr com.apple.quarantine /Volumes/<volume-name>/
 cp -R /Volumes/<volume-name>/*.app /Applications/
 hdiutil detach /Volumes/<volume-name>
+xattr -dr com.apple.quarantine /Applications/<app-name>.app
 ```
 
 The alternative is **System Settings → Privacy & Security → Open Anyway** after the first launch attempt. On macOS 15+ that is the only route when the command is not used.
