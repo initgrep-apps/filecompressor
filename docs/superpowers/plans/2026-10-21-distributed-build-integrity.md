@@ -678,7 +678,7 @@ The ffprobe step depends on the PNG the ffmpeg step produced, so ffmpeg and ffpr
 
 The macOS column comes from `bundle.externalBin` in `tauri.conf.json` (Tauri writes those under their plain names). The Windows column comes from `bundle.externalBin` in `tauri.windows.conf.json` plus the `bundle.resources["binaries/engines/"]` target and the manifest's `dest` names.
 
-- [ ] **Step 1: Export `checkVersion` from verify.mjs with an env override**
+- [x] **Step 1: Export `checkVersion` from verify.mjs with an env override**
 
 In `scripts/binaries/verify.mjs`, change line 32 from:
 
@@ -703,7 +703,7 @@ export async function checkVersion(binPath, expectVersion, triple, root, { env, 
 
 and rename the `env` in the `execFile` options to `runEnv` (`{ encoding: "utf8", timeout: 20000, env: runEnv }`) and the hardcoded `["--version"]` to `versionArgs`. A falsy `env` (absent, `undefined` or `null`) means "no override", so the staging `DYLD_LIBRARY_PATH` is injected; any truthy object is used as-is. The existing four-argument caller keeps its behavior: default env plus the staging `DYLD_LIBRARY_PATH`. The gate passes five, with `{ env }` = a copy of `process.env` minus `DYLD_LIBRARY_PATH` — inherits the ambient env, **no** staging injection, so the bundled engines must load their own dylibs from the package. `args` overrides the version flag; by default ffmpeg/ffprobe get `-version` (they exit nonzero on `--version` while still printing the banner) and every other engine gets `--version`.
 
-- [ ] **Step 2: Write the failing vitest file**
+- [x] **Step 2: Write the failing vitest file**
 
 Create `scripts/ci/package-gate.test.mjs` with these cases. Line 1 is `// @vitest-environment node`, like all 19 existing script test files — the repo default is jsdom plus the React setup files, which a pure-node script must not drag in. The `vi.mock` of `node:child_process` follows the `scripts/binaries/all.test.mjs` pattern: mock-based tests live in their own file, never inside `verify.test.mjs`, which compiles real fixtures with `clang` through the real `execFile`. The mock also lets the file pin the `checkVersion` env-override contract from Step 1:
 
@@ -901,12 +901,12 @@ describe("checkVersion env override (the gate's no-staging-DYLD contract)", () =
 ```
 
 
-- [ ] **Step 3: Run the vitest file to verify it fails**
+- [x] **Step 3: Run the vitest file to verify it fails**
 
 Run: `yarn vitest run scripts/ci/package-gate.test.mjs`
 Expected: FAIL — `Cannot find module './package-gate.mjs'`.
 
-- [ ] **Step 4: Implement `scripts/ci/package-gate.mjs`**
+- [x] **Step 4: Implement `scripts/ci/package-gate.mjs`**
 
 The script must:
 
@@ -926,17 +926,17 @@ The script must:
   5. Spawn `cargo test --lib resolve_for_finds_every_engine_in_a_bundled_package -- --nocapture` with `cwd = src-tauri`, `FSO_BUNDLE_EXE_DIR` set to `exeDir`, **and** `FSO_BUNDLE_GATE=1`. The check passes only when the command exits 0 **and** its output contains the `fso-bundle-resolver-ok` marker: `cargo test --lib <filter>` exits 0 when the filter matches nothing, and a skipped test also exits 0 with `1 passed`, so exit 0 alone (or a `1 passed` count) proves nothing — only the marker says the test really ran the resolver. `--nocapture` is required because libtest swallows stdout otherwise. The sentinel turns a gate that forgets `FSO_BUNDLE_EXE_DIR` into a hard failure rather than a silent skip.
   6. Print one line per check (`PASS`/`FAIL` + detail) and return 0 when every check passed, 1 otherwise.
 
-- [ ] **Step 5: Run the vitest file to verify it passes**
+- [x] **Step 5: Run the vitest file to verify it passes**
 
 Run: `yarn vitest run scripts/ci/package-gate.test.mjs`
 Expected: PASS — all cases green.
 
-- [ ] **Step 6: Run the full test suite**
+- [x] **Step 6: Run the full test suite**
 
 Run: `yarn test`
 Expected: PASS — the existing suite stays green, plus the new `package-gate.test.mjs` cases.
 
-- [ ] **Step 7: Run the gate end-to-end against a locally built macOS package**
+- [x] **Step 7: Run the gate end-to-end against a locally built macOS package**
 
 Task 1 produced the package. Run:
 
@@ -948,7 +948,7 @@ Expected: every check PASS — five engines found, five version matches, five re
 
 If the gate cannot find the package, pass the path explicitly: `--bundle-dir src-tauri/target/aarch64-apple-darwin/release/bundle/macos/file-compressor.app`. A relative `--bundle-dir` is resolved to an absolute path before it reaches the Rust resolver.
 
-- [ ] **Step 8: Prove the gate can fail (the negative case)**
+- [x] **Step 8: Prove the gate can fail (the negative case)**
 
 Copy the built package, delete one engine from the copy, and run the gate against it:
 
@@ -960,7 +960,7 @@ node scripts/ci/package-gate.mjs --triple aarch64-apple-darwin --bundle-dir /tmp
 
 Expected: exit 1 with a `FAIL` line naming vips. Also break a *library* rather than a binary — re-sign `Contents/MacOS/vips` with `codesign --force --options runtime --sign -` after removing the entitlement — and confirm the gate reports the loader's own error text (`Library not loaded`) rather than "file not found". This is Review Focus item 1.
 
-- [ ] **Step 9: Wire the gate into the release workflow**
+- [x] **Step 9: Wire the gate into the release workflow**
 
 In `.github/workflows/release.yml`, insert this step **immediately after** the `fail-closed app-asset check for this triple` step (the one ending at line 236) and before the `upload sbom + third-party notices + verify upload` step:
 
@@ -972,7 +972,7 @@ In `.github/workflows/release.yml`, insert this step **immediately after** the `
         shell: bash
 ```
 
-- [ ] **Step 10: Pin the new step in `scripts/ci/workflows.test.mjs`**
+- [x] **Step 10: Pin the new step in `scripts/ci/workflows.test.mjs`**
 
 That file exists to pin the release workflow's shape — the app-asset check is pinned with existence, ordering after tauri-action, no `if`, and env-passed values (`workflows.test.mjs:1105-1113`). Add one case to the same `FILENAME = "release.yml"` describe, right after the `fail-closes each row ...` case:
 
@@ -997,7 +997,7 @@ it("runs the package gate on every row after the app-asset check", async () => {
 Run: `yarn vitest run scripts/ci/workflows.test.mjs`
 Expected: PASS.
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add scripts/ci/package-gate.mjs scripts/ci/package-gate.test.mjs scripts/ci/package-gate.cli.test.mjs scripts/binaries/verify.mjs .github/workflows/release.yml scripts/ci/workflows.test.mjs
