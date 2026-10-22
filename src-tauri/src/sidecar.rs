@@ -140,6 +140,7 @@ fn sidecar_candidates(exe_dir: &std::path::Path, name: &str) -> Vec<std::path::P
         candidates.push(exe_dir.join(&filename));
     }
     candidates.push(exe_dir.join(name));
+    candidates.push(exe_dir.join(format!("{name}.exe")));
     candidates
 }
 
@@ -538,18 +539,20 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_candidates_prefer_triple_then_plain_name() {
+    fn sidecar_candidates_prefer_triple_then_bare_then_exe_name() {
         let dir = std::path::PathBuf::from("/opt/engine");
         let candidates = sidecar_candidates(&dir, "vips");
 
         let triple_name = sidecar_filename("vips").expect("host platform must map to a triple");
         assert_eq!(
             candidates.len(),
-            2,
-            "the exe-dir candidate list is exactly the triple-suffixed name then the plain name"
+            3,
+            "the exe-dir candidate list is exactly the triple-suffixed name, then the bare name, \
+             then the stripped .exe name the windows bundler produces"
         );
         assert_eq!(candidates[0], dir.join(triple_name));
         assert_eq!(candidates[1], dir.join("vips"));
+        assert_eq!(candidates[2], dir.join("vips.exe"));
     }
 
     #[test]
@@ -1396,5 +1399,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn sidecar_candidates_probe_the_stripped_external_bin_name() {
+        let exe_dir = std::path::PathBuf::from("/opt/app");
+        let candidates = sidecar_candidates(&exe_dir, "ffmpeg");
+        assert!(
+            candidates.contains(&exe_dir.join("ffmpeg.exe")),
+            "the windows bundler strips the -{{target_triple}} suffix and keeps the .exe \
+             (tauri-bundler copy_binaries), so the shipped ffmpeg.exe is only found through the \
+             stripped-name candidate — v0.1.0-alpha.1 shipped ffmpeg.exe beside the app and video \
+             compression failed with 'Engine error: ffmpeg not available'"
+        );
     }
 }
