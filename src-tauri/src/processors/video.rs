@@ -28,6 +28,7 @@ use crate::engine::{
 };
 use crate::models::Category;
 use crate::settings::QualityFloors;
+use crate::sidecar::suppress_console_window;
 
 pub struct VideoProcessor;
 
@@ -429,14 +430,15 @@ impl VideoProcessor {
             "default=noprint_wrappers=1:nokey=1".to_string(),
             input.display().to_string(),
         ];
-        let mut child = std::process::Command::new(ffprobe_path)
+        let mut command = std::process::Command::new(ffprobe_path);
+        command
             .args(&args)
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                CompressionError::SidecarFailed(format!("Failed to start ffprobe: {e}"))
-            })?;
+            .stderr(Stdio::piped());
+        suppress_console_window(&mut command);
+        let mut child = command.spawn().map_err(|e| {
+            CompressionError::SidecarFailed(format!("Failed to start ffprobe: {e}"))
+        })?;
 
         let mut stdout_pipe = child.stdout.take();
         let stdout_reader = std::thread::spawn(move || {
@@ -550,14 +552,15 @@ impl VideoProcessor {
         range_span: u32,
         duration_secs: f64,
     ) -> Result<(), CompressionError> {
-        let mut child = std::process::Command::new(ffmpeg_path)
+        let mut command = std::process::Command::new(ffmpeg_path);
+        command
             .args(args)
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| {
-                CompressionError::SidecarFailed(format!("Failed to start ffmpeg: {e}"))
-            })?;
+            .stderr(Stdio::piped());
+        suppress_console_window(&mut command);
+        let mut child = command.spawn().map_err(|e| {
+            CompressionError::SidecarFailed(format!("Failed to start ffmpeg: {e}"))
+        })?;
 
         let mut stderr_pipe = child.stderr.take();
         let progress_for_thread = progress.clone();

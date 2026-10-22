@@ -20,7 +20,7 @@ use crate::models::Category;
 use crate::settings::QualityFloors;
 use crate::sidecar::{
     GsResources, prepend_engine_dir_to_path, resolve_engine_candidate, resolve_gs_resources,
-    resolve_sidecar_candidate,
+    resolve_sidecar_candidate, suppress_console_window,
 };
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -227,6 +227,7 @@ pub fn run_sidecar(
         .args(args)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
+    suppress_console_window(&mut command);
     prepend_engine_dir_to_path(&mut command, sidecar_path);
     let mut child = command.spawn()
         .map_err(|e| {

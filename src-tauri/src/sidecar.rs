@@ -134,6 +134,23 @@ pub fn prepend_engine_dir_to_path(
     Some(fronted)
 }
 
+/// Windows allocates a console for every console-subsystem child unless the
+/// parent suppresses it. The app itself is a GUI process
+/// (`windows_subsystem = "windows"`), so without this every engine spawn
+/// flashes a terminal window for the duration of a compression pass.
+pub fn suppress_console_window(cmd: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
+}
+
 fn sidecar_candidates(exe_dir: &std::path::Path, name: &str) -> Vec<std::path::PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(filename) = sidecar_filename(name) {

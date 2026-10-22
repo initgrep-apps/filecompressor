@@ -90,3 +90,9 @@ All three defects below were found by unpacking the **`v0.1.0-alpha.1` release a
 - **Windows: ffmpeg/ffprobe were never found** — symptom: every video compression failed. Error text: `Engine error: ffmpeg not available`. Root cause: the bundler strips the target-triple suffix from an `externalBin` sidecar, so the installer carries plain `ffmpeg.exe`/`ffprobe.exe`, while `sidecar_candidates` probed only `ffmpeg-<triple>.exe` and the bare `ffmpeg`. Windows file APIs do no extension guessing. Fix (0756bd9, PR #145): `<exe_dir>/<name>.exe` is now the third candidate, after the triple-suffixed and bare names.
 
 The gate (03e1f7d, PR #147) runs after the per-row app-asset check on every release row: it opens that row's package, asserts each engine is at the resolved path, checks the manifest version, runs a real operation with magic-byte output checks, verifies the macOS gs resource tree, and runs the app's own resolver against the package. A row that fails it leaves the draft unpublished.
+
+## Windows console windows flash during compression — reported 2026-10-22 (v0.1.0-alpha.2, Windows arm64 + MSI)
+
+- **Symptom:** every compression pass pops a terminal window for each engine process — image, video, PDF and document categories all affected.
+- **Root cause:** the app is a GUI process (`windows_subsystem = "windows"`), but `std::process::Command` spawns the console-subsystem engines (vips, gs, qpdf, ffmpeg, ffprobe) without `CREATE_NO_WINDOW`, so Windows allocates a console per child.
+- **Fix:** `sidecar::suppress_console_window` sets `CREATE_NO_WINDOW` on Windows (no-op elsewhere) and is applied at all three production spawn sites: `run_sidecar` (vips/qpdf/gs), the ffprobe probe and the ffmpeg pass.
