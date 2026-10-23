@@ -19,119 +19,92 @@ import { RiFileShield2Line } from "@remixicon/react"
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
   SidebarHeader,
   SidebarInset,
-  SidebarMenu,
-  SidebarMenuItem,
-  SidebarMenuButton,
   SidebarProvider,
-  SidebarRail,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
-import { Separator } from "@/components/ui/separator"
+import { Toaster } from "@/components/ui/sonner"
+import { AboutDialog } from "@/components/AboutDialog"
+import { SettingsDialog } from "@/components/SettingsDialog"
+import { DragSurface } from "@/components/shell/DragSurface"
+import { SidebarNav } from "@/components/shell/SidebarNav"
+import { QuitGuard } from "@/components/shell/QuitGuard"
+import { TopBar } from "@/components/shell/TopBar"
+import { CompressionProvider } from "@/providers/CompressionProvider"
+import { HistoryProvider } from "@/providers/HistoryProvider"
+import { usePlatform } from "@/providers/PlatformProvider"
 import { CompressView } from "@/views/CompressView"
 import { HistoryView } from "@/views/HistoryView"
-import { SettingsView } from "@/views/SettingsView"
-import { Toaster } from "@/components/ui/sonner"
-import { CompressionProvider } from "@/providers/CompressionProvider"
-import { SidebarNav, navItems, type ViewId } from "@/components/SidebarNav"
+import type { ViewId } from "@/types"
 
-function App() {
-  const [activeView, setActiveView] = useState<ViewId>("compress")
+function ShellSidebarHeader() {
+  const platform = usePlatform()
+  const { isMobile } = useSidebar()
+  const showControls = isMobile || platform !== "darwin"
 
   return (
-    <CompressionProvider>
-      <SidebarProvider className="h-svh overflow-hidden">
-      <Sidebar collapsible="icon">
-        <SidebarHeader>
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                size="lg"
-                tooltip="Yard"
-                isActive={false}
-                render={<div />}
-              >
-                <div className="flex aspect-square size-8 items-center justify-center rounded-lg bg-primary/15 text-primary">
-                  <RiFileShield2Line size={18} />
-                </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold text-sidebar-foreground">
-                    Yard
-                  </span>
-                </div>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        </SidebarHeader>
-        <SidebarContent>
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarNav activeView={activeView} onViewChange={setActiveView} />
-            </SidebarGroupContent>
-          </SidebarGroup>
+    <SidebarHeader className="h-12 justify-center p-2">
+      <DragSurface className="flex h-full items-center gap-1">
+        {showControls && (
+          <>
+            <span className="flex size-7 items-center justify-center rounded-lg bg-primary/15 text-primary">
+              <RiFileShield2Line size={16} />
+            </span>
+            <SidebarTrigger title="Toggle sidebar" />
+          </>
+        )}
+      </DragSurface>
+    </SidebarHeader>
+  )
+}
+
+function Shell() {
+  const [activeView, setActiveView] = useState<ViewId>("compress")
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [aboutOpen, setAboutOpen] = useState(false)
+
+  return (
+    <SidebarProvider className="h-svh overflow-hidden">
+      <Sidebar collapsible="offcanvas">
+        <ShellSidebarHeader />
+        <SidebarContent className="overflow-hidden">
+          <SidebarNav
+            activeView={activeView}
+            onNavigate={setActiveView}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
         </SidebarContent>
-        <SidebarFooter>
-          <div className="flex items-center justify-start px-3 py-2">
-            <div className="flex items-center gap-1.5 group-data-[collapsible=icon]:hidden">
-              <span className="inline-flex items-center rounded-full border border-border px-2 py-0.5 font-mono text-[10px] font-bold text-muted-foreground">
-                v1.0.0
-              </span>
-              <span className="inline-flex items-center rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 font-mono text-[10px] font-bold text-primary">
-                GPLv3
-              </span>
-            </div>
-            <div
-              data-testid="footer-collapsed"
-              className="hidden items-center gap-1 group-data-[collapsible=icon]:flex"
-            >
-              <span className="size-1.5 rounded-full bg-primary" />
-              <span className="h-2.5 w-5 rounded-full border border-primary/30" />
-            </div>
-          </div>
-        </SidebarFooter>
-        <SidebarRail />
       </Sidebar>
       <SidebarInset>
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-          <SidebarTrigger />
-          <Separator
-            orientation="vertical"
-            className="mr-2 data-[orientation=vertical]:h-4"
-          />
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                <BreadcrumbLink href="#">Yard</BreadcrumbLink>
-              </BreadcrumbItem>
-              <BreadcrumbSeparator />
-              <BreadcrumbItem>
-                <BreadcrumbPage>
-                  {navItems.find((item) => item.id === activeView)?.label}
-                </BreadcrumbPage>
-              </BreadcrumbItem>
-            </BreadcrumbList>
-          </Breadcrumb>
-        </header>
-        <div data-testid="view-container" className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {activeView === "compress" && <CompressView />}
-          {activeView === "history" && <HistoryView />}
-          {activeView === "settings" && <SettingsView />}
+        <TopBar
+          activeView={activeView}
+          onNavigate={setActiveView}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onOpenAbout={() => setAboutOpen(true)}
+        />
+        <div
+          data-testid="view-container"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
+          {activeView === "compress" ? <CompressView /> : <HistoryView />}
         </div>
       </SidebarInset>
       <Toaster />
-      </SidebarProvider>
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
+    </SidebarProvider>
+  )
+}
+
+function App() {
+  return (
+    <CompressionProvider>
+      <QuitGuard />
+      <HistoryProvider>
+        <Shell />
+      </HistoryProvider>
     </CompressionProvider>
   )
 }

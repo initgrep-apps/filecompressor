@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+export type ViewId = 'compress' | 'history'
+
 export const CATEGORIES = ['image', 'video', 'pdf', 'document', 'other'] as const
 
 export type Category = (typeof CATEGORIES)[number]
