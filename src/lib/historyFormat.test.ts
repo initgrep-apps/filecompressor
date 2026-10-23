@@ -207,6 +207,7 @@ describe('history aggregates', () => {
         fileWithStatus('pending'),
         fileWithStatus('compressing'),
         fileWithStatus('bogus' as HistoryFile['status']),
+        fileWithStatus('toString' as HistoryFile['status']),
       ])
     ).toEqual(expected)
   })

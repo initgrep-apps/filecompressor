@@ -90,12 +90,14 @@ const toResponse = (items: HistorySession[]): HistoryResponse => ({
 })
 
 function mockHistory() {
-  vi.mocked(invoke).mockImplementation(async (_command, args) => {
+  vi.mocked(invoke).mockImplementation(async (command, args) => {
+    if (command === 'clear_history') return undefined
     const filters = (args as { filters?: HistoryFilters } | undefined)?.filters ?? {}
+    const page = (args as { page?: number } | undefined)?.page ?? 0
     const matched = filters.search
       ? sessions.filter((item) => item.files.some((file) => file.name.includes(filters.search!)))
       : sessions
-    return toResponse(matched)
+    return { ...toResponse(matched), page }
   })
 }
 
@@ -111,6 +113,9 @@ const lastFilters = () => {
   const calls = historyCalls()
   return (calls[calls.length - 1][1] as { filters: HistoryFilters }).filters
 }
+
+const displayedFilters = (): HistoryFilters =>
+  JSON.parse(screen.getByTestId('filters').textContent ?? '{}')
 
 const flush = () =>
   act(async () => {
@@ -172,6 +177,24 @@ function Probe() {
       <button type="button" onClick={() => ctx.setFilters({ search: '  ' })}>
         apply-search-blank
       </button>
+      <button type="button" onClick={() => ctx.setFilters({ search: '  beta  ' })}>
+        apply-search-padded
+      </button>
+      <button
+        type="button"
+        onClick={() => ctx.setFilters({ sinceMs: 1_000, outputFolder: '/out', sort: 'newest' })}
+      >
+        apply-range
+      </button>
+      <button type="button" onClick={() => ctx.setFilters({ statuses: ['failed'] })}>
+        apply-statuses-only
+      </button>
+      <button type="button" onClick={() => ctx.setPage(2)}>
+        page-two
+      </button>
+      <button type="button" onClick={() => void ctx.clearHistory()}>
+        clear-history
+      </button>
       <button type="button" onClick={() => ctx.setExpanded(false)}>
         collapse
       </button>
@@ -209,6 +232,7 @@ describe('HistoryProvider', () => {
   it('selects the first session after load and starts expanded', async () => {
     mockHistory()
     await renderProvider()
+    expect(historyCalls()).toHaveLength(1)
     expect(screen.getByTestId('selected')).toHaveTextContent('s1')
     expect(screen.getByTestId('expanded')).toHaveTextContent('true')
     expect(screen.getByTestId('page')).toHaveTextContent('0')
@@ -298,6 +322,22 @@ describe('HistoryProvider', () => {
     expect(lastFilters().search).toBeUndefined()
   })
 
+  it('refetches once with search undefined when an applied search is cleared', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('type-alpha'))
+    await advance(300)
+    await flush()
+    expect(lastFilters().search).toBe('alpha')
+
+    const before = historyCalls().length
+    fireEvent.click(screen.getByText('clear-search'))
+    await advance(300)
+    await flush()
+    expect(historyCalls()).toHaveLength(before + 1)
+    expect(lastFilters().search).toBeUndefined()
+  })
+
   it('merges a debounced search with filters applied in the meantime', async () => {
     mockHistory()
     await renderProvider()
@@ -330,10 +370,18 @@ describe('HistoryProvider', () => {
     await renderProvider()
     fireEvent.click(screen.getByText('apply-search-blank'))
     await flush()
-    expect(
-      JSON.parse(screen.getByTestId('filters').textContent ?? '{}').search
-    ).toBeUndefined()
+    expect(displayedFilters().search).toBeUndefined()
     expect(screen.getByTestId('search-text').textContent).toBe('')
+  })
+
+  it('trims a padded search supplied through setFilters', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('apply-search-padded'))
+    await flush()
+    expect(displayedFilters().search).toBe('beta')
+    expect(screen.getByTestId('search-text').textContent).toBe('beta')
+    expect(lastFilters().search).toBe('beta')
   })
 
   it('replaces filters so clearing statuses and categories sticks', async () => {
@@ -348,6 +396,24 @@ describe('HistoryProvider', () => {
     await flush()
     expect(lastFilters().sort).toBe('newest')
     expect(lastFilters().statuses).toBeUndefined()
+    expect(lastFilters().categories).toBeUndefined()
+  })
+
+  it('clears every omitted filter key on replacement', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('apply-range'))
+    await flush()
+    expect(lastFilters().sinceMs).toBe(1_000)
+    expect(lastFilters().outputFolder).toBe('/out')
+    expect(lastFilters().sort).toBe('newest')
+
+    fireEvent.click(screen.getByText('apply-statuses-only'))
+    await flush()
+    expect(lastFilters().statuses).toEqual(['failed'])
+    expect(lastFilters().sinceMs).toBeUndefined()
+    expect(lastFilters().outputFolder).toBeUndefined()
+    expect(lastFilters().sort).toBeUndefined()
     expect(lastFilters().categories).toBeUndefined()
   })
 
@@ -393,6 +459,36 @@ describe('HistoryProvider', () => {
     expect(screen.getByTestId('error')).toHaveTextContent('none')
     await flush()
     expect(screen.getByTestId('error')).toHaveTextContent('none')
+
+    fireEvent.click(screen.getByText('refresh'))
+    await flush()
+    expect(screen.getByTestId('error')).toHaveTextContent('Could not load history: boom')
+  })
+
+  it('pages and resets the page when filters change', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('page-two'))
+    await flush()
+    const paged = historyCalls()[historyCalls().length - 1][1] as { page: number }
+    expect(paged.page).toBe(2)
+    expect(screen.getByTestId('page')).toHaveTextContent('2')
+
+    fireEvent.click(screen.getByText('apply-category'))
+    await flush()
+    const filtered = historyCalls()[historyCalls().length - 1][1] as { page: number }
+    expect(filtered.page).toBe(0)
+    expect(screen.getByTestId('page')).toHaveTextContent('0')
+  })
+
+  it('clears history and refetches', async () => {
+    mockHistory()
+    await renderProvider()
+    const before = historyCalls().length
+    fireEvent.click(screen.getByText('clear-history'))
+    await flush()
+    expect(invoke).toHaveBeenCalledWith('clear_history')
+    expect(historyCalls()).toHaveLength(before + 1)
   })
 
   it('updates expanded', async () => {

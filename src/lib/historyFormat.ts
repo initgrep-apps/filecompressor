@@ -54,7 +54,9 @@ export function countOutcome(files: HistoryFile[]): SessionOutcome {
     alreadyUnderTarget: 0,
   }
   return files.reduce((acc, file) => {
-    const key = OUTCOME_COUNT_KEYS[file.status]
+    const key = Object.prototype.hasOwnProperty.call(OUTCOME_COUNT_KEYS, file.status)
+      ? OUTCOME_COUNT_KEYS[file.status]
+      : null
     if (key != null) acc[key] += 1
     return acc
   }, counts)
