@@ -29,6 +29,7 @@ import { Toaster } from "@/components/ui/sonner"
 import { AboutDialog } from "@/components/AboutDialog"
 import { SettingsDialog } from "@/components/SettingsDialog"
 import { DragSurface } from "@/components/shell/DragSurface"
+import type { DialogId } from "@/components/shell/nav"
 import { SidebarNav } from "@/components/shell/SidebarNav"
 import { QuitGuard } from "@/components/shell/QuitGuard"
 import { TopBar } from "@/components/shell/TopBar"
@@ -73,8 +74,11 @@ function ShellSidebarHeader() {
 
 function Shell() {
   const [activeView, setActiveView] = useState<ViewId>("compress")
-  const [dialog, setDialog] = useState<"settings" | "about" | null>(null)
+  const [dialog, setDialog] = useState<DialogId | null>(null)
   const View = VIEWS[activeView]
+
+  const setDialogOpen = (id: DialogId) => (open: boolean) =>
+    setDialog((current) => (open ? id : current === id ? null : current))
 
   return (
     <SidebarProvider className="h-svh overflow-hidden">
@@ -106,11 +110,11 @@ function Shell() {
       <Toaster />
       <SettingsDialog
         open={dialog === "settings"}
-        onOpenChange={(open) => setDialog(open ? "settings" : null)}
+        onOpenChange={setDialogOpen("settings")}
       />
       <AboutDialog
         open={dialog === "about"}
-        onOpenChange={(open) => setDialog(open ? "about" : null)}
+        onOpenChange={setDialogOpen("about")}
       />
     </SidebarProvider>
   )

@@ -16,8 +16,6 @@
 
 import {
   RiCheckLine,
-  RiContractUpDownLine,
-  RiHistoryLine,
   RiMenuLine,
   RiSettings3Line,
 } from "@remixicon/react"
@@ -32,7 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
-  VIEW_LABEL,
+  NAV_ITEMS,
   type ShellNavProps,
 } from "@/components/shell/nav"
 
@@ -63,22 +61,20 @@ export function NavMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-48">
         <DropdownMenuGroup>
-          <DropdownMenuItem
-            aria-current={activeView === "compress" ? "page" : undefined}
-            onClick={() => onNavigate("compress")}
-          >
-            <RiContractUpDownLine data-icon="inline-start" />
-            {VIEW_LABEL.compress}
-            {activeView === "compress" && activeCheck}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            aria-current={activeView === "history" ? "page" : undefined}
-            onClick={() => onNavigate("history")}
-          >
-            <RiHistoryLine data-icon="inline-start" />
-            {VIEW_LABEL.history}
-            {activeView === "history" && activeCheck}
-          </DropdownMenuItem>
+          {NAV_ITEMS.map((item) => {
+            const Icon = item.icon
+            return (
+              <DropdownMenuItem
+                key={item.id}
+                aria-current={activeView === item.id ? "page" : undefined}
+                onClick={() => onNavigate(item.id)}
+              >
+                <Icon />
+                {item.label}
+                {activeView === item.id && activeCheck}
+              </DropdownMenuItem>
+            )
+          })}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>

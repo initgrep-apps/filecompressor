@@ -378,6 +378,29 @@ describe("App shell", () => {
     )
     expect(within(topBar()).getByText("History")).toBeInTheDocument()
     expect(topBar().className).toContain("pl-22")
+
+    await user.click(
+      within(topBar()).getByRole("button", { name: "Expand sidebar" }),
+    )
+    const reopenedSheet = await waitFor(() => {
+      const element = document.querySelector(
+        '[data-slot="sidebar"][data-mobile="true"]',
+      )
+      expect(element).not.toBeNull()
+      return element as HTMLElement
+    })
+    const activeHistoryRow = within(reopenedSheet).getByRole("button", {
+      name: /History/,
+    })
+    expect(activeHistoryRow).toHaveAttribute("aria-expanded", "true")
+
+    await user.click(activeHistoryRow)
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
+      ).toBeNull(),
+    )
   })
 
   it("caps the shell height and keeps the view container clipped", () => {
@@ -588,5 +611,95 @@ describe("App shell", () => {
     expect(
       within(dialog).getByRole("heading", { name: "Yard" }),
     ).toBeInTheDocument()
+  })
+
+  it("closes and reopens Settings with Escape", async () => {
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    await user.click(screen.getByTestId("nav-settings"))
+    expect(await screen.findByRole("dialog")).toBeInTheDocument()
+
+    await user.keyboard("{Escape}")
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+
+    await user.click(screen.getByTestId("nav-settings"))
+    expect(await screen.findByRole("dialog")).toBeInTheDocument()
+  })
+
+  it("closes and reopens About with Escape", async () => {
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    await user.click(within(topBar()).getByRole("button", { name: "App menu" }))
+    await user.click(
+      await screen.findByRole("menuitem", { name: "About Yard" }),
+    )
+    expect(await screen.findByRole("dialog")).toBeInTheDocument()
+
+    await user.keyboard("{Escape}")
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+
+    await user.click(within(topBar()).getByRole("button", { name: "App menu" }))
+    await user.click(
+      await screen.findByRole("menuitem", { name: "About Yard" }),
+    )
+    expect(await screen.findByRole("dialog")).toBeInTheDocument()
+  })
+
+  it("wires the collapsed ☰ menu to Settings and History", async () => {
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    await user.click(
+      within(topBar()).getByRole("button", { name: "Collapse sidebar" }),
+    )
+    await user.click(
+      within(topBar()).getByRole("button", { name: "Open navigation" }),
+    )
+    await user.click(await screen.findByRole("menuitem", { name: "Settings" }))
+
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByText("Settings")).toBeInTheDocument()
+
+    await user.keyboard("{Escape}")
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+
+    await user.click(
+      within(topBar()).getByRole("button", { name: "Open navigation" }),
+    )
+    await user.click(await screen.findByRole("menuitem", { name: "History" }))
+
+    expect(screen.getByTestId("view-container")).toHaveAttribute(
+      "data-view",
+      "history",
+    )
+    expect(within(topBar()).getByText("History")).toBeInTheDocument()
+  })
+
+  it("does not maximize the window from interactive header controls", async () => {
+    const user = userEvent.setup()
+    renderApp("win32")
+
+    const headerTrigger = document.querySelector(
+      '[data-slot="sidebar-trigger"]',
+    ) as HTMLElement
+    fireEvent.doubleClick(headerTrigger)
+    expect(win.toggleMaximize).not.toHaveBeenCalled()
+
+    await user.click(headerTrigger)
+
+    const expandButton = within(topBar()).getByRole("button", {
+      name: "Expand sidebar",
+    })
+    const navigationButton = within(topBar()).getByRole("button", {
+      name: "Open navigation",
+    })
+    fireEvent.doubleClick(expandButton)
+    fireEvent.doubleClick(navigationButton)
+    expect(win.toggleMaximize).not.toHaveBeenCalled()
+
+    fireEvent.doubleClick(topBar())
+    expect(win.toggleMaximize).toHaveBeenCalledTimes(1)
   })
 })

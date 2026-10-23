@@ -14,12 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import {
-  RiArrowDownSLine,
-  RiContractUpDownLine,
-  RiHistoryLine,
-  RiSettings3Line,
-} from "@remixicon/react"
+import { RiArrowDownSLine, RiSettings3Line } from "@remixicon/react"
 import {
   SidebarFooter,
   SidebarGroup,
@@ -33,10 +28,7 @@ import {
 import { cn } from "@/lib/utils"
 import { useCompressionContext } from "@/providers/CompressionProvider"
 import { useHistoryContext } from "@/providers/HistoryProvider"
-import {
-  VIEW_LABEL,
-  type ShellNavProps,
-} from "@/components/shell/nav"
+import { NAV_ITEMS, type ShellNavProps } from "@/components/shell/nav"
 import type { ViewId } from "@/types"
 
 const rowClass = (active: boolean) =>
@@ -69,17 +61,14 @@ export function SidebarNav({
     if (isMobile) setOpenMobile(false)
   }
 
-  const navigate = (view: ViewId) => {
+  const handleNavigate = (view: ViewId) => {
+    if (view === "history" && activeView === "history") {
+      setExpanded(!expanded)
+      closeSheet()
+      return
+    }
     onNavigate(view)
     closeSheet()
-  }
-
-  const openHistory = () => {
-    if (activeView === "history") {
-      setExpanded(!expanded)
-    } else {
-      navigate("history")
-    }
   }
 
   const openSettings = () => {
@@ -87,60 +76,50 @@ export function SidebarNav({
     closeSheet()
   }
 
-  const compressActive = activeView === "compress"
-  const historyActive = activeView === "history"
-
   return (
     <>
       <SidebarGroup>
         <SidebarGroupContent>
           <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                isActive={compressActive}
-                onClick={() => navigate("compress")}
-                data-testid="nav-compress"
-                className={rowClass(compressActive)}
-              >
-                <span className={glyphClass(compressActive)}>
-                  <RiContractUpDownLine size={16} />
-                </span>
-                <span className={labelClass(compressActive)}>
-                  {VIEW_LABEL.compress}
-                </span>
-              </SidebarMenuButton>
-              {files.length > 0 && (
-                <SidebarMenuBadge
-                  data-testid="nav-count"
-                  className="font-mono text-[10px] font-bold text-primary"
-                >
-                  {files.length}
-                </SidebarMenuBadge>
-              )}
-            </SidebarMenuItem>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                isActive={historyActive}
-                aria-expanded={expanded}
-                onClick={openHistory}
-                data-testid="nav-history"
-                className={rowClass(historyActive)}
-              >
-                <span className={glyphClass(historyActive)}>
-                  <RiHistoryLine size={16} />
-                </span>
-                <span className={labelClass(historyActive)}>
-                  {VIEW_LABEL.history}
-                </span>
-                <RiArrowDownSLine
-                  aria-hidden
-                  className={cn(
-                    "ml-auto transition-transform",
-                    expanded && "rotate-180",
+            {NAV_ITEMS.map((item) => {
+              const active = activeView === item.id
+              const Icon = item.icon
+              return (
+                <SidebarMenuItem key={item.id}>
+                  <SidebarMenuButton
+                    isActive={active}
+                    aria-expanded={
+                      item.id === "history" ? expanded : undefined
+                    }
+                    onClick={() => handleNavigate(item.id)}
+                    data-testid={`nav-${item.id}`}
+                    className={rowClass(active)}
+                  >
+                    <span className={glyphClass(active)}>
+                      <Icon />
+                    </span>
+                    <span className={labelClass(active)}>{item.label}</span>
+                    {item.id === "history" && (
+                      <RiArrowDownSLine
+                        aria-hidden
+                        className={cn(
+                          "ml-auto transition-transform",
+                          expanded && "rotate-180",
+                        )}
+                      />
+                    )}
+                  </SidebarMenuButton>
+                  {item.id === "compress" && files.length > 0 && (
+                    <SidebarMenuBadge
+                      data-testid="nav-count"
+                      className="font-mono text-[10px] font-bold text-primary"
+                    >
+                      {files.length}
+                    </SidebarMenuBadge>
                   )}
-                />
-              </SidebarMenuButton>
-            </SidebarMenuItem>
+                </SidebarMenuItem>
+              )
+            })}
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
@@ -153,7 +132,7 @@ export function SidebarNav({
               data-testid="nav-settings"
             >
               <span className={glyphClass(false)}>
-                <RiSettings3Line size={16} />
+                <RiSettings3Line />
               </span>
               <span>Settings</span>
             </SidebarMenuButton>
