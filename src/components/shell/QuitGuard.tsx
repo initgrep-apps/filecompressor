@@ -24,7 +24,10 @@ import { useCompressionContext } from "@/providers/CompressionProvider"
 export function QuitGuard() {
   const { isCompressing } = useCompressionContext()
   const isCompressingRef = useRef(isCompressing)
-  isCompressingRef.current = isCompressing
+
+  useEffect(() => {
+    isCompressingRef.current = isCompressing
+  }, [isCompressing])
 
   useEffect(() => {
     let quitting = false
@@ -33,6 +36,7 @@ export function QuitGuard() {
     const registered = getCurrentWindow().onCloseRequested(async (event) => {
       event.preventDefault()
       if (quitting) return
+      quitting = true
 
       if (isCompressingRef.current) {
         try {
@@ -40,15 +44,18 @@ export function QuitGuard() {
             title: "Quit Yard",
             kind: "warning",
           })
-          if (!confirmed || quitting) return
+          if (!confirmed) {
+            quitting = false
+            return
+          }
         } catch (error) {
+          quitting = false
           console.error("quit confirmation failed:", error)
           toast.error("Could not confirm quit — the window stays open.")
           return
         }
       }
 
-      quitting = true
       try {
         await invoke("quit")
       } catch (error) {
@@ -60,7 +67,10 @@ export function QuitGuard() {
 
     void registered.catch((error) => {
       console.error("quit guard registration failed:", error)
-      toast.error("Close protection is off — save your work before closing.")
+      toast.error("Close protection is off — save your work before closing.", {
+        id: "quit-guard-off",
+        duration: Infinity,
+      })
     })
 
     return () => {

@@ -130,6 +130,38 @@ describe("WindowControls", () => {
     expect(onDoubleClick).not.toHaveBeenCalled()
   })
 
+  it("reports a failed minimize instead of crashing", async () => {
+    win.minimize.mockRejectedValue(new Error("minimize failed"))
+    const user = userEvent.setup()
+    render(<WindowControls />)
+
+    await user.click(screen.getByRole("button", { name: "Minimize" }))
+
+    await waitFor(() =>
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "Could not minimize the window",
+        expect.objectContaining({ id: "window-minimize-failed" }),
+      ),
+    )
+    expect(consoleError).toHaveBeenCalled()
+  })
+
+  it("reports a failed maximize instead of crashing", async () => {
+    win.toggleMaximize.mockRejectedValue(new Error("maximize failed"))
+    const user = userEvent.setup()
+    render(<WindowControls />)
+
+    await user.click(screen.getByRole("button", { name: "Maximize" }))
+
+    await waitFor(() =>
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "Could not resize the window",
+        expect.objectContaining({ id: "window-resize-failed" }),
+      ),
+    )
+    expect(consoleError).toHaveBeenCalled()
+  })
+
   it("reports a failed close instead of crashing", async () => {
     win.close.mockRejectedValue(new Error("close failed"))
     const user = userEvent.setup()
@@ -137,7 +169,12 @@ describe("WindowControls", () => {
 
     await user.click(screen.getByRole("button", { name: "Close" }))
 
-    await waitFor(() => expect(toastErrorMock).toHaveBeenCalledTimes(1))
+    await waitFor(() =>
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        "Could not close the window: close failed",
+        expect.objectContaining({ id: "window-close-failed" }),
+      ),
+    )
     expect(consoleError).toHaveBeenCalled()
   })
 })

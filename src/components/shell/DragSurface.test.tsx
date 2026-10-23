@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 
@@ -29,11 +29,18 @@ import { mockWindow } from "@/lib/test-tauri"
 
 const win = getCurrentWindow() as unknown as ReturnType<typeof mockWindow>
 
+let consoleError: ReturnType<typeof vi.spyOn>
+
 beforeEach(() => {
+  consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
   win.startDragging.mockReset()
   win.toggleMaximize.mockReset()
   win.startDragging.mockResolvedValue(undefined)
   win.toggleMaximize.mockResolvedValue(undefined)
+})
+
+afterEach(() => {
+  consoleError.mockRestore()
 })
 
 describe("DragSurface", () => {
@@ -69,6 +76,18 @@ describe("DragSurface", () => {
     expect(win.startDragging).not.toHaveBeenCalled()
   })
 
+  it("starts one drag and toggles maximize across a double click sequence", () => {
+    render(<DragSurface data-testid="drag-surface">content</DragSurface>)
+    const surface = screen.getByTestId("drag-surface")
+
+    fireEvent.mouseDown(surface, { detail: 1, buttons: 1 })
+    fireEvent.mouseDown(surface, { detail: 2, buttons: 1 })
+    fireEvent.doubleClick(surface)
+
+    expect(win.startDragging).toHaveBeenCalledTimes(1)
+    expect(win.toggleMaximize).toHaveBeenCalledTimes(1)
+  })
+
   it("toggles maximize on double click", () => {
     render(<DragSurface data-testid="drag-surface">content</DragSurface>)
 
@@ -92,5 +111,15 @@ describe("DragSurface", () => {
     })
 
     expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
+  it("reports a failed drag start instead of throwing", async () => {
+    win.startDragging.mockRejectedValue(new Error("drag failed"))
+    render(<DragSurface data-testid="drag-surface">content</DragSurface>)
+
+    expect(() =>
+      fireEvent.mouseDown(screen.getByTestId("drag-surface"), { detail: 1, buttons: 1 }),
+    ).not.toThrow()
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalled())
   })
 })

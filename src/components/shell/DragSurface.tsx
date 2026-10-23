@@ -17,7 +17,10 @@
 import type { ComponentProps } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 
-type DragSurfaceProps = Omit<ComponentProps<"div">, "onMouseDown" | "onDoubleClick">
+type DragSurfaceProps = Omit<
+  ComponentProps<"div">,
+  "onMouseDown" | "onDoubleClick" | "onMouseDownCapture" | "onDoubleClickCapture"
+>
 
 export function DragSurface(props: DragSurfaceProps) {
   return (

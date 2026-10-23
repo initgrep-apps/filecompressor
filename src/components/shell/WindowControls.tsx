@@ -23,6 +23,9 @@ import { Separator } from "@/components/ui/separator"
 
 const stopPropagation = (event: MouseEvent) => event.stopPropagation()
 
+const errorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error)
+
 export function WindowControls() {
   const win = getCurrentWindow()
 
@@ -39,9 +42,12 @@ export function WindowControls() {
         aria-label="Minimize"
         title="Minimize"
         onClick={() => {
-          void win
-            .minimize()
-            .catch((error) => console.error("window minimize failed:", error))
+          void win.minimize().catch((error) => {
+            console.error("window minimize failed:", error)
+            toast.error("Could not minimize the window", {
+              id: "window-minimize-failed",
+            })
+          })
         }}
       >
         <RiSubtractLine />
@@ -52,9 +58,12 @@ export function WindowControls() {
         aria-label="Maximize"
         title="Maximize"
         onClick={() => {
-          void win
-            .toggleMaximize()
-            .catch((error) => console.error("window maximize failed:", error))
+          void win.toggleMaximize().catch((error) => {
+            console.error("window maximize failed:", error)
+            toast.error("Could not resize the window", {
+              id: "window-resize-failed",
+            })
+          })
         }}
       >
         <RiWindowLine />
@@ -67,7 +76,9 @@ export function WindowControls() {
         onClick={() => {
           void win.close().catch((error) => {
             console.error("window close failed:", error)
-            toast.error("Could not close the window")
+            toast.error(`Could not close the window: ${errorMessage(error)}`, {
+              id: "window-close-failed",
+            })
           })
         }}
       >

@@ -179,11 +179,16 @@ describe("QuitGuard", () => {
     await waitFor(() => expect(stop).toHaveBeenCalledTimes(1))
   })
 
-  it("reports a failed registration", async () => {
+  it("reports a failed registration with a pinned toast", async () => {
     win.onCloseRequested.mockRejectedValue(new Error("listen failed"))
     renderGuard()
 
     await waitFor(() => expect(toastErrorMock).toHaveBeenCalledTimes(1))
+    expect(toastErrorMock.mock.calls[0][0]).toContain("Close protection")
+    expect(toastErrorMock.mock.calls[0][1]).toMatchObject({
+      id: "quit-guard-off",
+      duration: Infinity,
+    })
     expect(consoleError).toHaveBeenCalled()
   })
 
@@ -231,5 +236,70 @@ describe("QuitGuard", () => {
     await handler(closeEvent().event)
 
     expect(invokeMock).toHaveBeenCalledTimes(2)
+  })
+
+  it("allows a retry after the user cancels", async () => {
+    confirmMock.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
+    renderGuard(true)
+    const handler = await capturedHandler()
+
+    await handler(closeEvent().event)
+    await handler(closeEvent().event)
+
+    expect(confirmMock).toHaveBeenCalledTimes(2)
+    expect(invokeMock).toHaveBeenCalledTimes(1)
+    expect(invokeMock).toHaveBeenCalledWith("quit")
+  })
+
+  it("opens one confirmation dialog for concurrent closes", async () => {
+    let resolveConfirm: ((confirmed: boolean) => void) | undefined
+    confirmMock.mockImplementation(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveConfirm = resolve
+        }),
+    )
+    renderGuard(true)
+    const handler = await capturedHandler()
+    const first = closeEvent()
+    const second = closeEvent()
+
+    const firstClose = handler(first.event)
+    const secondClose = handler(second.event)
+
+    expect(first.preventDefault).toHaveBeenCalledTimes(1)
+    expect(second.preventDefault).toHaveBeenCalledTimes(1)
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveConfirm?.(false)
+    })
+    await firstClose
+    await secondClose
+
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it("sends one quit for concurrent closes", async () => {
+    let resolveInvoke: ((value: unknown) => void) | undefined
+    invokeMock.mockImplementation(
+      () =>
+        new Promise<unknown>((resolve) => {
+          resolveInvoke = resolve
+        }),
+    )
+    renderGuard()
+    const handler = await capturedHandler()
+
+    const firstClose = handler(closeEvent().event)
+    const secondClose = handler(closeEvent().event)
+
+    expect(invokeMock).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveInvoke?.(undefined)
+    })
+    await firstClose
+    await secondClose
   })
 })
