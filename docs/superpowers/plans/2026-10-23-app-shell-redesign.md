@@ -277,25 +277,25 @@ git commit -m "feat(shell): add drag surface, window controls, and quit guard"
 **Interfaces:**
 - Produces: `HistoryFilters.sort?: "newest" | "oldest"`; `query_history` sorts filtered sessions before pagination; unknown values behave as `newest`.
 
-- [ ] **Step 1: Write the failing Rust tests**
+- [x] **Step 1: Write the failing Rust tests**
 
 Add tests: `sort_newest_is_default`, `sort_oldest_reverses_started_at`, `sort_unknown_falls_back_to_newest`, `sort_applies_before_pagination` (page 0 of size 1 returns the same session for both sorts only when it is the extreme; totals unchanged).
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd src-tauri && cargo test history::tests::sort_`
 Expected: FAIL — `HistoryFilters` has no `sort` field.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Add `pub sort: Option<String>` to `HistoryFilters` (`deny_unknown_fields` is on, so this must land before any TS caller sends `sort`; `Option` defaults to `None`, no `#[serde(default)]` needed). In `query_history`, after filtering and before `skip/take`, sort sessions by `started_at`; `oldest` → ascending, absent/unknown/`null` → descending. Add `sort?: "newest" | "oldest"` to the TS interface.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `cd src-tauri && cargo test history::tests::sort_`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src-tauri/src/history.rs src/types.ts
