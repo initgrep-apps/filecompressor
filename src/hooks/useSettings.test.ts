@@ -17,9 +17,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { invoke } from '@tauri-apps/api/core'
+import { toast } from 'sonner'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 import { useSettings } from '@/hooks/useSettings'
 import type { Settings } from '@/types'
@@ -89,26 +91,6 @@ describe('useSettings', () => {
     expect(result.current.settings).toEqual(mockSettings)
     expect(result.current.error).toContain('Could not save settings')
     expect(result.current.error).toContain('disk full')
-  })
-
-  it('bumps the error counter on repeated identical save failures', async () => {
-    vi.mocked(invoke)
-      .mockResolvedValueOnce(mockSettings)
-      .mockRejectedValueOnce(new Error('disk full'))
-      .mockRejectedValueOnce(new Error('disk full'))
-    const { result } = renderHook(() => useSettings())
-    await act(async () => {})
-    const initial = result.current.errorCount
-    await act(async () => {
-      await result.current.saveSettings(mockSettings)
-    })
-    const first = result.current.errorCount
-    await act(async () => {
-      await result.current.saveSettings(mockSettings)
-    })
-    expect(first).toBeGreaterThan(initial)
-    expect(result.current.errorCount).toBeGreaterThan(first)
-    expect(result.current.error).toBe('Could not save settings: disk full')
   })
 
   it('resetSettings returns and applies defaults', async () => {
@@ -194,6 +176,9 @@ describe('useSettings', () => {
     })
     expect(picked).toBeNull()
     expect(result.current.error).toBeNull()
+    expect(toast.error).toHaveBeenCalledWith('Could not open folder picker', {
+      id: 'settings-folder-picker',
+    })
     expect(consoleSpy).toHaveBeenCalledWith(
       'Folder picker failed:',
       expect.any(Error),

@@ -17,7 +17,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import { toast } from 'sonner'
 import type { Settings } from '@/types'
+
+const PICKER_ERROR = 'Could not open folder picker'
+const PICKER_ERROR_ID = 'settings-folder-picker'
 
 const toMessage = (err: unknown): string => {
   if (err instanceof Error) return err.message
@@ -29,7 +33,6 @@ export function useSettings() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [errorCount, setErrorCount] = useState(0)
   const mutationCountRef = useRef(0)
   const bumpMutations = () => {
     mutationCountRef.current += 1
@@ -67,7 +70,6 @@ export function useSettings() {
       return true
     } catch (err) {
       setError(`Could not save settings: ${toMessage(err)}`)
-      setErrorCount((count) => count + 1)
       return false
     }
   }, [])
@@ -91,6 +93,7 @@ export function useSettings() {
       return typeof selected === 'string' ? selected : null
     } catch (err) {
       console.error('Folder picker failed:', err)
+      toast.error(PICKER_ERROR, { id: PICKER_ERROR_ID })
       return null
     }
   }, [])
@@ -99,7 +102,6 @@ export function useSettings() {
     settings,
     loading,
     error,
-    errorCount,
     saveSettings,
     resetSettings,
     browseFolder,

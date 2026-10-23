@@ -14,9 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { useState } from "react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { invoke } from "@tauri-apps/api/core"
+import { open } from "@tauri-apps/plugin-dialog"
 import { toast } from "sonner"
 import type { Settings } from "@/types"
 
@@ -56,6 +58,28 @@ const saveCalls = () =>
 const savedSettings = () =>
   (saveCalls()[0]?.[1] as { settings: Settings }).settings
 
+function deferred() {
+  let resolve!: () => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<void>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
+function ForceCloseDialog() {
+  const [open, setOpen] = useState(true)
+
+  return (
+    <div>
+      <button onClick={() => setOpen(false)}>Force close</button>
+      <button onClick={() => setOpen(true)}>Force open</button>
+      <SettingsDialog open={open} onOpenChange={setOpen} />
+    </div>
+  )
+}
+
 async function openHistoryTab() {
   render(<SettingsDialog open onOpenChange={vi.fn()} />)
   await screen.findByRole("tab", { name: "General" })
@@ -65,9 +89,12 @@ async function openHistoryTab() {
 
 beforeEach(() => {
   vi.mocked(invoke).mockReset()
+  vi.mocked(open).mockReset()
   vi.mocked(toast.error).mockReset()
-  vi.mocked(invoke).mockImplementation(() =>
-    Promise.resolve(structuredClone(baseSettings)),
+  vi.mocked(invoke).mockImplementation((command: string) =>
+    command === "get_settings"
+      ? Promise.resolve(structuredClone(baseSettings))
+      : Promise.resolve(undefined),
   )
 })
 
@@ -76,7 +103,7 @@ afterEach(() => {
 })
 
 describe("SettingsDialog", () => {
-  it("renders the five section tabs", async () => {
+  it("renders the five section tabs in a labelled tablist", async () => {
     render(<SettingsDialog open onOpenChange={vi.fn()} />)
 
     const tabs = await screen.findAllByRole("tab")
@@ -88,22 +115,31 @@ describe("SettingsDialog", () => {
       "Performance",
       "History",
     ])
+    expect(screen.getByRole("tablist")).toHaveAccessibleName(
+      "Settings sections",
+    )
   })
 
-  it("saves once 400 ms after a retention change", async () => {
+  it("saves the full draft once the 400 ms debounce elapses", async () => {
     const input = await openHistoryTab()
     vi.useFakeTimers()
 
     fireEvent.change(input, { target: { value: "30" } })
 
+    await act(async () => {
+      vi.advanceTimersByTime(399)
+    })
     expect(saveCalls()).toHaveLength(0)
 
     await act(async () => {
-      vi.advanceTimersByTime(400)
+      vi.advanceTimersByTime(1)
     })
 
     expect(saveCalls()).toHaveLength(1)
-    expect(savedSettings().history).toEqual({ retentionDays: 30 })
+    expect(savedSettings()).toEqual({
+      ...baseSettings,
+      history: { retentionDays: 30 },
+    })
 
     await act(async () => {
       vi.advanceTimersByTime(400)
@@ -126,7 +162,10 @@ describe("SettingsDialog", () => {
     await act(async () => {})
 
     expect(saveCalls()).toHaveLength(1)
-    expect(savedSettings().history).toEqual({ retentionDays: 30 })
+    expect(savedSettings()).toEqual({
+      ...baseSettings,
+      history: { retentionDays: 30 },
+    })
     expect(onOpenChange).toHaveBeenCalledWith(false)
 
     await act(async () => {
@@ -154,7 +193,9 @@ describe("SettingsDialog", () => {
 
     await act(async () => {})
 
-    expect(toast.error).toHaveBeenCalledWith("Could not save settings")
+    expect(toast.error).toHaveBeenCalledWith("Could not save settings", {
+      id: "settings-save",
+    })
     expect(onOpenChange).not.toHaveBeenCalled()
     expect(screen.getByRole("dialog")).toBeInTheDocument()
     expect(screen.getByLabelText("History retention (days)")).toHaveDisplayValue(
@@ -162,12 +203,255 @@ describe("SettingsDialog", () => {
     )
   })
 
-  it("resets the draft to the returned defaults", async () => {
+  it("retries a failed debounced save when closed", async () => {
+    let saves = 0
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "get_settings") {
+        return Promise.resolve(structuredClone(baseSettings))
+      }
+      if (command === "save_settings") {
+        saves += 1
+        return saves === 1
+          ? Promise.reject(new Error("disk full"))
+          : Promise.resolve(undefined)
+      }
+      return Promise.resolve(undefined)
+    })
+    const onOpenChange = vi.fn()
+    render(<SettingsDialog open onOpenChange={onOpenChange} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    vi.useFakeTimers()
+
+    fireEvent.change(screen.getByLabelText("History retention (days)"), {
+      target: { value: "30" },
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(saveCalls()).toHaveLength(1)
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    await act(async () => {})
+
+    expect(saveCalls()).toHaveLength(2)
+    expect(savedSettings().history).toEqual({ retentionDays: 30 })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("waits for an in-flight save before closing and retries after it fails", async () => {
+    const first = deferred()
+    const second = deferred()
+    let saves = 0
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "get_settings") {
+        return Promise.resolve(structuredClone(baseSettings))
+      }
+      if (command === "save_settings") {
+        saves += 1
+        return saves === 1 ? first.promise : second.promise
+      }
+      return Promise.resolve(undefined)
+    })
+    const onOpenChange = vi.fn()
+    render(<SettingsDialog open onOpenChange={onOpenChange} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    vi.useFakeTimers()
+
+    fireEvent.change(screen.getByLabelText("History retention (days)"), {
+      target: { value: "30" },
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+    expect(saveCalls()).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    await act(async () => {})
+
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    await act(async () => {
+      first.reject(new Error("disk full"))
+    })
+
+    expect(toast.error).toHaveBeenCalledWith("Could not save settings", {
+      id: "settings-save",
+    })
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(screen.getByRole("dialog")).toBeInTheDocument()
+    expect(saves).toBe(2)
+
+    await act(async () => {
+      second.resolve()
+    })
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("saves edits made while a close-flush write is in flight", async () => {
+    const first = deferred()
+    const second = deferred()
+    let saves = 0
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "get_settings") {
+        return Promise.resolve(structuredClone(baseSettings))
+      }
+      if (command === "save_settings") {
+        saves += 1
+        return saves === 1 ? first.promise : second.promise
+      }
+      return Promise.resolve(undefined)
+    })
+    const onOpenChange = vi.fn()
+    render(<SettingsDialog open onOpenChange={onOpenChange} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    vi.useFakeTimers()
+    const input = screen.getByLabelText("History retention (days)")
+
+    fireEvent.change(input, { target: { value: "30" } })
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+    expect(saveCalls()).toHaveLength(1)
+
+    fireEvent.change(input, { target: { value: "31" } })
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    await act(async () => {
+      first.resolve()
+    })
+
+    expect(saveCalls()).toHaveLength(2)
+    const secondSave = saveCalls()[1]?.[1] as { settings: Settings }
+    expect(secondSave.settings.history).toEqual({ retentionDays: 31 })
+    expect(onOpenChange).not.toHaveBeenCalled()
+
+    await act(async () => {
+      second.resolve()
+    })
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("saves a folder picked with Choose…", async () => {
+    vi.mocked(open).mockResolvedValueOnce("/tmp/picked")
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+    vi.useFakeTimers()
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose…" }))
+    await act(async () => {})
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(saveCalls()).toHaveLength(1)
+    expect(savedSettings().outputFolder).toBe("/tmp/picked")
+  })
+
+  it("reseeds from loaded settings on reopen and skips saving an untouched draft", async () => {
     vi.mocked(invoke).mockImplementation((command: string) =>
-      command === "reset_settings"
-        ? Promise.resolve(structuredClone(resetDefaults))
+      command === "save_settings"
+        ? Promise.reject(new Error("disk full"))
         : Promise.resolve(structuredClone(baseSettings)),
     )
+    render(<ForceCloseDialog />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    fireEvent.change(screen.getByLabelText("History retention (days)"), {
+      target: { value: "30" },
+    })
+    fireEvent.blur(screen.getByLabelText("History retention (days)"))
+
+    fireEvent.click(screen.getByText("Force close"))
+    await act(async () => {})
+    expect(toast.error).toHaveBeenCalled()
+
+    fireEvent.click(screen.getByText("Force open"))
+    await act(async () => {})
+    expect(screen.getByLabelText("History retention (days)")).toHaveDisplayValue(
+      "90",
+    )
+
+    vi.mocked(invoke).mockClear()
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    await act(async () => {})
+
+    expect(saveCalls()).toHaveLength(0)
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    )
+  })
+
+  it("toasts when reset fails and keeps the dialog open", async () => {
+    vi.mocked(invoke).mockImplementation((command: string) =>
+      command === "reset_settings"
+        ? Promise.reject(new Error("nope"))
+        : Promise.resolve(structuredClone(baseSettings)),
+    )
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset defaults" }))
+    await act(async () => {})
+
+    expect(toast.error).toHaveBeenCalledWith("Could not reset settings", {
+      id: "settings-reset",
+    })
+    expect(screen.getByRole("dialog")).toBeInTheDocument()
+    expect(saveCalls()).toHaveLength(0)
+  })
+
+  it("shows the load error instead of the loading text", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("load boom"))
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+
+    expect(
+      await screen.findByText(/Could not load settings/),
+    ).toBeInTheDocument()
+    expect(screen.queryByText("Loading settings…")).not.toBeInTheDocument()
+  })
+
+  it("toasts every consecutive failed save with the same stable id", async () => {
+    vi.mocked(invoke).mockImplementation((command: string) =>
+      command === "save_settings"
+        ? Promise.reject(new Error("disk full"))
+        : Promise.resolve(structuredClone(baseSettings)),
+    )
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    vi.useFakeTimers()
+    const input = screen.getByLabelText("History retention (days)")
+
+    fireEvent.change(input, { target: { value: "30" } })
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+    fireEvent.change(input, { target: { value: "31" } })
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(saveCalls()).toHaveLength(2)
+    expect(vi.mocked(toast.error).mock.calls).toEqual([
+      ["Could not save settings", { id: "settings-save" }],
+      ["Could not save settings", { id: "settings-save" }],
+    ])
+  })
+
+  it("resets the draft to the returned defaults", async () => {
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "reset_settings") {
+        return Promise.resolve(structuredClone(resetDefaults))
+      }
+      return Promise.resolve(structuredClone(baseSettings))
+    })
     render(<SettingsDialog open onOpenChange={vi.fn()} />)
     await screen.findByRole("tab", { name: "General" })
     fireEvent.click(screen.getByRole("tab", { name: "History" }))

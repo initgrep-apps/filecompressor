@@ -55,6 +55,7 @@ import { useSettings } from "@/hooks/useSettings"
 import { CATEGORY_TONES } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 import type {
+  Category,
   CategoryTarget,
   MaxConcurrent,
   QualityFloors,
@@ -62,7 +63,11 @@ import type {
 } from "@/types"
 
 const SAVE_DEBOUNCE_MS = 400
+const MAX_FLUSH_WRITES = 3
 const SAVE_ERROR = "Could not save settings"
+const RESET_ERROR = "Could not reset settings"
+const SAVE_ERROR_ID = "settings-save"
+const RESET_ERROR_ID = "settings-reset"
 
 const SECTIONS = [
   { value: "general", label: "General", icon: RiSettings3Line },
@@ -72,12 +77,18 @@ const SECTIONS = [
   { value: "history", label: "History", icon: RiTimeLine },
 ] as const
 
+type SectionId = (typeof SECTIONS)[number]["value"]
+
 const CATEGORIES = [
   { key: "image", label: "Images", badge: "Image", formats: "JPEG, PNG, WebP, HEIC" },
   { key: "video", label: "Videos", badge: "Video", formats: "MP4, MOV" },
   { key: "pdf", label: "PDF", badge: "PDF", formats: "PDF documents" },
   { key: "document", label: "Documents", badge: "Document", formats: "DOCX, XLSX, PPTX" },
 ] as const
+
+function targetFor(settings: Settings, key: Category): CategoryTarget {
+  return settings.categoryTargets[key] ?? { size: 0, unit: "KB" }
+}
 
 interface SettingsDialogProps {
   open: boolean
@@ -122,10 +133,7 @@ function GeneralSection({
           </FieldDescription>
           <ul className="flex flex-col gap-1.5 text-sm">
             {CATEGORIES.map((category) => {
-              const target = draft.categoryTargets[category.key] ?? {
-                size: 0,
-                unit: "KB",
-              }
+              const target = targetFor(draft, category.key)
               return (
                 <li
                   key={category.key}
@@ -146,8 +154,8 @@ function GeneralSection({
 }
 
 function TargetsSection({ draft, onChange }: SectionProps) {
-  const setTarget = (key: string, patch: Partial<CategoryTarget>) => {
-    const current = draft.categoryTargets[key] ?? { size: 0, unit: "KB" }
+  const setTarget = (key: Category, patch: Partial<CategoryTarget>) => {
+    const current = targetFor(draft, key)
     onChange({
       ...draft,
       categoryTargets: {
@@ -162,10 +170,7 @@ function TargetsSection({ draft, onChange }: SectionProps) {
       <FieldLegend>Targets</FieldLegend>
       <FieldGroup>
         {CATEGORIES.map((category) => {
-          const target = draft.categoryTargets[category.key] ?? {
-            size: 0,
-            unit: "KB",
-          }
+          const target = targetFor(draft, category.key)
           const tone = CATEGORY_TONES[category.key]
           return (
             <Field key={category.key} orientation="horizontal">
@@ -427,7 +432,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { settings, loading, error, saveSettings, resetSettings, browseFolder } =
     useSettings()
   const [draft, setDraft] = useState<Settings | null>(null)
-  const [section, setSection] = useState("general")
+  const [section, setSection] = useState<SectionId>("general")
   const draftRef = useRef<Settings | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inFlightRef = useRef<Promise<boolean> | null>(null)
@@ -441,39 +446,48 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     }
   }
 
+  const persist = useCallback(async (): Promise<boolean> => {
+    clearTimer()
+    for (let writes = 0; writes < MAX_FLUSH_WRITES; writes++) {
+      while (inFlightRef.current) await inFlightRef.current
+      if (!dirtyRef.current || !draftRef.current) return true
+
+      dirtyRef.current = false
+      const request = saveSettings(draftRef.current)
+      inFlightRef.current = request
+      const saved = await request
+      inFlightRef.current = null
+
+      if (!saved) {
+        dirtyRef.current = true
+        toast.error(SAVE_ERROR, { id: SAVE_ERROR_ID })
+        return false
+      }
+    }
+    return !dirtyRef.current
+  }, [saveSettings])
+
   useEffect(() => {
     if (!open) {
       seededRef.current = false
-      dirtyRef.current = false
-      clearTimer()
+      if (dirtyRef.current) void persist()
       return
     }
     if (!seededRef.current && settings) {
       seededRef.current = true
+      clearTimer()
+      dirtyRef.current = false
       draftRef.current = settings
       setDraft(settings)
     }
-  }, [open, settings])
+  }, [open, settings, persist])
 
-  useEffect(() => clearTimer, [])
-
-  const persist = useCallback(async (): Promise<boolean> => {
-    clearTimer()
-    if (inFlightRef.current) await inFlightRef.current
-    if (!dirtyRef.current || !draftRef.current) return true
-
-    dirtyRef.current = false
-    const request = saveSettings(draftRef.current)
-    inFlightRef.current = request
-    const saved = await request
-    inFlightRef.current = null
-
-    if (!saved) {
-      dirtyRef.current = true
-      toast.error(SAVE_ERROR)
-    }
-    return saved
-  }, [saveSettings])
+  useEffect(
+    () => () => {
+      if (dirtyRef.current) void persist()
+    },
+    [persist],
+  )
 
   const commit = (next: Settings) => {
     draftRef.current = next
@@ -508,12 +522,26 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   const handleReset = async () => {
     clearTimer()
-    if (inFlightRef.current) await inFlightRef.current
-    const defaults = await resetSettings()
-    if (!defaults) return
+    const wasDirty = dirtyRef.current
     dirtyRef.current = false
-    draftRef.current = defaults
-    setDraft(defaults)
+    while (inFlightRef.current) await inFlightRef.current
+    dirtyRef.current = false
+
+    const request = (async (): Promise<boolean> => {
+      const defaults = await resetSettings()
+      if (!defaults) {
+        toast.error(RESET_ERROR, { id: RESET_ERROR_ID })
+        return false
+      }
+      draftRef.current = defaults
+      setDraft(defaults)
+      dirtyRef.current = false
+      return true
+    })()
+    inFlightRef.current = request
+    const reset = await request
+    inFlightRef.current = null
+    if (!reset) dirtyRef.current = wasDirty
   }
 
   return (
@@ -531,12 +559,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             value={section}
             onValueChange={setSection}
             orientation="vertical"
-            aria-label="Settings sections"
             className="h-full min-h-0 gap-0"
           >
             <div className="w-[184px] shrink-0 border-r border-border p-2">
               <TabsList
                 variant="line"
+                aria-label="Settings sections"
                 className="h-fit w-full flex-col items-stretch gap-0.5 bg-transparent p-0"
               >
                 {SECTIONS.map(({ value, label, icon: Icon }) => (
