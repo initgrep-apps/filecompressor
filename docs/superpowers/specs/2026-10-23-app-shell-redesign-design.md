@@ -28,8 +28,9 @@ Success criteria:
 | [`mocks/app-shell/shell.html`](mocks/app-shell/shell.html) | macOS open/collapsed, Windows open/collapsed, ☰ menu, traffic lights, toggle, right controls |
 | [`mocks/app-shell/history.html`](mocks/app-shell/history.html) | History as an expandable sidebar section, batch list, focused detail, one filter dropdown |
 | [`mocks/app-shell/settings-about.html`](mocks/app-shell/settings-about.html) | Settings dialog (General, Targets), About dialog |
+| [`mocks/app-shell/filter-dialog.html`](mocks/app-shell/filter-dialog.html) | Final filter dialog: two sorts, status/category chips, date picker with presets, at 760×500 and 900×640 |
 
-Corrections recorded in `mocks/app-shell/README.md` are part of the design: offcanvas collapse, menu icons, History retention kept, auto-save, About copy, sidebar list, single-level filter menu.
+Corrections recorded in `mocks/app-shell/README.md` are part of the design: offcanvas collapse, menu icons, History retention kept, auto-save, About copy, sidebar list, filter dialog with Apply/Cancel, shared category glyphs.
 
 Implementation must match these mocks except where this spec states a correction. If implementation and mock disagree, stop and reconcile before coding.
 
@@ -63,7 +64,7 @@ If a needed behavior is missing from shadcn, first question the design. If it is
 
 Compliance checklist for this slice:
 
-- Items always inside their group: `DropdownMenuItem`/`DropdownMenuCheckboxItem`/`DropdownMenuLabel` inside `DropdownMenuGroup`; `SelectItem` inside `SelectGroup`.
+- Items always inside their group: `DropdownMenuItem`/`DropdownMenuLabel` inside `DropdownMenuGroup`; `SelectItem` inside `SelectGroup`.
 - Forms use `FieldSet`/`FieldGroup`/`Field`/`FieldLabel`/`FieldDescription`; never raw `div` + label.
 - Dialog and Popover titles: `DialogTitle` present (may be `sr-only`).
 - Icons inside `Button` use `data-icon`, no sizing classes.
@@ -80,7 +81,7 @@ Known acceptable non-shadcn pieces:
 ### 2.4 Research sources
 
 - shadcn project context: `npx shadcn@latest info` (base-rhea, remixicon, Vite, Tailwind v4).
-- shadcn CLI dry-run for this slice resolves all eight components (`dialog`, `dropdown-menu`, `popover`, `checkbox`, `radio-group`, `tabs`, `collapsible`, `scroll-area`); `button` is already identical and is skipped.
+- shadcn CLI dry-run resolves the shell set (`dialog`, `dropdown-menu`, `popover`, `toggle-group`, `calendar`, `tabs`, `collapsible`, `scroll-area`); `button` is identical and skipped, and `calendar` adds `react-day-picker` + `date-fns`.
 - shadcn docs used: `dialog`, `dropdown-menu`, `popover`, `tabs`, `field`, `sidebar`.
 - Tauri docs: window `transparent`/`shadow`/`decorations` fields; platform-specific config merge; `setTheme`.
 - Persistent state in Tauri apps (Aptabase): localStorage for non-critical UI preferences; `tauri-plugin-store` for backend/critical preferences.
@@ -245,19 +246,22 @@ Sidebar open state is owned by `SidebarProvider` (no second store). All toggles 
 Add via the project CLI (no flags; `components.json` drives style, aliases, icons):
 
 ```bash
-yarn shadcn add dialog dropdown-menu popover checkbox radio-group tabs collapsible scroll-area --yes
+yarn shadcn add dialog dropdown-menu popover toggle-group calendar tabs collapsible scroll-area --yes
 ```
+
+`calendar` brings `react-day-picker` and `date-fns`; both are required by the shadcn Calendar and are the only new runtime dependencies in this slice.
 
 | Component | Used by |
 |---|---|
 | `Sidebar*` (existing) | shell, nav rows, sub-list, footer, search input, badges |
 | `Button` (existing) | every icon/text action |
 | `DropdownMenu*` (add) | ☰ and ⋯ menus |
-| `Popover` + `Checkbox` + `RadioGroup` (add) | filter panel (multi-select content; see §7) |
+| `Popover` + `Calendar` (add) | filter dialog’s Date Picker (presets + custom date); `react-day-picker` and `date-fns` come with Calendar |
+| `ToggleGroup` (add) | filter dialog chips/segments (single and multiple); pulls `Toggle` |
 | `Dialog*` (add) | Settings, About |
 | `Tabs*` (add) | Settings rail, vertical |
 | `Collapsible` (add) | History list expand/collapse |
-| `ScrollArea` (add) | Settings sections, notices |
+| `ScrollArea` (add) | sidebar history list (the only scroller), Settings sections, notices |
 | `Field*`, `Input`, `Select`, `Label` (existing) | settings rows and controls |
 | `Separator`, `Tooltip`, `Breadcrumb`, `Badge`, `Empty`, `Skeleton` (existing) | chrome details, empty and loading states |
 | `AlertDialog` (existing) | clear-history confirmation |
@@ -278,7 +282,8 @@ Use the components as generated for Yard’s preset and the shadcn docs for thei
 | `src/components/shell/AppMenu.tsx` | ⋯ menu |
 | `src/components/shell/ThemeToggle.tsx` | theme button |
 | `src/components/history/HistoryList.tsx` | sidebar list + search + pagination |
-| `src/components/history/HistoryFilterMenu.tsx` | single dropdown |
+| `src/components/history/HistoryFilterDialog.tsx` | filter dialog: ToggleGroups, Date Picker, Apply/Cancel |
+| `src/components/CategoryIcon.tsx` | shared category glyphs + tones, used by DropZone and filter chips |
 | `src/components/AboutDialog.tsx` | version + licenses + notices |
 | `src/components/SettingsDialog.tsx` | dialog, tabs, sections |
 | `src/providers/HistoryProvider.tsx` | data + selection + filters |
@@ -319,6 +324,13 @@ Rows:
 - Two lines: `Today · 2:31 PM` / `12 files · 48.2 MB saved`; right-aligned percent or `cancelled`.
 - Long labels truncate; meta text is single-line.
 
+Scrolling model:
+
+- `SidebarContent` is a flex column: nav rows, search, list, pagination, and Settings never scroll as one block.
+- The batch list is the only scroller: shadcn `ScrollArea` with `className="min-h-0 flex-1"` wrapping `SidebarMenuSub`.
+- Search and filter stay pinned above the list; pagination and Settings stay pinned below it.
+- At 500px window height the nav and footer remain visible; the list scrolls independently (see the approved mock’s first frame).
+
 Search: `SidebarInput` above the list, placeholder `Search history`, debounced 300ms, `aria-label="Search history"`. It preserves the existing search filter (name, path, output path, error).
 
 Pagination: `Button size="icon-xs" variant="ghost"` previous/next plus `Page N of M` text; disabled at bounds.
@@ -339,23 +351,33 @@ Detail pane:
 - States: loading skeleton (`Skeleton`), error banner, empty message.
 - No day groups, no per-session accordion; one batch per screen.
 
-Filter panel (`HistoryFilterMenu`): a shadcn `Popover` anchored to the `SidebarMenuAction` with `side="right"` `align="start"` `sideOffset={8}`.
+### Filter dialog
 
-Why a Popover and not a DropdownMenu: shadcn menus are action menus and close when an item is selected. Filtering needs several independent toggles in one open panel, and reimplementing “stay open” behavior would violate the shadcn rule. `Popover` is the shadcn surface for interactive content, and the shadcn docs show it hosting forms. It looks identical to the approved mock.
+The funnel (`SidebarMenuAction`) opens a shadcn `Dialog` — not a dropdown. Reason: the panel has several independent multi-select controls plus a calendar, and a menu would close after each pick or need custom keep-open behavior. A modal fits at the 760×500 minimum, where a nested menu of submenus does not. Approved mock: `mocks/app-shell/filter-dialog.html`.
 
-Contents, all shadcn:
+Layout:
 
-- `PopoverHeader` (sr-only `PopoverTitle` “Filter history”).
-- `FieldSet` + `FieldLegend` Sort by; `RadioGroup` with RadioGroupItems Newest / Oldest / Most saved / Most files.
-- `FieldSet` + `FieldLegend` Show; `Checkbox` + `Field` rows for Done / Best effort / Failed / Cancelled / Already under target / Unsupported.
-- `FieldSet` + `FieldLegend` Category; `Checkbox` rows for Image / Video / PDF / Document.
-- `FieldSet` + `FieldLegend` Since; `RadioGroup` Any time / Last 7 days / Last 30 days.
-- `Button variant="ghost"` Clear filters, disabled when nothing is active.
-- `Separator` between groups.
+- `DialogContent` 560–600px wide, `max-h-[90%]`, body scrolls only if a section is added.
+- Title row: `DialogTitle` “Filter history”, `Badge` with the active-filter count, close button.
+- Groups use `FieldSet` + `FieldLegend`; hairlines between groups; no checkboxes.
 
-Filters apply immediately; the funnel shows a primary dot while any filter is active. The Popover closes when the sidebar collapses. Layout follows the compact two-column rhythm in the mock, but every control is a shadcn control.
+Controls, all shadcn:
 
-Sort: `HistoryFilters` gains `sort?: "newest" | "oldest" | "most_saved" | "most_files"`. Rust sorts after filtering and before pagination; unknown values fall back to `newest`.
+- **Sort by** — single-select `ToggleGroup` with two items: `Newest first`, `Oldest first`.
+- **Status** — multi-select `ToggleGroup` (`multiple`): Done, Best effort, Failed, Cancelled, Already under target, Unsupported. Each chip carries a status dot using the existing status tones.
+- **Category** — multi-select `ToggleGroup`: Image, Video, PDF, Document. Each chip uses the shared `CategoryIcon` glyphs and category tones from `src/lib/tokens.ts`, identical to the staging area.
+- **Since** — shadcn Date Picker: `Popover` + `Calendar` (`react-day-picker`). Preset column (All time, Today, Last 7 days, Last 30 days, This month, Last 3 months) plus a custom start date. The trigger shows the resolved label; the value maps to the existing `sinceMs` filter.
+- Footer: `Button variant="ghost"` Clear all, `Button variant="outline"` Cancel, `Button` Apply.
+
+Commit model:
+
+- The dialog edits a draft copy of the filters. Apply writes the draft to `HistoryProvider` and refetches; Cancel discards; Clear all resets the draft only.
+- The funnel shows a primary dot when the applied filters are non-default.
+- Opening the dialog seeds the draft from the applied filters.
+
+Category icon reuse: extract `CATEGORY_GLYPHS` and `CategoryIcon` from `DropZone.tsx` into `src/components/CategoryIcon.tsx`; `DropZone` imports it, the filter dialog imports it. No duplicated SVG paths, no icon drift.
+
+Sort: `HistoryFilters` gains `sort?: "newest" | "oldest"`. Rust sorts after filtering and before pagination; unknown values fall back to `newest`.
 
 ## 8. Settings dialog
 
@@ -427,7 +449,7 @@ Moving theme into Rust settings later is a one-file change (`useTheme` + a setti
 
 ## 12. IPC and Rust changes
 
-- `HistoryFilters` (Rust + TS) gains `sort`; `query_history` sorts before pagination.
+- `HistoryFilters` (Rust + TS) gains `sort` (`newest` default, `oldest`); `query_history` sorts before pagination.
 - New command `quit` (`app.exit(0)`), registered in `lib.rs`; used by the app menu and the custom close button.
 - No new events.
 - Plugins: add `tauri-plugin-os` only.
@@ -471,7 +493,8 @@ Frontend:
 - Theme: OS default, toggle persists, class flips, `setTheme` called.
 - About: version renders from package.json, notices render, dialog opens from ⋯.
 - Settings: tabs switch sections; auto-save debounces and calls `save_settings`; reset applies defaults; failure toasts.
-- History: expand/collapse; search debounce; filter/sort menu updates the query; selecting a row shows detail; empty/error states; pagination.
+- History: expand/collapse; search debounce; filter dialog draft/Apply/Cancel/Clear all; two sort options; status/category chip selection; date presets and a custom date; selecting a row shows detail; empty/error states; pagination.
+- CategoryIcon: staging area and filter dialog render identical glyphs/tones.
 - Delete `useAutoCollapse` tests and call-site mocks; delete `SettingsView` tests after migrating.
 
 Gate: `yarn build && yarn test && cd src-tauri && cargo test`.
@@ -490,6 +513,7 @@ Gate: `yarn build && yarn test && cd src-tauri && cargo test`.
 - Sidebar batch rows are denser than the mock’s 56px rows at 640px height; the list scrolls, so verify at least 5 rows remain visible.
 - Removing `useAutoCollapse` changes Compress/History sizing behavior; the boards must remain usable at 760px with the sidebar open (horizontal scroll is acceptable).
 - plugin-os adds a native dependency; the bootstrap now awaits one IPC call before first paint.
-- The Popover-based filter must visually match the menu in the mock (spacing, section labels, two-column rhythm); it is the one place where “shadcn component choice” overrides “looks like a menu”.
+- The filter dialog is more modal than the earlier popover mock; verify chip density and calendar fit at 760×500 (calendar popover must escape the dialog bounds without clipping).
+- `Calendar` adds `react-day-picker` + `date-fns`; keep their versions pinned with the rest of the lockfile.
 - `Tabs` vertical orientation is documented by shadcn but must be checked in the generated component; if it is missing, fall back to a horizontal `TabsList` with a left rail layout driven by `TabsTrigger` buttons, not a new component.
 - The About dialog imports `THIRD_PARTY_LICENSES.md?raw`; confirm the bundler includes it in the production build and bump the notices file when engines change.

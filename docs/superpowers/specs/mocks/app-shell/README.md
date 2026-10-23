@@ -5,7 +5,8 @@ Static HTML fragments from the design session. Open directly in a browser; each 
 | File | Covers | Status |
 |---|---|---|
 | `shell.html` | 900×640 frames: macOS sidebar open / collapsed with ☰ menu, Windows collapsed / collapsed with menu open | Approved in chat |
-| `history.html` | History as an expandable sidebar section; batch list + focused detail; single filter dropdown | Approved in chat |
+| `history.html` | History as an expandable sidebar section; batch list + focused detail | Approved in chat |
+| `filter-dialog.html` | Final filter dialog: two sorts, status/category chips, date picker with presets, 760×500 and 900×640 | Approved in chat |
 | `settings-about.html` | Settings dialog (General, Targets) and About dialog | Approved in chat |
 
 ## Corrections applied after approval (binding for implementation)
@@ -16,7 +17,9 @@ Static HTML fragments from the design session. Open directly in a browser; each 
 - Settings saves automatically; there is no draft/Save footer.
 - About copy: “Offline file compression tool” / “No accounts and no telemetry.”
 - History is not a third column; the list lives inside the sidebar.
-- The filter is one panel with no submenus, anchored to the right of the sidebar. It is implemented with shadcn `Popover` + `Checkbox`/`RadioGroup` so it stays open while toggling; `DropdownMenu` closes on select.
+- The filter is a modal `Dialog` opened from the funnel, not a side panel. Controls are shadcn `ToggleGroup` chips (no checkboxes) and a `Calendar` date picker with presets.
+- Sort is only `Newest first` / `Oldest first`.
+- Category chips reuse the staging-area glyphs and tones via a shared `CategoryIcon`.
 - Windows is frameless with the default shadow (Windows 11 rounded corners); no transparent window.
 
 ## Not shown in the mocks
