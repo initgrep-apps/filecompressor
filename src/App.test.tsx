@@ -15,8 +15,9 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import type { ReactNode } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
 import { getCurrentWindow } from "@tauri-apps/api/window"
@@ -41,6 +42,31 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
   Toaster: () => null,
 }))
+vi.mock("@/providers/HistoryProvider", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/providers/HistoryProvider")>()
+
+  function SelectionProbe() {
+    const { response, selectSession } = actual.useHistoryContext()
+    const second = response?.sessions[1]
+    if (!second) return null
+    return (
+      <button onClick={() => selectSession(second.sessionId)}>
+        Select second session
+      </button>
+    )
+  }
+
+  return {
+    ...actual,
+    HistoryProvider: ({ children }: { children: ReactNode }) => (
+      <actual.HistoryProvider>
+        {children}
+        <SelectionProbe />
+      </actual.HistoryProvider>
+    ),
+  }
+})
 
 import App from "@/App"
 import { PlatformProvider } from "@/providers/PlatformProvider"
@@ -102,9 +128,9 @@ function makeEntry(n: number): FileEntry {
   }
 }
 
-function makeSession(startedAt: number): HistorySession {
+function makeSession(startedAt: number, sessionId = "s1"): HistorySession {
   return {
-    sessionId: "s1",
+    sessionId,
     startedAt,
     endedAt: startedAt + 1_000,
     outputFolder: "/out",
@@ -175,6 +201,7 @@ describe("App shell", () => {
 
     const root = sidebar()!
     expect(root).not.toBeNull()
+    expect(root.getAttribute("data-variant")).toBe("sidebar")
     expect(
       within(root).getByRole("button", { name: /Compress/ }),
     ).toBeInTheDocument()
@@ -378,5 +405,188 @@ describe("App shell", () => {
     await user.click(screen.getByRole("button", { name: /drop files/i }))
 
     expect(await screen.findByTestId("nav-count")).toHaveTextContent("3")
+  })
+
+  it("does not start dragging from the sidebar header trigger", () => {
+    renderApp("win32")
+
+    const trigger = document.querySelector(
+      '[data-slot="sidebar-trigger"]',
+    ) as HTMLElement
+    fireEvent.mouseDown(trigger, { buttons: 1, detail: 1 })
+
+    expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
+  it("opens Settings from the sidebar footer as a dialog", async () => {
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    await user.click(screen.getByTestId("nav-settings"))
+
+    const dialog = await screen.findByRole("dialog")
+    expect(within(dialog).getByText("Settings")).toBeInTheDocument()
+    expect(
+      await within(dialog).findByRole("tab", { name: "General" }),
+    ).toBeInTheDocument()
+  })
+
+  it("closes the mobile Sheet with the header trigger", async () => {
+    window.innerWidth = 760
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="sidebar-gap"]')).toBeNull(),
+    )
+    await user.click(
+      within(topBar()).getByRole("button", { name: "Expand sidebar" }),
+    )
+    const sheet = await waitFor(() => {
+      const element = document.querySelector(
+        '[data-slot="sidebar"][data-mobile="true"]',
+      )
+      expect(element).not.toBeNull()
+      return element as HTMLElement
+    })
+    const trigger = sheet.querySelector(
+      '[data-slot="sidebar-trigger"]',
+    ) as HTMLElement
+    expect(trigger).not.toBeNull()
+
+    await user.click(trigger)
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
+      ).toBeNull(),
+    )
+  })
+
+  it("closes the mobile Sheet when Settings is chosen", async () => {
+    window.innerWidth = 760
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="sidebar-gap"]')).toBeNull(),
+    )
+    await user.click(
+      within(topBar()).getByRole("button", { name: "Expand sidebar" }),
+    )
+    const sheet = await waitFor(() => {
+      const element = document.querySelector(
+        '[data-slot="sidebar"][data-mobile="true"]',
+      )
+      expect(element).not.toBeNull()
+      return element as HTMLElement
+    })
+
+    await user.click(within(sheet).getByTestId("nav-settings"))
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
+      ).toBeNull(),
+    )
+    expect(await screen.findByRole("dialog")).toBeInTheDocument()
+  })
+
+  it("renders the matching view when navigating", async () => {
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    expect(screen.getByTestId("view-container")).toHaveAttribute(
+      "data-view",
+      "compress",
+    )
+    expect(
+      screen.getByRole("button", { name: /drop files/i }),
+    ).toBeInTheDocument()
+
+    await user.click(within(sidebar()!).getByRole("button", { name: /History/ }))
+
+    expect(screen.getByTestId("view-container")).toHaveAttribute(
+      "data-view",
+      "history",
+    )
+    expect(await screen.findByText("No history yet")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /drop files/i })).toBeNull()
+
+    await user.click(
+      within(sidebar()!).getByRole("button", { name: /Compress/ }),
+    )
+
+    expect(screen.getByTestId("view-container")).toHaveAttribute(
+      "data-view",
+      "compress",
+    )
+    expect(
+      screen.getByRole("button", { name: /drop files/i }),
+    ).toBeInTheDocument()
+  })
+
+  it("shows the selected batch label only on History", async () => {
+    const user = userEvent.setup()
+    const first = new Date()
+    first.setHours(10, 30, 0, 0)
+    const second = new Date()
+    second.setHours(11, 45, 0, 0)
+    const firstSession = makeSession(first.getTime(), "s1")
+    const secondSession = makeSession(second.getTime(), "s2")
+    stubInvoke({
+      ...emptyHistory,
+      sessions: [firstSession, secondSession],
+      totalSessions: 2,
+      totalFiles: 4,
+    })
+    renderApp("darwin")
+
+    await user.click(
+      await screen.findByRole("button", { name: "Select second session" }),
+    )
+    await user.click(within(sidebar()!).getByRole("button", { name: /History/ }))
+
+    const secondLabel = batchLabel(secondSession.startedAt, new Date())
+    const firstLabel = batchLabel(firstSession.startedAt, new Date())
+    await waitFor(() =>
+      expect(within(topBar()).getByText(secondLabel)).toBeInTheDocument(),
+    )
+    expect(within(topBar()).queryByText(firstLabel)).toBeNull()
+
+    await user.click(
+      within(sidebar()!).getByRole("button", { name: /Compress/ }),
+    )
+
+    expect(within(topBar()).queryByText(secondLabel)).toBeNull()
+    expect(within(topBar()).getByText("Compress")).toBeInTheDocument()
+  })
+
+  it("treats an unknown platform as non-darwin chrome", () => {
+    renderApp("unknown")
+
+    const bar = topBar()
+    expect(
+      within(bar).getByRole("button", { name: "Minimize" }),
+    ).toBeInTheDocument()
+    expect(bar.className).not.toContain("pl-22")
+    expect(
+      document.querySelector('[data-slot="sidebar-trigger"]'),
+    ).not.toBeNull()
+  })
+
+  it("opens About from the app menu", async () => {
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    await user.click(within(topBar()).getByRole("button", { name: "App menu" }))
+    await user.click(
+      await screen.findByRole("menuitem", { name: "About Yard" }),
+    )
+
+    const dialog = await screen.findByRole("dialog")
+    expect(
+      within(dialog).getByRole("heading", { name: "Yard" }),
+    ).toBeInTheDocument()
   })
 })

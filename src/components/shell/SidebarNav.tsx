@@ -33,13 +33,11 @@ import {
 import { cn } from "@/lib/utils"
 import { useCompressionContext } from "@/providers/CompressionProvider"
 import { useHistoryContext } from "@/providers/HistoryProvider"
+import {
+  VIEW_LABEL,
+  type ShellNavProps,
+} from "@/components/shell/nav"
 import type { ViewId } from "@/types"
-
-interface SidebarNavProps {
-  activeView: ViewId
-  onNavigate: (view: ViewId) => void
-  onOpenSettings: () => void
-}
 
 const rowClass = (active: boolean) =>
   cn(
@@ -62,7 +60,7 @@ export function SidebarNav({
   activeView,
   onNavigate,
   onOpenSettings,
-}: SidebarNavProps) {
+}: ShellNavProps) {
   const { files } = useCompressionContext()
   const { expanded, setExpanded } = useHistoryContext()
   const { isMobile, setOpenMobile } = useSidebar()
@@ -77,8 +75,11 @@ export function SidebarNav({
   }
 
   const openHistory = () => {
-    navigate("history")
-    setExpanded(!expanded)
+    if (activeView === "history") {
+      setExpanded(!expanded)
+    } else {
+      navigate("history")
+    }
   }
 
   const openSettings = () => {
@@ -104,7 +105,9 @@ export function SidebarNav({
                 <span className={glyphClass(compressActive)}>
                   <RiContractUpDownLine size={16} />
                 </span>
-                <span className={labelClass(compressActive)}>Compress</span>
+                <span className={labelClass(compressActive)}>
+                  {VIEW_LABEL.compress}
+                </span>
               </SidebarMenuButton>
               {files.length > 0 && (
                 <SidebarMenuBadge
@@ -126,7 +129,9 @@ export function SidebarNav({
                 <span className={glyphClass(historyActive)}>
                   <RiHistoryLine size={16} />
                 </span>
-                <span className={labelClass(historyActive)}>History</span>
+                <span className={labelClass(historyActive)}>
+                  {VIEW_LABEL.history}
+                </span>
                 <RiArrowDownSLine
                   aria-hidden
                   className={cn(

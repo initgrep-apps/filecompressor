@@ -19,7 +19,10 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 
-const { historyMock } = vi.hoisted(() => ({ historyMock: vi.fn() }))
+const { historyMock, toastErrorMock } = vi.hoisted(() => ({
+  historyMock: vi.fn(),
+  toastErrorMock: vi.fn(),
+}))
 
 vi.mock("@tauri-apps/api/window", async () => {
   const { mockWindow } = await import("@/lib/test-tauri")
@@ -29,7 +32,7 @@ vi.mock("@tauri-apps/api/window", async () => {
 vi.mock("@/providers/HistoryProvider", () => ({
   useHistoryContext: historyMock,
 }))
-vi.mock("sonner", () => ({ toast: { error: vi.fn() } }))
+vi.mock("sonner", () => ({ toast: { error: toastErrorMock } }))
 
 import { TopBar } from "@/components/shell/TopBar"
 import { SidebarProvider } from "@/components/ui/sidebar"
@@ -112,12 +115,15 @@ const topBar = () => screen.getByTestId("top-bar")
 
 beforeEach(() => {
   historyMock.mockReset()
+  toastErrorMock.mockReset()
   win.startDragging.mockReset()
   win.toggleMaximize.mockReset()
   win.setTheme.mockReset()
+  win.close.mockReset()
   win.startDragging.mockResolvedValue(undefined)
   win.toggleMaximize.mockResolvedValue(undefined)
   win.setTheme.mockResolvedValue(undefined)
+  win.close.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -216,6 +222,34 @@ describe("TopBar", () => {
 
     fireEvent.mouseDown(topBar(), { buttons: 1, detail: 1 })
     expect(win.startDragging).toHaveBeenCalledTimes(1)
+  })
+
+  it("reports a failed quit and keeps the window open", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      win.close.mockRejectedValueOnce(new Error("denied"))
+      const user = userEvent.setup()
+      renderTopBar({ platform: "win32" })
+
+      await user.click(
+        within(topBar()).getByRole("button", { name: "App menu" }),
+      )
+      await user.click(await screen.findByRole("menuitem", { name: "Quit" }))
+
+      await waitFor(() =>
+        expect(toastErrorMock).toHaveBeenCalledWith(
+          "Could not quit the app — the window stays open.",
+          { id: "window-close-failed" },
+        ),
+      )
+      expect(win.close).toHaveBeenCalledTimes(1)
+      expect(consoleError).toHaveBeenCalledWith(
+        "window close failed:",
+        expect.any(Error),
+      )
+    } finally {
+      consoleError.mockRestore()
+    }
   })
 
   it("uses the mobile overlay state for visibility decisions", async () => {

@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useState } from "react"
+import { useState, type ComponentType, type MouseEvent } from "react"
 import { RiFileShield2Line } from "@remixicon/react"
 import {
   Sidebar,
@@ -39,6 +39,13 @@ import { CompressView } from "@/views/CompressView"
 import { HistoryView } from "@/views/HistoryView"
 import type { ViewId } from "@/types"
 
+const VIEWS: Record<ViewId, ComponentType> = {
+  compress: CompressView,
+  history: HistoryView,
+}
+
+const stopPropagation = (event: MouseEvent) => event.stopPropagation()
+
 function ShellSidebarHeader() {
   const platform = usePlatform()
   const { isMobile } = useSidebar()
@@ -48,12 +55,16 @@ function ShellSidebarHeader() {
     <SidebarHeader className="h-12 justify-center p-2">
       <DragSurface className="flex h-full items-center gap-1">
         {showControls && (
-          <>
+          <div
+            className="flex items-center gap-1"
+            onMouseDown={stopPropagation}
+            onDoubleClick={stopPropagation}
+          >
             <span className="flex size-7 items-center justify-center rounded-lg bg-primary/15 text-primary">
               <RiFileShield2Line size={16} />
             </span>
             <SidebarTrigger title="Toggle sidebar" />
-          </>
+          </div>
         )}
       </DragSurface>
     </SidebarHeader>
@@ -62,8 +73,8 @@ function ShellSidebarHeader() {
 
 function Shell() {
   const [activeView, setActiveView] = useState<ViewId>("compress")
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [aboutOpen, setAboutOpen] = useState(false)
+  const [dialog, setDialog] = useState<"settings" | "about" | null>(null)
+  const View = VIEWS[activeView]
 
   return (
     <SidebarProvider className="h-svh overflow-hidden">
@@ -73,7 +84,7 @@ function Shell() {
           <SidebarNav
             activeView={activeView}
             onNavigate={setActiveView}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={() => setDialog("settings")}
           />
         </SidebarContent>
       </Sidebar>
@@ -81,19 +92,26 @@ function Shell() {
         <TopBar
           activeView={activeView}
           onNavigate={setActiveView}
-          onOpenSettings={() => setSettingsOpen(true)}
-          onOpenAbout={() => setAboutOpen(true)}
+          onOpenSettings={() => setDialog("settings")}
+          onOpenAbout={() => setDialog("about")}
         />
         <div
           data-testid="view-container"
+          data-view={activeView}
           className="flex min-h-0 flex-1 flex-col overflow-hidden"
         >
-          {activeView === "compress" ? <CompressView /> : <HistoryView />}
+          <View />
         </div>
       </SidebarInset>
       <Toaster />
-      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-      <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} />
+      <SettingsDialog
+        open={dialog === "settings"}
+        onOpenChange={(open) => setDialog(open ? "settings" : null)}
+      />
+      <AboutDialog
+        open={dialog === "about"}
+        onOpenChange={(open) => setDialog(open ? "about" : null)}
+      />
     </SidebarProvider>
   )
 }

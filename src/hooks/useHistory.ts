@@ -64,6 +64,7 @@ export function useHistory() {
         }
       } catch (err) {
         if (cancelled) return
+        console.error('get_history failed:', err)
         setError(`Could not load history: ${toMessage(err)}`)
       } finally {
         if (!cancelled) setLoading(false)

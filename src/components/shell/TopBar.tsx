@@ -16,6 +16,7 @@
 
 import type { MouseEvent } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
+import { toast } from "sonner"
 import {
   RiSidebarFoldLine,
   RiSidebarUnfoldLine,
@@ -36,14 +37,11 @@ import { ThemeToggle } from "@/components/shell/ThemeToggle"
 import { WindowControls } from "@/components/shell/WindowControls"
 import { useHistoryContext } from "@/providers/HistoryProvider"
 import { usePlatform } from "@/providers/PlatformProvider"
+import { VIEW_LABEL, type ShellNavProps } from "@/components/shell/nav"
 import { batchLabel } from "@/lib/historyFormat"
 import { cn } from "@/lib/utils"
-import type { ViewId } from "@/types"
 
-interface TopBarProps {
-  activeView: ViewId
-  onNavigate: (view: ViewId) => void
-  onOpenSettings: () => void
+interface TopBarProps extends ShellNavProps {
   onOpenAbout: () => void
 }
 
@@ -67,7 +65,7 @@ export function TopBar({
           (item) => item.sessionId === selectedSessionId,
         ) ?? null)
       : null
-  const section = activeView === "compress" ? "Compress" : "History"
+  const section = VIEW_LABEL[activeView]
 
   return (
     <DragSurface
@@ -130,7 +128,16 @@ export function TopBar({
         <ThemeToggle />
         <AppMenu
           onAbout={onOpenAbout}
-          onQuit={() => void getCurrentWindow().close()}
+          onQuit={() => {
+            void getCurrentWindow()
+              .close()
+              .catch((error) => {
+                console.error("window close failed:", error)
+                toast.error("Could not quit the app — the window stays open.", {
+                  id: "window-close-failed",
+                })
+              })
+          }}
         />
         {!isDarwin && <WindowControls />}
       </div>

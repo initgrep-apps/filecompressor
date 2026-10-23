@@ -31,18 +31,16 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-
-interface NavMenuProps {
-  activeView: "compress" | "history"
-  onNavigate: (view: "compress" | "history") => void
-  onOpenSettings: () => void
-}
+import {
+  VIEW_LABEL,
+  type ShellNavProps,
+} from "@/components/shell/nav"
 
 export function NavMenu({
   activeView,
   onNavigate,
   onOpenSettings,
-}: NavMenuProps) {
+}: ShellNavProps) {
   const activeCheck = (
     <DropdownMenuShortcut>
       <RiCheckLine aria-hidden />
@@ -70,7 +68,7 @@ export function NavMenu({
             onClick={() => onNavigate("compress")}
           >
             <RiContractUpDownLine data-icon="inline-start" />
-            Compress
+            {VIEW_LABEL.compress}
             {activeView === "compress" && activeCheck}
           </DropdownMenuItem>
           <DropdownMenuItem
@@ -78,7 +76,7 @@ export function NavMenu({
             onClick={() => onNavigate("history")}
           >
             <RiHistoryLine data-icon="inline-start" />
-            History
+            {VIEW_LABEL.history}
             {activeView === "history" && activeCheck}
           </DropdownMenuItem>
         </DropdownMenuGroup>

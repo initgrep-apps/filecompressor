@@ -107,14 +107,29 @@ describe("SidebarNav", () => {
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
-  it("navigates to History and toggles the expandable row", async () => {
+  it("navigates to History without collapsing the list from another view", async () => {
     const user = userEvent.setup()
     const { onNavigate, setExpanded } = renderNav()
 
     await user.click(screen.getByRole("button", { name: /History/ }))
 
     expect(onNavigate).toHaveBeenCalledWith("history")
-    expect(setExpanded).toHaveBeenCalledWith(true)
+    expect(setExpanded).not.toHaveBeenCalled()
+  })
+
+  it("toggles the expanded list when History is already active", async () => {
+    const user = userEvent.setup()
+    const { onNavigate, setExpanded } = renderNav({
+      activeView: "history",
+      expanded: true,
+    })
+    const row = screen.getByTestId("nav-history")
+    expect(row).toHaveAttribute("aria-expanded", "true")
+
+    await user.click(row)
+
+    expect(setExpanded).toHaveBeenCalledWith(false)
+    expect(onNavigate).not.toHaveBeenCalled()
   })
 
   it("navigates to Compress", async () => {
