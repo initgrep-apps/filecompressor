@@ -16,12 +16,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, waitFor } from "@testing-library/react"
-import { getCurrentWindow, type CloseRequestedEvent } from "@tauri-apps/api/window"
+import { getCurrentWindow } from "@tauri-apps/api/window"
+import type { CompressionContextValue } from "@/providers/CompressionProvider"
 
 const { invokeMock, confirmMock, compressionMock, toastErrorMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   confirmMock: vi.fn(),
-  compressionMock: vi.fn(),
+  compressionMock: vi.fn<() => Pick<CompressionContextValue, "isCompressing">>(),
   toastErrorMock: vi.fn(),
 }))
 
@@ -44,12 +45,18 @@ const win = getCurrentWindow() as unknown as ReturnType<typeof mockWindow>
 
 let consoleError: ReturnType<typeof vi.spyOn>
 
-function closeEvent() {
-  const preventDefault = vi.fn()
-  return { event: { preventDefault } as unknown as CloseRequestedEvent, preventDefault }
+async function closeEvent() {
+  const { CloseRequestedEvent } = await vi.importActual<
+    typeof import("@tauri-apps/api/window")
+  >("@tauri-apps/api/window")
+  return new CloseRequestedEvent({
+    event: "tauri://close-requested",
+    id: 0,
+    payload: null,
+  })
 }
 
-function renderGuard(isCompressing = false) {
+function renderGuard(isCompressing: CompressionContextValue["isCompressing"]) {
   compressionMock.mockReturnValue({ isCompressing })
   return render(<QuitGuard />)
 }
@@ -57,6 +64,13 @@ function renderGuard(isCompressing = false) {
 async function capturedHandler() {
   await waitFor(() => expect(win.onCloseRequested).toHaveBeenCalled())
   return win.onCloseRequested.mock.calls[0][0]
+}
+
+const expectConfirmCopy = () => {
+  expect(confirmMock).toHaveBeenCalledWith(
+    expect.stringContaining("Compression is still running"),
+    expect.objectContaining({ kind: "warning" }),
+  )
 }
 
 beforeEach(() => {
@@ -75,25 +89,26 @@ afterEach(() => {
 
 describe("QuitGuard", () => {
   it("always prevents the default close", async () => {
-    renderGuard()
+    renderGuard(false)
     const handler = await capturedHandler()
-    const { event, preventDefault } = closeEvent()
+    const event = await closeEvent()
 
     await handler(event)
 
-    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(event.isPreventDefault()).toBe(true)
   })
 
   it("keeps the window open when the user cancels while compressing", async () => {
     confirmMock.mockResolvedValue(false)
     renderGuard(true)
     const handler = await capturedHandler()
-    const { event, preventDefault } = closeEvent()
+    const event = await closeEvent()
 
     await handler(event)
 
-    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(event.isPreventDefault()).toBe(true)
     expect(confirmMock).toHaveBeenCalledTimes(1)
+    expectConfirmCopy()
     expect(invokeMock).not.toHaveBeenCalled()
   })
 
@@ -101,24 +116,25 @@ describe("QuitGuard", () => {
     confirmMock.mockResolvedValue(true)
     renderGuard(true)
     const handler = await capturedHandler()
-    const { event, preventDefault } = closeEvent()
+    const event = await closeEvent()
 
     await handler(event)
 
-    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(event.isPreventDefault()).toBe(true)
     expect(confirmMock).toHaveBeenCalledTimes(1)
+    expectConfirmCopy()
     expect(invokeMock).toHaveBeenCalledTimes(1)
     expect(invokeMock).toHaveBeenCalledWith("quit")
   })
 
   it("quits immediately when idle", async () => {
-    renderGuard()
+    renderGuard(false)
     const handler = await capturedHandler()
-    const { event, preventDefault } = closeEvent()
+    const event = await closeEvent()
 
     await handler(event)
 
-    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(event.isPreventDefault()).toBe(true)
     expect(confirmMock).not.toHaveBeenCalled()
     expect(invokeMock).toHaveBeenCalledTimes(1)
     expect(invokeMock).toHaveBeenCalledWith("quit")
@@ -132,7 +148,7 @@ describe("QuitGuard", () => {
     view.rerender(<QuitGuard />)
     confirmMock.mockResolvedValue(false)
 
-    await handler(closeEvent().event)
+    await handler(await closeEvent())
 
     expect(confirmMock).toHaveBeenCalledTimes(1)
     expect(invokeMock).not.toHaveBeenCalled()
@@ -151,7 +167,7 @@ describe("QuitGuard", () => {
   it("unlistens on unmount", async () => {
     const stop = vi.fn()
     win.onCloseRequested.mockResolvedValue(stop)
-    const { unmount } = renderGuard()
+    const { unmount } = renderGuard(false)
     await capturedHandler()
 
     unmount()
@@ -167,7 +183,7 @@ describe("QuitGuard", () => {
           resolveRegistration = resolve
         }),
     )
-    const { unmount } = renderGuard()
+    const { unmount } = renderGuard(false)
     await capturedHandler()
 
     unmount()
@@ -181,7 +197,7 @@ describe("QuitGuard", () => {
 
   it("reports a failed registration with a pinned toast", async () => {
     win.onCloseRequested.mockRejectedValue(new Error("listen failed"))
-    renderGuard()
+    renderGuard(false)
 
     await waitFor(() => expect(toastErrorMock).toHaveBeenCalledTimes(1))
     expect(toastErrorMock.mock.calls[0][0]).toContain("Close protection")
@@ -194,15 +210,15 @@ describe("QuitGuard", () => {
 
   it("keeps the window open and reports a failed quit", async () => {
     invokeMock.mockRejectedValue(new Error("quit failed"))
-    renderGuard()
+    renderGuard(false)
     const handler = await capturedHandler()
-    const { event, preventDefault } = closeEvent()
+    const event = await closeEvent()
 
     await expect(handler(event)).resolves.toBeUndefined()
 
-    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(event.isPreventDefault()).toBe(true)
+    expect(toastErrorMock.mock.calls[0][0]).toContain("Could not quit")
     expect(consoleError).toHaveBeenCalled()
-    expect(toastErrorMock).toHaveBeenCalledTimes(1)
   })
 
   it("keeps the window open and reports a failed confirmation", async () => {
@@ -210,30 +226,32 @@ describe("QuitGuard", () => {
     renderGuard(true)
     const handler = await capturedHandler()
 
-    await expect(handler(closeEvent().event)).resolves.toBeUndefined()
+    await expect(handler(await closeEvent())).resolves.toBeUndefined()
 
     expect(invokeMock).not.toHaveBeenCalled()
+    expect(toastErrorMock.mock.calls[0][0]).toContain("window stays open")
     expect(consoleError).toHaveBeenCalled()
-    expect(toastErrorMock).toHaveBeenCalledTimes(1)
   })
 
   it("calls invoke once for a double close", async () => {
-    renderGuard()
+    renderGuard(false)
     const handler = await capturedHandler()
+    const first = await closeEvent()
+    const second = await closeEvent()
 
-    await handler(closeEvent().event)
-    await handler(closeEvent().event)
+    await handler(first)
+    await handler(second)
 
     expect(invokeMock).toHaveBeenCalledTimes(1)
   })
 
   it("allows a retry after a failed quit", async () => {
     invokeMock.mockRejectedValueOnce(new Error("quit failed"))
-    renderGuard()
+    renderGuard(false)
     const handler = await capturedHandler()
 
-    await handler(closeEvent().event)
-    await handler(closeEvent().event)
+    await handler(await closeEvent())
+    await handler(await closeEvent())
 
     expect(invokeMock).toHaveBeenCalledTimes(2)
   })
@@ -243,12 +261,24 @@ describe("QuitGuard", () => {
     renderGuard(true)
     const handler = await capturedHandler()
 
-    await handler(closeEvent().event)
-    await handler(closeEvent().event)
+    await handler(await closeEvent())
+    await handler(await closeEvent())
 
     expect(confirmMock).toHaveBeenCalledTimes(2)
     expect(invokeMock).toHaveBeenCalledTimes(1)
     expect(invokeMock).toHaveBeenCalledWith("quit")
+  })
+
+  it("allows a retry after a failed confirmation", async () => {
+    confirmMock.mockRejectedValueOnce(new Error("dialog failed")).mockResolvedValueOnce(false)
+    renderGuard(true)
+    const handler = await capturedHandler()
+
+    await handler(await closeEvent())
+    await handler(await closeEvent())
+
+    expect(confirmMock).toHaveBeenCalledTimes(2)
+    expect(invokeMock).not.toHaveBeenCalled()
   })
 
   it("opens one confirmation dialog for concurrent closes", async () => {
@@ -261,14 +291,14 @@ describe("QuitGuard", () => {
     )
     renderGuard(true)
     const handler = await capturedHandler()
-    const first = closeEvent()
-    const second = closeEvent()
+    const first = await closeEvent()
+    const second = await closeEvent()
 
-    const firstClose = handler(first.event)
-    const secondClose = handler(second.event)
+    const firstClose = handler(first)
+    const secondClose = handler(second)
 
-    expect(first.preventDefault).toHaveBeenCalledTimes(1)
-    expect(second.preventDefault).toHaveBeenCalledTimes(1)
+    expect(first.isPreventDefault()).toBe(true)
+    expect(second.isPreventDefault()).toBe(true)
     expect(confirmMock).toHaveBeenCalledTimes(1)
 
     await act(async () => {
@@ -288,11 +318,11 @@ describe("QuitGuard", () => {
           resolveInvoke = resolve
         }),
     )
-    renderGuard()
+    renderGuard(false)
     const handler = await capturedHandler()
 
-    const firstClose = handler(closeEvent().event)
-    const secondClose = handler(closeEvent().event)
+    const firstClose = handler(await closeEvent())
+    const secondClose = handler(await closeEvent())
 
     expect(invokeMock).toHaveBeenCalledTimes(1)
 

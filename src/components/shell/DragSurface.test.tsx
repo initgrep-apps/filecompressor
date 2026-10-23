@@ -18,11 +18,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { fireEvent, render, screen } from "@testing-library/react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 
+const { toastErrorMock } = vi.hoisted(() => ({ toastErrorMock: vi.fn() }))
+
 vi.mock("@tauri-apps/api/window", async () => {
   const { mockWindow } = await import("@/lib/test-tauri")
   const win = mockWindow()
   return { getCurrentWindow: () => win }
 })
+vi.mock("sonner", () => ({ toast: { error: toastErrorMock } }))
 
 import { DragSurface } from "@/components/shell/DragSurface"
 import { mockWindow } from "@/lib/test-tauri"
@@ -33,6 +36,7 @@ let consoleError: ReturnType<typeof vi.spyOn>
 
 beforeEach(() => {
   consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+  toastErrorMock.mockReset()
   win.startDragging.mockReset()
   win.toggleMaximize.mockReset()
   win.startDragging.mockResolvedValue(undefined)
@@ -113,6 +117,29 @@ describe("DragSurface", () => {
     expect(win.startDragging).not.toHaveBeenCalled()
   })
 
+  it("ignores caller drag handlers at runtime", () => {
+    const onMouseDown = vi.fn()
+    const onDoubleClick = vi.fn()
+    render(
+      <DragSurface
+        data-testid="drag-surface"
+        onMouseDown={onMouseDown}
+        onDoubleClick={onDoubleClick}
+      >
+        content
+      </DragSurface>,
+    )
+    const surface = screen.getByTestId("drag-surface")
+
+    fireEvent.mouseDown(surface, { detail: 1, buttons: 1 })
+    fireEvent.doubleClick(surface)
+
+    expect(onMouseDown).not.toHaveBeenCalled()
+    expect(onDoubleClick).not.toHaveBeenCalled()
+    expect(win.startDragging).toHaveBeenCalledTimes(1)
+    expect(win.toggleMaximize).toHaveBeenCalledTimes(1)
+  })
+
   it("reports a failed drag start instead of throwing", async () => {
     win.startDragging.mockRejectedValue(new Error("drag failed"))
     render(<DragSurface data-testid="drag-surface">content</DragSurface>)
@@ -121,5 +148,21 @@ describe("DragSurface", () => {
       fireEvent.mouseDown(screen.getByTestId("drag-surface"), { detail: 1, buttons: 1 }),
     ).not.toThrow()
     await vi.waitFor(() => expect(consoleError).toHaveBeenCalled())
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      "Could not move the window",
+      expect.objectContaining({ id: "window-drag-failed" }),
+    )
+  })
+
+  it("reports a failed maximize instead of throwing", async () => {
+    win.toggleMaximize.mockRejectedValue(new Error("maximize failed"))
+    render(<DragSurface data-testid="drag-surface">content</DragSurface>)
+
+    expect(() => fireEvent.doubleClick(screen.getByTestId("drag-surface"))).not.toThrow()
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalled())
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      "Could not resize the window",
+      expect.objectContaining({ id: "window-resize-failed" }),
+    )
   })
 })

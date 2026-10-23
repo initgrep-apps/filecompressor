@@ -16,13 +16,15 @@
 
 import type { ComponentProps } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
+import { toast } from "sonner"
 
-type DragSurfaceProps = Omit<
-  ComponentProps<"div">,
-  "onMouseDown" | "onDoubleClick" | "onMouseDownCapture" | "onDoubleClickCapture"
->
-
-export function DragSurface(props: DragSurfaceProps) {
+export function DragSurface({
+  onMouseDown: _onMouseDown,
+  onDoubleClick: _onDoubleClick,
+  onMouseDownCapture: _onMouseDownCapture,
+  onDoubleClickCapture: _onDoubleClickCapture,
+  ...props
+}: ComponentProps<"div">) {
   return (
     <div
       {...props}
@@ -30,13 +32,19 @@ export function DragSurface(props: DragSurfaceProps) {
         if (event.buttons === 1 && event.detail === 1) {
           void getCurrentWindow()
             .startDragging()
-            .catch((error) => console.error("window drag failed:", error))
+            .catch((error) => {
+              console.error("window drag failed:", error)
+              toast.error("Could not move the window", { id: "window-drag-failed" })
+            })
         }
       }}
       onDoubleClick={() => {
         void getCurrentWindow()
           .toggleMaximize()
-          .catch((error) => console.error("window maximize failed:", error))
+          .catch((error) => {
+            console.error("window maximize failed:", error)
+            toast.error("Could not resize the window", { id: "window-resize-failed" })
+          })
       }}
     />
   )

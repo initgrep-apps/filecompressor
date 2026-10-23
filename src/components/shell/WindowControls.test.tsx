@@ -78,6 +78,7 @@ describe("WindowControls", () => {
     await user.click(screen.getByRole("button", { name: "Minimize" }))
 
     expect(win.minimize).toHaveBeenCalledTimes(1)
+    expect(toastErrorMock).not.toHaveBeenCalled()
   })
 
   it("toggles maximize on Maximize", async () => {
@@ -87,6 +88,7 @@ describe("WindowControls", () => {
     await user.click(screen.getByRole("button", { name: "Maximize" }))
 
     expect(win.toggleMaximize).toHaveBeenCalledTimes(1)
+    expect(toastErrorMock).not.toHaveBeenCalled()
   })
 
   it("closes the window through the close API on Close", async () => {
@@ -98,6 +100,7 @@ describe("WindowControls", () => {
     expect(win.close).toHaveBeenCalledTimes(1)
     expect(win.minimize).not.toHaveBeenCalled()
     expect(win.toggleMaximize).not.toHaveBeenCalled()
+    expect(toastErrorMock).not.toHaveBeenCalled()
   })
 
   it("never invokes the quit command from any control", async () => {
@@ -109,6 +112,7 @@ describe("WindowControls", () => {
     }
 
     expect(invokeMock).not.toHaveBeenCalled()
+    expect(toastErrorMock).not.toHaveBeenCalled()
   })
 
   it("stops mousedown and double click propagation from every button", () => {
@@ -175,6 +179,20 @@ describe("WindowControls", () => {
         expect.objectContaining({ id: "window-close-failed" }),
       ),
     )
+    expect(consoleError).toHaveBeenCalled()
+  })
+
+  it("includes a non-Error close rejection in the toast", async () => {
+    win.close.mockRejectedValue("denied by window policy")
+    const user = userEvent.setup()
+    render(<WindowControls />)
+
+    await user.click(screen.getByRole("button", { name: "Close" }))
+
+    await waitFor(() => expect(toastErrorMock).toHaveBeenCalledTimes(1))
+    const [message, options] = toastErrorMock.mock.calls[0]
+    expect(message).toContain("denied by window policy")
+    expect(options).toMatchObject({ id: "window-close-failed" })
     expect(consoleError).toHaveBeenCalled()
   })
 })
