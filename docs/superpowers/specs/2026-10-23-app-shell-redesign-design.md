@@ -35,7 +35,7 @@ Implementation must match these mocks except where this spec states a correction
 
 ### 2.2 Reference app (Nakso)
 
-Repo: `/Users/irshadsheikh/dev/github/refs/nakso` (Tauri 2 + React 19 + Tailwind 4 + Base UI shadcn; production builds on macOS, Windows, Linux).
+Repo: `/Users/irshadsheikh/dev/github/refs/nakso` (Tauri 2 + React 19 + Tailwind 4 + shadcn/ui; production builds on macOS, Windows, Linux).
 
 | Concern | Nakso reference | Use |
 |---|---|---|
@@ -43,7 +43,7 @@ Repo: `/Users/irshadsheikh/dev/github/refs/nakso` (Tauri 2 + React 19 + Tailwind
 | Top bar | `src/components/header/app-header.tsx` | Copy layout, traffic-light clearance, window controls, propagation guards |
 | Drag / double-click zoom | `src/components/common/tauri-drag-region.tsx` | Copy, but spread caller props before handlers |
 | Sidebar | `src/components/sidebar/app-sidebar.tsx`, `src/components/ui/sidebar.tsx` | Copy composition and `offcanvas` default; keep our width |
-| Menus | `src/components/menu/menu.tsx`, `src/components/ui/dropdown-menu.tsx` | Copy composition idea; adapt to our newer Base UI API |
+| Menus | `src/components/menu/menu.tsx`, `src/components/ui/dropdown-menu.tsx` | Copy composition idea; adapt to our preset’s generated API |
 | Settings | `src/components/settings/settings-dialog.tsx`, `src/components/ui/dialog.tsx` | Copy dialog shell and auto-save pattern; improve rail semantics with Tabs |
 | About | `src/components/dialogs/about-dialog.tsx` | Copy package.json version source and small-dialog layout; add notices |
 | Theme toggle | `src/components/header/toggle-darkmode-button.tsx` | Copy button shape and `setTheme` sync |
@@ -51,21 +51,40 @@ Repo: `/Users/irshadsheikh/dev/github/refs/nakso` (Tauri 2 + React 19 + Tailwind
 
 Rules for reuse:
 
-1. Nakso runs Base UI 1.7 / `data-[open]`; Yard runs Base UI 1.9 / `data-open`. Never paste Nakso primitive files or classes into `src/components/ui/`. Use the components generated for Yard and adapt composition only.
+1. Nakso’s generated components predate ours. Never paste its `src/components/ui/*` files or its data-state classes; use the components generated for Yard’s current preset. Adapt composition only.
 2. Nakso writes menus as JSON + a zustand store + a command manager. Yard has no such layer; menu contents are static React children. Do not port the JSON/keymap/zod architecture.
 3. Deliberate deviations are listed in §3; everything else follows the reference.
 
 ### 2.3 shadcn/ui rule
 
-shadcn/ui is the only UI primitive layer. Every interactive control (menus, dialogs, tabs, scroll areas, sidebar, buttons, inputs, selects, tooltips, separators) must be a vendored shadcn component. A custom file may only compose and style those primitives; it must not reimplement focus management, dismissal, positioning, or keyboard behavior.
+shadcn/ui is the only UI primitive layer. Every interactive control (menus, popovers, dialogs, tabs, scroll areas, sidebar, buttons, inputs, selects, checks, radios, tooltips, separators) must be a vendored shadcn component. A custom file may only compose and style those primitives; it must not reimplement focus management, dismissal, positioning, or keyboard behavior.
 
-If a needed behavior is missing from shadcn, first question the design. If it is still required, extend the shadcn component with a thin wrapper — never a parallel implementation.
+If a needed behavior is missing from shadcn, first question the design. If it is still required, extend the shadcn component with a thin wrapper — never a parallel implementation, and never import a primitive library directly.
+
+Compliance checklist for this slice:
+
+- Items always inside their group: `DropdownMenuItem`/`DropdownMenuCheckboxItem`/`DropdownMenuLabel` inside `DropdownMenuGroup`; `SelectItem` inside `SelectGroup`.
+- Forms use `FieldSet`/`FieldGroup`/`Field`/`FieldLabel`/`FieldDescription`; never raw `div` + label.
+- Dialog and Popover titles: `DialogTitle` present (may be `sr-only`).
+- Icons inside `Button` use `data-icon`, no sizing classes.
+- Status uses `Badge`; empty states use `Empty`; loading uses `Skeleton`; dividers use `Separator`.
+- No custom `role="menu"`, no manual focus trap, no manual z-index on overlays.
+- No new raw color classes; semantic tokens only.
 
 Known acceptable non-shadcn pieces:
 
-- `NumberStepper` (existing, built on Base UI NumberField; no shadcn number field exists).
+- `NumberStepper` (existing local component; shadcn has no number field).
 - `DragSurface` (window-drag behavior, not a UI control).
 - Layout containers (`div`s for rows, rails, grids).
+
+### 2.4 Research sources
+
+- shadcn project context: `npx shadcn@latest info` (base-rhea, remixicon, Vite, Tailwind v4).
+- shadcn CLI dry-run for this slice resolves all eight components (`dialog`, `dropdown-menu`, `popover`, `checkbox`, `radio-group`, `tabs`, `collapsible`, `scroll-area`); `button` is already identical and is skipped.
+- shadcn docs used: `dialog`, `dropdown-menu`, `popover`, `tabs`, `field`, `sidebar`.
+- Tauri docs: window `transparent`/`shadow`/`decorations` fields; platform-specific config merge; `setTheme`.
+- Persistent state in Tauri apps (Aptabase): localStorage for non-critical UI preferences; `tauri-plugin-store` for backend/critical preferences.
+- Nakso source (read-only): listed in §2.2.
 
 ## 3. Decisions and deviations from the reference
 
@@ -74,7 +93,7 @@ Known acceptable non-shadcn pieces:
 | Platform detection | `@tauri-apps/plugin-os` `platform()`, mapped to `darwin`/`win32`/`linux` | Same as Nakso; no user-agent guessing |
 | Bootstrap | await platform before `createRoot` | Same as Nakso; platform is always known at first render |
 | macOS chrome | `titleBarStyle: "Overlay"`, traffic lights `(16, 26)`, empty title | Same |
-| Windows chrome | `decorations: false`, `transparent: true`, custom controls right | Same; see risk on transparency |
+| Windows chrome | `decorations: false`, `shadow` left at its default (`true`), no `transparent` | Same frameless result as Nakso; transparency dropped per Tauri docs (see §4.2) |
 | Linux chrome | `decorations: false`, same custom controls | Same |
 | Sidebar collapse | `collapsible="offcanvas"` | Same as Nakso; matches mocks (fully hidden, no icon rail) |
 | Collapse triggers | macOS: top bar only. Windows/Linux: sidebar header when open, top bar when closed | Same as Nakso and the mock |
@@ -82,8 +101,8 @@ Known acceptable non-shadcn pieces:
 | Collapsed navigation | `☰` menu in the top bar, all platforms | Deviation: Nakso has no nav menu; requirement from the brief |
 | App menu | `⋯`: About, separator, Quit | Same content as Nakso minus shortcuts/devtools |
 | Settings commit | Auto-save, debounced 400ms | Same idea as Nakso’s store-on-change; our settings go through Rust |
-| Settings rail | shadcn `Tabs` (vertical) | Deviation: Nakso uses plain divs; shadcn rule wins |
-| Theme | Binary toggle, `localStorage`, OS default, native `setTheme` | Deviation: Nakso persists via async fs store and has no OS default. Ours avoids the first-paint flash |
+| Settings rail | shadcn `Tabs` with `orientation="vertical"` | Deviation: Nakso uses plain divs; shadcn rule wins, and shadcn documents the vertical variant |
+| Theme | Binary toggle, `localStorage`, OS default, native `setTheme` | Researched: localStorage is the recommended home for non-critical UI preferences and is the only flash-free option (see §10) |
 | About version | `package.json` import | Same as Nakso; no extra Tauri permission |
 | Quit | New Rust `quit` command (`app.exit(0)`) | Deviation: Nakso adds `plugin-process`; a 3-line command avoids a plugin |
 | History sort | Server-side `sort` param | New; keeps pagination coherent |
@@ -153,8 +172,10 @@ If detection rejects, log once and continue with `"unknown"`; the app must still
 
 Platform overlays (new, JSON Merge Patch — window arrays are replaced):
 
-- `src-tauri/tauri.windows.conf.json`: `decorations: false`, `transparent: true`
+- `src-tauri/tauri.windows.conf.json`: `decorations: false`
 - `src-tauri/tauri.linux.conf.json`: `decorations: false`
+
+Windows rounded corners come from Tauri’s `shadow` field, which defaults to `true`: the docs state an undecorated Windows window then gets a 1px border and rounded corners on Windows 11. Do **not** set `transparent`: it is only needed for see-through content, requires `macOSPrivateApi` on macOS, and adds composition cost on Windows. The reference app sets it while also painting an opaque background, so it buys nothing there; we deliberately omit it.
 
 Keep `dragDropEnabled` default (`true`); `DropZone` relies on Tauri’s native drop events. Do not copy Nakso’s global `dragover`/`drop`/`contextmenu` suppression.
 
@@ -224,23 +245,24 @@ Sidebar open state is owned by `SidebarProvider` (no second store). All toggles 
 Add via the project CLI (no flags; `components.json` drives style, aliases, icons):
 
 ```bash
-yarn shadcn add dialog dropdown-menu collapsible scroll-area tabs --yes
+yarn shadcn add dialog dropdown-menu popover checkbox radio-group tabs collapsible scroll-area --yes
 ```
 
 | Component | Used by |
 |---|---|
 | `Sidebar*` (existing) | shell, nav rows, sub-list, footer, search input, badges |
 | `Button` (existing) | every icon/text action |
-| `DropdownMenu*` (add) | ☰, ⋯, filter |
+| `DropdownMenu*` (add) | ☰ and ⋯ menus |
+| `Popover` + `Checkbox` + `RadioGroup` (add) | filter panel (multi-select content; see §7) |
 | `Dialog*` (add) | Settings, About |
-| `Tabs*` (add) | Settings rail |
+| `Tabs*` (add) | Settings rail, vertical |
 | `Collapsible` (add) | History list expand/collapse |
 | `ScrollArea` (add) | Settings sections, notices |
 | `Field*`, `Input`, `Select`, `Label` (existing) | settings rows and controls |
-| `Separator`, `Tooltip`, `Breadcrumb`, `Badge` (existing) | chrome details |
-| `AlertDialog` (existing) | clear-history confirmation if the inline confirm is replaced |
+| `Separator`, `Tooltip`, `Breadcrumb`, `Badge`, `Empty`, `Skeleton` (existing) | chrome details, empty and loading states |
+| `AlertDialog` (existing) | clear-history confirmation |
 
-Generated target versions differ from Nakso (Base UI 1.9: `data-open`, content owns the positioner, no `DropdownMenuPositioner` export). Use the generated API; do not copy Nakso wrappers.
+Use the components as generated for Yard’s preset and the shadcn docs for their API. The generated files are the source of truth for available parts and props; never reach below them.
 
 ### 5.2 File map
 
@@ -317,17 +339,21 @@ Detail pane:
 - States: loading skeleton (`Skeleton`), error banner, empty message.
 - No day groups, no per-session accordion; one batch per screen.
 
-Filter menu (`HistoryFilterMenu`), shadcn `DropdownMenu` anchored to the `SidebarMenuAction` with `side="right"` `align="start"` `sideOffset={8}`:
+Filter panel (`HistoryFilterMenu`): a shadcn `Popover` anchored to the `SidebarMenuAction` with `side="right"` `align="start"` `sideOffset={8}`.
 
-- `DropdownMenuLabel` Sort by; `DropdownMenuRadioGroup` with RadioItems Newest / Oldest / Most saved / Most files
-- `DropdownMenuSeparator`
-- `DropdownMenuLabel` Show; CheckboxItems Done / Best effort / Failed / Cancelled / Already under target / Unsupported
-- `DropdownMenuLabel` Category; CheckboxItems Image / Video / PDF / Document
-- `DropdownMenuLabel` Since; RadioGroup Any time / Last 7 days / Last 30 days
-- `DropdownMenuSeparator`
-- `DropdownMenuItem` Clear filters (disabled when nothing active)
+Why a Popover and not a DropdownMenu: shadcn menus are action menus and close when an item is selected. Filtering needs several independent toggles in one open panel, and reimplementing “stay open” behavior would violate the shadcn rule. `Popover` is the shadcn surface for interactive content, and the shadcn docs show it hosting forms. It looks identical to the approved mock.
 
-Checkable items set Base UI `closeOnClick={false}` so the panel stays open while toggling. Verify this prop in the generated component; if unavailable, accept close-on-toggle rather than hand-rolling the menu. Filters apply immediately; the funnel shows a primary dot while any filter is active. The menu closes when the sidebar collapses.
+Contents, all shadcn:
+
+- `PopoverHeader` (sr-only `PopoverTitle` “Filter history”).
+- `FieldSet` + `FieldLegend` Sort by; `RadioGroup` with RadioGroupItems Newest / Oldest / Most saved / Most files.
+- `FieldSet` + `FieldLegend` Show; `Checkbox` + `Field` rows for Done / Best effort / Failed / Cancelled / Already under target / Unsupported.
+- `FieldSet` + `FieldLegend` Category; `Checkbox` rows for Image / Video / PDF / Document.
+- `FieldSet` + `FieldLegend` Since; `RadioGroup` Any time / Last 7 days / Last 30 days.
+- `Button variant="ghost"` Clear filters, disabled when nothing is active.
+- `Separator` between groups.
+
+Filters apply immediately; the funnel shows a primary dot while any filter is active. The Popover closes when the sidebar collapses. Layout follows the compact two-column rhythm in the mock, but every control is a shadcn control.
 
 Sort: `HistoryFilters` gains `sort?: "newest" | "oldest" | "most_saved" | "most_files"`. Rust sorts after filtering and before pagination; unknown values fall back to `newest`.
 
@@ -375,7 +401,14 @@ About (`AboutDialog`):
 - Effect toggles `.dark` on `document.documentElement` and calls `getCurrentWindow().setTheme(theme)`, ignoring failure.
 - `main.tsx` no longer owns the theme listener.
 
-Deviation from Nakso is deliberate: its async store hydration can paint light before applying dark; a synchronous `localStorage` read plus `matchMedia` avoids the flash.
+Why localStorage rather than `plugin-store` / Rust settings:
+
+- Theme is a non-critical UI preference. The Tauri-focused guidance (Aptabase, “Persistent state in Tauri apps”) recommends localStorage for exactly this category and `tauri-plugin-store` for backend or critical preferences (keys, licenses) that Rust must read. Our settings that affect compression already live in Rust; theme does not belong there.
+- localStorage is synchronous, so the `.dark` class can be applied before the first React render. The store plugin is async over IPC and would need another bootstrap await or accept a light flash.
+- It is the common pattern in Tauri/Vite React apps and the one shadcn’s own dark-mode guidance implies (a small provider reading a stored preference).
+- Caveat recorded: webview storage is per-origin; Tauri’s v1→v2 Windows scheme change reset it once. That is a migration event, not normal operation, and the value is trivially recoverable (falls back to OS preference).
+
+Moving theme into Rust settings later is a one-file change (`useTheme` + a settings field); no UI changes.
 
 ## 11. State ownership
 
@@ -418,7 +451,7 @@ Deviation from Nakso is deliberate: its async store hydration can paint light be
 - Every icon button has `aria-label` plus native `title` (Windows users see native tooltips).
 - History row exposes `aria-expanded` and `aria-controls`; the list has `role="group"`.
 - Batch rows are buttons and support Tab/Enter.
-- Menus, tabs, dialogs, and scroll areas inherit Base UI keyboard behavior; do not override.
+- Menus, popovers, tabs, dialogs, and scroll areas inherit the shadcn primitives’ keyboard behavior; do not override it.
 - ⌘B / Ctrl+B toggles the sidebar.
 - Settings dialog traps focus, closes on Escape/backdrop, and restores focus to the sidebar trigger when possible.
 
@@ -454,9 +487,9 @@ Gate: `yarn build && yarn test && cd src-tauri && cargo test`.
 
 ## 17. Risks
 
-- `transparent: true` on Windows may be a no-op because the body is opaque; the mock’s rounded corners may come from DWM clipping. Keep it to match the reference, verify visually, and drop it only if it changes nothing.
-- Newly generated `dialog` / `dropdown-menu` / `tabs` / `collapsible` / `scroll-area` use Base UI 1.9 APIs; do not copy Nakso’s 1.7-era files. Confirm vertical `Tabs` orientation in the generated component; if unsupported, keep Tabs for panels but drive the rail with a `ToggleGroup` or Buttons.
-- `closeOnClick={false}` support on checkable menu items must be verified in the generated dropdown; fallback is close-on-toggle.
-- Removing `useAutoCollapse` changes Compress/History sizing behavior; the boards must remain usable at 760px with the sidebar open (horizontal scroll is acceptable).
 - Sidebar batch rows are denser than the mock’s 56px rows at 640px height; the list scrolls, so verify at least 5 rows remain visible.
+- Removing `useAutoCollapse` changes Compress/History sizing behavior; the boards must remain usable at 760px with the sidebar open (horizontal scroll is acceptable).
 - plugin-os adds a native dependency; the bootstrap now awaits one IPC call before first paint.
+- The Popover-based filter must visually match the menu in the mock (spacing, section labels, two-column rhythm); it is the one place where “shadcn component choice” overrides “looks like a menu”.
+- `Tabs` vertical orientation is documented by shadcn but must be checked in the generated component; if it is missing, fall back to a horizontal `TabsList` with a left rail layout driven by `TabsTrigger` buttons, not a new component.
+- The About dialog imports `THIRD_PARTY_LICENSES.md?raw`; confirm the bundler includes it in the production build and bump the notices file when engines change.

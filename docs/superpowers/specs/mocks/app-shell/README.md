@@ -16,7 +16,8 @@ Static HTML fragments from the design session. Open directly in a browser; each 
 - Settings saves automatically; there is no draft/Save footer.
 - About copy: “Offline file compression tool” / “No accounts and no telemetry.”
 - History is not a third column; the list lives inside the sidebar.
-- The filter is one dropdown with no submenus, anchored to the right of the sidebar.
+- The filter is one panel with no submenus, anchored to the right of the sidebar. It is implemented with shadcn `Popover` + `Checkbox`/`RadioGroup` so it stays open while toggling; `DropdownMenu` closes on select.
+- Windows is frameless with the default shadow (Windows 11 rounded corners); no transparent window.
 
 ## Not shown in the mocks
 
