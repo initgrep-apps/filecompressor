@@ -73,12 +73,13 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
           variant="link"
           className="self-center"
           aria-expanded={showNotices}
+          aria-controls="third-party-notices"
           onClick={() => setShowNotices((shown) => !shown)}
         >
           Third-party notices…
         </Button>
         {showNotices && (
-          <ScrollArea className="h-48 rounded-xl border">
+          <ScrollArea id="third-party-notices" className="h-48 rounded-xl border">
             <pre
               data-testid="third-party-notices"
               className="p-3 whitespace-pre-wrap font-mono text-xs"

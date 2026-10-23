@@ -100,7 +100,9 @@ describe("NavMenu", () => {
     expect(compress).not.toHaveAttribute("aria-current")
     expect(settings).not.toHaveAttribute("aria-current")
     expect(
-      history.querySelector("[data-slot='dropdown-menu-shortcut'] svg"),
+      history.querySelector(
+        "[data-slot='dropdown-menu-shortcut'] svg[aria-hidden='true']",
+      ),
     ).not.toBeNull()
     expect(
       compress.querySelector("[data-slot='dropdown-menu-shortcut']"),

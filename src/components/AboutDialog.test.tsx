@@ -85,12 +85,27 @@ describe("AboutDialog", () => {
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
-  it("ties the license rows to the generated notices", () => {
+  it("ties the rendered license rows to the generated notices", () => {
     render(<AboutDialog open onOpenChange={vi.fn()} />)
 
-    LICENSE_ROWS.filter(([name]) => name !== "Yard").forEach(([, license]) => {
+    const rows = within(screen.getByRole("dialog")).getAllByRole("listitem")
+    const licenses = rows
+      .slice(1)
+      .map((row) => row.querySelectorAll("span")[1].textContent ?? "")
+
+    licenses.forEach((license) => {
       expect(thirdPartyNotices).toContain(`License: ${license}`)
     })
+
+    const noticeComponents = licenses.reduce(
+      (total, license) =>
+        total +
+        (thirdPartyNotices.match(new RegExp(`License: ${license}`, "g"))
+          ?.length ?? 0),
+      0,
+    )
+
+    expect(thirdPartyNotices).toContain(`Components: ${noticeComponents}`)
   })
 
   it("collapses the notices when the toggle is clicked again", async () => {
@@ -99,15 +114,18 @@ describe("AboutDialog", () => {
     const toggle = screen.getByRole("button", { name: /Third-party notices/ })
 
     expect(toggle).toHaveAttribute("aria-expanded", "false")
+    expect(toggle).toHaveAttribute("aria-controls", "third-party-notices")
 
     await user.click(toggle)
 
     expect(toggle).toHaveAttribute("aria-expanded", "true")
+    expect(document.getElementById("third-party-notices")).not.toBeNull()
     expect(screen.getByRole("dialog").querySelector("pre")).not.toBeNull()
 
     await user.click(toggle)
 
     expect(toggle).toHaveAttribute("aria-expanded", "false")
+    expect(document.getElementById("third-party-notices")).toBeNull()
     expect(screen.getByRole("dialog").querySelector("pre")).toBeNull()
   })
 

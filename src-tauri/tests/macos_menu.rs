@@ -46,18 +46,19 @@ fn main() {
         .iter()
         .map(|submenu| submenu.text().expect("submenu title"))
         .collect::<Vec<_>>();
-    let entries = submenus
-        .iter()
-        .map(|submenu| {
-            submenu
-                .items()
-                .expect("submenu items")
-                .iter()
-                .map(item_text)
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-
+    let mut entries = Vec::new();
+    for submenu in &submenus {
+        let mut texts = Vec::new();
+        for item in submenu.items().expect("submenu items") {
+            assert!(
+                matches!(&item, MenuItemKind::Predefined(_)),
+                "{} must use native predefined items",
+                submenu.text().expect("submenu title")
+            );
+            texts.push(item_text(&item));
+        }
+        entries.push(texts);
+    }
     assert_eq!(titles, ["Yard", "Edit", "Window"]);
     assert_eq!(
         entries,
@@ -74,6 +75,9 @@ fn main() {
             .all(|text| !text.to_lowercase().contains("about")),
         "the macOS menu must not offer About: the dialog is the only About surface"
     );
+
+    app.set_menu(menu).expect("the macOS menu must install");
+    assert!(app.menu().is_some(), "set_menu must retain the app menu");
 }
 
 #[cfg(not(target_os = "macos"))]
