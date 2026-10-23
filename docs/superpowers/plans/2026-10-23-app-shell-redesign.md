@@ -413,25 +413,25 @@ git commit -m "feat(shell): add menus, about dialog, and a native macOS menu wit
 **Interfaces:**
 - `SettingsDialog({ open, onOpenChange })`; sections `general | targets | floors | performance | history`; changes call `save_settings` after 400 ms; a close request awaits the flush and only then commits.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Render with mocked `invoke` (`get_settings` returns defaults). Assert: the five `TabsTrigger`s render; changing retention to 30 then advancing 400 ms calls `save_settings` once; closing within 400 ms flushes the save once; a rejected save shows `Could not save settings` and keeps the dialog open; Reset calls `reset_settings` and shows returned defaults. Update `src/hooks/useSettings.test.ts` for the new contract (boolean return, repeated-failure notification still fires).
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `yarn test src/components/SettingsDialog.test.tsx`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `Dialog` + `DialogContent` (720×540, `max-h-[90%]`, `p-0`, `overflow-hidden`) + visually hidden `DialogHeader`. Vertical `Tabs` rail; `ScrollArea` body; `FieldSet`/`FieldGroup`/`Field` rows; existing `NumberStepper`, `Select`, `Input`. Repack the five cards from `SettingsView.tsx` into section components inside this file. Debounce with a ref. On a close request: `await flush()`; if `saveSettings` returned false, keep the dialog open and toast (`Could not save settings`); otherwise let the owner close. Reset replaces the draft and handles a `null` return.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `yarn test src/components/SettingsDialog.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/SettingsDialog.tsx src/components/SettingsDialog.test.tsx src/hooks/useSettings.ts src/hooks/useSettings.test.ts
