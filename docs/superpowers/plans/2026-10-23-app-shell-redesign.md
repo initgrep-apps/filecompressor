@@ -237,29 +237,29 @@ git commit -m "feat(shell): add persisted theme toggle with native window sync"
 **Interfaces:**
 - Produces: `<DragSurface {...divProps} />`; `<WindowControls />` calling `minimize`, `toggleMaximize`, and `invoke("quit")`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 DragSurface: left `mousedown` with `detail === 1` calls `startDragging`; `detail === 2` does not; `dblclick` calls `toggleMaximize`; a child button's `onMouseDown` stopPropagation prevents the call.
 WindowControls: three buttons with accessible names `Minimize`, `Maximize`, `Close`; each calls the expected API; Close calls `getCurrentWindow().close()`; every button stops mousedown propagation.
 QuitGuard: `preventDefault` always; `confirm` false → no `quit`; `confirm` true → exactly one `quit`; idle → one `quit`.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `yarn test src/components/shell/DragSurface.test.tsx src/components/shell/WindowControls.test.tsx src/components/shell/QuitGuard.test.tsx`
 Expected: FAIL — modules not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `DragSurface` uses `getCurrentWindow()`; spread caller props before its handlers so callers cannot silently disable dragging. `WindowControls` renders `Separator orientation="vertical"` then three shadcn ghost icon buttons (`RiSubtractLine`, `RiWindowLine`, `RiCloseLine`), native `title`, mousedown stopPropagation. Close calls `getCurrentWindow().close()`, never `invoke("quit")` directly.
 
 `QuitGuard` (mounted once in `App`) registers `getCurrentWindow().onCloseRequested`: always `event.preventDefault()`, then `if (isCompressing && !(await confirm(...)))` return, else `await invoke("quit")`. Tests: preventDefault always; confirm false → no quit; confirm true → one quit; idle → one quit. Note in a comment: `shortcut: ⌘Q bypasses onCloseRequested and exits directly, acceptable for a deliberate OS quit`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `yarn test src/components/shell/DragSurface.test.tsx src/components/shell/WindowControls.test.tsx src/components/shell/QuitGuard.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/shell/DragSurface.tsx src/components/shell/DragSurface.test.tsx src/components/shell/WindowControls.tsx src/components/shell/WindowControls.test.tsx src/components/shell/QuitGuard.tsx src/components/shell/QuitGuard.test.tsx
