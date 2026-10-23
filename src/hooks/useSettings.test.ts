@@ -17,9 +17,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { invoke } from '@tauri-apps/api/core'
+import { toast } from 'sonner'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }))
+vi.mock('sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 import { useSettings } from '@/hooks/useSettings'
 import type { Settings } from '@/types'
@@ -64,24 +66,28 @@ describe('useSettings', () => {
     const { result } = renderHook(() => useSettings())
     await act(async () => {})
     const updated: Settings = { ...mockSettings, outputFolder: '/tmp/new' }
+    let saved: boolean | undefined
     await act(async () => {
-      await result.current.saveSettings(updated)
+      saved = await result.current.saveSettings(updated)
     })
+    expect(saved).toBe(true)
     expect(invoke).toHaveBeenLastCalledWith('save_settings', { settings: updated })
     expect(result.current.settings).toEqual(updated)
     expect(result.current.error).toBeNull()
   })
 
-  it('does not update state when save rejects', async () => {
+  it('does not update state and returns false when save rejects', async () => {
     vi.mocked(invoke)
       .mockResolvedValueOnce(mockSettings)
       .mockRejectedValueOnce(new Error('disk full'))
     const { result } = renderHook(() => useSettings())
     await act(async () => {})
     const updated: Settings = { ...mockSettings, outputFolder: '/tmp/new' }
+    let saved: boolean | undefined
     await act(async () => {
-      await result.current.saveSettings(updated)
+      saved = await result.current.saveSettings(updated)
     })
+    expect(saved).toBe(false)
     expect(result.current.settings).toEqual(mockSettings)
     expect(result.current.error).toContain('Could not save settings')
     expect(result.current.error).toContain('disk full')
@@ -170,6 +176,13 @@ describe('useSettings', () => {
     })
     expect(picked).toBeNull()
     expect(result.current.error).toBeNull()
+    expect(toast.error).toHaveBeenCalledWith(
+      'Could not open folder picker',
+      expect.objectContaining({
+        id: 'settings-folder-picker',
+        description: 'picker dead',
+      }),
+    )
     expect(consoleSpy).toHaveBeenCalledWith(
       'Folder picker failed:',
       expect.any(Error),
