@@ -373,29 +373,29 @@ git commit -m "feat(history): add history provider and formatting helpers"
 - `AppMenu({ onAbout, onQuit })`, trigger `aria-label="App menu"`.
 - `AboutDialog({ open, onOpenChange })`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 NavMenu: `☰` shows Compress, History, separator, Settings; clicking History calls `onNavigate("history")`; the active view has a checkmark.
 AppMenu: About calls `onAbout`; Quit calls `onQuit`; exactly one separator.
 AboutDialog: shows `Yard`, `Offline file compression tool`, `No accounts and no telemetry.`, `Version 0.1.0` (from package.json), five license rows, and expands the raw notices text.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `yarn test src/components/shell/NavMenu.test.tsx src/components/shell/AppMenu.test.tsx src/components/AboutDialog.test.tsx`
 Expected: FAIL — modules not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Both menus use `DropdownMenu` + `DropdownMenuTrigger render={<Button …/>}` + `DropdownMenuGroup`; items carry the sidebar glyphs via `data-icon`. `AboutDialog` uses `Dialog`, `DialogTitle`, `DialogHeader` and a `ScrollArea` for `THIRD_PARTY_LICENSES.md?raw`; version comes from `import { version } from "../../package.json"`. `AppMenu`'s Quit item executes `onQuit`; the wiring (Task 9) connects it to `getCurrentWindow().close()` — never `invoke("quit")` — so the click crosses QuitGuard.
 
 Native macOS menu (`src-tauri/src/lib.rs`, `#[cfg(target_os = "macos")]` in `setup`): build a `MenuBuilder` with three `SubmenuBuilder`s — app (`hide`, `hide_others`, separator, `quit`), `Edit` (`undo`, `redo`, separator, `cut`, `copy`, `paste`, `select_all`), `Window` (`minimize`, `maximize`, separator, `close_window`) — and `app.set_menu(menu)?`. **No About item**, so the only About is the dialog. Windows/Linux get no menu bar. This is the app's only native code in this task; `cargo test` must stay green.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `yarn test src/components/shell/NavMenu.test.tsx src/components/shell/AppMenu.test.tsx src/components/AboutDialog.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/shell/NavMenu.tsx src/components/shell/NavMenu.test.tsx src/components/shell/AppMenu.tsx src/components/shell/AppMenu.test.tsx src/components/AboutDialog.tsx src/components/AboutDialog.test.tsx src-tauri/src/lib.rs

@@ -51,6 +51,109 @@ pub(crate) fn setup_history<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MacMenuItem {
+    Hide,
+    HideOthers,
+    Separator,
+    Quit,
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    Minimize,
+    Maximize,
+    CloseWindow,
+}
+
+#[cfg(target_os = "macos")]
+const YARD_MENU: &[MacMenuItem] = &[
+    MacMenuItem::Hide,
+    MacMenuItem::HideOthers,
+    MacMenuItem::Separator,
+    MacMenuItem::Quit,
+];
+
+#[cfg(target_os = "macos")]
+const EDIT_MENU: &[MacMenuItem] = &[
+    MacMenuItem::Undo,
+    MacMenuItem::Redo,
+    MacMenuItem::Separator,
+    MacMenuItem::Cut,
+    MacMenuItem::Copy,
+    MacMenuItem::Paste,
+    MacMenuItem::SelectAll,
+];
+
+#[cfg(target_os = "macos")]
+const WINDOW_MENU: &[MacMenuItem] = &[
+    MacMenuItem::Minimize,
+    MacMenuItem::Maximize,
+    MacMenuItem::Separator,
+    MacMenuItem::CloseWindow,
+];
+
+#[cfg(target_os = "macos")]
+fn macos_menu_spec() -> [(&'static str, &'static [MacMenuItem]); 3] {
+    [
+        ("Yard", YARD_MENU),
+        ("Edit", EDIT_MENU),
+        ("Window", WINDOW_MENU),
+    ]
+}
+
+#[cfg(target_os = "macos")]
+pub fn build_macos_menu<R: tauri::Runtime, M: tauri::Manager<R>>(
+    manager: &M,
+) -> tauri::Result<tauri::menu::Menu<R>> {
+    use tauri::menu::{MenuBuilder, Submenu, SubmenuBuilder};
+
+    fn submenu<R: tauri::Runtime, M: tauri::Manager<R>>(
+        manager: &M,
+        title: &str,
+        items: &[MacMenuItem],
+    ) -> tauri::Result<Submenu<R>> {
+        let mut builder = SubmenuBuilder::new(manager, title);
+        for item in items {
+            builder = match item {
+                MacMenuItem::Hide => builder.hide(),
+                MacMenuItem::HideOthers => builder.hide_others(),
+                MacMenuItem::Separator => builder.separator(),
+                MacMenuItem::Quit => builder.quit(),
+                MacMenuItem::Undo => builder.undo(),
+                MacMenuItem::Redo => builder.redo(),
+                MacMenuItem::Cut => builder.cut(),
+                MacMenuItem::Copy => builder.copy(),
+                MacMenuItem::Paste => builder.paste(),
+                MacMenuItem::SelectAll => builder.select_all(),
+                MacMenuItem::Minimize => builder.minimize(),
+                MacMenuItem::Maximize => builder.maximize(),
+                MacMenuItem::CloseWindow => builder.close_window(),
+            };
+        }
+        builder.build()
+    }
+
+    let [(yard_title, yard_items), (edit_title, edit_items), (window_title, window_items)] =
+        macos_menu_spec();
+    let app_menu = submenu(manager, yard_title, yard_items)?;
+    let edit_menu = submenu(manager, edit_title, edit_items)?;
+    let window_menu = submenu(manager, window_title, window_items)?;
+    MenuBuilder::new(manager)
+        .items(&[&app_menu, &edit_menu, &window_menu])
+        .build()
+}
+
+#[cfg(all(target_os = "macos", not(test)))]
+fn install_macos_menu<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    let menu = build_macos_menu(app)?;
+    let _previous = app.set_menu(menu)?;
+    Ok(())
+}
+
 pub(crate) fn setup_hook<R: tauri::Runtime>(
     app: &mut tauri::App<R>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -60,6 +163,10 @@ pub(crate) fn setup_hook<R: tauri::Runtime>(
     }
     temp::cleanup_stale_temp_files(app.handle());
     setup_history(app.handle());
+    #[cfg(all(target_os = "macos", not(test)))]
+    if let Err(error) = install_macos_menu(app) {
+        eprintln!("warn: macOS menu install failed; Tauri default menu remains active (native About visible): {error}");
+    }
     Ok(())
 }
 
@@ -318,6 +425,42 @@ mod wiring_tests {
         assert!(
             app.try_state::<HistoryStore>().is_some(),
             "startup trim failure must not disable history for the session"
+        );
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_menu_tests {
+    use super::*;
+
+    #[test]
+    fn macos_menu_has_exactly_three_submenus() {
+        let spec = macos_menu_spec();
+
+        assert_eq!(spec.len(), 3);
+        assert_eq!(spec.map(|(title, _)| title), ["Yard", "Edit", "Window"]);
+    }
+
+    #[test]
+    fn macos_menu_entries_match_the_spec() {
+        use MacMenuItem::*;
+
+        let spec = macos_menu_spec();
+
+        assert_eq!(
+            spec[0].1,
+            &[Hide, HideOthers, Separator, Quit][..],
+            "the Yard submenu must offer hide, hide others, a separator, and quit"
+        );
+        assert_eq!(
+            spec[1].1,
+            &[Undo, Redo, Separator, Cut, Copy, Paste, SelectAll][..],
+            "the Edit submenu must keep undo/redo, a separator, then the clipboard items"
+        );
+        assert_eq!(
+            spec[2].1,
+            &[Minimize, Maximize, Separator, CloseWindow][..],
+            "the Window submenu must offer minimize, maximize, a separator, and close"
         );
     }
 }

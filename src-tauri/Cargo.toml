@@ -42,6 +42,10 @@ tauri = { version = "2.12", features = ["test"] }
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"
 
+[[test]]
+name = "macos_menu"
+harness = false
+
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
