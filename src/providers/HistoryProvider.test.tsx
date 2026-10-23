@@ -169,6 +169,9 @@ function Probe() {
       <button type="button" onClick={() => ctx.setFilters({ search: 'beta' })}>
         apply-search-beta
       </button>
+      <button type="button" onClick={() => ctx.setFilters({ search: '  ' })}>
+        apply-search-blank
+      </button>
       <button type="button" onClick={() => ctx.setExpanded(false)}>
         collapse
       </button>
@@ -282,15 +285,16 @@ describe('HistoryProvider', () => {
     await flush()
   })
 
-  it('cancels a pending search when the text is cleared', async () => {
+  it('cancels a pending search when the text is cleared without refetching', async () => {
     mockHistory()
     await renderProvider()
     fireEvent.click(screen.getByText('type-alpha'))
     await advance(100)
+    const before = historyCalls().length
     fireEvent.click(screen.getByText('clear-search'))
     await advance(300)
     await flush()
-    expect(searchCalls()).toHaveLength(0)
+    expect(historyCalls()).toHaveLength(before)
     expect(lastFilters().search).toBeUndefined()
   })
 
@@ -304,6 +308,32 @@ describe('HistoryProvider', () => {
     await flush()
     expect(lastFilters().search).toBe('alpha')
     expect(lastFilters().categories).toEqual(['image'])
+  })
+
+  it('keeps the applied search when filters are replaced without a search key', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('type-alpha'))
+    await advance(300)
+    await flush()
+    expect(lastFilters().search).toBe('alpha')
+
+    fireEvent.click(screen.getByText('apply-category'))
+    await flush()
+    expect(lastFilters().search).toBe('alpha')
+    expect(lastFilters().categories).toEqual(['image'])
+    expect(screen.getByTestId('search-text')).toHaveTextContent('alpha')
+  })
+
+  it('normalizes a blank search to undefined', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('apply-search-blank'))
+    await flush()
+    expect(
+      JSON.parse(screen.getByTestId('filters').textContent ?? '{}').search
+    ).toBeUndefined()
+    expect(screen.getByTestId('search-text').textContent).toBe('')
   })
 
   it('replaces filters so clearing statuses and categories sticks', async () => {
@@ -356,10 +386,12 @@ describe('HistoryProvider', () => {
   })
 
   it('clears a load error through clearError', async () => {
-    vi.mocked(invoke).mockRejectedValueOnce(new Error('boom'))
+    vi.mocked(invoke).mockRejectedValue(new Error('boom'))
     await renderProvider()
     expect(screen.getByTestId('error')).toHaveTextContent('Could not load history: boom')
     fireEvent.click(screen.getByText('clear-error'))
+    expect(screen.getByTestId('error')).toHaveTextContent('none')
+    await flush()
     expect(screen.getByTestId('error')).toHaveTextContent('none')
   })
 

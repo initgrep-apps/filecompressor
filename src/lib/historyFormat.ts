@@ -29,7 +29,7 @@ export function fileCountLabel(count: number): string {
 
 export function savedPercent(original: number, compressed: number | null): number | null {
   if (!Number.isFinite(original) || original <= 0) return null
-  if (compressed === null || !Number.isFinite(compressed)) return null
+  if (compressed === null || !Number.isFinite(compressed) || compressed < 0) return null
   return Math.max(0, Math.round(((original - compressed) / original) * 100))
 }
 
@@ -55,19 +55,20 @@ export function countOutcome(files: HistoryFile[]): SessionOutcome {
   }
   return files.reduce((acc, file) => {
     const key = OUTCOME_COUNT_KEYS[file.status]
-    if (key !== null) acc[key] += 1
+    if (key != null) acc[key] += 1
     return acc
   }, counts)
 }
 
 export function batchLabel(ms: number, now: Date): string {
-  const day = dayLabel(ms, now)
-  if (day === '—') return '—'
+  if (!Number.isFinite(ms)) return '—'
+  const date = new Date(ms)
+  if (!Number.isFinite(date.getTime())) return '—'
   const time = new Intl.DateTimeFormat(undefined, {
     hour: 'numeric',
     minute: '2-digit',
-  }).format(new Date(ms))
-  return `${day} · ${time}`
+  }).format(date)
+  return `${dayLabel(ms, now)} · ${time}`
 }
 
 export function describeSince(ms: number | undefined, now: Date): string {
@@ -81,7 +82,7 @@ export function describeSince(ms: number | undefined, now: Date): string {
 }
 
 export function formatDuration(ms: number): string {
-  if (ms <= 0) return '—'
+  if (!Number.isFinite(ms) || ms <= 0) return '—'
   if (ms < 60_000) {
     const seconds = Math.max(1, Math.floor(ms / 1_000))
     return `${seconds}s`

@@ -81,6 +81,9 @@ describe('historyFormat', () => {
 
   it('formats duration boundaries', () => {
     expect(formatDuration(-5)).toBe('—')
+    expect(formatDuration(Number.NaN)).toBe('—')
+    expect(formatDuration(Number.POSITIVE_INFINITY)).toBe('—')
+    expect(formatDuration(Number.NEGATIVE_INFINITY)).toBe('—')
     expect(formatDuration(999)).toBe('1s')
     expect(formatDuration(1_000)).toBe('1s')
     expect(formatDuration(59_999)).toBe('59s')
@@ -181,6 +184,7 @@ describe('history aggregates', () => {
     expect(savedPercent(-10, 5)).toBeNull()
     expect(savedPercent(Number.POSITIVE_INFINITY, 10)).toBeNull()
     expect(savedPercent(100, Number.POSITIVE_INFINITY)).toBeNull()
+    expect(savedPercent(100, -10)).toBeNull()
   })
 
   it('counts session outcomes', () => {
@@ -202,6 +206,7 @@ describe('history aggregates', () => {
         fileWithStatus('already_under_target'),
         fileWithStatus('pending'),
         fileWithStatus('compressing'),
+        fileWithStatus('bogus' as HistoryFile['status']),
       ])
     ).toEqual(expected)
   })

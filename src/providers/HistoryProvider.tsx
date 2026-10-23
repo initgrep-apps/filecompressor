@@ -49,13 +49,19 @@ const HistoryContext = createContext<HistoryContextValue | null>(null)
 
 const searchToFilter = (text: string): string | undefined => text.trim() || undefined
 
+const NO_FILTERS = {
+  search: undefined,
+  statuses: undefined,
+  categories: undefined,
+  sinceMs: undefined,
+  outputFolder: undefined,
+  sort: undefined,
+} satisfies Record<keyof HistoryFilters, undefined>
+
 const normalizeFilters = (partial: Partial<HistoryFilters>): HistoryFilters => ({
-  search: partial.search,
-  statuses: partial.statuses,
-  categories: partial.categories,
-  sinceMs: partial.sinceMs,
-  outputFolder: partial.outputFolder,
-  sort: partial.sort,
+  ...NO_FILTERS,
+  ...partial,
+  search: searchToFilter(partial.search ?? ''),
 })
 
 export function HistoryProvider({ children }: { children: ReactNode }) {
@@ -63,6 +69,8 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(true)
   const [searchText, setSearchText] = useState('')
+  const searchTextRef = useRef(searchText)
+  searchTextRef.current = searchText
 
   useEffect(() => {
     const sessions = history.response?.sessions
@@ -101,9 +109,11 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
         window.clearTimeout(searchTimerRef.current)
         searchTimerRef.current = null
       }
-      setSearchText(partial.search ?? '')
+      setSearchText(searchToFilter(partial.search ?? '') ?? '')
     }
-    setFiltersRef.current(normalizeFilters(partial))
+    const search =
+      'search' in partial ? partial.search : searchToFilter(searchTextRef.current)
+    setFiltersRef.current(normalizeFilters({ ...partial, search }))
   }, [])
 
   const selectSession = useCallback(
