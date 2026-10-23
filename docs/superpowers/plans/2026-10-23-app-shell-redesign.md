@@ -452,25 +452,25 @@ git commit -m "feat(settings): move settings into an auto-saving dialog"
 - `SidebarNav({ activeView, onNavigate, onOpenSettings })`; renders Compress, History (expandable trigger placeholder), footer Settings.
 - `ViewId = "compress" | "history"`.
 
-- [ ] **Step 1: Write failing shell tests**
+- [x] **Step 1: Write failing shell tests**
 
 Replace `App.test.tsx` assertions: no `Yard` brand in the sidebar, no version/GPL badges; nav has Compress and History; Settings exists only in the footer; toggling collapses the sidebar and shows `☰`; breadcrumb reads Compress/History; macOS shows the toggle in both states; win32 shows window controls and hides the top-bar toggle while the sidebar is visible; no `SidebarRail`; the ⋯ menu's Quit calls `getCurrentWindow().close()` (never `invoke("quit")`); at a 760px viewport (set `window.innerWidth` before render — `useIsMobile` reads it directly in its initial effect) the sidebar renders as the `Sheet` and selecting a nav row closes it. `SidebarNav.test.tsx`: Settings click calls `onOpenSettings`; History click calls `onNavigate("history")`.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `yarn test src/App.test.tsx src/components/shell/SidebarNav.test.tsx`
 Expected: FAIL — old shell renders brand/settings nav.
 
-- [ ] **Step 3: Implement the shell**
+- [x] **Step 3: Implement the shell**
 
 `App`: `CompressionProvider` → `HistoryProvider` → `SidebarProvider` → `Sidebar collapsible="offcanvas"` + `SidebarInset`. Pass `className="overflow-hidden"` to `SidebarContent` (vendored default is `overflow-auto`). Do not render `SidebarRail`. On macOS the `SidebarHeader` is empty on desktop; inside the mobile Sheet it shows the collapse trigger on every platform. Mount `QuitGuard` under `CompressionProvider` (it reads `isCompressing`), then `SettingsDialog`, `AboutDialog`, and `HistoryFilterDialog` (wired in Task 11). Wire `AppMenu` with `onQuit={() => getCurrentWindow().close()}` so every quit crosses the guard — never `invoke("quit")` from the menu. The sidebar's History row and batch rows close the Sheet on mobile (`if (isMobile) setOpenMobile(false)`). `activeView` is local state; Settings no longer a view. Remove the `SettingsView` route and its import. `TopBar`: `DragSurface` row, left cluster (toggle rules by platform, `☰` when hidden, breadcrumb `History › batch` via `batchLabel`), right cluster (`ThemeToggle`, `AppMenu`, `WindowControls` on non-darwin). Use `const visible = isMobile ? openMobile : open`; the `pl-22` clearance applies whenever `!visible` on darwin. `SidebarHeader`: empty on macOS desktop; otherwise glyph + `SidebarTrigger` (in the Sheet: close). Remove `useAutoCollapse(boardRef)` from `CompressView` only (HistoryView/Settings cleanup comes in Tasks 12/13).
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `yarn test src/App.test.tsx src/components/shell/SidebarNav.test.tsx src/components/shell/TopBar.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/App.tsx src/App.test.tsx src/components/shell/TopBar.tsx src/components/shell/TopBar.test.tsx src/components/shell/SidebarNav.tsx src/components/shell/SidebarNav.test.tsx src/views/CompressView.tsx
