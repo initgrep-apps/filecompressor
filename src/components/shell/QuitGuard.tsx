@@ -17,8 +17,8 @@
 import { useEffect, useRef } from "react"
 import { invoke } from "@tauri-apps/api/core"
 import { getCurrentWindow } from "@tauri-apps/api/window"
-import type { UnlistenFn } from "@tauri-apps/api/event"
 import { confirm } from "@tauri-apps/plugin-dialog"
+import { toast } from "sonner"
 import { useCompressionContext } from "@/providers/CompressionProvider"
 
 export function QuitGuard() {
@@ -27,32 +27,48 @@ export function QuitGuard() {
   isCompressingRef.current = isCompressing
 
   useEffect(() => {
-    let unlisten: UnlistenFn | undefined
-    let mounted = true
+    let quitting = false
 
     // shortcut: ⌘Q bypasses onCloseRequested and exits directly, acceptable for a deliberate OS quit
-    void getCurrentWindow()
-      .onCloseRequested(async (event) => {
-        event.preventDefault()
-        if (
-          isCompressingRef.current &&
-          !(await confirm("Compression is still running. Quit anyway?", {
+    const registered = getCurrentWindow().onCloseRequested(async (event) => {
+      event.preventDefault()
+      if (quitting) return
+
+      if (isCompressingRef.current) {
+        try {
+          const confirmed = await confirm("Compression is still running. Quit anyway?", {
             title: "Quit Yard",
             kind: "warning",
-          }))
-        ) {
+          })
+          if (!confirmed || quitting) return
+        } catch (error) {
+          console.error("quit confirmation failed:", error)
+          toast.error("Could not confirm quit — the window stays open.")
           return
         }
+      }
+
+      quitting = true
+      try {
         await invoke("quit")
-      })
-      .then((stop) => {
-        if (mounted) unlisten = stop
-        else stop()
-      })
+      } catch (error) {
+        quitting = false
+        console.error("quit failed:", error)
+        toast.error("Could not quit the app — the window stays open.")
+      }
+    })
+
+    void registered.catch((error) => {
+      console.error("quit guard registration failed:", error)
+      toast.error("Close protection is off — save your work before closing.")
+    })
 
     return () => {
-      mounted = false
-      unlisten?.()
+      void registered
+        .then((stop) => stop())
+        .catch((error) => {
+          console.error("quit guard cleanup failed:", error)
+        })
     }
   }, [])
 

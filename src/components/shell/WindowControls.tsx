@@ -17,6 +17,7 @@
 import type { MouseEvent } from "react"
 import { RiCloseLine, RiSubtractLine, RiWindowLine } from "@remixicon/react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 
@@ -26,16 +27,22 @@ export function WindowControls() {
   const win = getCurrentWindow()
 
   return (
-    <div className="flex items-center gap-1">
+    <div
+      className="flex items-center gap-1"
+      onMouseDown={stopPropagation}
+      onDoubleClick={stopPropagation}
+    >
       <Separator orientation="vertical" className="h-4" />
       <Button
         variant="ghost"
         size="icon-sm"
         aria-label="Minimize"
         title="Minimize"
-        onMouseDown={stopPropagation}
-        onDoubleClick={stopPropagation}
-        onClick={() => void win.minimize()}
+        onClick={() => {
+          void win
+            .minimize()
+            .catch((error) => console.error("window minimize failed:", error))
+        }}
       >
         <RiSubtractLine />
       </Button>
@@ -44,9 +51,11 @@ export function WindowControls() {
         size="icon-sm"
         aria-label="Maximize"
         title="Maximize"
-        onMouseDown={stopPropagation}
-        onDoubleClick={stopPropagation}
-        onClick={() => void win.toggleMaximize()}
+        onClick={() => {
+          void win
+            .toggleMaximize()
+            .catch((error) => console.error("window maximize failed:", error))
+        }}
       >
         <RiWindowLine />
       </Button>
@@ -55,9 +64,12 @@ export function WindowControls() {
         size="icon-sm"
         aria-label="Close"
         title="Close"
-        onMouseDown={stopPropagation}
-        onDoubleClick={stopPropagation}
-        onClick={() => void win.close()}
+        onClick={() => {
+          void win.close().catch((error) => {
+            console.error("window close failed:", error)
+            toast.error("Could not close the window")
+          })
+        }}
       >
         <RiCloseLine />
       </Button>

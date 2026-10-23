@@ -53,6 +53,22 @@ describe("DragSurface", () => {
     expect(win.startDragging).not.toHaveBeenCalled()
   })
 
+  it("does not start dragging on a non-left mousedown", () => {
+    render(<DragSurface data-testid="drag-surface">content</DragSurface>)
+
+    fireEvent.mouseDown(screen.getByTestId("drag-surface"), { detail: 1, buttons: 2 })
+
+    expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
+  it("does not start dragging on a third click", () => {
+    render(<DragSurface data-testid="drag-surface">content</DragSurface>)
+
+    fireEvent.mouseDown(screen.getByTestId("drag-surface"), { detail: 3, buttons: 1 })
+
+    expect(win.startDragging).not.toHaveBeenCalled()
+  })
+
   it("toggles maximize on double click", () => {
     render(<DragSurface data-testid="drag-surface">content</DragSurface>)
 

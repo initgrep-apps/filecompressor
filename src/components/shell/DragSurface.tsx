@@ -17,17 +17,23 @@
 import type { ComponentProps } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 
-export function DragSurface(props: ComponentProps<"div">) {
+type DragSurfaceProps = Omit<ComponentProps<"div">, "onMouseDown" | "onDoubleClick">
+
+export function DragSurface(props: DragSurfaceProps) {
   return (
     <div
       {...props}
       onMouseDown={(event) => {
-        if (event.buttons === 1 && event.detail !== 2) {
-          void getCurrentWindow().startDragging()
+        if (event.buttons === 1 && event.detail === 1) {
+          void getCurrentWindow()
+            .startDragging()
+            .catch((error) => console.error("window drag failed:", error))
         }
       }}
       onDoubleClick={() => {
-        void getCurrentWindow().toggleMaximize()
+        void getCurrentWindow()
+          .toggleMaximize()
+          .catch((error) => console.error("window maximize failed:", error))
       }}
     />
   )

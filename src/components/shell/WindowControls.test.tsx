@@ -14,29 +14,45 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { beforeEach, describe, expect, it, vi } from "vitest"
-import { fireEvent, render, screen } from "@testing-library/react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
+
+const { invokeMock, toastErrorMock } = vi.hoisted(() => ({
+  invokeMock: vi.fn(),
+  toastErrorMock: vi.fn(),
+}))
 
 vi.mock("@tauri-apps/api/window", async () => {
   const { mockWindow } = await import("@/lib/test-tauri")
   const win = mockWindow()
   return { getCurrentWindow: () => win }
 })
+vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }))
+vi.mock("sonner", () => ({ toast: { error: toastErrorMock } }))
 
 import { WindowControls } from "@/components/shell/WindowControls"
 import { mockWindow } from "@/lib/test-tauri"
 
 const win = getCurrentWindow() as unknown as ReturnType<typeof mockWindow>
 
+let consoleError: ReturnType<typeof vi.spyOn>
+
 beforeEach(() => {
+  consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+  invokeMock.mockReset()
+  toastErrorMock.mockReset()
   win.minimize.mockReset()
   win.toggleMaximize.mockReset()
   win.close.mockReset()
   win.minimize.mockResolvedValue(undefined)
   win.toggleMaximize.mockResolvedValue(undefined)
   win.close.mockResolvedValue(undefined)
+})
+
+afterEach(() => {
+  consoleError.mockRestore()
 })
 
 describe("WindowControls", () => {
@@ -84,6 +100,17 @@ describe("WindowControls", () => {
     expect(win.toggleMaximize).not.toHaveBeenCalled()
   })
 
+  it("never invokes the quit command from any control", async () => {
+    const user = userEvent.setup()
+    render(<WindowControls />)
+
+    for (const name of ["Minimize", "Maximize", "Close"]) {
+      await user.click(screen.getByRole("button", { name }))
+    }
+
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
   it("stops mousedown and double click propagation from every button", () => {
     const onMouseDown = vi.fn()
     const onDoubleClick = vi.fn()
@@ -101,5 +128,16 @@ describe("WindowControls", () => {
 
     expect(onMouseDown).not.toHaveBeenCalled()
     expect(onDoubleClick).not.toHaveBeenCalled()
+  })
+
+  it("reports a failed close instead of crashing", async () => {
+    win.close.mockRejectedValue(new Error("close failed"))
+    const user = userEvent.setup()
+    render(<WindowControls />)
+
+    await user.click(screen.getByRole("button", { name: "Close" }))
+
+    await waitFor(() => expect(toastErrorMock).toHaveBeenCalledTimes(1))
+    expect(consoleError).toHaveBeenCalled()
   })
 })

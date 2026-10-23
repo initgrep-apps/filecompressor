@@ -14,13 +14,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, waitFor } from "@testing-library/react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { act, render, waitFor } from "@testing-library/react"
 import { getCurrentWindow, type CloseRequestedEvent } from "@tauri-apps/api/window"
 
-const { invokeMock, confirmMock } = vi.hoisted(() => ({
+const { invokeMock, confirmMock, compressionMock, toastErrorMock } = vi.hoisted(() => ({
   invokeMock: vi.fn(),
   confirmMock: vi.fn(),
+  compressionMock: vi.fn(),
+  toastErrorMock: vi.fn(),
 }))
 
 vi.mock("@tauri-apps/api/window", async () => {
@@ -29,44 +31,52 @@ vi.mock("@tauri-apps/api/window", async () => {
   return { getCurrentWindow: () => win }
 })
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }))
-vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }))
-vi.mock("@tauri-apps/plugin-dialog", () => ({ confirm: confirmMock, open: vi.fn() }))
+vi.mock("@tauri-apps/plugin-dialog", () => ({ confirm: confirmMock }))
+vi.mock("@/providers/CompressionProvider", () => ({
+  useCompressionContext: compressionMock,
+}))
+vi.mock("sonner", () => ({ toast: { error: toastErrorMock } }))
 
 import { QuitGuard } from "@/components/shell/QuitGuard"
-import {
-  CompressionContext,
-  type CompressionContextValue,
-} from "@/providers/CompressionProvider"
 import { mockWindow } from "@/lib/test-tauri"
 
 const win = getCurrentWindow() as unknown as ReturnType<typeof mockWindow>
+
+let consoleError: ReturnType<typeof vi.spyOn>
 
 function closeEvent() {
   const preventDefault = vi.fn()
   return { event: { preventDefault } as unknown as CloseRequestedEvent, preventDefault }
 }
 
-async function mountGuard(isCompressing: boolean) {
-  render(
-    <CompressionContext.Provider value={{ isCompressing } as CompressionContextValue}>
-      <QuitGuard />
-    </CompressionContext.Provider>,
-  )
+function renderGuard(isCompressing = false) {
+  compressionMock.mockReturnValue({ isCompressing })
+  return render(<QuitGuard />)
+}
+
+async function capturedHandler() {
   await waitFor(() => expect(win.onCloseRequested).toHaveBeenCalled())
   return win.onCloseRequested.mock.calls[0][0]
 }
 
 beforeEach(() => {
+  consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
   invokeMock.mockReset()
-  invokeMock.mockResolvedValue(undefined)
   confirmMock.mockReset()
+  compressionMock.mockReset()
+  toastErrorMock.mockReset()
   win.onCloseRequested.mockReset()
   win.onCloseRequested.mockResolvedValue(vi.fn())
 })
 
+afterEach(() => {
+  consoleError.mockRestore()
+})
+
 describe("QuitGuard", () => {
   it("always prevents the default close", async () => {
-    const handler = await mountGuard(false)
+    renderGuard()
+    const handler = await capturedHandler()
     const { event, preventDefault } = closeEvent()
 
     await handler(event)
@@ -76,7 +86,51 @@ describe("QuitGuard", () => {
 
   it("keeps the window open when the user cancels while compressing", async () => {
     confirmMock.mockResolvedValue(false)
-    const handler = await mountGuard(true)
+    renderGuard(true)
+    const handler = await capturedHandler()
+    const { event, preventDefault } = closeEvent()
+
+    await handler(event)
+
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  it("quits exactly once when the user confirms while compressing", async () => {
+    confirmMock.mockResolvedValue(true)
+    renderGuard(true)
+    const handler = await capturedHandler()
+    const { event, preventDefault } = closeEvent()
+
+    await handler(event)
+
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(invokeMock).toHaveBeenCalledTimes(1)
+    expect(invokeMock).toHaveBeenCalledWith("quit")
+  })
+
+  it("quits immediately when idle", async () => {
+    renderGuard()
+    const handler = await capturedHandler()
+    const { event, preventDefault } = closeEvent()
+
+    await handler(event)
+
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(confirmMock).not.toHaveBeenCalled()
+    expect(invokeMock).toHaveBeenCalledTimes(1)
+    expect(invokeMock).toHaveBeenCalledWith("quit")
+  })
+
+  it("reads a fresh isCompressing value after rerender", async () => {
+    const view = renderGuard(false)
+    const handler = await capturedHandler()
+
+    compressionMock.mockReturnValue({ isCompressing: true })
+    view.rerender(<QuitGuard />)
+    confirmMock.mockResolvedValue(false)
 
     await handler(closeEvent().event)
 
@@ -84,24 +138,98 @@ describe("QuitGuard", () => {
     expect(invokeMock).not.toHaveBeenCalled()
   })
 
-  it("quits exactly once when the user confirms while compressing", async () => {
-    confirmMock.mockResolvedValue(true)
-    const handler = await mountGuard(true)
+  it("registers the close handler exactly once across isCompressing changes", async () => {
+    const view = renderGuard(false)
+    await capturedHandler()
 
-    await handler(closeEvent().event)
+    compressionMock.mockReturnValue({ isCompressing: true })
+    view.rerender(<QuitGuard />)
 
-    expect(confirmMock).toHaveBeenCalledTimes(1)
-    expect(invokeMock).toHaveBeenCalledTimes(1)
-    expect(invokeMock).toHaveBeenCalledWith("quit")
+    expect(win.onCloseRequested).toHaveBeenCalledTimes(1)
   })
 
-  it("quits immediately when idle", async () => {
-    const handler = await mountGuard(false)
+  it("unlistens on unmount", async () => {
+    const stop = vi.fn()
+    win.onCloseRequested.mockResolvedValue(stop)
+    const { unmount } = renderGuard()
+    await capturedHandler()
+
+    unmount()
+
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1))
+  })
+
+  it("unlistens when registration resolves after unmount", async () => {
+    let resolveRegistration: ((stop: () => void) => void) | undefined
+    win.onCloseRequested.mockImplementation(
+      () =>
+        new Promise<() => void>((resolve) => {
+          resolveRegistration = resolve
+        }),
+    )
+    const { unmount } = renderGuard()
+    await capturedHandler()
+
+    unmount()
+    const stop = vi.fn()
+    await act(async () => {
+      resolveRegistration?.(stop)
+    })
+
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1))
+  })
+
+  it("reports a failed registration", async () => {
+    win.onCloseRequested.mockRejectedValue(new Error("listen failed"))
+    renderGuard()
+
+    await waitFor(() => expect(toastErrorMock).toHaveBeenCalledTimes(1))
+    expect(consoleError).toHaveBeenCalled()
+  })
+
+  it("keeps the window open and reports a failed quit", async () => {
+    invokeMock.mockRejectedValue(new Error("quit failed"))
+    renderGuard()
+    const handler = await capturedHandler()
+    const { event, preventDefault } = closeEvent()
+
+    await expect(handler(event)).resolves.toBeUndefined()
+
+    expect(preventDefault).toHaveBeenCalledTimes(1)
+    expect(consoleError).toHaveBeenCalled()
+    expect(toastErrorMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps the window open and reports a failed confirmation", async () => {
+    confirmMock.mockRejectedValue(new Error("dialog failed"))
+    renderGuard(true)
+    const handler = await capturedHandler()
+
+    await expect(handler(closeEvent().event)).resolves.toBeUndefined()
+
+    expect(invokeMock).not.toHaveBeenCalled()
+    expect(consoleError).toHaveBeenCalled()
+    expect(toastErrorMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("calls invoke once for a double close", async () => {
+    renderGuard()
+    const handler = await capturedHandler()
 
     await handler(closeEvent().event)
+    await handler(closeEvent().event)
 
-    expect(confirmMock).not.toHaveBeenCalled()
     expect(invokeMock).toHaveBeenCalledTimes(1)
-    expect(invokeMock).toHaveBeenCalledWith("quit")
+  })
+
+  it("allows a retry after a failed quit", async () => {
+    invokeMock.mockRejectedValueOnce(new Error("quit failed"))
+    renderGuard()
+    const handler = await capturedHandler()
+
+    await handler(closeEvent().event)
+    await handler(closeEvent().event)
+
+    expect(invokeMock).toHaveBeenCalledTimes(2)
   })
 })
