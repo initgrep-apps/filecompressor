@@ -147,6 +147,9 @@ describe("SidebarNav", () => {
     expect(screen.getByTestId("nav-compress").hasAttribute("data-active")).toBe(
       false,
     )
+    expect(screen.getByTestId("nav-compress")).not.toHaveAttribute(
+      "aria-expanded",
+    )
     expect(screen.getByTestId("nav-history").hasAttribute("data-active")).toBe(
       true,
     )
@@ -154,6 +157,15 @@ describe("SidebarNav", () => {
       "aria-expanded",
       "false",
     )
+  })
+
+  it("renders a glyph in every nav row", () => {
+    renderNav()
+
+    for (const id of ["nav-compress", "nav-history"]) {
+      const row = screen.getByTestId(id)
+      expect(row.firstElementChild?.querySelector("svg")).not.toBeNull()
+    }
   })
 
   it("shows the staged file count on the Compress row", () => {

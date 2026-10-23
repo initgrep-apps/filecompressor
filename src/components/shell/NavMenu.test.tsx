@@ -87,6 +87,17 @@ describe("NavMenu", () => {
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
+  it("renders a glyph in each nav row", async () => {
+    renderMenu()
+
+    await openMenu()
+
+    for (const name of ["Compress", "History"]) {
+      const item = screen.getByRole("menuitem", { name })
+      expect(item.querySelector("svg")).not.toBeNull()
+    }
+  })
+
   it("marks the active view with aria-current and a hidden checkmark", async () => {
     renderMenu("history")
 

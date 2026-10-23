@@ -677,7 +677,7 @@ describe("App shell", () => {
     expect(within(topBar()).getByText("History")).toBeInTheDocument()
   })
 
-  it("does not maximize the window from interactive header controls", async () => {
+  it("does not drag or maximize the window from interactive header controls", async () => {
     const user = userEvent.setup()
     renderApp("win32")
 
@@ -695,9 +695,25 @@ describe("App shell", () => {
     const navigationButton = within(topBar()).getByRole("button", {
       name: "Open navigation",
     })
-    fireEvent.doubleClick(expandButton)
-    fireEvent.doubleClick(navigationButton)
+    const themeToggle = within(topBar()).getByRole("button", {
+      name: "Toggle theme",
+    })
+    const appMenu = within(topBar()).getByRole("button", {
+      name: "App menu",
+    })
+
+    for (const control of [
+      expandButton,
+      navigationButton,
+      themeToggle,
+      appMenu,
+    ]) {
+      fireEvent.doubleClick(control)
+      fireEvent.mouseDown(control, { buttons: 1, detail: 1 })
+    }
+
     expect(win.toggleMaximize).not.toHaveBeenCalled()
+    expect(win.startDragging).not.toHaveBeenCalled()
 
     fireEvent.doubleClick(topBar())
     expect(win.toggleMaximize).toHaveBeenCalledTimes(1)
