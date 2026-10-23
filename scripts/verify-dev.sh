@@ -3,8 +3,7 @@
 # tauri.conf.json declares the intentionally untitled window (macOS overlay
 # chrome). Exits 0 on success, 1 on failure. Does NOT launch the Tauri webview
 # (impractical in CI); instead validates the dev server payload + Tauri
-# manifest, which is the actionable surface for Task 1's "dev launches"
-# acceptance criterion.
+# manifest, which is the actionable surface for the dev smoke check.
 set -euo pipefail
 
 DEV_URL="http://localhost:5173"

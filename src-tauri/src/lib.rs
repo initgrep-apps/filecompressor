@@ -84,6 +84,11 @@ macro_rules! invoke_handlers {
     };
 }
 
+fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
+    tauri_plugin_window_state::StateFlags::all()
+        & !tauri_plugin_window_state::StateFlags::DECORATIONS
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -104,10 +109,7 @@ pub fn run() {
         }))
         .plugin(
             tauri_plugin_window_state::Builder::new()
-                .with_state_flags(
-                    tauri_plugin_window_state::StateFlags::all()
-                        & !tauri_plugin_window_state::StateFlags::DECORATIONS,
-                )
+                .with_state_flags(window_state_flags())
                 .build(),
         )
         .plugin(tauri_plugin_os::init())
@@ -139,6 +141,19 @@ mod wiring_tests {
                 tauri::utils::config::AppDirectoriesOverride::Root(root.to_path_buf()),
             ))
             .unwrap()
+    }
+
+    #[test]
+    fn window_state_flags_never_restore_decorations() {
+        let flags = window_state_flags();
+        assert!(
+            flags.contains(tauri_plugin_window_state::StateFlags::SIZE),
+            "window-state must keep restoring size"
+        );
+        assert!(
+            !flags.contains(tauri_plugin_window_state::StateFlags::DECORATIONS),
+            "window-state must never restore decorations: a stale state file would re-decorate the frameless Windows window"
+        );
     }
 
     #[test]

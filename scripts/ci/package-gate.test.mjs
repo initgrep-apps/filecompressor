@@ -168,8 +168,7 @@ describe("window chrome contract", () => {
   it("keeps the Windows overlay frameless with the same bounds", () => {
     const window = windowsConf.app.windows[0];
     expect(window.label).toBe("main");
-    const { titleBarStyle, trafficLightPosition, decorations, ...rest } =
-      baseConf.app.windows[0];
+    const { titleBarStyle, trafficLightPosition, ...rest } = baseConf.app.windows[0];
     expect(window).toMatchObject({ ...rest, decorations: false });
     expect(window).not.toHaveProperty("titleBarStyle");
     expect(window).not.toHaveProperty("trafficLightPosition");

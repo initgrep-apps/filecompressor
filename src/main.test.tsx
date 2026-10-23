@@ -14,24 +14,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { describe, it, expect, vi } from "vitest"
-import {
-  isValidElement,
-  type ElementType,
-  type ReactElement,
-  type ReactNode,
-} from "react"
-import App from "./App"
-import { ErrorBoundary } from "./components/ErrorBoundary"
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
+import { isValidElement, StrictMode, type ReactElement, type ReactNode } from "react"
 import type { Platform } from "./lib/platform"
-import { PlatformProvider } from "./providers/PlatformProvider"
 
-const { renderMock, createRootMock, detectPlatformMock } = vi.hoisted(() => ({
-  renderMock: vi.fn<(node: ReactNode) => void>(),
-  createRootMock:
-    vi.fn<(container: Element | DocumentFragment) => { render: (node: ReactNode) => void }>(),
-  detectPlatformMock: vi.fn<() => Platform>(() => "linux"),
-}))
+const { renderMock, createRootMock, detectPlatformMock } = vi.hoisted(() => {
+  const renderMock = vi.fn<(node: ReactNode) => void>()
+  const createRootMock =
+    vi.fn<
+      (container: Element | DocumentFragment) => { render: (node: ReactNode) => void }
+    >(() => ({ render: renderMock }))
+  const detectPlatformMock = vi.fn<() => Platform>(() => "win32")
+  return { renderMock, createRootMock, detectPlatformMock }
+})
 
 vi.mock("react-dom/client", () => ({
   default: { createRoot: createRootMock },
@@ -39,46 +34,80 @@ vi.mock("react-dom/client", () => ({
 }))
 vi.mock("./lib/platform", () => ({ detectPlatform: detectPlatformMock }))
 
-createRootMock.mockReturnValue({ render: renderMock })
+type ShellElement = ReactElement<{ children?: ReactNode; platform?: Platform }>
 
-function findElement<P extends { children?: ReactNode }>(
-  node: ReactNode,
-  type: ElementType<P>,
-): ReactElement<P> | null {
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = findElement(child, type)
-      if (found) return found
-    }
-    return null
+function onlyChild(element: ShellElement): ShellElement {
+  const children = element.props.children
+  if (!isValidElement<{ children?: ReactNode; platform?: Platform }>(children)) {
+    throw new Error("expected a single element child")
   }
-  if (!isValidElement<P>(node)) return null
-  if (node.type === type) return node
-  return findElement(node.props.children, type)
+  return children
+}
+
+async function importShell() {
+  const { default: App } = await import("./App")
+  const { ErrorBoundary } = await import("./components/ErrorBoundary")
+  const { PlatformProvider } = await import("./providers/PlatformProvider")
+  await import("./main")
+  return { App, ErrorBoundary, PlatformProvider }
 }
 
 describe("main bootstrap", () => {
-  it("pre-paints dark, then renders App under ErrorBoundary and PlatformProvider", async () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.resetModules()
+    document.documentElement.classList.remove("dark")
     document.body.innerHTML = '<div id="root"></div>'
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("pre-paints dark before rendering the shell", async () => {
     const rootEl = document.getElementById("root")
     expect(rootEl).not.toBeNull()
     vi.stubGlobal("matchMedia", (query: string) => ({
       matches: query === "(prefers-color-scheme: dark)",
     }))
+    renderMock.mockImplementationOnce(() => {
+      expect(document.documentElement.classList.contains("dark")).toBe(true)
+    })
 
-    await import("./main")
+    const { App, ErrorBoundary, PlatformProvider } = await importShell()
 
     expect(document.documentElement.classList.contains("dark")).toBe(true)
-    expect(detectPlatformMock).toHaveBeenCalledTimes(1)
+    expect(detectPlatformMock).toHaveBeenCalledOnce()
     expect(createRootMock).toHaveBeenCalledWith(rootEl)
     expect(renderMock).toHaveBeenCalledTimes(1)
 
     const tree = renderMock.mock.calls[0][0]
-    expect(findElement(tree, ErrorBoundary)).not.toBeNull()
+    if (!isValidElement<{ children?: ReactNode; platform?: Platform }>(tree)) {
+      throw new Error("expected an element tree")
+    }
+    expect(tree.type).toBe(StrictMode)
+    const boundary = onlyChild(tree)
+    expect(boundary.type).toBe(ErrorBoundary)
+    const provider = onlyChild(boundary)
+    expect(provider.type).toBe(PlatformProvider)
+    expect(provider.props.platform).toBe("win32")
+    expect(onlyChild(provider).type).toBe(App)
+  })
 
-    const provider = findElement(tree, PlatformProvider)
-    expect(provider?.props.platform).toBe("linux")
+  it("leaves the light theme alone", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: false }))
+    expect(document.documentElement.classList.contains("dark")).toBe(false)
 
-    expect(findElement(provider?.props.children, App)).not.toBeNull()
+    await importShell()
+
+    expect(document.documentElement.classList.contains("dark")).toBe(false)
+    expect(detectPlatformMock).toHaveBeenCalledOnce()
+    expect(renderMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("fails loudly when #root is missing", async () => {
+    document.body.innerHTML = ""
+
+    await expect(import("./main")).rejects.toThrow(/#root element missing/)
   })
 })
