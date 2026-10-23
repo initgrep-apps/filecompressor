@@ -21,12 +21,10 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { detectPlatform } from "./lib/platform";
+import { applyTheme, readInitialTheme } from "./lib/theme";
 import { PlatformProvider } from "./providers/PlatformProvider";
 
-document.documentElement.classList.toggle(
-  "dark",
-  window.matchMedia("(prefers-color-scheme: dark)").matches,
-);
+applyTheme(readInitialTheme());
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
