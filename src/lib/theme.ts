@@ -14,11 +14,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-export type Theme = "light" | "dark"
+export const THEMES = ["light", "dark"] as const
+
+export type Theme = (typeof THEMES)[number]
 
 export const THEME_STORAGE_KEY = "yard-theme"
 
+export const DARK_QUERY = "(prefers-color-scheme: dark)"
+
 let storageReadWarned = false
+let mediaQueryWarned = false
 
 const warnStorageReadOnce = (error: unknown) => {
   if (storageReadWarned) return
@@ -26,20 +31,37 @@ const warnStorageReadOnce = (error: unknown) => {
   console.warn("theme storage read failed", error)
 }
 
+const warnMediaQueryOnce = (error: unknown) => {
+  if (mediaQueryWarned) return
+  mediaQueryWarned = true
+  console.warn("theme media query failed", error)
+}
+
 export function readStoredTheme(): Theme | null {
   try {
     const stored = localStorage.getItem(THEME_STORAGE_KEY)
-    return stored === "light" || stored === "dark" ? stored : null
+    return THEMES.find((theme) => theme === stored) ?? null
   } catch (error) {
     warnStorageReadOnce(error)
     return null
   }
 }
 
+export function getDarkMediaQuery(): MediaQueryList | null {
+  try {
+    return window.matchMedia(DARK_QUERY)
+  } catch (error) {
+    warnMediaQueryOnce(error)
+    return null
+  }
+}
+
+export function prefersDark(): boolean {
+  return getDarkMediaQuery()?.matches ?? false
+}
+
 export function readInitialTheme(): Theme {
-  const stored = readStoredTheme()
-  if (stored) return stored
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+  return readStoredTheme() ?? (prefersDark() ? "dark" : "light")
 }
 
 export function readAppliedTheme(): Theme {

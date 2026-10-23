@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import {
   applyTheme,
+  getDarkMediaQuery,
   readAppliedTheme,
   readStoredTheme,
   THEME_STORAGE_KEY,
@@ -54,7 +55,7 @@ const syncNativeTheme = (theme: Theme) => {
 export function useTheme(): { theme: Theme; toggleTheme: () => void } {
   const [theme, setTheme] = useState<Theme>(readAppliedTheme)
   const bootstrapped = useRef(false)
-  const explicitChoice = useRef(false)
+  const explicitChoice = useRef(readStoredTheme() !== null)
 
   useEffect(() => {
     if (bootstrapped.current) applyTheme(theme)
@@ -63,8 +64,9 @@ export function useTheme(): { theme: Theme; toggleTheme: () => void } {
   }, [theme])
 
   useEffect(() => {
-    if (explicitChoice.current || readStoredTheme() !== null) return
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)")
+    if (explicitChoice.current) return
+    const mediaQuery = getDarkMediaQuery()
+    if (!mediaQuery) return
     const handleChange = (event: MediaQueryListEvent) => {
       setTheme(event.matches ? "dark" : "light")
     }

@@ -101,4 +101,18 @@ describe("ThemeToggle", () => {
     expect(document.documentElement.classList.contains("dark")).toBe(true)
     expect(win.setTheme).toHaveBeenLastCalledWith("dark")
   })
+
+  it("flips back on a double click without a stale closure", async () => {
+    stubMatchMedia(false)
+    const user = userEvent.setup()
+    render(<ThemeToggle />)
+    const button = screen.getByRole("button", { name: "Toggle theme" })
+
+    await user.click(button)
+    await user.click(button)
+
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light")
+    expect(document.documentElement.classList.contains("dark")).toBe(false)
+    expect(win.setTheme).toHaveBeenLastCalledWith("light")
+  })
 })
