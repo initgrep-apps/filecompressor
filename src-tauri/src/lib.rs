@@ -224,12 +224,18 @@ mod wiring_tests {
             "an unregistered command must fail, so the quit assertion cannot pass vacuously"
         );
 
-        let quit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = tauri::test::get_ipc_response(&webview, request("quit"));
-        }));
-        assert!(
-            quit.is_err(),
-            "quit must be registered: it reaches MockRuntime::request_exit, which is unimplemented!()"
+        }))
+        .expect_err("quit must be registered: neither Ok nor a panic means it never reached request_exit");
+        let msg = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic payload>");
+        assert_eq!(
+            msg, "not implemented",
+            "quit must panic only from MockRuntime::request_exit, whose unimplemented!() payload is \"not implemented\"; got: {msg}"
         );
     }
 

@@ -152,7 +152,7 @@ describe("expectedEnginePaths", () => {
 });
 
 describe("window chrome contract", () => {
-  it("keeps the macOS overlay title bar and content inset", () => {
+  it("keeps the macOS overlay title bar and traffic-light offset", () => {
     const window = baseConf.app.windows[0];
     expect(window.title).toBe("");
     expect(window.titleBarStyle).toBe("Overlay");
@@ -174,7 +174,7 @@ describe("window chrome contract", () => {
     expect(window).not.toHaveProperty("transparent");
   });
 
-  it("grants every window and platform permission the shell calls", () => {
+  it("grants the window and platform permissions the shell relies on", () => {
     for (const permission of [
       "os:default",
       "window-state:default",
