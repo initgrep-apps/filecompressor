@@ -14,9 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 
 const registry = new Map<string, Set<(e: { payload: unknown }) => void>>()
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
@@ -100,10 +99,27 @@ function mockHistory() {
   })
 }
 
+const historyCalls = () =>
+  vi.mocked(invoke).mock.calls.filter(([command]) => command === 'get_history')
+
 const searchCalls = () =>
-  vi.mocked(invoke).mock.calls.filter(([command, args]) => {
-    if (command !== 'get_history') return false
-    return (args as { filters?: HistoryFilters }).filters?.search !== undefined
+  historyCalls().filter(
+    ([, args]) => (args as { filters?: HistoryFilters }).filters?.search !== undefined
+  )
+
+const lastFilters = () => {
+  const calls = historyCalls()
+  return (calls[calls.length - 1][1] as { filters: HistoryFilters }).filters
+}
+
+const flush = () =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(0)
+  })
+
+const advance = (ms: number) =>
+  act(async () => {
+    await vi.advanceTimersByTimeAsync(ms)
   })
 
 function Probe() {
@@ -112,77 +128,254 @@ function Probe() {
     <div>
       <span data-testid="selected">{ctx.selectedSessionId ?? 'none'}</span>
       <span data-testid="expanded">{String(ctx.expanded)}</span>
+      <span data-testid="search-text">{ctx.searchText}</span>
+      <span data-testid="page">{ctx.page}</span>
+      <span data-testid="loading">{String(ctx.loading)}</span>
+      <span data-testid="filters">{JSON.stringify(ctx.filters)}</span>
+      <span data-testid="error">{ctx.error ?? 'none'}</span>
       <button type="button" onClick={() => ctx.selectSession('s2')}>
         select-second
+      </button>
+      <button type="button" onClick={() => ctx.selectSession('missing-id')}>
+        select-missing
       </button>
       <button type="button" onClick={() => ctx.setSearchText('  alpha  ')}>
         find-alpha
       </button>
+      <button type="button" onClick={() => ctx.setSearchText('a')}>
+        type-a
+      </button>
+      <button type="button" onClick={() => ctx.setSearchText('alpha')}>
+        type-alpha
+      </button>
       <button type="button" onClick={() => ctx.setSearchText('missing')}>
-        find-missing
+        type-missing
+      </button>
+      <button type="button" onClick={() => ctx.setSearchText('')}>
+        clear-search
+      </button>
+      <button type="button" onClick={() => ctx.setFilters({ categories: ['image'] })}>
+        apply-category
+      </button>
+      <button
+        type="button"
+        onClick={() => ctx.setFilters({ statuses: ['failed'], categories: ['image'] })}
+      >
+        apply-status
+      </button>
+      <button type="button" onClick={() => ctx.setFilters({ sort: 'newest' })}>
+        clear-filters
+      </button>
+      <button type="button" onClick={() => ctx.setFilters({ search: 'beta' })}>
+        apply-search-beta
+      </button>
+      <button type="button" onClick={() => ctx.setExpanded(false)}>
+        collapse
+      </button>
+      <button type="button" onClick={ctx.refresh}>
+        refresh
+      </button>
+      <button type="button" onClick={ctx.clearError}>
+        clear-error
       </button>
     </div>
   )
 }
 
-const renderProvider = () =>
+const renderProvider = async () => {
   render(
     <HistoryProvider>
       <Probe />
     </HistoryProvider>
   )
+  await flush()
+  await advance(300)
+}
 
 beforeEach(() => {
   vi.clearAllMocks()
   registry.clear()
+  vi.useFakeTimers()
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('HistoryProvider', () => {
-  it('selects the first session after load', async () => {
+  it('selects the first session after load and starts expanded', async () => {
     mockHistory()
-    renderProvider()
-    await waitFor(() => expect(screen.getByTestId('selected')).toHaveTextContent('s1'))
+    await renderProvider()
+    expect(screen.getByTestId('selected')).toHaveTextContent('s1')
+    expect(screen.getByTestId('expanded')).toHaveTextContent('true')
+    expect(screen.getByTestId('page')).toHaveTextContent('0')
+  })
+
+  it('keeps the selection when it survives a refresh or batch completion', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('select-second'))
+    expect(screen.getByTestId('selected')).toHaveTextContent('s2')
+
+    fireEvent.click(screen.getByText('refresh'))
+    await flush()
+    expect(screen.getByTestId('selected')).toHaveTextContent('s2')
+
+    act(() => {
+      registry.get('batch:complete')?.forEach((handler) => handler({ payload: {} }))
+    })
+    await flush()
+    expect(screen.getByTestId('selected')).toHaveTextContent('s2')
+  })
+
+  it('ignores a selectSession id that is not in the response', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('select-missing'))
+    expect(screen.getByTestId('selected')).toHaveTextContent('s1')
   })
 
   it('falls back to the first session when the selected one is filtered out', async () => {
     mockHistory()
-    const user = userEvent.setup()
-    renderProvider()
-    await waitFor(() => expect(screen.getByTestId('selected')).toHaveTextContent('s1'))
-
-    await user.click(screen.getByText('select-second'))
+    await renderProvider()
+    fireEvent.click(screen.getByText('select-second'))
     expect(screen.getByTestId('selected')).toHaveTextContent('s2')
 
-    await user.click(screen.getByText('find-alpha'))
-    await waitFor(() => expect(screen.getByTestId('selected')).toHaveTextContent('s1'))
+    fireEvent.click(screen.getByText('type-alpha'))
+    await advance(300)
+    await flush()
+    expect(screen.getByTestId('selected')).toHaveTextContent('s1')
   })
 
   it('clears the selection when no session matches', async () => {
     mockHistory()
-    const user = userEvent.setup()
-    renderProvider()
-    await waitFor(() => expect(screen.getByTestId('selected')).toHaveTextContent('s1'))
-
-    await user.click(screen.getByText('find-missing'))
-    await waitFor(() => expect(screen.getByTestId('selected')).toHaveTextContent('none'))
+    await renderProvider()
+    fireEvent.click(screen.getByText('type-missing'))
+    await advance(300)
+    await flush()
+    expect(screen.getByTestId('selected')).toHaveTextContent('none')
   })
 
-  it('debounces the trimmed search into the filters', async () => {
+  it('debounces the trimmed search by 300 ms', async () => {
     mockHistory()
-    const user = userEvent.setup()
-    renderProvider()
-    await waitFor(() => expect(screen.getByTestId('selected')).toHaveTextContent('s1'))
-
-    await user.click(screen.getByText('find-alpha'))
+    await renderProvider()
+    fireEvent.click(screen.getByText('find-alpha'))
+    await advance(299)
     expect(searchCalls()).toHaveLength(0)
-
-    await waitFor(() => expect(searchCalls()).toHaveLength(1))
+    await advance(1)
+    expect(searchCalls()).toHaveLength(1)
     expect(searchCalls()[0][1]).toMatchObject({ filters: { search: 'alpha' }, page: 0 })
+    await flush()
   })
 
-  it('starts expanded', async () => {
+  it('restarts the debounce on each change and sends the latest text once', async () => {
     mockHistory()
-    renderProvider()
-    await waitFor(() => expect(screen.getByTestId('expanded')).toHaveTextContent('true'))
+    await renderProvider()
+    fireEvent.click(screen.getByText('type-a'))
+    await advance(100)
+    fireEvent.click(screen.getByText('type-alpha'))
+    await advance(200)
+    expect(searchCalls()).toHaveLength(0)
+    await advance(100)
+    expect(searchCalls()).toHaveLength(1)
+    expect(lastFilters().search).toBe('alpha')
+    await flush()
+  })
+
+  it('cancels a pending search when the text is cleared', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('type-alpha'))
+    await advance(100)
+    fireEvent.click(screen.getByText('clear-search'))
+    await advance(300)
+    await flush()
+    expect(searchCalls()).toHaveLength(0)
+    expect(lastFilters().search).toBeUndefined()
+  })
+
+  it('merges a debounced search with filters applied in the meantime', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('type-alpha'))
+    await advance(100)
+    fireEvent.click(screen.getByText('apply-category'))
+    await advance(200)
+    await flush()
+    expect(lastFilters().search).toBe('alpha')
+    expect(lastFilters().categories).toEqual(['image'])
+  })
+
+  it('replaces filters so clearing statuses and categories sticks', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('apply-status'))
+    await flush()
+    expect(lastFilters().statuses).toEqual(['failed'])
+    expect(lastFilters().categories).toEqual(['image'])
+
+    fireEvent.click(screen.getByText('clear-filters'))
+    await flush()
+    expect(lastFilters().sort).toBe('newest')
+    expect(lastFilters().statuses).toBeUndefined()
+    expect(lastFilters().categories).toBeUndefined()
+  })
+
+  it('syncs searchText and cancels the debounce when setFilters includes search', async () => {
+    mockHistory()
+    await renderProvider()
+    fireEvent.click(screen.getByText('type-alpha'))
+    await advance(100)
+    fireEvent.click(screen.getByText('apply-search-beta'))
+    await flush()
+    expect(screen.getByTestId('search-text')).toHaveTextContent('beta')
+    expect(lastFilters().search).toBe('beta')
+
+    await advance(300)
+    await flush()
+    expect(
+      searchCalls().some(
+        ([, args]) => (args as { filters: HistoryFilters }).filters.search === 'alpha'
+      )
+    ).toBe(false)
+    expect(lastFilters().search).toBe('beta')
+  })
+
+  it('exposes loading, filters and page, and refresh refetches', async () => {
+    mockHistory()
+    await renderProvider()
+    const before = historyCalls().length
+
+    fireEvent.click(screen.getByText('refresh'))
+    expect(screen.getByTestId('loading')).toHaveTextContent('true')
+    await flush()
+    expect(screen.getByTestId('loading')).toHaveTextContent('false')
+    expect(historyCalls().length).toBe(before + 1)
+    expect(screen.getByTestId('page')).toHaveTextContent('0')
+    expect(JSON.parse(screen.getByTestId('filters').textContent ?? '{}')).toEqual(lastFilters())
+  })
+
+  it('clears a load error through clearError', async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('boom'))
+    await renderProvider()
+    expect(screen.getByTestId('error')).toHaveTextContent('Could not load history: boom')
+    fireEvent.click(screen.getByText('clear-error'))
+    expect(screen.getByTestId('error')).toHaveTextContent('none')
+  })
+
+  it('updates expanded', async () => {
+    mockHistory()
+    await renderProvider()
+    expect(screen.getByTestId('expanded')).toHaveTextContent('true')
+    fireEvent.click(screen.getByText('collapse'))
+    expect(screen.getByTestId('expanded')).toHaveTextContent('false')
+  })
+
+  it('throws when used outside the provider', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(() => render(<Probe />)).toThrow(
+      'useHistoryContext must be used within HistoryProvider'
+    )
+    spy.mockRestore()
   })
 })

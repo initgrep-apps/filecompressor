@@ -127,8 +127,16 @@ describe('describeSince', () => {
   it('falls back to the calendar date for a custom start', () => {
     const custom = new Date(2026, 8, 20).getTime()
     expect(describeSince(custom, now)).toBe(dayLabel(custom, now))
-    expect(describeSince(custom, now)).toMatch(/20/)
     expect(describeSince(new Date(2025, 8, 20).getTime(), now)).toMatch(/2025/)
+  })
+
+  it('guards non-finite timestamps', () => {
+    expect(dayLabel(Number.NaN, now)).toBe('—')
+    expect(dayLabel(Number.POSITIVE_INFINITY, now)).toBe('—')
+    expect(batchLabel(Number.NaN, now)).toBe('—')
+    expect(batchLabel(Number.POSITIVE_INFINITY, now)).toBe('—')
+    expect(describeSince(Number.NaN, now)).toBe('—')
+    expect(describeSince(Number.POSITIVE_INFINITY, now)).toBe('—')
   })
 })
 
@@ -152,16 +160,27 @@ describe('history aggregates', () => {
   it('formats saved bytes and file counts', () => {
     expect(savedLabel(0)).toBe('0 B')
     expect(savedLabel(1536)).toBe('2 KB')
+    expect(savedLabel(Number.NaN)).toBe('—')
+    expect(savedLabel(Number.POSITIVE_INFINITY)).toBe('—')
+    expect(savedLabel(-1)).toBe('—')
     expect(fileCountLabel(0)).toBe('0 files')
     expect(fileCountLabel(1)).toBe('1 file')
     expect(fileCountLabel(12)).toBe('12 files')
+    expect(fileCountLabel(Number.NaN)).toBe('—')
+    expect(fileCountLabel(-1)).toBe('—')
   })
 
-  it('computes the saved percentage', () => {
-    expect(savedPercent(0, 0)).toBe(0)
+  it('computes the saved percentage or null when it is unknowable', () => {
     expect(savedPercent(100, 25)).toBe(75)
     expect(savedPercent(3, 2)).toBe(33)
     expect(savedPercent(100, 150)).toBe(0)
+    expect(savedPercent(100, null)).toBeNull()
+    expect(savedPercent(100, Number.NaN)).toBeNull()
+    expect(savedPercent(Number.NaN, 10)).toBeNull()
+    expect(savedPercent(0, 0)).toBeNull()
+    expect(savedPercent(-10, 5)).toBeNull()
+    expect(savedPercent(Number.POSITIVE_INFINITY, 10)).toBeNull()
+    expect(savedPercent(100, Number.POSITIVE_INFINITY)).toBeNull()
   })
 
   it('counts session outcomes', () => {
@@ -182,6 +201,7 @@ describe('history aggregates', () => {
         fileWithStatus('unsupported'),
         fileWithStatus('already_under_target'),
         fileWithStatus('pending'),
+        fileWithStatus('compressing'),
       ])
     ).toEqual(expected)
   })

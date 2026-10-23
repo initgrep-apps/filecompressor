@@ -18,20 +18,24 @@ import { formatSize } from '@/lib/sizeFormat'
 import type { FileStatus, HistoryFile, SessionOutcome } from '@/types'
 
 export function savedLabel(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '—'
   return bytes === 0 ? '0 B' : formatSize(bytes)
 }
 
 export function fileCountLabel(count: number): string {
+  if (!Number.isFinite(count) || count < 0) return '—'
   return count === 1 ? '1 file' : `${count} files`
 }
 
-export function savedPercent(original: number, compressed: number): number {
-  return original > 0
-    ? Math.max(0, Math.round(((original - compressed) / original) * 100))
-    : 0
+export function savedPercent(original: number, compressed: number | null): number | null {
+  if (!Number.isFinite(original) || original <= 0) return null
+  if (compressed === null || !Number.isFinite(compressed)) return null
+  return Math.max(0, Math.round(((original - compressed) / original) * 100))
 }
 
-const OUTCOME_COUNT_KEYS: Partial<Record<FileStatus, keyof SessionOutcome>> = {
+const OUTCOME_COUNT_KEYS: Record<FileStatus, keyof SessionOutcome | null> = {
+  pending: null,
+  compressing: null,
   done: 'done',
   best_effort: 'bestEffort',
   failed: 'failed',
@@ -51,23 +55,24 @@ export function countOutcome(files: HistoryFile[]): SessionOutcome {
   }
   return files.reduce((acc, file) => {
     const key = OUTCOME_COUNT_KEYS[file.status]
-    if (key !== undefined) acc[key] += 1
+    if (key !== null) acc[key] += 1
     return acc
   }, counts)
 }
 
 export function batchLabel(ms: number, now: Date): string {
-  const date = new Date(ms)
-  if (!Number.isFinite(date.getTime())) return '—'
+  const day = dayLabel(ms, now)
+  if (day === '—') return '—'
   const time = new Intl.DateTimeFormat(undefined, {
     hour: 'numeric',
     minute: '2-digit',
-  }).format(date)
-  return `${dayLabel(ms, now)} · ${time}`
+  }).format(new Date(ms))
+  return `${day} · ${time}`
 }
 
 export function describeSince(ms: number | undefined, now: Date): string {
   if (ms === undefined) return 'All time'
+  if (!Number.isFinite(ms)) return '—'
   if (ms === presetSinceMs('today', now)) return 'Today'
   if (ms === presetSinceMs('last7', now)) return 'Last 7 days'
   if (ms === presetSinceMs('last30', now)) return 'Last 30 days'
@@ -108,12 +113,13 @@ export function dayKey(ms: number): string {
 }
 
 export function dayLabel(ms: number, now: Date): string {
+  const date = new Date(ms)
+  if (!Number.isFinite(ms) || !Number.isFinite(date.getTime())) return '—'
   const key = dayKey(ms)
   if (key === dayKey(now.getTime())) return 'Today'
   const yesterday = new Date(now)
   yesterday.setDate(yesterday.getDate() - 1)
   if (key === dayKey(yesterday.getTime())) return 'Yesterday'
-  const date = new Date(ms)
   const includeYear = date.getFullYear() !== now.getFullYear()
   return new Intl.DateTimeFormat(undefined, {
     month: 'short',

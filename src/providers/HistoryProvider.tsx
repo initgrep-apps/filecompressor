@@ -45,9 +45,18 @@ export type HistoryContextValue = {
   clearError: () => void
 }
 
-export const HistoryContext = createContext<HistoryContextValue | null>(null)
+const HistoryContext = createContext<HistoryContextValue | null>(null)
 
 const searchToFilter = (text: string): string | undefined => text.trim() || undefined
+
+const normalizeFilters = (partial: Partial<HistoryFilters>): HistoryFilters => ({
+  search: partial.search,
+  statuses: partial.statuses,
+  categories: partial.categories,
+  sinceMs: partial.sinceMs,
+  outputFolder: partial.outputFolder,
+  sort: partial.sort,
+})
 
 export function HistoryProvider({ children }: { children: ReactNode }) {
   const history = useHistory()
@@ -72,21 +81,46 @@ export function HistoryProvider({ children }: { children: ReactNode }) {
     setFiltersRef.current = history.setFilters
   }, [history.setFilters])
 
+  const searchTimerRef = useRef<number | null>(null)
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
+      searchTimerRef.current = null
       setFiltersRef.current({ search: searchToFilter(searchText) })
     }, 300)
-    return () => window.clearTimeout(timer)
+    searchTimerRef.current = timer
+    return () => {
+      window.clearTimeout(timer)
+      if (searchTimerRef.current === timer) searchTimerRef.current = null
+    }
   }, [searchText])
 
-  const selectSession = useCallback((id: string) => setSelectedSessionId(id), [])
+  const setFilters = useCallback((partial: Partial<HistoryFilters>) => {
+    if ('search' in partial) {
+      if (searchTimerRef.current !== null) {
+        window.clearTimeout(searchTimerRef.current)
+        searchTimerRef.current = null
+      }
+      setSearchText(partial.search ?? '')
+    }
+    setFiltersRef.current(normalizeFilters(partial))
+  }, [])
+
+  const selectSession = useCallback(
+    (id: string) => {
+      const sessions = history.response?.sessions
+      if (!sessions?.some((session) => session.sessionId === id)) return
+      setSelectedSessionId(id)
+    },
+    [history.response]
+  )
 
   const value: HistoryContextValue = {
     response: history.response,
     loading: history.loading,
     error: history.error,
     filters: history.filters,
-    setFilters: history.setFilters,
+    setFilters,
     page: history.page,
     setPage: history.setPage,
     searchText,
