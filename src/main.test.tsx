@@ -34,6 +34,9 @@ vi.mock("react-dom/client", () => ({
 }))
 vi.mock("./lib/platform", () => ({ detectPlatform: detectPlatformMock }))
 
+const THEME_KEY = "yard-theme"
+const darkQuery = "(prefers-color-scheme: dark)"
+
 type ShellElement = ReactElement<{ children?: ReactNode; platform?: Platform }>
 
 function onlyChild(element: ShellElement): ShellElement {
@@ -56,6 +59,7 @@ describe("main bootstrap", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.resetModules()
+    localStorage.clear()
     document.documentElement.classList.remove("dark")
     document.body.innerHTML = '<div id="root"></div>'
   })
@@ -68,7 +72,7 @@ describe("main bootstrap", () => {
     const rootEl = document.getElementById("root")
     expect(rootEl).not.toBeNull()
     vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: query === "(prefers-color-scheme: dark)",
+      matches: query === darkQuery,
     }))
     renderMock.mockImplementationOnce(() => {
       expect(document.documentElement.classList.contains("dark")).toBe(true)
@@ -103,6 +107,54 @@ describe("main bootstrap", () => {
     expect(document.documentElement.classList.contains("dark")).toBe(false)
     expect(detectPlatformMock).toHaveBeenCalledOnce()
     expect(renderMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("restores a stored light theme over a dark OS preference", async () => {
+    localStorage.setItem(THEME_KEY, "light")
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === darkQuery,
+    }))
+    renderMock.mockImplementationOnce(() => {
+      expect(document.documentElement.classList.contains("dark")).toBe(false)
+    })
+
+    await importShell()
+
+    expect(document.documentElement.classList.contains("dark")).toBe(false)
+    expect(renderMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("restores a stored dark theme over a light OS preference", async () => {
+    localStorage.setItem(THEME_KEY, "dark")
+    vi.stubGlobal("matchMedia", () => ({ matches: false }))
+    renderMock.mockImplementationOnce(() => {
+      expect(document.documentElement.classList.contains("dark")).toBe(true)
+    })
+
+    await importShell()
+
+    expect(document.documentElement.classList.contains("dark")).toBe(true)
+    expect(renderMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("falls back to the OS preference and still renders when storage access throws", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === darkQuery,
+    }))
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    const storage = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("storage blocked")
+    })
+
+    try {
+      await expect(importShell()).resolves.toBeTruthy()
+      expect(document.documentElement.classList.contains("dark")).toBe(true)
+      expect(renderMock).toHaveBeenCalledTimes(1)
+      expect(warn).toHaveBeenCalledWith("theme storage read failed", expect.any(Error))
+    } finally {
+      storage.mockRestore()
+      warn.mockRestore()
+    }
   })
 
   it("fails loudly when #root is missing", async () => {

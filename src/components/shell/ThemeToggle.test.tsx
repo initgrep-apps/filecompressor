@@ -51,6 +51,22 @@ beforeEach(() => {
 })
 
 describe("ThemeToggle", () => {
+  it("renders a different icon for light and dark", () => {
+    stubMatchMedia(false)
+    const light = render(<ThemeToggle />)
+    const lightMarkup = screen.getByRole("button", { name: "Toggle theme" }).innerHTML
+    light.unmount()
+
+    document.documentElement.classList.add("dark")
+    stubMatchMedia(true)
+    render(<ThemeToggle />)
+    const darkMarkup = screen.getByRole("button", { name: "Toggle theme" }).innerHTML
+
+    expect(lightMarkup).toContain("<svg")
+    expect(darkMarkup).toContain("<svg")
+    expect(darkMarkup).not.toBe(lightMarkup)
+  })
+
   it("renders an icon-only button with an accessible name and native title", () => {
     stubMatchMedia(false)
 

@@ -24,9 +24,14 @@ vi.mock("@tauri-apps/api/window", async () => {
   return { getCurrentWindow: () => win }
 })
 
+vi.mock("@/lib/theme", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/theme")>()
+  return { ...actual, applyTheme: vi.fn(actual.applyTheme) }
+})
+
 import { useTheme } from "@/hooks/useTheme"
 import { mockWindow } from "@/lib/test-tauri"
-import { THEME_STORAGE_KEY } from "@/lib/theme"
+import { applyTheme, THEME_STORAGE_KEY } from "@/lib/theme"
 
 type ChangeListener = (event: MediaQueryListEvent) => void
 
@@ -61,6 +66,7 @@ beforeEach(() => {
   document.documentElement.classList.remove("dark")
   win.setTheme.mockReset()
   win.setTheme.mockResolvedValue(undefined)
+  vi.mocked(applyTheme).mockClear()
 })
 
 describe("useTheme", () => {
@@ -72,19 +78,22 @@ describe("useTheme", () => {
 
     expect(result.current.theme).toBe("dark")
     expect(document.documentElement.classList.contains("dark")).toBe(true)
+    expect(applyTheme).not.toHaveBeenCalled()
     expect(win.setTheme).toHaveBeenCalledTimes(1)
     expect(win.setTheme).toHaveBeenCalledWith("dark")
   })
 
-  it("does not re-apply the class on mount", () => {
+  it("does not re-apply the class on mount but applies it after a toggle", () => {
     document.documentElement.classList.add("dark")
     mockMatchMedia(true)
-    const toggleSpy = vi.spyOn(document.documentElement.classList, "toggle")
+    const { result } = renderHook(() => useTheme())
 
-    renderHook(() => useTheme())
+    expect(applyTheme).not.toHaveBeenCalled()
 
-    expect(toggleSpy).not.toHaveBeenCalled()
-    toggleSpy.mockRestore()
+    act(() => result.current.toggleTheme())
+
+    expect(applyTheme).toHaveBeenCalledTimes(1)
+    expect(applyTheme).toHaveBeenCalledWith("light")
   })
 
   it("toggles from dark to light, persists the choice, and drops the class", () => {
@@ -98,6 +107,7 @@ describe("useTheme", () => {
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light")
     expect(document.documentElement.classList.contains("dark")).toBe(false)
     expect(win.setTheme).toHaveBeenLastCalledWith("light")
+    expect(win.setTheme).toHaveBeenCalledTimes(2)
   })
 
   it("toggles from light to dark", () => {
@@ -110,6 +120,7 @@ describe("useTheme", () => {
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark")
     expect(document.documentElement.classList.contains("dark")).toBe(true)
     expect(win.setTheme).toHaveBeenLastCalledWith("dark")
+    expect(win.setTheme).toHaveBeenCalledTimes(2)
   })
 
   it("follows OS changes while no theme is stored", () => {
@@ -147,25 +158,66 @@ describe("useTheme", () => {
     expect(media.listenerCount()).toBe(0)
   })
 
-  it("lets a stored light theme win over a dark OS preference", () => {
+  it("lets a stored light theme win over a dark OS preference and stays unsubscribed", () => {
     localStorage.setItem(THEME_STORAGE_KEY, "light")
-    mockMatchMedia(true)
+    const media = mockMatchMedia(true)
 
     const { result } = renderHook(() => useTheme())
 
     expect(result.current.theme).toBe("light")
     expect(document.documentElement.classList.contains("dark")).toBe(false)
+    expect(media.listenerCount()).toBe(0)
     expect(win.setTheme).toHaveBeenCalledWith("light")
   })
 
-  it("swallows native setTheme failures", async () => {
+  it("still toggles for the session when persisting the choice fails", () => {
+    const media = mockMatchMedia(false)
+    const { result } = renderHook(() => useTheme())
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("storage blocked")
+    })
+    try {
+      expect(() => act(() => result.current.toggleTheme())).not.toThrow()
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect(result.current.theme).toBe("dark")
+    expect(document.documentElement.classList.contains("dark")).toBe(true)
+    expect(media.listenerCount()).toBe(0)
+  })
+
+  it("removes the OS listener on unmount without a late update", () => {
+    const media = mockMatchMedia(false)
+    const { unmount } = renderHook(() => useTheme())
+    expect(media.listenerCount()).toBe(1)
+
+    unmount()
+
+    expect(media.listenerCount()).toBe(0)
+    const nativeCalls = win.setTheme.mock.calls.length
+    act(() => media.setDark(true))
+    expect(win.setTheme.mock.calls.length).toBe(nativeCalls)
+  })
+
+  it("logs a native setTheme failure once and keeps rendering", async () => {
     win.setTheme.mockRejectedValue(new Error("no tauri window"))
     mockMatchMedia(false)
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
 
-    const { result } = renderHook(() => useTheme())
-    await act(async () => {})
+    try {
+      const { result } = renderHook(() => useTheme())
+      await act(async () => {})
 
-    expect(result.current.theme).toBe("light")
-    expect(win.setTheme).toHaveBeenCalledWith("light")
+      expect(result.current.theme).toBe("light")
+      expect(win.setTheme).toHaveBeenCalledWith("light")
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn).toHaveBeenCalledWith(
+        "native window theme sync failed",
+        expect.any(Error),
+      )
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

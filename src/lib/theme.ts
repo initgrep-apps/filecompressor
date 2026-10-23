@@ -18,16 +18,27 @@ export type Theme = "light" | "dark"
 
 export const THEME_STORAGE_KEY = "yard-theme"
 
-const isTheme = (value: string | null): value is Theme =>
-  value === "light" || value === "dark"
+let storageReadWarned = false
 
-export function hasStoredTheme(): boolean {
-  return isTheme(localStorage.getItem(THEME_STORAGE_KEY))
+const warnStorageReadOnce = (error: unknown) => {
+  if (storageReadWarned) return
+  storageReadWarned = true
+  console.warn("theme storage read failed", error)
+}
+
+export function readStoredTheme(): Theme | null {
+  try {
+    const stored = localStorage.getItem(THEME_STORAGE_KEY)
+    return stored === "light" || stored === "dark" ? stored : null
+  } catch (error) {
+    warnStorageReadOnce(error)
+    return null
+  }
 }
 
 export function readInitialTheme(): Theme {
-  const stored = localStorage.getItem(THEME_STORAGE_KEY)
-  if (isTheme(stored)) return stored
+  const stored = readStoredTheme()
+  if (stored) return stored
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
 }
 

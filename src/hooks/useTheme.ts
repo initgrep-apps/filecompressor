@@ -18,23 +18,43 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import {
   applyTheme,
-  hasStoredTheme,
   readAppliedTheme,
+  readStoredTheme,
   THEME_STORAGE_KEY,
   type Theme,
 } from "@/lib/theme"
 
+let storageWriteWarned = false
+let nativeSyncWarned = false
+
+const persistTheme = (theme: Theme) => {
+  try {
+    localStorage.setItem(THEME_STORAGE_KEY, theme)
+  } catch (error) {
+    if (storageWriteWarned) return
+    storageWriteWarned = true
+    console.warn("theme storage write failed", error)
+  }
+}
+
+const warnNativeSyncOnce = (error: unknown) => {
+  if (nativeSyncWarned) return
+  nativeSyncWarned = true
+  console.warn("native window theme sync failed", error)
+}
+
 const syncNativeTheme = (theme: Theme) => {
   try {
-    void getCurrentWindow().setTheme(theme).catch(() => {})
-  } catch {
-    return
+    void getCurrentWindow().setTheme(theme).catch(warnNativeSyncOnce)
+  } catch (error) {
+    warnNativeSyncOnce(error)
   }
 }
 
 export function useTheme(): { theme: Theme; toggleTheme: () => void } {
   const [theme, setTheme] = useState<Theme>(readAppliedTheme)
   const bootstrapped = useRef(false)
+  const explicitChoice = useRef(false)
 
   useEffect(() => {
     if (bootstrapped.current) applyTheme(theme)
@@ -43,7 +63,7 @@ export function useTheme(): { theme: Theme; toggleTheme: () => void } {
   }, [theme])
 
   useEffect(() => {
-    if (hasStoredTheme()) return
+    if (explicitChoice.current || readStoredTheme() !== null) return
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)")
     const handleChange = (event: MediaQueryListEvent) => {
       setTheme(event.matches ? "dark" : "light")
@@ -53,12 +73,11 @@ export function useTheme(): { theme: Theme; toggleTheme: () => void } {
   }, [theme])
 
   const toggleTheme = useCallback(() => {
-    setTheme((current) => {
-      const next: Theme = current === "dark" ? "light" : "dark"
-      localStorage.setItem(THEME_STORAGE_KEY, next)
-      return next
-    })
-  }, [])
+    const next: Theme = theme === "dark" ? "light" : "dark"
+    explicitChoice.current = true
+    persistTheme(next)
+    setTheme(next)
+  }, [theme])
 
   return { theme, toggleTheme }
 }
