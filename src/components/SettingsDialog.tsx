@@ -65,8 +65,11 @@ const SAVE_DEBOUNCE_MS = 400
 const MAX_FLUSH_WRITES = 3
 const SAVE_ERROR = "Could not save settings"
 const RESET_ERROR = "Could not reset settings"
+const PENDING_ERROR = "Settings still not saved — close again to retry"
 const SAVE_ERROR_ID = "settings-save"
 const RESET_ERROR_ID = "settings-reset"
+
+type PersistResult = "saved" | "failed" | "pending"
 
 const SECTIONS = [
   { value: "general", label: "General", icon: RiSettings3Line },
@@ -428,8 +431,15 @@ function HistorySection({ draft, onChange }: SectionProps) {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const { settings, loading, error, saveSettings, resetSettings, browseFolder } =
-    useSettings()
+  const {
+    settings,
+    loading,
+    error,
+    getLastError,
+    saveSettings,
+    resetSettings,
+    browseFolder,
+  } = useSettings()
   const [draft, setDraft] = useState<Settings | null>(null)
   const [section, setSection] = useState<SectionId>("general")
   const [flushVersion, setFlushVersion] = useState(0)
@@ -438,11 +448,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const inFlightRef = useRef<Promise<boolean> | null>(null)
   const dirtyRef = useRef(false)
   const seededRef = useRef(false)
-  const errorRef = useRef<string | null>(error)
-
-  useEffect(() => {
-    errorRef.current = error
-  }, [error])
+  const reopenedWhileWritingRef = useRef(false)
 
   const clearTimer = () => {
     if (timerRef.current !== null) {
@@ -451,11 +457,19 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     }
   }
 
-  const persist = useCallback(async (): Promise<boolean> => {
+  const armDebounce = () => {
+    clearTimer()
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null
+      void persist()
+    }, SAVE_DEBOUNCE_MS)
+  }
+
+  const persist = useCallback(async (): Promise<PersistResult> => {
     clearTimer()
     for (let writes = 0; writes < MAX_FLUSH_WRITES; writes++) {
       while (inFlightRef.current) await inFlightRef.current
-      if (!dirtyRef.current || !draftRef.current) return true
+      if (!dirtyRef.current || !draftRef.current) return "saved"
 
       dirtyRef.current = false
       const request = saveSettings(draftRef.current)
@@ -468,24 +482,40 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         dirtyRef.current = true
         toast.error(SAVE_ERROR, {
           id: SAVE_ERROR_ID,
-          description: errorRef.current ?? undefined,
+          description: getLastError() ?? undefined,
+          duration: Infinity,
         })
-        return false
+        return "failed"
       }
       toast.dismiss(SAVE_ERROR_ID)
     }
-    return !dirtyRef.current
-  }, [saveSettings])
+    return dirtyRef.current ? "pending" : "saved"
+  }, [getLastError, saveSettings])
 
   useEffect(() => {
     if (open) return
     seededRef.current = false
+    reopenedWhileWritingRef.current = false
     setDraft(null)
     if (dirtyRef.current) void persist()
   }, [open, persist])
 
   useEffect(() => {
-    if (!open || seededRef.current || inFlightRef.current || !settings) return
+    if (!open || seededRef.current) return
+    if (inFlightRef.current) {
+      reopenedWhileWritingRef.current = true
+      return
+    }
+    if (reopenedWhileWritingRef.current) {
+      reopenedWhileWritingRef.current = false
+      if (dirtyRef.current && draftRef.current) {
+        seededRef.current = true
+        setDraft(draftRef.current)
+        armDebounce()
+        return
+      }
+    }
+    if (!settings) return
     seededRef.current = true
     clearTimer()
     dirtyRef.current = false
@@ -504,24 +534,23 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     draftRef.current = next
     setDraft(next)
     dirtyRef.current = true
-    clearTimer()
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null
-      void persist()
-    }, SAVE_DEBOUNCE_MS)
+    armDebounce()
   }
 
   const requestClose = async () => {
-    const saved = await persist()
-    if (saved) {
+    const result = await persist()
+    if (result === "saved") {
       onOpenChange(false)
       return
     }
-    if (dirtyRef.current) {
-      toast.error(SAVE_ERROR, {
+    if (result === "pending") {
+      toast.error(PENDING_ERROR, {
         id: SAVE_ERROR_ID,
-        description: errorRef.current ?? undefined,
+        description: getLastError() ?? undefined,
+        duration: Infinity,
       })
+      dirtyRef.current = true
+      armDebounce()
     }
   }
 
@@ -543,6 +572,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const handleReset = async () => {
     while (inFlightRef.current) await inFlightRef.current
     const wasDirty = dirtyRef.current
+    const startDraft = draftRef.current
     clearTimer()
     dirtyRef.current = false
 
@@ -552,9 +582,15 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       if (!defaults) {
         toast.error(RESET_ERROR, {
           id: RESET_ERROR_ID,
-          description: errorRef.current ?? undefined,
+          description: getLastError() ?? undefined,
+          duration: Infinity,
         })
         return false
+      }
+      if (draftRef.current !== startDraft && draftRef.current) {
+        dirtyRef.current = true
+        armDebounce()
+        return true
       }
       toast.dismiss(SAVE_ERROR_ID)
       toast.dismiss(RESET_ERROR_ID)
@@ -569,11 +605,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     inFlightRef.current = null
     if (!reset && wasDirty) {
       dirtyRef.current = true
-      clearTimer()
-      timerRef.current = setTimeout(() => {
-        timerRef.current = null
-        void persist()
-      }, SAVE_DEBOUNCE_MS)
+      armDebounce()
     }
   }
 

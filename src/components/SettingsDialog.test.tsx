@@ -57,13 +57,13 @@ const resetDefaults: Settings = {
 const saveCalls = () =>
   vi.mocked(invoke).mock.calls.filter(([command]) => command === "save_settings")
 
-const savedSettings = () =>
-  (saveCalls()[0]?.[1] as { settings: Settings }).settings
+const savedSettings = (index = 0) =>
+  (saveCalls()[index]?.[1] as { settings: Settings }).settings
 
-function deferred() {
-  let resolve!: () => void
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
   let reject!: (reason?: unknown) => void
-  const promise = new Promise<void>((res, rej) => {
+  const promise = new Promise<T>((res, rej) => {
     resolve = res
     reject = rej
   })
@@ -150,6 +150,28 @@ describe("SettingsDialog", () => {
     expect(saveCalls()).toHaveLength(1)
   })
 
+  it("coalesces two edits 200 ms apart into one save", async () => {
+    const input = await openHistoryTab()
+    vi.useFakeTimers()
+
+    fireEvent.change(input, { target: { value: "30" } })
+    await act(async () => {
+      vi.advanceTimersByTime(200)
+    })
+    fireEvent.change(input, { target: { value: "31" } })
+
+    await act(async () => {
+      vi.advanceTimersByTime(399)
+    })
+    expect(saveCalls()).toHaveLength(0)
+
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(saveCalls()).toHaveLength(1)
+    expect(savedSettings().history).toEqual({ retentionDays: 31 })
+  })
+
   it("flushes a pending save exactly once when closed inside the debounce window", async () => {
     const onOpenChange = vi.fn()
     render(<SettingsDialog open onOpenChange={onOpenChange} />)
@@ -205,9 +227,14 @@ describe("SettingsDialog", () => {
     await act(async () => {})
 
     expect(saveCalls()).toHaveLength(1)
+    expect(toast.error).toHaveBeenCalledTimes(1)
     expect(toast.error).toHaveBeenCalledWith(
       "Could not save settings",
-      expect.objectContaining({ id: "settings-save" }),
+      expect.objectContaining({
+        id: "settings-save",
+        description: "Could not save settings: disk full",
+        duration: Infinity,
+      }),
     )
     expect(onOpenChange).not.toHaveBeenCalled()
     expect(screen.getByRole("dialog")).toBeInTheDocument()
@@ -216,11 +243,11 @@ describe("SettingsDialog", () => {
     await act(async () => {})
 
     expect(saveCalls()).toHaveLength(2)
-    const retried = saveCalls()[1]?.[1] as { settings: Settings }
-    expect(retried.settings).toEqual({
+    expect(savedSettings(1)).toEqual({
       ...baseSettings,
       history: { retentionDays: 30 },
     })
+    expect(toast.dismiss).toHaveBeenCalledWith("settings-save")
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
@@ -259,7 +286,7 @@ describe("SettingsDialog", () => {
     await act(async () => {})
 
     expect(saveCalls()).toHaveLength(2)
-    expect(savedSettings().history).toEqual({ retentionDays: 30 })
+    expect(savedSettings(1).history).toEqual({ retentionDays: 30 })
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
@@ -410,6 +437,48 @@ describe("SettingsDialog", () => {
     )
   })
 
+  it("keeps the pending edit when a close flush rejects after reopening", async () => {
+    const first = deferred()
+    let saves = 0
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "get_settings") {
+        return Promise.resolve(structuredClone(baseSettings))
+      }
+      if (command === "save_settings") {
+        saves += 1
+        return saves === 1 ? first.promise : Promise.resolve(undefined)
+      }
+      return Promise.resolve(undefined)
+    })
+    render(<ForceCloseDialog />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    fireEvent.change(screen.getByLabelText("History retention (days)"), {
+      target: { value: "30" },
+    })
+
+    fireEvent.click(screen.getByText("Force close"))
+    await act(async () => {})
+    expect(saveCalls()).toHaveLength(1)
+
+    fireEvent.click(screen.getByText("Force open"))
+    await act(async () => {})
+    await act(async () => {
+      first.reject(new Error("disk full"))
+    })
+    await act(async () => {})
+
+    expect(screen.getByLabelText("History retention (days)")).toHaveDisplayValue(
+      "30",
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    await act(async () => {})
+
+    expect(saveCalls()).toHaveLength(2)
+    expect(savedSettings(1).history).toEqual({ retentionDays: 30 })
+  })
+
   it("toasts when reset fails and keeps the dialog open", async () => {
     vi.mocked(invoke).mockImplementation((command: string) =>
       command === "reset_settings"
@@ -422,12 +491,51 @@ describe("SettingsDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset defaults" }))
     await act(async () => {})
 
+    expect(toast.error).toHaveBeenCalledTimes(1)
+    expect(toast.error).toHaveBeenCalledWith(
+      "Could not reset settings",
+      expect.objectContaining({
+        id: "settings-reset",
+        description: "Could not reset settings: nope",
+        duration: Infinity,
+      }),
+    )
+    expect(screen.getByRole("dialog")).toBeInTheDocument()
+    expect(saveCalls()).toHaveLength(0)
+  })
+
+  it("re-arms the draft save after a reset failure", async () => {
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "reset_settings") {
+        return Promise.reject(new Error("reset boom"))
+      }
+      if (command === "save_settings") {
+        return Promise.resolve(undefined)
+      }
+      return Promise.resolve(structuredClone(baseSettings))
+    })
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    vi.useFakeTimers()
+    const input = screen.getByLabelText("History retention (days)")
+
+    fireEvent.change(input, { target: { value: "30" } })
+    fireEvent.click(screen.getByRole("button", { name: "Reset defaults" }))
+    await act(async () => {})
+
     expect(toast.error).toHaveBeenCalledWith(
       "Could not reset settings",
       expect.objectContaining({ id: "settings-reset" }),
     )
-    expect(screen.getByRole("dialog")).toBeInTheDocument()
     expect(saveCalls()).toHaveLength(0)
+
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(saveCalls()).toHaveLength(1)
+    expect(savedSettings().history).toEqual({ retentionDays: 30 })
   })
 
   it("keeps a failed save's draft when reset races it", async () => {
@@ -474,13 +582,21 @@ describe("SettingsDialog", () => {
       "Could not reset settings",
       expect.objectContaining({ id: "settings-reset" }),
     )
+    const errorMessages = vi
+      .mocked(toast.error)
+      .mock.calls.map(([message]) => message)
+    expect(
+      errorMessages.filter((message) => message === "Could not save settings"),
+    ).toHaveLength(1)
+    expect(
+      errorMessages.filter((message) => message === "Could not reset settings"),
+    ).toHaveLength(1)
 
     fireEvent.click(screen.getByRole("button", { name: "Done" }))
     await act(async () => {})
 
     expect(saveCalls()).toHaveLength(2)
-    const retried = saveCalls()[1]?.[1] as { settings: Settings }
-    expect(retried.settings.history).toEqual({ retentionDays: 30 })
+    expect(savedSettings(1).history).toEqual({ retentionDays: 30 })
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
@@ -520,6 +636,46 @@ describe("SettingsDialog", () => {
     await act(async () => {})
 
     expect(invoke).toHaveBeenCalledWith("reset_settings")
+  })
+
+  it("keeps an edit made while reset is in flight", async () => {
+    const resetInFlight = deferred<Settings>()
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "get_settings") {
+        return Promise.resolve(structuredClone(baseSettings))
+      }
+      if (command === "save_settings") {
+        return Promise.resolve(undefined)
+      }
+      if (command === "reset_settings") {
+        return resetInFlight.promise
+      }
+      return Promise.resolve(undefined)
+    })
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    vi.useFakeTimers()
+    const input = screen.getByLabelText("History retention (days)")
+
+    fireEvent.change(input, { target: { value: "30" } })
+    fireEvent.click(screen.getByRole("button", { name: "Reset defaults" }))
+    await act(async () => {})
+    fireEvent.change(input, { target: { value: "31" } })
+
+    await act(async () => {
+      resetInFlight.resolve(structuredClone(resetDefaults))
+    })
+    await act(async () => {})
+
+    expect(input).toHaveDisplayValue("31")
+
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(saveCalls()).toHaveLength(1)
+    expect(savedSettings().history).toEqual({ retentionDays: 31 })
   })
 
   it("resets the draft before saving a folder picked afterwards", async () => {
@@ -596,9 +752,13 @@ describe("SettingsDialog", () => {
 
     expect(saveCalls()).toHaveLength(3)
     expect(onOpenChange).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledTimes(1)
     expect(toast.error).toHaveBeenCalledWith(
-      "Could not save settings",
-      expect.objectContaining({ id: "settings-save" }),
+      "Settings still not saved — close again to retry",
+      expect.objectContaining({
+        id: "settings-save",
+        duration: Infinity,
+      }),
     )
   })
 
@@ -676,6 +836,8 @@ describe("SettingsDialog", () => {
     await act(async () => {})
 
     expect(invoke).toHaveBeenCalledWith("reset_settings")
+    expect(toast.dismiss).toHaveBeenCalledWith("settings-save")
+    expect(toast.dismiss).toHaveBeenCalledWith("settings-reset")
     expect(screen.getByLabelText("History retention (days)")).toHaveDisplayValue(
       "30",
     )
