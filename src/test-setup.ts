@@ -48,6 +48,10 @@ export function resetCapturedResizeObservers(): void {
 
 globalThis.ResizeObserver = CapturingResizeObserver
 
+if (typeof Element !== 'undefined' && !Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = () => []
+}
+
 const matchMediaStub = (query: string) =>
   ({
     matches: false,

@@ -1,0 +1,91 @@
+// Yard — offline batch file compression
+// Copyright (C) 2026 Yard Contributors
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+import {
+  RiCheckLine,
+  RiContractUpDownLine,
+  RiHistoryLine,
+  RiMenuLine,
+  RiSettings3Line,
+} from "@remixicon/react"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+
+interface NavMenuProps {
+  activeView: "compress" | "history"
+  onNavigate: (view: "compress" | "history") => void
+  onOpenSettings: () => void
+}
+
+export function NavMenu({
+  activeView,
+  onNavigate,
+  onOpenSettings,
+}: NavMenuProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Open navigation"
+            title="Open navigation"
+          />
+        }
+      >
+        <RiMenuLine />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-48">
+        <DropdownMenuGroup>
+          <DropdownMenuItem onClick={() => onNavigate("compress")}>
+            <RiContractUpDownLine data-icon="inline-start" />
+            Compress
+            {activeView === "compress" && (
+              <DropdownMenuShortcut>
+                <RiCheckLine />
+              </DropdownMenuShortcut>
+            )}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => onNavigate("history")}>
+            <RiHistoryLine data-icon="inline-start" />
+            History
+            {activeView === "history" && (
+              <DropdownMenuShortcut>
+                <RiCheckLine />
+              </DropdownMenuShortcut>
+            )}
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuItem onClick={onOpenSettings}>
+            <RiSettings3Line data-icon="inline-start" />
+            Settings
+          </DropdownMenuItem>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}

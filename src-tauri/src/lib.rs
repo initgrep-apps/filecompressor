@@ -51,6 +51,38 @@ pub(crate) fn setup_history<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
+#[cfg(all(target_os = "macos", not(test)))]
+fn install_macos_menu<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    use tauri::menu::{MenuBuilder, SubmenuBuilder};
+
+    let app_menu = SubmenuBuilder::new(app, "Yard")
+        .hide()
+        .hide_others()
+        .separator()
+        .quit()
+        .build()?;
+    let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+    let window_menu = SubmenuBuilder::new(app, "Window")
+        .minimize()
+        .maximize()
+        .separator()
+        .close_window()
+        .build()?;
+    let menu = MenuBuilder::new(app)
+        .items(&[&app_menu, &edit_menu, &window_menu])
+        .build()?;
+    let _previous = app.set_menu(menu)?;
+    Ok(())
+}
+
 pub(crate) fn setup_hook<R: tauri::Runtime>(
     app: &mut tauri::App<R>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -60,6 +92,8 @@ pub(crate) fn setup_hook<R: tauri::Runtime>(
     }
     temp::cleanup_stale_temp_files(app.handle());
     setup_history(app.handle());
+    #[cfg(all(target_os = "macos", not(test)))]
+    install_macos_menu(app)?;
     Ok(())
 }
 
