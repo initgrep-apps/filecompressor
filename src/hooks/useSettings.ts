@@ -29,6 +29,7 @@ export function useSettings() {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [errorCount, setErrorCount] = useState(0)
   const mutationCountRef = useRef(0)
   const bumpMutations = () => {
     mutationCountRef.current += 1
@@ -57,14 +58,17 @@ export function useSettings() {
     }
   }, [])
 
-  const saveSettings = useCallback(async (s: Settings) => {
+  const saveSettings = useCallback(async (s: Settings): Promise<boolean> => {
     bumpMutations()
     try {
       await invoke('save_settings', { settings: s })
       setSettings(s)
       setError(null)
+      return true
     } catch (err) {
       setError(`Could not save settings: ${toMessage(err)}`)
+      setErrorCount((count) => count + 1)
+      return false
     }
   }, [])
 
@@ -91,5 +95,13 @@ export function useSettings() {
     }
   }, [])
 
-  return { settings, loading, error, saveSettings, resetSettings, browseFolder }
+  return {
+    settings,
+    loading,
+    error,
+    errorCount,
+    saveSettings,
+    resetSettings,
+    browseFolder,
+  }
 }

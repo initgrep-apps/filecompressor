@@ -64,27 +64,51 @@ describe('useSettings', () => {
     const { result } = renderHook(() => useSettings())
     await act(async () => {})
     const updated: Settings = { ...mockSettings, outputFolder: '/tmp/new' }
+    let saved: boolean | undefined
     await act(async () => {
-      await result.current.saveSettings(updated)
+      saved = await result.current.saveSettings(updated)
     })
+    expect(saved).toBe(true)
     expect(invoke).toHaveBeenLastCalledWith('save_settings', { settings: updated })
     expect(result.current.settings).toEqual(updated)
     expect(result.current.error).toBeNull()
   })
 
-  it('does not update state when save rejects', async () => {
+  it('does not update state and returns false when save rejects', async () => {
     vi.mocked(invoke)
       .mockResolvedValueOnce(mockSettings)
       .mockRejectedValueOnce(new Error('disk full'))
     const { result } = renderHook(() => useSettings())
     await act(async () => {})
     const updated: Settings = { ...mockSettings, outputFolder: '/tmp/new' }
+    let saved: boolean | undefined
     await act(async () => {
-      await result.current.saveSettings(updated)
+      saved = await result.current.saveSettings(updated)
     })
+    expect(saved).toBe(false)
     expect(result.current.settings).toEqual(mockSettings)
     expect(result.current.error).toContain('Could not save settings')
     expect(result.current.error).toContain('disk full')
+  })
+
+  it('bumps the error counter on repeated identical save failures', async () => {
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(mockSettings)
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockRejectedValueOnce(new Error('disk full'))
+    const { result } = renderHook(() => useSettings())
+    await act(async () => {})
+    const initial = result.current.errorCount
+    await act(async () => {
+      await result.current.saveSettings(mockSettings)
+    })
+    const first = result.current.errorCount
+    await act(async () => {
+      await result.current.saveSettings(mockSettings)
+    })
+    expect(first).toBeGreaterThan(initial)
+    expect(result.current.errorCount).toBeGreaterThan(first)
+    expect(result.current.error).toBe('Could not save settings: disk full')
   })
 
   it('resetSettings returns and applies defaults', async () => {
