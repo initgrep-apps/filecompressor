@@ -40,8 +40,9 @@ async function openMenu() {
 }
 
 function menuOrder() {
+  const menu = screen.getByRole("menu")
   return Array.from(
-    document.querySelectorAll('[role="menuitem"], [role="separator"]'),
+    menu.querySelectorAll('[role="menuitem"], [role="separator"]'),
   ).map((element) =>
     element.getAttribute("role") === "separator"
       ? "—"
@@ -98,7 +99,11 @@ describe("NavMenu", () => {
     expect(history).toHaveAttribute("aria-current", "page")
     expect(compress).not.toHaveAttribute("aria-current")
     expect(settings).not.toHaveAttribute("aria-current")
-    expect(history.querySelector("svg[aria-hidden='true']")).not.toBeNull()
-    expect(compress.querySelector("svg[aria-hidden='true']")).toBeNull()
+    expect(
+      history.querySelector("[data-slot='dropdown-menu-shortcut'] svg"),
+    ).not.toBeNull()
+    expect(
+      compress.querySelector("[data-slot='dropdown-menu-shortcut']"),
+    ).toBeNull()
   })
 })

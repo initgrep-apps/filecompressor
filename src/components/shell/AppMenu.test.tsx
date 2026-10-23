@@ -34,8 +34,9 @@ async function openMenu() {
 }
 
 function menuOrder() {
+  const menu = screen.getByRole("menu")
   return Array.from(
-    document.querySelectorAll('[role="menuitem"], [role="separator"]'),
+    menu.querySelectorAll('[role="menuitem"], [role="separator"]'),
   ).map((element) =>
     element.getAttribute("role") === "separator"
       ? "—"

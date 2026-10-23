@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { RiContractUpDownLine } from "@remixicon/react"
 import { version } from "../../package.json"
 import thirdPartyNotices from "../../THIRD_PARTY_LICENSES.md?raw"
@@ -43,13 +43,12 @@ interface AboutDialogProps {
 export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
   const [showNotices, setShowNotices] = useState(false)
 
-  function handleOpenChange(nextOpen: boolean) {
-    if (!nextOpen) setShowNotices(false)
-    onOpenChange(nextOpen)
-  }
+  useEffect(() => {
+    if (!open) setShowNotices(false)
+  }, [open])
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader className="items-center text-center">
           <span className="flex size-12 items-center justify-center rounded-2xl bg-muted text-primary">

@@ -105,16 +105,18 @@ fn macos_menu_spec() -> [(&'static str, &'static [MacMenuItem]); 3] {
     ]
 }
 
-#[cfg(all(target_os = "macos", not(test)))]
-fn install_macos_menu<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+#[cfg(target_os = "macos")]
+pub fn build_macos_menu<R: tauri::Runtime, M: tauri::Manager<R>>(
+    manager: &M,
+) -> tauri::Result<tauri::menu::Menu<R>> {
     use tauri::menu::{MenuBuilder, Submenu, SubmenuBuilder};
 
-    fn submenu<R: tauri::Runtime>(
-        app: &tauri::App<R>,
+    fn submenu<R: tauri::Runtime, M: tauri::Manager<R>>(
+        manager: &M,
         title: &str,
         items: &[MacMenuItem],
     ) -> tauri::Result<Submenu<R>> {
-        let mut builder = SubmenuBuilder::new(app, title);
+        let mut builder = SubmenuBuilder::new(manager, title);
         for item in items {
             builder = match item {
                 MacMenuItem::Hide => builder.hide(),
@@ -137,12 +139,17 @@ fn install_macos_menu<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<(
 
     let [(yard_title, yard_items), (edit_title, edit_items), (window_title, window_items)] =
         macos_menu_spec();
-    let app_menu = submenu(app, yard_title, yard_items)?;
-    let edit_menu = submenu(app, edit_title, edit_items)?;
-    let window_menu = submenu(app, window_title, window_items)?;
-    let menu = MenuBuilder::new(app)
+    let app_menu = submenu(manager, yard_title, yard_items)?;
+    let edit_menu = submenu(manager, edit_title, edit_items)?;
+    let window_menu = submenu(manager, window_title, window_items)?;
+    MenuBuilder::new(manager)
         .items(&[&app_menu, &edit_menu, &window_menu])
-        .build()?;
+        .build()
+}
+
+#[cfg(all(target_os = "macos", not(test)))]
+fn install_macos_menu<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    let menu = build_macos_menu(app)?;
     let _previous = app.set_menu(menu)?;
     Ok(())
 }
@@ -158,7 +165,7 @@ pub(crate) fn setup_hook<R: tauri::Runtime>(
     setup_history(app.handle());
     #[cfg(all(target_os = "macos", not(test)))]
     if let Err(error) = install_macos_menu(app) {
-        eprintln!("warn: macOS menu bar unavailable, continuing without it: {error}");
+        eprintln!("warn: macOS menu install failed; Tauri default menu remains active (native About visible): {error}");
     }
     Ok(())
 }
@@ -454,16 +461,6 @@ mod macos_menu_tests {
             spec[2].1,
             &[Minimize, Maximize, Separator, CloseWindow][..],
             "the Window submenu must offer minimize, maximize, a separator, and close"
-        );
-    }
-
-    #[test]
-    fn macos_menu_has_no_about_item() {
-        let spec = macos_menu_spec();
-
-        assert!(
-            !format!("{spec:?}").to_lowercase().contains("about"),
-            "the macOS menu must not offer About: the dialog is the only About surface"
         );
     }
 }

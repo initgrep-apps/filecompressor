@@ -74,6 +74,7 @@ describe("AboutDialog", () => {
     render(<AboutDialog open onOpenChange={vi.fn()} />)
     const user = userEvent.setup()
 
+    expect(thirdPartyNotices.length).toBeGreaterThan(0)
     expect(screen.getByRole("dialog").querySelector("pre")).toBeNull()
 
     await user.click(screen.getByRole("button", { name: /Third-party notices/ }))
@@ -84,6 +85,47 @@ describe("AboutDialog", () => {
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
+  it("ties the license rows to the generated notices", () => {
+    render(<AboutDialog open onOpenChange={vi.fn()} />)
+
+    LICENSE_ROWS.filter(([name]) => name !== "Yard").forEach(([, license]) => {
+      expect(thirdPartyNotices).toContain(`License: ${license}`)
+    })
+  })
+
+  it("collapses the notices when the toggle is clicked again", async () => {
+    render(<AboutDialog open onOpenChange={vi.fn()} />)
+    const user = userEvent.setup()
+    const toggle = screen.getByRole("button", { name: /Third-party notices/ })
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false")
+
+    await user.click(toggle)
+
+    expect(toggle).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByRole("dialog").querySelector("pre")).not.toBeNull()
+
+    await user.click(toggle)
+
+    expect(toggle).toHaveAttribute("aria-expanded", "false")
+    expect(screen.getByRole("dialog").querySelector("pre")).toBeNull()
+  })
+
+  it("resets the notices when the parent closes and reopens the dialog", async () => {
+    const { rerender } = render(
+      <AboutDialog open onOpenChange={vi.fn()} />,
+    )
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole("button", { name: /Third-party notices/ }))
+    expect(screen.getByRole("dialog").querySelector("pre")).not.toBeNull()
+
+    rerender(<AboutDialog open={false} onOpenChange={vi.fn()} />)
+    rerender(<AboutDialog open onOpenChange={vi.fn()} />)
+
+    expect(screen.getByRole("dialog").querySelector("pre")).toBeNull()
+  })
+
   it("requests a close from the close button", async () => {
     const onOpenChange = vi.fn()
     render(<AboutDialog open onOpenChange={onOpenChange} />)
@@ -91,7 +133,8 @@ describe("AboutDialog", () => {
 
     await user.click(screen.getByRole("button", { name: "Close" }))
 
-    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(onOpenChange).toHaveBeenCalledTimes(1)
+    expect(onOpenChange.mock.calls[0][0]).toBe(false)
   })
 
   it("requests a close on Escape", async () => {
@@ -101,7 +144,8 @@ describe("AboutDialog", () => {
 
     await user.keyboard("{Escape}")
 
-    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(onOpenChange).toHaveBeenCalledTimes(1)
+    expect(onOpenChange.mock.calls[0][0]).toBe(false)
   })
 
   it("renders no dialog while closed", () => {
