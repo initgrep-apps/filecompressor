@@ -176,9 +176,13 @@ describe('useSettings', () => {
     })
     expect(picked).toBeNull()
     expect(result.current.error).toBeNull()
-    expect(toast.error).toHaveBeenCalledWith('Could not open folder picker', {
-      id: 'settings-folder-picker',
-    })
+    expect(toast.error).toHaveBeenCalledWith(
+      'Could not open folder picker',
+      expect.objectContaining({
+        id: 'settings-folder-picker',
+        description: 'picker dead',
+      }),
+    )
     expect(consoleSpy).toHaveBeenCalledWith(
       'Folder picker failed:',
       expect.any(Error),

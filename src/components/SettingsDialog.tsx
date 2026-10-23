@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   RiEqualizerLine,
   RiFlashlightLine,
@@ -57,7 +57,6 @@ import { cn } from "@/lib/utils"
 import type {
   Category,
   CategoryTarget,
-  MaxConcurrent,
   QualityFloors,
   Settings,
 } from "@/types"
@@ -377,7 +376,7 @@ function PerformanceSection({ draft, onChange }: SectionProps) {
               if (maxConcurrent !== null) {
                 onChange({
                   ...draft,
-                  performance: { maxConcurrent: maxConcurrent as MaxConcurrent },
+                  performance: { maxConcurrent },
                 })
               }
             }}
@@ -433,11 +432,17 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     useSettings()
   const [draft, setDraft] = useState<Settings | null>(null)
   const [section, setSection] = useState<SectionId>("general")
+  const [flushVersion, setFlushVersion] = useState(0)
   const draftRef = useRef<Settings | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inFlightRef = useRef<Promise<boolean> | null>(null)
   const dirtyRef = useRef(false)
   const seededRef = useRef(false)
+  const errorRef = useRef<string | null>(error)
+
+  useEffect(() => {
+    errorRef.current = error
+  }, [error])
 
   const clearTimer = () => {
     if (timerRef.current !== null) {
@@ -457,30 +462,36 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       inFlightRef.current = request
       const saved = await request
       inFlightRef.current = null
+      setFlushVersion((version) => version + 1)
 
       if (!saved) {
         dirtyRef.current = true
-        toast.error(SAVE_ERROR, { id: SAVE_ERROR_ID })
+        toast.error(SAVE_ERROR, {
+          id: SAVE_ERROR_ID,
+          description: errorRef.current ?? undefined,
+        })
         return false
       }
+      toast.dismiss(SAVE_ERROR_ID)
     }
     return !dirtyRef.current
   }, [saveSettings])
 
   useEffect(() => {
-    if (!open) {
-      seededRef.current = false
-      if (dirtyRef.current) void persist()
-      return
-    }
-    if (!seededRef.current && settings) {
-      seededRef.current = true
-      clearTimer()
-      dirtyRef.current = false
-      draftRef.current = settings
-      setDraft(settings)
-    }
-  }, [open, settings, persist])
+    if (open) return
+    seededRef.current = false
+    setDraft(null)
+    if (dirtyRef.current) void persist()
+  }, [open, persist])
+
+  useEffect(() => {
+    if (!open || seededRef.current || inFlightRef.current || !settings) return
+    seededRef.current = true
+    clearTimer()
+    dirtyRef.current = false
+    draftRef.current = settings
+    setDraft(settings)
+  }, [open, settings, flushVersion])
 
   useEffect(
     () => () => {
@@ -502,7 +513,16 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   const requestClose = async () => {
     const saved = await persist()
-    if (saved) onOpenChange(false)
+    if (saved) {
+      onOpenChange(false)
+      return
+    }
+    if (dirtyRef.current) {
+      toast.error(SAVE_ERROR, {
+        id: SAVE_ERROR_ID,
+        description: errorRef.current ?? undefined,
+      })
+    }
   }
 
   const handleOpenChange = (next: boolean) => {
@@ -521,28 +541,49 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   }
 
   const handleReset = async () => {
-    clearTimer()
-    const wasDirty = dirtyRef.current
-    dirtyRef.current = false
     while (inFlightRef.current) await inFlightRef.current
+    const wasDirty = dirtyRef.current
+    clearTimer()
     dirtyRef.current = false
 
     const request = (async (): Promise<boolean> => {
       const defaults = await resetSettings()
+      setFlushVersion((version) => version + 1)
       if (!defaults) {
-        toast.error(RESET_ERROR, { id: RESET_ERROR_ID })
+        toast.error(RESET_ERROR, {
+          id: RESET_ERROR_ID,
+          description: errorRef.current ?? undefined,
+        })
         return false
       }
+      toast.dismiss(SAVE_ERROR_ID)
+      toast.dismiss(RESET_ERROR_ID)
+      clearTimer()
+      dirtyRef.current = false
       draftRef.current = defaults
       setDraft(defaults)
-      dirtyRef.current = false
       return true
     })()
     inFlightRef.current = request
     const reset = await request
     inFlightRef.current = null
-    if (!reset) dirtyRef.current = wasDirty
+    if (!reset && wasDirty) {
+      dirtyRef.current = true
+      clearTimer()
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null
+        void persist()
+      }, SAVE_DEBOUNCE_MS)
+    }
   }
+
+  const panelsFor = (current: Settings): Record<SectionId, ReactNode> => ({
+    general: <GeneralSection draft={current} onChoose={handleChoose} />,
+    targets: <TargetsSection draft={current} onChange={commit} />,
+    floors: <FloorsSection draft={current} onChange={commit} />,
+    performance: <PerformanceSection draft={current} onChange={commit} />,
+    history: <HistorySection draft={current} onChange={commit} />,
+  })
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -581,21 +622,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             </div>
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               <ScrollArea className="min-h-0 flex-1">
-                <TabsContent value="general" className="p-6">
-                  <GeneralSection draft={draft} onChoose={handleChoose} />
-                </TabsContent>
-                <TabsContent value="targets" className="p-6">
-                  <TargetsSection draft={draft} onChange={commit} />
-                </TabsContent>
-                <TabsContent value="floors" className="p-6">
-                  <FloorsSection draft={draft} onChange={commit} />
-                </TabsContent>
-                <TabsContent value="performance" className="p-6">
-                  <PerformanceSection draft={draft} onChange={commit} />
-                </TabsContent>
-                <TabsContent value="history" className="p-6">
-                  <HistorySection draft={draft} onChange={commit} />
-                </TabsContent>
+                {SECTIONS.map(({ value }) => (
+                  <TabsContent key={value} value={value} className="p-6">
+                    {panelsFor(draft)[value]}
+                  </TabsContent>
+                ))}
               </ScrollArea>
               <div className="flex shrink-0 justify-end gap-2 border-t border-border p-4">
                 <Button variant="ghost" onClick={handleReset}>

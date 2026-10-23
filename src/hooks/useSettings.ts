@@ -69,6 +69,7 @@ export function useSettings() {
       setError(null)
       return true
     } catch (err) {
+      console.error('Save settings failed:', err)
       setError(`Could not save settings: ${toMessage(err)}`)
       return false
     }
@@ -82,6 +83,7 @@ export function useSettings() {
       setError(null)
       return defaults
     } catch (err) {
+      console.error('Reset settings failed:', err)
       setError(`Could not reset settings: ${toMessage(err)}`)
       return null
     }
@@ -93,7 +95,10 @@ export function useSettings() {
       return typeof selected === 'string' ? selected : null
     } catch (err) {
       console.error('Folder picker failed:', err)
-      toast.error(PICKER_ERROR, { id: PICKER_ERROR_ID })
+      toast.error(PICKER_ERROR, {
+        id: PICKER_ERROR_ID,
+        description: toMessage(err),
+      })
       return null
     }
   }, [])

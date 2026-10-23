@@ -24,7 +24,9 @@ import type { Settings } from "@/types"
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }))
-vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn(), dismiss: vi.fn() },
+}))
 
 import { SettingsDialog } from "@/components/SettingsDialog"
 
@@ -91,6 +93,7 @@ beforeEach(() => {
   vi.mocked(invoke).mockReset()
   vi.mocked(open).mockReset()
   vi.mocked(toast.error).mockReset()
+  vi.mocked(toast.dismiss).mockReset()
   vi.mocked(invoke).mockImplementation((command: string) =>
     command === "get_settings"
       ? Promise.resolve(structuredClone(baseSettings))
@@ -174,12 +177,20 @@ describe("SettingsDialog", () => {
     expect(saveCalls()).toHaveLength(1)
   })
 
-  it("keeps the dialog open and toasts when the close flush rejects", async () => {
-    vi.mocked(invoke).mockImplementation((command: string) =>
-      command === "save_settings"
-        ? Promise.reject(new Error("disk full"))
-        : Promise.resolve(structuredClone(baseSettings)),
-    )
+  it("retries the close flush and saves the draft after a failed write", async () => {
+    let saves = 0
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "get_settings") {
+        return Promise.resolve(structuredClone(baseSettings))
+      }
+      if (command === "save_settings") {
+        saves += 1
+        return saves === 1
+          ? Promise.reject(new Error("disk full"))
+          : Promise.resolve(undefined)
+      }
+      return Promise.resolve(undefined)
+    })
     const onOpenChange = vi.fn()
     render(<SettingsDialog open onOpenChange={onOpenChange} />)
     await screen.findByRole("tab", { name: "General" })
@@ -193,14 +204,24 @@ describe("SettingsDialog", () => {
 
     await act(async () => {})
 
-    expect(toast.error).toHaveBeenCalledWith("Could not save settings", {
-      id: "settings-save",
-    })
+    expect(saveCalls()).toHaveLength(1)
+    expect(toast.error).toHaveBeenCalledWith(
+      "Could not save settings",
+      expect.objectContaining({ id: "settings-save" }),
+    )
     expect(onOpenChange).not.toHaveBeenCalled()
     expect(screen.getByRole("dialog")).toBeInTheDocument()
-    expect(screen.getByLabelText("History retention (days)")).toHaveDisplayValue(
-      "30",
-    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    await act(async () => {})
+
+    expect(saveCalls()).toHaveLength(2)
+    const retried = saveCalls()[1]?.[1] as { settings: Settings }
+    expect(retried.settings).toEqual({
+      ...baseSettings,
+      history: { retentionDays: 30 },
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
   it("retries a failed debounced save when closed", async () => {
@@ -279,9 +300,10 @@ describe("SettingsDialog", () => {
       first.reject(new Error("disk full"))
     })
 
-    expect(toast.error).toHaveBeenCalledWith("Could not save settings", {
-      id: "settings-save",
-    })
+    expect(toast.error).toHaveBeenCalledWith(
+      "Could not save settings",
+      expect.objectContaining({ id: "settings-save" }),
+    )
     expect(onOpenChange).not.toHaveBeenCalled()
     expect(screen.getByRole("dialog")).toBeInTheDocument()
     expect(saves).toBe(2)
@@ -400,11 +422,199 @@ describe("SettingsDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reset defaults" }))
     await act(async () => {})
 
-    expect(toast.error).toHaveBeenCalledWith("Could not reset settings", {
-      id: "settings-reset",
-    })
+    expect(toast.error).toHaveBeenCalledWith(
+      "Could not reset settings",
+      expect.objectContaining({ id: "settings-reset" }),
+    )
     expect(screen.getByRole("dialog")).toBeInTheDocument()
     expect(saveCalls()).toHaveLength(0)
+  })
+
+  it("keeps a failed save's draft when reset races it", async () => {
+    const first = deferred()
+    let saves = 0
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "get_settings") {
+        return Promise.resolve(structuredClone(baseSettings))
+      }
+      if (command === "save_settings") {
+        saves += 1
+        return saves === 1 ? first.promise : Promise.resolve(undefined)
+      }
+      if (command === "reset_settings") {
+        return Promise.reject(new Error("reset boom"))
+      }
+      return Promise.resolve(undefined)
+    })
+    const onOpenChange = vi.fn()
+    render(<SettingsDialog open onOpenChange={onOpenChange} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    vi.useFakeTimers()
+    const input = screen.getByLabelText("History retention (days)")
+
+    fireEvent.change(input, { target: { value: "30" } })
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+    expect(saveCalls()).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset defaults" }))
+    await act(async () => {})
+    await act(async () => {
+      first.reject(new Error("disk full"))
+    })
+    await act(async () => {})
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "Could not save settings",
+      expect.objectContaining({ id: "settings-save" }),
+    )
+    expect(toast.error).toHaveBeenCalledWith(
+      "Could not reset settings",
+      expect.objectContaining({ id: "settings-reset" }),
+    )
+
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    await act(async () => {})
+
+    expect(saveCalls()).toHaveLength(2)
+    const retried = saveCalls()[1]?.[1] as { settings: Settings }
+    expect(retried.settings.history).toEqual({ retentionDays: 30 })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("waits for an in-flight save before resetting", async () => {
+    const first = deferred()
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "get_settings") {
+        return Promise.resolve(structuredClone(baseSettings))
+      }
+      if (command === "save_settings") {
+        return first.promise
+      }
+      if (command === "reset_settings") {
+        return Promise.resolve(structuredClone(resetDefaults))
+      }
+      return Promise.resolve(undefined)
+    })
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    vi.useFakeTimers()
+
+    fireEvent.change(screen.getByLabelText("History retention (days)"), {
+      target: { value: "31" },
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset defaults" }))
+    await act(async () => {})
+    expect(invoke).not.toHaveBeenCalledWith("reset_settings")
+
+    await act(async () => {
+      first.resolve()
+    })
+    await act(async () => {})
+
+    expect(invoke).toHaveBeenCalledWith("reset_settings")
+  })
+
+  it("resets the draft before saving a folder picked afterwards", async () => {
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "reset_settings") {
+        return Promise.resolve(structuredClone(resetDefaults))
+      }
+      return Promise.resolve(structuredClone(baseSettings))
+    })
+    vi.mocked(open).mockResolvedValueOnce("/tmp/picked")
+    const onOpenChange = vi.fn()
+    render(<SettingsDialog open onOpenChange={onOpenChange} />)
+    await screen.findByRole("tab", { name: "General" })
+
+    fireEvent.click(screen.getByRole("button", { name: "Reset defaults" }))
+    await act(async () => {})
+    fireEvent.click(screen.getByRole("button", { name: "Choose…" }))
+    await act(async () => {})
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    await act(async () => {})
+
+    expect(savedSettings()).toEqual({
+      ...resetDefaults,
+      outputFolder: "/tmp/picked",
+    })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("toasts instead of closing when the flush write cap is exhausted", async () => {
+    const first = deferred()
+    const second = deferred()
+    const third = deferred()
+    let saves = 0
+    vi.mocked(invoke).mockImplementation((command: string) => {
+      if (command === "get_settings") {
+        return Promise.resolve(structuredClone(baseSettings))
+      }
+      if (command === "save_settings") {
+        saves += 1
+        if (saves === 1) return first.promise
+        if (saves === 2) return second.promise
+        return third.promise
+      }
+      return Promise.resolve(undefined)
+    })
+    const onOpenChange = vi.fn()
+    render(<SettingsDialog open onOpenChange={onOpenChange} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    vi.useFakeTimers()
+    const input = screen.getByLabelText("History retention (days)")
+
+    fireEvent.change(input, { target: { value: "30" } })
+    fireEvent.click(screen.getByRole("button", { name: "Done" }))
+    await act(async () => {})
+    expect(saveCalls()).toHaveLength(1)
+
+    fireEvent.change(input, { target: { value: "31" } })
+    await act(async () => {
+      first.resolve()
+    })
+    expect(saveCalls()).toHaveLength(2)
+
+    fireEvent.change(input, { target: { value: "32" } })
+    await act(async () => {
+      second.resolve()
+    })
+    expect(saveCalls()).toHaveLength(3)
+
+    fireEvent.change(input, { target: { value: "33" } })
+    await act(async () => {
+      third.resolve()
+    })
+
+    expect(saveCalls()).toHaveLength(3)
+    expect(onOpenChange).not.toHaveBeenCalled()
+    expect(toast.error).toHaveBeenCalledWith(
+      "Could not save settings",
+      expect.objectContaining({ id: "settings-save" }),
+    )
+  })
+
+  it("flushes a pending draft on unmount", async () => {
+    const view = render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "History" }))
+    fireEvent.change(screen.getByLabelText("History retention (days)"), {
+      target: { value: "30" },
+    })
+
+    view.unmount()
+    await act(async () => {})
+
+    expect(saveCalls()).toHaveLength(1)
+    expect(savedSettings().history).toEqual({ retentionDays: 30 })
   })
 
   it("shows the load error instead of the loading text", async () => {
@@ -439,10 +649,13 @@ describe("SettingsDialog", () => {
     })
 
     expect(saveCalls()).toHaveLength(2)
-    expect(vi.mocked(toast.error).mock.calls).toEqual([
-      ["Could not save settings", { id: "settings-save" }],
-      ["Could not save settings", { id: "settings-save" }],
-    ])
+    const calls = vi.mocked(toast.error).mock.calls
+    expect(calls).toHaveLength(2)
+    expect(calls[0][0]).toBe("Could not save settings")
+    expect(calls[1][0]).toBe("Could not save settings")
+    calls.forEach((call) =>
+      expect(call[1]).toMatchObject({ id: "settings-save" }),
+    )
   })
 
   it("resets the draft to the returned defaults", async () => {
