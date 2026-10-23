@@ -14,6 +14,7 @@ Open items only. Resolved investigations belong in git history or as a durable r
 | Sidebar footer hardcodes `v1.0.0` | `package.json` and Tauri say `0.1.0` |
 | File picker passes `filters: []` | Unsupported files are only rejected after selection |
 | History filters/page/search reset on view change | Views unmount; state is view-local by design |
+| `history.jsonl` is re-folded on every `get_history` call | Acceptable while history stays small; cache the fold in `HistoryStore` keyed by `(mtime, len)` if history grows past ~10k records |
 | Manual acceptance matrix not yet run on released builds | CI proves packages start and compress; the UI matrix in `docs/distribution-acceptance.md` is manual |
 
 ## Accepted limitations
