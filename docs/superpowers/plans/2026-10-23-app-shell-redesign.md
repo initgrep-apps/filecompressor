@@ -198,7 +198,7 @@ git commit -m "feat(ui): add shell primitives and shared category icon"
 **Interfaces:**
 - Produces: `useTheme(): { theme: "light" | "dark"; toggleTheme: () => void }`; `<ThemeToggle />` with `aria-label="Toggle theme"` and native `title`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Cover:
 - `readInitialTheme()`: stored value wins; absent follows `matchMedia`; `useTheme` seeds from the class `main.tsx` already applied;
@@ -206,21 +206,21 @@ Cover:
 - `getCurrentWindow().setTheme` is called with the resolved value (mock `@tauri-apps/api/window`);
 - a stored `"light"` wins over a dark OS preference.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `yarn test src/hooks/useTheme.test.ts src/components/shell/ThemeToggle.test.tsx`
 Expected: FAIL — modules not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `src/lib/theme.ts` with `readInitialTheme()`. `main.tsx` applies `.dark` from it as its first statement, **before** `createRoot` and before the `detectPlatform()` await. `useTheme` seeds from `readInitialTheme()`, does not re-apply on mount, subscribes to `matchMedia` only while no stored value exists, persists explicit choices, and calls `setTheme` once after bootstrap (failures swallowed). `ThemeToggle` is an icon-only shadcn `Button` (`variant="ghost"`, `size="icon-sm"`) using `RiSunLine`/`RiMoonLine`. Remove the theme listener from `main.tsx`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `yarn test src/hooks/useTheme.test.ts src/components/shell/ThemeToggle.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/lib/theme.ts src/lib/theme.test.ts src/hooks/useTheme.ts src/hooks/useTheme.test.ts src/components/shell/ThemeToggle.tsx src/components/shell/ThemeToggle.test.tsx src/main.tsx
