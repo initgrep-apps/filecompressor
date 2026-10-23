@@ -30,9 +30,13 @@ function renderTablist(orientation?: 'horizontal' | 'vertical') {
 }
 
 it('forwards vertical orientation to the tablist', () => {
-  expect(renderTablist('vertical')).toHaveAttribute('aria-orientation', 'vertical')
+  const tablist = renderTablist('vertical')
+  expect(tablist).toHaveAttribute('aria-orientation', 'vertical')
+  expect(tablist.closest('[data-slot="tabs"]')).toHaveAttribute('data-orientation', 'vertical')
 })
 
 it('defaults to horizontal orientation', () => {
-  expect(renderTablist()).not.toHaveAttribute('aria-orientation')
+  const tablist = renderTablist()
+  expect(tablist).not.toHaveAttribute('aria-orientation')
+  expect(tablist.closest('[data-slot="tabs"]')).toHaveAttribute('data-orientation', 'horizontal')
 })

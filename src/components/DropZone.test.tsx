@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, act, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { UnlistenFn } from '@tauri-apps/api/event'
+import type { Category } from '@/types'
 
 const handlers: Array<(evt: unknown) => void> = []
 const unlisten = vi.fn()
@@ -19,7 +20,7 @@ vi.mock('@tauri-apps/api/webview', () => ({
 
 import { DropZone } from '@/components/DropZone'
 
-const ALL_EXTENSIONS = ['JPEG', 'PNG', 'WebP', 'HEIC', 'MP4', 'MOV', 'PDF', 'DOCX', 'XLSX', 'PPTX']
+const ALL_EXTENSIONS = ['JPEG', 'PNG', 'WebP', 'HEIC', 'MP4', 'MOV', 'PDF', 'DOCX', 'XLSX', 'PPTX'] as const
 
 const ALL_FORMATS = ALL_EXTENSIONS.join(', ')
 
@@ -36,7 +37,7 @@ const GROUP_MEMBERSHIP: Record<string, string> = {
   PPTX: 'docs',
 }
 
-const CATEGORY_MEMBERSHIP: Record<string, string> = {
+const CATEGORY_MEMBERSHIP: Record<(typeof ALL_EXTENSIONS)[number], Category> = {
   JPEG: 'image',
   PNG: 'image',
   WebP: 'image',
@@ -189,7 +190,9 @@ describe('DropZone', () => {
     for (const ext of ALL_EXTENSIONS) {
       const pill = screen.getByText(ext)
       expect(pill).toBeInTheDocument()
-      expect(pill.querySelector('svg')?.getAttribute('data-category')).toBe(CATEGORY_MEMBERSHIP[ext])
+      const svg = pill.querySelector('svg')
+      expect(svg).not.toBeNull()
+      expect(svg!.getAttribute('data-category')).toBe(CATEGORY_MEMBERSHIP[ext])
     }
     expect(screen.getByText('JPEG').className).toContain('text-blue-600')
     expect(screen.getByText('HEIC').className).toContain('text-blue-600')
