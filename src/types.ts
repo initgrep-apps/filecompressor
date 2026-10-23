@@ -118,6 +118,7 @@ export interface HistoryFilters {
   categories?: Category[]
   sinceMs?: number
   outputFolder?: string
+  sort?: 'newest' | 'oldest'
 }
 
 export interface HistorySummary {

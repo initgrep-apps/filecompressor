@@ -138,6 +138,7 @@ pub struct HistoryFilters {
     pub categories: Option<Vec<String>>,
     pub since_ms: Option<i64>,
     pub output_folder: Option<String>,
+    pub sort: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -503,6 +504,12 @@ pub fn query_history(
             session.matched_files = Some(session.files.len());
         }
         visible.push(session);
+    }
+
+    if filters.sort.as_deref() == Some("oldest") {
+        visible.sort_by_key(|session| session.started_at);
+    } else {
+        visible.sort_by_key(|session| std::cmp::Reverse(session.started_at));
     }
 
     let total_sessions = visible.len();
@@ -2182,6 +2189,80 @@ mod tests {
 
     fn no_filters() -> HistoryFilters {
         HistoryFilters::default()
+    }
+
+    fn sorted_ids(fold: FoldResult, filters: &HistoryFilters) -> Vec<String> {
+        query_history(fold, filters, 0, 50)
+            .sessions
+            .into_iter()
+            .map(|session| session.session_id)
+            .collect()
+    }
+
+    fn sort_filter(sort: &str) -> HistoryFilters {
+        HistoryFilters {
+            sort: Some(sort.into()),
+            ..no_filters()
+        }
+    }
+
+    #[test]
+    fn sort_newest_is_default() {
+        let newest = sorted_ids(five_sessions(), &sort_filter("newest"));
+        assert_eq!(newest, vec!["s5", "s4", "s3", "s2", "s1"]);
+        assert_eq!(
+            sorted_ids(five_sessions(), &no_filters()),
+            newest,
+            "absent sort keeps the newest-first default"
+        );
+    }
+
+    #[test]
+    fn sort_oldest_reverses_started_at() {
+        assert_eq!(
+            sorted_ids(five_sessions(), &sort_filter("oldest")),
+            vec!["s1", "s2", "s3", "s4", "s5"]
+        );
+        assert_eq!(
+            sorted_ids(two_sessions(), &sort_filter("oldest")),
+            vec!["s1", "s2"]
+        );
+    }
+
+    #[test]
+    fn sort_unknown_falls_back_to_newest() {
+        let newest = sorted_ids(five_sessions(), &no_filters());
+        for sort in ["recent", "", "OLDEST"] {
+            assert_eq!(
+                sorted_ids(five_sessions(), &sort_filter(sort)),
+                newest,
+                "unknown sort {sort:?} falls back to newest"
+            );
+        }
+        let null: HistoryFilters = serde_json::from_str(r#"{"sort":null}"#).unwrap();
+        assert_eq!(null.sort, None);
+        assert_eq!(sorted_ids(five_sessions(), &null), newest);
+    }
+
+    #[test]
+    fn sort_applies_before_pagination() {
+        let newest = query_history(five_sessions_mixed_statuses(), &sort_filter("newest"), 0, 1);
+        let oldest = query_history(five_sessions_mixed_statuses(), &sort_filter("oldest"), 0, 1);
+        assert_eq!(newest.sessions.len(), 1);
+        assert_eq!(oldest.sessions.len(), 1);
+        assert_eq!(newest.sessions[0].session_id, "s5");
+        assert_eq!(oldest.sessions[0].session_id, "s1");
+        assert_eq!(newest.total_sessions, 5);
+        assert_eq!(oldest.total_sessions, 5);
+        assert_eq!(newest.total_files, 5);
+        assert_eq!(oldest.total_files, newest.total_files);
+        assert_eq!(oldest.summary, newest.summary);
+        let oldest_second =
+            query_history(five_sessions_mixed_statuses(), &sort_filter("oldest"), 1, 1);
+        assert_eq!(
+            oldest_second.sessions[0].session_id, "s2",
+            "pagination slices after the sort"
+        );
     }
 
     #[test]
