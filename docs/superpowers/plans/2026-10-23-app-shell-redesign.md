@@ -335,25 +335,25 @@ useHistoryContext(): HistoryContextValue
 ```
 - `historyFormat` adds `batchLabel(ms: number, now: Date): string` (`Today · 2:31 PM`), `savedPercent(original, compressed): number`, and `describeSince(ms: number | undefined, now: Date): string`, and absorbs `savedLabel`, `fileCountLabel`, `countOutcome` from `HistoryView.tsx:196-268` (single source; Task 12 deletes the local copies).
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Provider: with two sessions and no selection, the first is selected after load; selecting the second then filtering it out selects the first; filtering out everything yields `null`. Search updates debounce 300 ms into `filters.search`. Format helpers: `batchLabel` today/yesterday/other; `describeSince` for today, 7 days, 30 days, month start, and a custom date.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `yarn test src/providers/HistoryProvider.test.tsx src/lib/historyFormat.test.ts`
 Expected: FAIL — exports missing.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Provider wraps `useHistory`, owns `selectedSessionId`, `expanded`, and `searchText`, and syncs selection whenever `response.sessions` changes. It mounts at app level, so `get_history` runs once at boot and once per `batch:complete` (async IPC, off the UI thread; no per-file fetch). Record in `docs/bugs.md`: cache the fold in `HistoryStore` keyed by `(mtime, len)` if history grows past ~10k records. `setSearchText` debounces into `setFilters({ search: trimmed || undefined })` via a ref, like the old view. Selection fallback: first session, then `null`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `yarn test src/providers/HistoryProvider.test.tsx src/lib/historyFormat.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/providers/HistoryProvider.tsx src/providers/HistoryProvider.test.tsx src/lib/historyFormat.ts src/lib/historyFormat.test.ts

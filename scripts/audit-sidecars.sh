@@ -318,13 +318,13 @@ if [ -n "$CONF_CHECK_TARGET" ] && [ -f "$CONF" ]; then
     fi
   fi
   for entry in $listed; do
-    if ! printf '%s\n' "$present" | grep -Fxq "$entry"; then
+    if ! grep -Fxq "$entry" <<<"$present"; then
       printf 'FAIL tauri.conf.json lists missing dylib: %s\n' "$entry"
       failures+=("$CONF")
     fi
   done
   for entry in $present; do
-    if ! printf '%s\n' "$listed" | grep -Fxq "$entry"; then
+    if ! grep -Fxq "$entry" <<<"$listed"; then
       printf 'FAIL tauri.conf.json missing bundled dylib: %s\n' "$entry"
       failures+=("$CONF")
     fi

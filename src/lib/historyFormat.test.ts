@@ -15,7 +15,19 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect } from 'vitest'
-import { formatDuration, presetSinceMs, dayLabel, dayKey } from '@/lib/historyFormat'
+import {
+  batchLabel,
+  countOutcome,
+  describeSince,
+  fileCountLabel,
+  formatDuration,
+  presetSinceMs,
+  dayLabel,
+  dayKey,
+  savedLabel,
+  savedPercent,
+} from '@/lib/historyFormat'
+import type { HistoryFile, SessionOutcome } from '@/types'
 
 describe('historyFormat', () => {
   it('formats durations', () => {
@@ -69,6 +81,9 @@ describe('historyFormat', () => {
 
   it('formats duration boundaries', () => {
     expect(formatDuration(-5)).toBe('—')
+    expect(formatDuration(Number.NaN)).toBe('—')
+    expect(formatDuration(Number.POSITIVE_INFINITY)).toBe('—')
+    expect(formatDuration(Number.NEGATIVE_INFINITY)).toBe('—')
     expect(formatDuration(999)).toBe('1s')
     expect(formatDuration(1_000)).toBe('1s')
     expect(formatDuration(59_999)).toBe('59s')
@@ -80,5 +95,120 @@ describe('historyFormat', () => {
   it('labels yesterday across year boundary', () => {
     const now = new Date(2027, 0, 1, 3, 0)
     expect(dayLabel(new Date(2026, 11, 31, 20, 0).getTime(), now)).toBe('Yesterday')
+  })
+})
+
+const timeLabel = (ms: number): string =>
+  new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(
+    new Date(ms)
+  )
+
+describe('batchLabel', () => {
+  const now = new Date(2026, 9, 23, 15, 0)
+
+  it('labels today, yesterday and other days with the batch time', () => {
+    const today = new Date(2026, 9, 23, 14, 31).getTime()
+    const yesterday = new Date(2026, 9, 22, 18, 20).getTime()
+    const other = new Date(2026, 9, 20, 16, 48).getTime()
+    expect(batchLabel(today, now)).toBe(`Today · ${timeLabel(today)}`)
+    expect(batchLabel(yesterday, now)).toBe(`Yesterday · ${timeLabel(yesterday)}`)
+    expect(batchLabel(other, now)).toBe(`${dayLabel(other, now)} · ${timeLabel(other)}`)
+  })
+})
+
+describe('describeSince', () => {
+  const now = new Date(2026, 9, 23, 15, 0)
+
+  it('names the presets', () => {
+    expect(describeSince(undefined, now)).toBe('All time')
+    expect(describeSince(presetSinceMs('today', now), now)).toBe('Today')
+    expect(describeSince(presetSinceMs('last7', now), now)).toBe('Last 7 days')
+    expect(describeSince(presetSinceMs('last30', now), now)).toBe('Last 30 days')
+    expect(describeSince(new Date(2026, 9, 1).getTime(), now)).toBe('This month')
+  })
+
+  it('falls back to the calendar date for a custom start', () => {
+    const custom = new Date(2026, 8, 20).getTime()
+    expect(describeSince(custom, now)).toBe(dayLabel(custom, now))
+    expect(describeSince(new Date(2025, 8, 20).getTime(), now)).toMatch(/2025/)
+  })
+
+  it('guards non-finite timestamps', () => {
+    expect(dayLabel(Number.NaN, now)).toBe('—')
+    expect(dayLabel(Number.POSITIVE_INFINITY, now)).toBe('—')
+    expect(batchLabel(Number.NaN, now)).toBe('—')
+    expect(batchLabel(Number.POSITIVE_INFINITY, now)).toBe('—')
+    expect(describeSince(Number.NaN, now)).toBe('—')
+    expect(describeSince(Number.POSITIVE_INFINITY, now)).toBe('—')
+  })
+})
+
+const fileWithStatus = (status: HistoryFile['status']): HistoryFile => ({
+  name: `${status}.bin`,
+  path: `/tmp/${status}.bin`,
+  outputPath: null,
+  category: 'other',
+  targetBytes: 100,
+  originalSize: 200,
+  compressedSize: null,
+  status,
+  qualityUsed: null,
+  strategyUsed: null,
+  error: null,
+  durationMs: 10,
+  completedAt: 0,
+})
+
+describe('history aggregates', () => {
+  it('formats saved bytes and file counts', () => {
+    expect(savedLabel(0)).toBe('0 B')
+    expect(savedLabel(1536)).toBe('2 KB')
+    expect(savedLabel(Number.NaN)).toBe('—')
+    expect(savedLabel(Number.POSITIVE_INFINITY)).toBe('—')
+    expect(savedLabel(-1)).toBe('—')
+    expect(fileCountLabel(0)).toBe('0 files')
+    expect(fileCountLabel(1)).toBe('1 file')
+    expect(fileCountLabel(12)).toBe('12 files')
+    expect(fileCountLabel(Number.NaN)).toBe('—')
+    expect(fileCountLabel(-1)).toBe('—')
+  })
+
+  it('computes the saved percentage or null when it is unknowable', () => {
+    expect(savedPercent(100, 25)).toBe(75)
+    expect(savedPercent(3, 2)).toBe(33)
+    expect(savedPercent(100, 150)).toBe(0)
+    expect(savedPercent(100, null)).toBeNull()
+    expect(savedPercent(100, Number.NaN)).toBeNull()
+    expect(savedPercent(Number.NaN, 10)).toBeNull()
+    expect(savedPercent(0, 0)).toBeNull()
+    expect(savedPercent(-10, 5)).toBeNull()
+    expect(savedPercent(Number.POSITIVE_INFINITY, 10)).toBeNull()
+    expect(savedPercent(100, Number.POSITIVE_INFINITY)).toBeNull()
+    expect(savedPercent(100, -10)).toBeNull()
+  })
+
+  it('counts session outcomes', () => {
+    const expected: SessionOutcome = {
+      done: 2,
+      bestEffort: 1,
+      failed: 1,
+      cancelled: 0,
+      unsupported: 1,
+      alreadyUnderTarget: 1,
+    }
+    expect(
+      countOutcome([
+        fileWithStatus('done'),
+        fileWithStatus('done'),
+        fileWithStatus('best_effort'),
+        fileWithStatus('failed'),
+        fileWithStatus('unsupported'),
+        fileWithStatus('already_under_target'),
+        fileWithStatus('pending'),
+        fileWithStatus('compressing'),
+        fileWithStatus('bogus' as HistoryFile['status']),
+        fileWithStatus('toString' as HistoryFile['status']),
+      ])
+    ).toEqual(expected)
   })
 })
