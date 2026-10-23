@@ -39,12 +39,12 @@
 ### Task 1: Platform foundation
 
 **Files:**
-- Modify: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `src-tauri/capabilities/default.json`, `src-tauri/tauri.conf.json`, `src/main.tsx`
+- Modify: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `src-tauri/src/commands.rs`, `src-tauri/capabilities/default.json`, `src-tauri/tauri.conf.json`, `src/main.tsx`
 - Create: `src/lib/platform.ts`, `src/providers/PlatformProvider.tsx`, `src-tauri/tauri.windows.conf.json`, `src-tauri/tauri.linux.conf.json`
 - Test: `src/lib/platform.test.ts`, `src/providers/PlatformProvider.test.tsx`
 
 **Interfaces:**
-- Produces: `type Platform = "darwin" | "win32" | "linux" | "unknown"`; `detectPlatform(): Promise<Platform>`; `<PlatformProvider platform={Platform}>`; `usePlatform(): Platform`.
+- Produces: `type Platform = "darwin" | "win32" | "linux" | "unknown"`; `detectPlatform(): Promise<Platform>`; `<PlatformProvider platform={Platform}>`; `usePlatform(): Platform`; JS-invokable `quit` command.
 
 - [ ] **Step 1: Write the failing platform tests**
 
@@ -89,7 +89,7 @@ yarn add @tauri-apps/plugin-os@^2.3.1
 ```
 
 `src-tauri/Cargo.toml`: add `tauri-plugin-os = "2"` under `[dependencies]`.
-`src-tauri/src/lib.rs`: register `.plugin(tauri_plugin_os::init())` before `run()`.
+`src-tauri/src/lib.rs`: register `.plugin(tauri_plugin_os::init())` before `run()`. Add `pub fn quit(app: tauri::AppHandle) { app.exit(0) }` to `commands.rs`, mark it `#[tauri::command]`, and include `commands::quit` in the `generate_handler!` list.
 `src-tauri/capabilities/default.json`: add `"os:default"`, `"core:window:allow-start-dragging"`, `"core:window:allow-minimize"`, `"core:window:allow-toggle-maximize"`, `"core:window:allow-set-theme"`.
 
 - [ ] **Step 4: Implement detection and the provider**
@@ -119,7 +119,7 @@ Expected: PASS and a clean Vite build.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add package.json yarn.lock src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/src/lib.rs src-tauri/capabilities/default.json src-tauri/tauri.conf.json src-tauri/tauri.windows.conf.json src-tauri/tauri.linux.conf.json src/lib/platform.ts src/lib/platform.test.ts src/providers/PlatformProvider.tsx src/providers/PlatformProvider.test.tsx src/main.tsx
+git add package.json yarn.lock src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/src/lib.rs src-tauri/src/commands.rs src-tauri/capabilities/default.json src-tauri/tauri.conf.json src-tauri/tauri.windows.conf.json src-tauri/tauri.linux.conf.json src/lib/platform.ts src/lib/platform.test.ts src/providers/PlatformProvider.tsx src/providers/PlatformProvider.test.tsx src/main.tsx
 git commit -m "feat(shell): add plugin-os platform detection and window chrome config"
 ```
 
@@ -510,6 +510,7 @@ git commit -m "feat(history): add filter dialog with chips and date presets"
 
 **Interfaces:**
 - `HistoryList({ onOpenFilter })`; consumes `useHistoryContext`. Renders `SidebarInput` search, `ScrollArea` list, `Button` pagination. History row gets `aria-expanded`, filter `SidebarMenuAction`.
+- `SidebarNav` gains `onOpenFilter` and passes it to `HistoryList`.
 - `App` owns `filterOpen`; mounts `HistoryFilterDialog` with `applied={filters}` and `onApply={setFilters}`.
 
 - [ ] **Step 1: Write failing tests**
@@ -550,7 +551,7 @@ git commit -m "feat(history): add scrollable sidebar batch list and filter trigg
 
 - [ ] **Step 1: Write failing tests**
 
-Render inside a mocked provider: selected batch shows label, file count, duration, output folder, and `Reveal folder`; file rows show sizes/percent/status; `null` selection shows the empty state; load error shows the banner; filtered counts show `N / M`.
+Render inside a mocked provider: selected batch shows label, file count, duration, output folder, and `Reveal folder`; file rows show sizes/percent/status; `null` selection shows the empty state; load error shows the banner; filtered counts show `N / M`; `Clear history` opens the `AlertDialog` and confirming calls `clearHistory`.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -559,7 +560,7 @@ Expected: FAIL — old view still expects filters/pagination.
 
 - [ ] **Step 3: Implement**
 
-Rewrite the view as a detail pane. Reuse `StatusMarker`, badges, and helpers (`savedLabel`, `fileCountLabel`, `savedPercent`, `formatDuration`, `countOutcome`) from the shared format module. Keep `openSessionFolder`/`revealFile` behavior. Remove `useAutoCollapse`.
+Rewrite the view as a detail pane. Reuse `StatusMarker`, badges, and helpers (`savedLabel`, `fileCountLabel`, `savedPercent`, `formatDuration`, `countOutcome`) from the shared format module. Keep `openSessionFolder`/`revealFile` behavior. Remove `useAutoCollapse`. Add the `Clear history` ghost button + `AlertDialog` in the detail header, disabled when there are no sessions.
 
 - [ ] **Step 4: Run tests**
 
