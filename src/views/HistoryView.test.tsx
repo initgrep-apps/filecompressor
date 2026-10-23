@@ -352,6 +352,16 @@ describe('HistoryView', () => {
     )
   })
 
+  it('renders the five category chips in CATEGORIES order', async () => {
+    invokeMock.mockResolvedValue(emptyResponse)
+    renderView()
+    const labels = ['Image', 'Video', 'PDF', 'Document', 'Other']
+    const chips = (await screen.findAllByRole('button')).filter((el) =>
+      labels.includes(el.textContent ?? '')
+    )
+    expect(chips.map((chip) => chip.textContent)).toEqual(labels)
+  })
+
   it('multi chip un-toggle keeps per-group payloads', async () => {
     const user = userEvent.setup()
     invokeMock.mockResolvedValue(emptyResponse)

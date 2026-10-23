@@ -194,6 +194,7 @@ describe('DropZone', () => {
       expect(svg).not.toBeNull()
       expect(svg!.getAttribute('data-category')).toBe(CATEGORY_MEMBERSHIP[ext])
     }
+    expect(document.querySelectorAll('svg[data-category]')).toHaveLength(ALL_EXTENSIONS.length)
     expect(screen.getByText('JPEG').className).toContain('text-blue-600')
     expect(screen.getByText('HEIC').className).toContain('text-blue-600')
     expect(screen.getByText('MP4').className).toContain('text-violet-600')

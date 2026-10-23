@@ -49,6 +49,18 @@ const CATEGORY_GLYPHS: Record<Category, ReactElement> = {
   other: FILE_GLYPH,
 }
 
+let warnedUnknownCategory = false
+
+function glyphFor(category: Category): ReactElement {
+  const glyph = CATEGORY_GLYPHS[category]
+  if (glyph) return glyph
+  if (!warnedUnknownCategory) {
+    warnedUnknownCategory = true
+    console.warn(`unknown category "${category}" rendered as other`)
+  }
+  return CATEGORY_GLYPHS.other
+}
+
 export function CategoryIcon({
   category,
   className,
@@ -72,7 +84,7 @@ export function CategoryIcon({
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      {CATEGORY_GLYPHS[category]}
+      {glyphFor(category)}
     </svg>
   )
 }

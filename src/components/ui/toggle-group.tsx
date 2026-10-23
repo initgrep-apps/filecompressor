@@ -18,18 +18,18 @@ const ToggleGroupContext = React.createContext<
   orientation: "horizontal",
 })
 
-function ToggleGroup({
+function ToggleGroup<Value extends string>({
   className,
   variant,
   size,
   spacing = 2,
   orientation = "horizontal",
+  style,
   children,
   ...props
-}: ToggleGroupPrimitive.Props &
+}: ToggleGroupPrimitive.Props<Value> &
   VariantProps<typeof toggleVariants> & {
     spacing?: number
-    orientation?: "horizontal" | "vertical"
   }) {
   return (
     <ToggleGroupPrimitive
@@ -39,7 +39,7 @@ function ToggleGroup({
       data-spacing={spacing}
       data-orientation={orientation}
       orientation={orientation}
-      style={{ "--gap": spacing } as React.CSSProperties}
+      style={{ ...style, "--gap": spacing } as React.CSSProperties}
       className={cn(
         "group/toggle-group flex w-fit flex-row items-center gap-[--spacing(var(--gap))] data-[spacing=0]:data-[variant=outline]:rounded-2xl data-vertical:flex-col data-vertical:items-stretch",
         className

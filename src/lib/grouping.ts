@@ -15,10 +15,11 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import type { Category, FileEntry, FileStatus } from '@/types'
+import { CATEGORIES } from '@/types'
 
 export type StatusFilter = 'all' | 'compressing' | 'complete' | 'below_target' | 'failed' | 'queued'
 
-export const LANE_ORDER = ['image', 'video', 'pdf', 'document', 'other'] as const satisfies readonly Category[]
+export const LANE_ORDER = CATEGORIES
 
 type MissingLanes = Exclude<Category, (typeof LANE_ORDER)[number]>
 type AssertNever<T extends never> = T

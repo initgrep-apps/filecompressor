@@ -1,5 +1,6 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { render } from '@testing-library/react'
+import type { Category } from '@/types'
 import { CATEGORIES } from '@/types'
 import { CategoryIcon } from './CategoryIcon'
 
@@ -25,6 +26,20 @@ it('matches the glyph markup for every category', () => {
       "video": "<svg aria-hidden="true" data-category="video" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"></path><rect x="2" y="6" width="14" height="12" rx="2"></rect></svg>",
     }
   `)
+})
+
+it('falls back to the other glyph and warns once for an unknown category', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  const otherGlyph = render(<CategoryIcon category="other" />).container.querySelector('svg')?.innerHTML
+  const first = render(<CategoryIcon category={'archive' as Category} />).container.querySelector('svg')
+  const second = render(<CategoryIcon category={'archive' as Category} />).container.querySelector('svg')
+
+  expect(first?.innerHTML).toBe(otherGlyph)
+  expect(second?.innerHTML).toBe(otherGlyph)
+  expect(warn).toHaveBeenCalledTimes(1)
+  expect(warn).toHaveBeenCalledWith('unknown category "archive" rendered as other')
+
+  warn.mockRestore()
 })
 
 it('defaults to 11px and accepts size and className overrides', () => {
