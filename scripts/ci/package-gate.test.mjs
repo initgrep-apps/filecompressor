@@ -31,6 +31,9 @@ const REPO_ROOT = join(import.meta.dirname, "..", "..");
 const manifest = JSON.parse(readFileSync(join(REPO_ROOT, "scripts/binaries.manifest.json"), "utf8"));
 const baseConf = JSON.parse(readFileSync(join(REPO_ROOT, "src-tauri/tauri.conf.json"), "utf8"));
 const windowsConf = JSON.parse(readFileSync(join(REPO_ROOT, "src-tauri/tauri.windows.conf.json"), "utf8"));
+const capabilitiesConf = JSON.parse(
+  readFileSync(join(REPO_ROOT, "src-tauri/capabilities/default.json"), "utf8"),
+);
 
 function appWithGsTree({ init = true, fonts = "real", icc = "absent" } = {}) {
   const app = mkdtempSync(join(tmpdir(), "gate-app-"));
@@ -145,6 +148,44 @@ describe("expectedEnginePaths", () => {
         windowsConf: broken,
       }),
     ).toThrow(/gs-resources/);
+  });
+});
+
+describe("window chrome contract", () => {
+  it("keeps the macOS overlay title bar and content inset", () => {
+    const window = baseConf.app.windows[0];
+    expect(window.title).toBe("");
+    expect(window.titleBarStyle).toBe("Overlay");
+    expect(window.trafficLightPosition).toEqual({ x: 16, y: 26 });
+    expect(window.width).toBe(900);
+    expect(window.height).toBe(640);
+    expect(window.minWidth).toBe(760);
+    expect(window.minHeight).toBe(500);
+    expect(window.resizable).toBe(true);
+  });
+
+  it("keeps the Windows overlay frameless with the same bounds", () => {
+    const window = windowsConf.app.windows[0];
+    expect(window.decorations).toBe(false);
+    expect(window.width).toBe(900);
+    expect(window.height).toBe(640);
+    expect(window.minWidth).toBe(760);
+    expect(window.minHeight).toBe(500);
+    expect(window).not.toHaveProperty("transparent");
+  });
+
+  it("grants every window and platform permission the shell calls", () => {
+    for (const permission of [
+      "os:default",
+      "window-state:default",
+      "core:window:allow-start-dragging",
+      "core:window:allow-minimize",
+      "core:window:allow-toggle-maximize",
+      "core:window:allow-set-theme",
+      "core:window:allow-close",
+    ]) {
+      expect(capabilitiesConf.permissions, permission).toContain(permission);
+    }
   });
 });
 

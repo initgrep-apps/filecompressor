@@ -23,6 +23,11 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { detectPlatform } from "./lib/platform";
 import { PlatformProvider } from "./providers/PlatformProvider";
 
+document.documentElement.classList.toggle(
+  "dark",
+  window.matchMedia("(prefers-color-scheme: dark)").matches,
+);
+
 const rootEl = document.getElementById("root");
 if (!rootEl) {
   throw new Error("Fatal: #root element missing from index.html — build corrupted");

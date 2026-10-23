@@ -88,8 +88,18 @@ macro_rules! invoke_handlers {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
+            let Some(window) = app.get_webview_window("main") else {
+                eprintln!("warn: second launch: main window missing, cannot focus");
+                return;
+            };
+            if let Err(e) = window.unminimize() {
+                eprintln!("warn: second launch: unminimize failed: {e}");
+            }
+            if let Err(e) = window.show() {
+                eprintln!("warn: second launch: show failed: {e}");
+            }
+            if let Err(e) = window.set_focus() {
+                eprintln!("warn: second launch: set_focus failed: {e}");
             }
         }))
         .plugin(tauri_plugin_window_state::Builder::new().build())
@@ -182,6 +192,45 @@ mod wiring_tests {
             request("clear_history", serde_json::json!({})),
         );
         response.expect("registered clear_history must answer the ipc dispatch with Ok");
+    }
+
+    #[test]
+    fn registered_quit_command_reaches_the_exit_request() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = wiring_app(root.path());
+        app.run_iteration(|_, _| {});
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let request = |cmd: &str| tauri::webview::InvokeRequest {
+            cmd: cmd.into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: if cfg!(any(windows, target_os = "android")) {
+                "http://tauri.localhost"
+            } else {
+                "tauri://localhost"
+            }
+            .parse()
+            .unwrap(),
+            body: tauri::ipc::InvokeBody::Json(serde_json::json!({})),
+            headers: Default::default(),
+            invoke_key: tauri::test::INVOKE_KEY.to_string(),
+        };
+
+        let unknown = tauri::test::get_ipc_response(&webview, request("definitely_not_a_command"));
+        assert!(
+            unknown.is_err(),
+            "an unregistered command must fail, so the quit assertion cannot pass vacuously"
+        );
+
+        let quit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = tauri::test::get_ipc_response(&webview, request("quit"));
+        }));
+        assert!(
+            quit.is_err(),
+            "quit must be registered: it reaches MockRuntime::request_exit, which is unimplemented!()"
+        );
     }
 
     #[test]
