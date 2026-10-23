@@ -142,7 +142,7 @@ git commit -m "feat(shell): add plugin-os platform detection and window chrome c
 **Interfaces:**
 - Produces: `<CategoryIcon category={Category} className?: string size?: number />` rendering the same glyphs as staging. Exports are tested by the vendored consumers.
 
-- [ ] **Step 1: Add the shadcn components**
+- [x] **Step 1: Add the shadcn components**
 
 ```bash
 yarn shadcn add dialog dropdown-menu popover toggle-group calendar tabs collapsible scroll-area --yes
@@ -150,7 +150,7 @@ yarn shadcn add dialog dropdown-menu popover toggle-group calendar tabs collapsi
 
 Read every generated file. Replace any non-remixicon icon import with the remixicon equivalent. Do not modify behavior; only imports/formatting. `calendar` adds `react-day-picker` and `date-fns`.
 
-- [ ] **Step 2: Write the failing CategoryIcon test**
+- [x] **Step 2: Write the failing CategoryIcon test**
 
 ```tsx
 import { render } from "@testing-library/react"
@@ -166,21 +166,21 @@ it.each(["image", "video", "pdf", "document", "other"] as const)(
 )
 ```
 
-- [ ] **Step 3: Run the test to verify it fails**
+- [x] **Step 3: Run the test to verify it fails**
 
 Run: `yarn test src/components/CategoryIcon.test.tsx`
 Expected: FAIL — module not found.
 
-- [ ] **Step 4: Extract the glyphs**
+- [x] **Step 4: Extract the glyphs**
 
 Move `CATEGORY_GLYPHS` and the `CategoryIcon` markup out of `DropZone.tsx` into `src/components/CategoryIcon.tsx`. The component sets `data-category={category}` and keeps the 11px default size overridable. `DropZone` imports it; delete its local copy. No glyph path changes.
 
-- [ ] **Step 5: Run tests and the build**
+- [x] **Step 5: Run tests and the build**
 
 Run: `yarn test src/components/CategoryIcon.test.tsx src/components/DropZone.test.tsx && yarn build`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/components/ui src/components/CategoryIcon.tsx src/components/CategoryIcon.test.tsx src/components/DropZone.tsx package.json yarn.lock

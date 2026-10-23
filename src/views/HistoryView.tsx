@@ -32,6 +32,7 @@ import {
   RiSkipRightLine,
 } from '@remixicon/react'
 import type { Category, FileStatus, HistoryFile, HistorySession, SessionOutcome } from '@/types'
+import { CATEGORIES } from '@/types'
 import { useHistory } from '@/hooks/useHistory'
 import {
   dayKey,
@@ -99,8 +100,6 @@ const HISTORY_STATUSES: FileStatus[] = [
   'unsupported',
   'already_under_target',
 ]
-
-const HISTORY_CATEGORIES: Category[] = ['image', 'video', 'pdf', 'document', 'other']
 
 const OUTCOME_COUNT_KEYS: Partial<Record<FileStatus, keyof SessionOutcome>> = {
   done: 'done',
@@ -642,7 +641,7 @@ export function HistoryView() {
                 {STATUS_LABELS[status]}
               </Chip>
             ))}
-            {HISTORY_CATEGORIES.map((category) => (
+            {CATEGORIES.map((category) => (
               <Chip
                 key={category}
                 active={filters.categories?.includes(category) === true}
