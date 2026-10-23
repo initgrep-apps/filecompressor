@@ -20,6 +20,7 @@ Static HTML fragments from the design session. Open directly in a browser; each 
 - The filter is a modal `Dialog` opened from the funnel, not a side panel. Controls are shadcn `ToggleGroup` chips (no checkboxes) and a `Calendar` date picker with presets.
 - Sort is only `Newest first` / `Oldest first`.
 - Category chips reuse the staging-area glyphs and tones via a shared `CategoryIcon`.
+- Category chips ship **five** values — Image, Video, PDF, Document, **Other** — keeping the existing filter scope (the mock shows four; `Other` was cut, current behavior wins).
 - Windows is frameless with the default shadow (Windows 11 rounded corners); no transparent window.
 
 ## Not shown in the mocks

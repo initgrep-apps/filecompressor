@@ -12,7 +12,7 @@ Success criteria:
 
 - On macOS the window has no visible OS title bar; traffic lights sit inside the sidebar band (`titleBarStyle: "Overlay"`).
 - The content top bar contains the sidebar toggle, the current location, a theme control, and an app menu — nothing else.
-- On Windows/Linux the window is frameless with custom minimize/maximize/close on the right, matching the reference app.
+- On Windows the window is frameless with custom minimize/maximize/close on the right, matching the reference app (Linux deferred).
 - The sidebar has exactly two entries, `Compress` and `History`, plus `Settings` at the bottom. No brand lockup, no version/license badges.
 - `History` expands in place to a batch list; selecting a batch fills the main pane. No third column.
 - Settings is a dialog with a section rail and auto-save. The full-page Settings view is gone.
@@ -34,13 +34,28 @@ Corrections recorded in `mocks/app-shell/README.md` are part of the design: offc
 
 Implementation must match these mocks except where this spec states a correction. If implementation and mock disagree, stop and reconcile before coding.
 
+**Revision 2 (binding, supersedes the mocks where noted):**
+
+- The sidebar is stock shadcn behaviour: `offcanvas` on desktop, the vendored `Sheet` overlay below 768px. `src/components/ui/sidebar.tsx` is not modified. At 760×500 the app shows the Sheet state, so the 760px desktop frames in `shell.html` are superseded (keep the 900×640 frames as the desktop reference).
+- One About surface on every platform: the macOS native About is removed by a custom native menu.
+- Theme is applied before first paint in `main.tsx`, not in a React effect.
+- Linux window chrome is out of scope for this slice.
+- Quit goes through one guarded path.
+
+**Revision 3 (spec review, 2026-10-23):**
+
+- `platform()` is synchronous (`window.__TAURI_OS_PLUGIN_INTERNALS__`, compile-time injected — plugin-os 2.3.1/2.4.0 typings). Detection is a sync read, not an awaited IPC call; §4.1 rewritten.
+- Category chips ship five values (the filter mock shows four; `Other` is kept for the existing filter scope — mock corrected in README).
+- ⋯ menu Quit routes through `getCurrentWindow().close()` so every quit crosses the guard.
+- `tauri-plugin-single-instance` is a deliberate addition beyond Nakso (registered first).
+
 ### 2.2 Reference app (Nakso)
 
 Repo: `/Users/irshadsheikh/dev/github/refs/nakso` (Tauri 2 + React 19 + Tailwind 4 + shadcn/ui; production builds on macOS, Windows, Linux).
 
 | Concern | Nakso reference | Use |
 |---|---|---|
-| Platform detection | `src/main.tsx` (`detectPlatform`), `src/store/app-store.ts` | Copy the `@tauri-apps/plugin-os` approach and startup ordering |
+| Platform detection | `src/main.tsx` (`detectPlatform`), `src/store/app-store.ts` | Copy the value mapping (`macos/windows/linux` → `darwin/win32/linux`); our read is synchronous, see §4.1 |
 | Top bar | `src/components/header/app-header.tsx` | Copy layout, traffic-light clearance, window controls, propagation guards |
 | Drag / double-click zoom | `src/components/common/tauri-drag-region.tsx` | Copy, but spread caller props before handlers |
 | Sidebar | `src/components/sidebar/app-sidebar.tsx`, `src/components/ui/sidebar.tsx` | Copy composition and `offcanvas` default; keep our width |
@@ -48,7 +63,7 @@ Repo: `/Users/irshadsheikh/dev/github/refs/nakso` (Tauri 2 + React 19 + Tailwind
 | Settings | `src/components/settings/settings-dialog.tsx`, `src/components/ui/dialog.tsx` | Copy dialog shell and auto-save pattern; improve rail semantics with Tabs |
 | About | `src/components/dialogs/about-dialog.tsx` | Copy package.json version source and small-dialog layout; add notices |
 | Theme toggle | `src/components/header/toggle-darkmode-button.tsx` | Copy button shape and `setTheme` sync |
-| Window config | `src-tauri/tauri.conf.json`, `tauri.windows.conf.json`, `tauri.linux.conf.json` | Copy per-platform split |
+| Window config | `src-tauri/tauri.conf.json`, `tauri.windows.conf.json` | Copy the per-platform split; modify the Windows overlay in place |
 
 Rules for reuse:
 
@@ -92,21 +107,25 @@ Known acceptable non-shadcn pieces:
 | Decision | Choice | Why / deviation |
 |---|---|---|
 | Platform detection | `@tauri-apps/plugin-os` `platform()`, mapped to `darwin`/`win32`/`linux` | Same as Nakso; no user-agent guessing |
-| Bootstrap | await platform before `createRoot` | Same as Nakso; platform is always known at first render |
+| Bootstrap | sync platform read before `createRoot` | Deviation: `platform()` is synchronous (plugin-os injects it at compile time); Nakso awaits a plain value. The value is known at first render with no IPC, no await, no loading state |
 | macOS chrome | `titleBarStyle: "Overlay"`, traffic lights `(16, 26)`, empty title | Same |
 | Windows chrome | `decorations: false`, `shadow` left at its default (`true`), no `transparent` | Same frameless result as Nakso; transparency dropped per Tauri docs (see §4.2) |
-| Linux chrome | `decorations: false`, same custom controls | Same |
-| Sidebar collapse | `collapsible="offcanvas"` | Same as Nakso; matches mocks (fully hidden, no icon rail) |
-| Collapse triggers | macOS: top bar only. Windows/Linux: sidebar header when open, top bar when closed | Same as Nakso and the mock |
+| Linux chrome | Deferred | No Linux release target in this slice; no `tauri.linux.conf.json` |
+| Sidebar collapse | `collapsible="offcanvas"` | Same as Nakso; fully hidden, no icon rail |
+| Small-window sidebar | Stock `Sheet` overlay below 768px; toggle opens it, selection/Esc/overlay closes it | Same as Nakso; the desktop sidebar hides at the breakpoint instead of squeezing |
+| Collapse triggers | macOS: top bar only. Windows/Linux: sidebar header when open, top bar when closed | Deviation from Nakso (its sidebar header always shows the close trigger, macOS included); matches the mock |
 | Drag | Custom `startDragging()` + `toggleMaximize()` wrapper | Same; keep our `dragDropEnabled: true` (native drop is core) |
 | Collapsed navigation | `☰` menu in the top bar, all platforms | Deviation: Nakso has no nav menu; requirement from the brief |
 | App menu | `⋯`: About, separator, Quit | Same content as Nakso minus shortcuts/devtools |
+| Native macOS menu | Custom app/Edit/Window menu, no About item | One About dialog on every platform; ⌘Q, ⌘C/⌘V, ⌘W preserved |
 | Settings commit | Auto-save, debounced 400ms | Same idea as Nakso’s store-on-change; our settings go through Rust |
 | Settings rail | shadcn `Tabs` with `orientation="vertical"` | Deviation: Nakso uses plain divs; shadcn rule wins, and shadcn documents the vertical variant |
 | Theme | Binary toggle, `localStorage`, OS default, native `setTheme` | Researched: localStorage is the recommended home for non-critical UI preferences and is the only flash-free option (see §10) |
 | About version | `package.json` import | Same as Nakso; no extra Tauri permission |
 | Quit | New Rust `quit` command (`app.exit(0)`) | Deviation: Nakso adds `plugin-process`; a 3-line command avoids a plugin |
 | History sort | Server-side `sort` param | New; keeps pagination coherent |
+| Single instance | `tauri-plugin-single-instance`, registered first | Addition beyond Nakso: a second launch focuses the existing window instead of starting another instance |
+| Window state | `tauri-plugin-window-state` | Same as Nakso; restores size/position across launches |
 | Sidebar auto-collapse | Deleted | Existing bug; deterministic layout is a goal |
 | Fullscreen | No code | macOS handles it natively; verified in research |
 
@@ -116,23 +135,29 @@ Known acceptable non-shadcn pieces:
 
 Dependencies:
 
-- `@tauri-apps/plugin-os` `^2.3.1` (`package.json`)
+- `@tauri-apps/plugin-os` `^2.4.0` (`package.json`)
 - `tauri-plugin-os = "2"` (`src-tauri/Cargo.toml`)
 - `.plugin(tauri_plugin_os::init())` in `src-tauri/src/lib.rs`
 - `"os:default"` in `src-tauri/capabilities/default.json`
+
+`platform()` is **synchronous**: the plugin injects `window.__TAURI_OS_PLUGIN_INTERNALS__.platform` at compile time (verified in the 2.3.1 and 2.4.0 typings — `declare function platform(): Platform`). There is no IPC call and no Promise. It cannot reject; the only failure mode is the injected global being absent (bare-browser dev), which surfaces as a throw.
 
 `src/lib/platform.ts`:
 
 ```ts
 export type Platform = "darwin" | "win32" | "linux" | "unknown"
 
-export async function detectPlatform(): Promise<Platform> {
-  const platform = await platformPlugin()
-  switch (platform) {
-    case "macos": return "darwin"
-    case "windows": return "win32"
-    case "linux": return "linux"
-    default: return "unknown"
+export function detectPlatform(): Platform {
+  try {
+    switch (platformPlugin()) {
+      case "macos": return "darwin"
+      case "windows": return "win32"
+      case "linux": return "linux"
+      default: return "unknown"
+    }
+  } catch (error) {
+    console.warn("platform detection failed", error)
+    return "unknown"
   }
 }
 ```
@@ -142,22 +167,19 @@ export async function detectPlatform(): Promise<Platform> {
 `src/main.tsx`:
 
 ```ts
-async function start() {
-  const platform = await detectPlatform()
-  createRoot(rootEl).render(
-    <StrictMode>
-      <ErrorBoundary>
-        <PlatformProvider platform={platform}>
-          <App />
-        </PlatformProvider>
-      </ErrorBoundary>
-    </StrictMode>,
-  )
-}
-start()
+const platform = detectPlatform()
+createRoot(rootEl).render(
+  <StrictMode>
+    <ErrorBoundary>
+      <PlatformProvider platform={platform}>
+        <App />
+      </PlatformProvider>
+    </ErrorBoundary>
+  </StrictMode>,
+)
 ```
 
-If detection rejects, log once and continue with `"unknown"`; the app must still boot. The delay is one IPC call, not a setup phase, so no loading screen is needed.
+No `async start()`, no await: the platform is known synchronously before the first render, and the pre-paint theme application (§10) needs no async either. Detection failure is logged once `warn` and the app boots as `"unknown"` (non-macOS chrome) — no loading screen, no bootstrap delay.
 
 ### 4.2 Window configuration
 
@@ -171,10 +193,10 @@ If detection rejects, log once and continue with `"unknown"`; the app must still
 "trafficLightPosition": { "x": 16, "y": 26 }
 ```
 
-Platform overlays (new, JSON Merge Patch — window arrays are replaced):
+Platform overlay (JSON Merge Patch — window arrays are replaced):
 
-- `src-tauri/tauri.windows.conf.json`: `decorations: false`
-- `src-tauri/tauri.linux.conf.json`: `decorations: false`
+- `src-tauri/tauri.windows.conf.json`: add `app.windows[0]` with `decorations: false`. **Modify, never replace** — this file already carries `bundle.externalBin` and the `gs-resources: null` merge that CI asserts.
+- Linux: no overlay in this slice.
 
 Windows rounded corners come from Tauri’s `shadow` field, which defaults to `true`: the docs state an undecorated Windows window then gets a 1px border and rounded corners on Windows 11. Do **not** set `transparent`: it is only needed for see-through content, requires `macOSPrivateApi` on macOS, and adds composition cost on Windows. The reference app sets it while also painting an opaque background, so it buys nothing there; we deliberately omit it.
 
@@ -190,8 +212,9 @@ Height 48px. The whole row is a `DragSurface`. Interactive children stop propaga
 
 Left cluster:
 
-- toggle (`RiSidebarFoldLine` when open, `RiSidebarUnfoldLine` when collapsed) calling `toggleSidebar()`. Shown always on macOS; on Windows/Linux only while collapsed, because the sidebar header carries the collapse trigger while open.
-- `☰` (`RiMenu2Line`) only while collapsed
+- `const visible = isMobile ? openMobile : open`. Every "is the sidebar showing" decision below uses `visible`, never `open`.
+- toggle (`RiSidebarFoldLine` when visible, `RiSidebarUnfoldLine` when hidden) calling `toggleSidebar()`. Shown always on macOS; on Windows/Linux only while hidden, because the sidebar header carries the collapse trigger while open.
+- `☰` (`RiMenu2Line`) only while hidden
 - breadcrumb: `Compress` or `History › <batch label>`
 
 Right cluster:
@@ -199,9 +222,9 @@ Right cluster:
 - theme toggle (`RiSunLine` / `RiMoonLine`), native `title`
 - `⋯` app menu (`RiMoreLine`), native `title`
 - non-darwin: `Separator orientation="vertical"`, then minimize / maximize / close `Button size="icon-sm" variant="ghost"` with native `title` tooltips, each with `onMouseDown` stopPropagation
-- close calls the `quit` command, not `window.close()`
+- close calls `getCurrentWindow().close()`; the close handler in §13 runs the guard and then the `quit` command
 
-macOS traffic-light clearance: when the sidebar is collapsed, add `pl-22` (88px) on macOS only. When the sidebar is open its 16rem width provides the clearance. No clearance on Windows/Linux.
+macOS traffic-light clearance: when the sidebar is hidden (collapsed desktop or mobile Sheet closed), add `pl-22` (88px) on macOS only. When the sidebar is open its 16rem width provides the clearance. No clearance on Windows/Linux.
 
 `WindowControls` is rendered only for `platform !== "darwin"`, at the far right after the separator, exactly as in the mock.
 
@@ -225,6 +248,7 @@ No implementation. macOS hides and restores traffic lights natively; the in-app 
 ```
 PlatformProvider
 └── CompressionProvider
+    ├── QuitGuard (reads isCompressing)
     └── HistoryProvider
         └── SidebarProvider (h-svh, overflow-hidden)
             ├── Sidebar (collapsible="offcanvas")
@@ -236,10 +260,11 @@ PlatformProvider
             │   └── view container (min-h-0, overflow-hidden): Compress | History
             ├── SettingsDialog
             ├── AboutDialog
+            ├── HistoryFilterDialog
             └── Toaster
 ```
 
-Sidebar open state is owned by `SidebarProvider` (no second store). All toggles call `toggleSidebar()`; ⌘B / Ctrl+B continues to work. State is session-only, like today; the existing cookie remains write-only and is not a source of truth.
+Sidebar open state is owned by `SidebarProvider` (no second store): `open` for the desktop `offcanvas` branch, `openMobile` for the stock `Sheet` branch below 768px. All toggles call `toggleSidebar()`; ⌘B / Ctrl+B continues to work. State is session-only, like today; the existing cookie remains write-only and is not a source of truth.
 
 ### 5.1 shadcn components
 
@@ -296,8 +321,9 @@ Composition uses only `Sidebar*` parts:
 ```
 SidebarHeader (h-12)
   DragSurface
-    macOS: empty (traffic lights live here)
-    Windows/Linux: app glyph + SidebarTrigger (collapse)
+    desktop macOS: empty (traffic lights live here)
+    desktop Windows/Linux: app glyph + SidebarTrigger (collapse)
+    mobile Sheet (all platforms): app glyph + SidebarTrigger (close)
 SidebarContent
   SidebarGroup > SidebarMenu
     Compress row  (SidebarMenuButton, badge = staged count)
@@ -314,7 +340,7 @@ History row:
 
 - `SidebarMenuButton` with clock icon, label, and a trailing `RiArrowDownSLine` (decorative, `pointer-events-none`, rotates 180° when expanded).
 - Click selects the History view and toggles the expanded list. `aria-expanded` reflects state.
-- `SidebarMenuAction` sibling for the filter, `aria-label="Filter history"`, `title="Filter"`, bumped to a 24px hit target. The button already reserves right padding.
+- `SidebarMenuAction` sibling for the filter, `aria-label="Filter history"`, `title="Filter"`, with `className="size-6"` for a 24px target (stock is 20px, and `md:after:hidden` removes its pseudo hit area on desktop). The button already reserves right padding.
 - Active view styling via `isActive`; no nested buttons.
 
 Rows:
@@ -324,9 +350,13 @@ Rows:
 - Two lines: `Today · 2:31 PM` / `12 files · 48.2 MB saved`; right-aligned percent or `cancelled`.
 - Long labels truncate; meta text is single-line.
 
+- Selecting a batch or a nav row closes the mobile Sheet (`if (isMobile) setOpenMobile(false)`); on desktop the sidebar stays open.
+- Widths stay stock: 16rem desktop, 18rem in the Sheet. `SidebarRail` is not rendered.
+- `src/components/ui/sidebar.tsx` stays unmodified; the Sheet branch and the `md:` gate are the shipped behaviour.
+
 Scrolling model:
 
-- `SidebarContent` is a flex column: nav rows, search, list, pagination, and Settings never scroll as one block.
+- `SidebarContent` is a flex column: nav rows, search, list, pagination, and Settings never scroll as one block. Pass `className="overflow-hidden"`; the vendored default is `overflow-auto`.
 - The batch list is the only scroller: shadcn `ScrollArea` with `className="min-h-0 flex-1"` wrapping `SidebarMenuSub`.
 - Search and filter stay pinned above the list; pagination and Settings stay pinned below it.
 - At 500px window height the nav and footer remain visible; the list scrolls independently (see the approved mock’s first frame).
@@ -365,7 +395,7 @@ Controls, all shadcn:
 
 - **Sort by** — single-select `ToggleGroup` with two items: `Newest first`, `Oldest first`.
 - **Status** — multi-select `ToggleGroup` (`multiple`): Done, Best effort, Failed, Cancelled, Already under target, Unsupported. Each chip carries a status dot using the existing status tones.
-- **Category** — multi-select `ToggleGroup`: Image, Video, PDF, Document. Each chip uses the shared `CategoryIcon` glyphs and category tones from `src/lib/tokens.ts`, identical to the staging area.
+- **Category** — multi-select `ToggleGroup`: Image, Video, PDF, Document, Other (five; the mock's four-chip row was corrected — keep the existing `other` filter scope). Each chip uses the shared `CategoryIcon` glyphs and category tones from `src/lib/tokens.ts`, identical to the staging area.
 - **Since** — shadcn Date Picker: `Popover` + `Calendar` (`react-day-picker`). Preset column (All time, Today, Last 7 days, Last 30 days, This month, Last 3 months) plus a custom start date. The trigger shows the resolved label; the value maps to the existing `sinceMs` filter.
 - Footer: `Button variant="ghost"` Clear all, `Button variant="outline"` Cancel, `Button` Apply.
 
@@ -401,13 +431,15 @@ Auto-save: local draft, `saveSettings` debounced 400ms, flush on close. Failures
 
 - `DropdownMenuItem` About Yard → opens About
 - `DropdownMenuSeparator`
-- `DropdownMenuItem` Quit → `invoke("quit")`
+- `DropdownMenuItem` Quit → `getCurrentWindow().close()` only; window close is intercepted by QuitGuard (§13). Never `invoke("quit")` from the menu.
+
+Native macOS menu: Tauri installs `Menu::default` (About, Services, Hide, Quit; Edit; Window; Help) when no menu is set. This slice sets a custom macOS menu in `lib.rs` — `Yard`, `Edit`, `Window` submenus built from predefined items, **no About** — so there is exactly one About surface. Windows/Linux have no menu bar. ⌘Q, ⌘C/⌘V and ⌘W keep working.
 
 About (`AboutDialog`):
 
 - App glyph, `Yard`, `Offline file compression tool`, `No accounts and no telemetry.`
 - `Version {version}` from `import { version } from "../../package.json"` (same source as the reference app; `resolveJsonModule` is enabled).
-- License rows: Yard GPL-3.0; FFmpeg GPL-2.0-or-later; Ghostscript AGPL-3.0; libvips LGPL-3.0; qpdf Apache-2.0.
+- License rows: Yard GPL-3.0; FFmpeg / ffprobe GPL-2.0-or-later; Ghostscript AGPL-3.0; libvips LGPL-3.0; qpdf Apache-2.0.
 - `Button variant="link"` Third-party notices… toggles a `ScrollArea` containing `THIRD_PARTY_LICENSES.md?raw` with `whitespace-pre-wrap font-mono text-xs`. No network.
 - Footer: `© 2026 Yard Contributors`.
 
@@ -426,7 +458,7 @@ About (`AboutDialog`):
 Why localStorage rather than `plugin-store` / Rust settings:
 
 - Theme is a non-critical UI preference. The Tauri-focused guidance (Aptabase, “Persistent state in Tauri apps”) recommends localStorage for exactly this category and `tauri-plugin-store` for backend or critical preferences (keys, licenses) that Rust must read. Our settings that affect compression already live in Rust; theme does not belong there.
-- localStorage is synchronous, so the `.dark` class can be applied before the first React render. The store plugin is async over IPC and would need another bootstrap await or accept a light flash.
+- localStorage is synchronous, so `main.tsx` applies the `.dark` class before `createRoot` and before the platform IPC; `useTheme` seeds from that class and only handles changes. The store plugin is async over IPC and would need another bootstrap await or accept a light flash.
 - It is the common pattern in Tauri/Vite React apps and the one shadcn’s own dark-mode guidance implies (a small provider reading a stored preference).
 - Caveat recorded: webview storage is per-origin; Tauri’s v1→v2 Windows scheme change reset it once. That is a migration event, not normal operation, and the value is trivially recoverable (falls back to OS preference).
 
@@ -437,12 +469,15 @@ Moving theme into Rust settings later is a one-file change (`useTheme` + a setti
 | State | Owner |
 |---|---|
 | `activeView` (`compress` \| `history`) | `App` |
-| sidebar open | `SidebarProvider` (`useSidebar`), session-only |
+| sidebar open (desktop) | `SidebarProvider` `open`, session-only |
+| sidebar overlay (below 768px) | `SidebarProvider` `openMobile`, session-only |
 | History expanded in sidebar | `HistoryProvider` |
 | selected batch | `HistoryProvider` |
 | history filters/sort/page/data | `HistoryProvider` over `useHistory` |
 | settings dialog open | `App` |
+| filter dialog open | `App` |
 | about dialog open | `App` (opened from `AppMenu`) |
+| window-close interception | `QuitGuard` under `CompressionProvider` (reads `isCompressing`) |
 | platform | `PlatformProvider` |
 | theme | `useTheme` |
 | staged files, run state | `CompressionProvider` (unchanged) |
@@ -463,16 +498,18 @@ Moving theme into Rust settings later is a one-file change (`useTheme` + a setti
 - History load failure: error message in the list area and detail pane; filters remain usable.
 - No history: `No batches yet.`; detail shows an empty state.
 - Selected batch filtered out: fall back to first, then empty.
-- Filter menu open while sidebar collapses: close the menu.
+- Filter dialog open while the sidebar collapses (⌘B): close the dialog.
 - Very long paths/labels: truncate, never widen the sidebar.
 - Narrow window (760px): breadcrumb truncates; toggle, theme, ⋯ and window controls stay visible.
-- Closing the window on macOS: `quit` command, not window close.
+- Closing the window (macOS traffic light, ⌘W, Windows custom button): `onCloseRequested` → `preventDefault()` → confirm when `isCompressing` → `quit`. ⌘Q exits directly (accepted bypass).
+- The app exits when the last window closes (Tauri runtime behaviour, all platforms); `history.jsonl` marks the in-flight session `interrupted`, so nothing corrupts.
 
 ## 14. Accessibility and keyboard
 
 - Every icon button has `aria-label` plus native `title` (Windows users see native tooltips).
 - History row exposes `aria-expanded` and `aria-controls`; the list has `role="group"`.
 - Batch rows are buttons and support Tab/Enter.
+- The mobile Sheet carries `SheetTitle`/`SheetDescription` (sr-only) from the vendored component and closes on overlay click, Esc, and selection.
 - Menus, popovers, tabs, dialogs, and scroll areas inherit the shadcn primitives’ keyboard behavior; do not override it.
 - ⌘B / Ctrl+B toggles the sidebar.
 - Settings dialog traps focus, closes on Escape/backdrop, and restores focus to the sidebar trigger when possible.
@@ -481,16 +518,18 @@ Moving theme into Rust settings later is a one-file change (`useTheme` + a setti
 
 Rust:
 
-- `query_history` sorts newest/oldest/most saved/most files; unknown falls back to newest.
+- `query_history` sorts `newest`/`oldest` only; absent or unknown `sort` falls back to `newest` (`sort: null` must not error).
 - Sorting precedes pagination; totals unchanged.
 - Existing history tests pass.
 
 Frontend:
 
-- Platform provider: explicit platform drives macOS vs Windows chrome; plugin failure yields `unknown` with non-darwin controls.
-- App shell: two nav entries, no brand/version/license badges, toggle in both states, ☰ only collapsed, breadcrumb updates, window controls only non-darwin.
+- Platform provider: explicit platform drives macOS vs Windows chrome; a missing plugin-injected global yields `unknown` with non-darwin controls.
+- App shell: two nav entries, no brand/version/license badges, toggle in both states, ☰ only while hidden, breadcrumb updates, window controls only non-darwin.
+- Sidebar: offcanvas at 900px, Sheet at 760px, selecting a row closes the Sheet, ⌘B toggles the active branch.
+- Close guard: `preventDefault` always; `confirm` false → no quit; true → exactly one `quit`; idle → immediate quit.
 - Top bar drag surface: startDragging called on mousedown, not on the second click of a double-click; buttons do not trigger drag.
-- Theme: OS default, toggle persists, class flips, `setTheme` called.
+- Theme: `readInitialTheme` resolves stored → OS before first paint; toggle persists; class flips; `setTheme` called once after bootstrap.
 - About: version renders from package.json, notices render, dialog opens from ⋯.
 - Settings: tabs switch sections; auto-save debounces and calls `save_settings`; reset applies defaults; failure toasts.
 - History: expand/collapse; search debounce; filter dialog draft/Apply/Cancel/Clear all; two sort options; status/category chip selection; date presets and a custom date; selecting a row shows detail; empty/error states; pagination.
@@ -504,15 +543,16 @@ Gate: `yarn build && yarn test && cd src-tauri && cargo test`.
 - `docs/ARCHITECTURE.md` §3–§4: shell components, views (no settings view), state table, IPC `sort` note, plugin-os.
 - `docs/FEATURES.md`: update rows 1, 3, 11, 12; add a row for this slice.
 - `docs/bugs.md`: remove the sidebar auto-collapse item.
-- `docs/adr/0007-platform-window-chrome.md`: overlay on macOS, frameless on Windows/Linux, custom drag, plugin-os, no native menu.
+- `docs/adr/0007-platform-window-chrome.md`: overlay on macOS, frameless on Windows, custom drag, plugin-os, stock shadcn sidebar (offcanvas + Sheet), custom macOS menu without About, guarded quit, window-state, single-instance.
 - `GLOSSARY.md`: add “shell”, “top bar”, “batch list”.
-- Keep `docs/superpowers/specs/mocks/app-shell/` until the slice merges, then delete with the spec.
+- Keep the mocks until the slice merges, then delete with the spec. Add a Revision 2 note to `mocks/app-shell/README.md`: 760×500 is the Sheet state, 900×640 is the desktop state.
 
 ## 17. Risks
 
 - Sidebar batch rows are denser than the mock’s 56px rows at 640px height; the list scrolls, so verify at least 5 rows remain visible.
-- Removing `useAutoCollapse` changes Compress/History sizing behavior; the boards must remain usable at 760px with the sidebar open (horizontal scroll is acceptable).
-- plugin-os adds a native dependency; the bootstrap now awaits one IPC call before first paint.
+- Below 768px the desktop sidebar is replaced by the Sheet. With the 760px floor that band is 760–767px; if a wider mobile range is wanted, lower `minWidth` (one number) and re-cut the mocks.
+- Removing `useAutoCollapse` changes Compress/History sizing behavior; the boards must remain usable at 760px with the sidebar hidden (the Sheet is closed at that size; horizontal scroll is acceptable).
+- plugin-os adds a native dependency; `platform()` is compile-time injected and read synchronously before first paint — no IPC, no await, no first-paint delay.
 - The filter dialog is more modal than the earlier popover mock; verify chip density and calendar fit at 760×500 (calendar popover must escape the dialog bounds without clipping).
 - `Calendar` adds `react-day-picker` + `date-fns`; keep their versions pinned with the rest of the lockfile.
 - `Tabs` vertical orientation is documented by shadcn but must be checked in the generated component; if it is missing, fall back to a horizontal `TabsList` with a left rail layout driven by `TabsTrigger` buttons, not a new component.

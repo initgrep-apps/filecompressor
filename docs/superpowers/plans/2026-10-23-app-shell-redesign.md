@@ -15,11 +15,14 @@
 
 - shadcn/ui is the only primitive layer. Never import `@base-ui/react` or another primitive library in app code. Compose vendored components; do not reimplement positioning, dismissal, focus, or keyboard behavior.
 - Use existing variants and semantic tokens. No raw colors, no `space-x-*`/`space-y-*`, use `size-*`, `truncate`, and `data-icon` for button icons.
-- Minimum window: 760×500. Default: 900×640. Sidebar width stays 16rem.
+- Minimum window: 760×500. Default: 900×640. Sidebar width is stock: 16rem desktop, 18rem in the mobile Sheet.
 - No router. `activeView` is React state.
-- Sidebar collapse is `offcanvas`. Sidebar state is session-only; no new persistence.
-- Platform detection only via `@tauri-apps/plugin-os`; values map `macos → darwin`, `windows → win32`, `linux → linux`, anything else → `unknown`.
-- macOS window: `titleBarStyle: "Overlay"`, `trafficLightPosition: { x: 16, y: 26 }`, empty title. Windows/Linux: `decorations: false`; no `transparent`.
+- Sidebar is stock shadcn: `offcanvas` on desktop, the vendored `Sheet` below 768px. Never modify `src/components/ui/sidebar.tsx`. Every "sidebar showing" check uses `isMobile ? openMobile : open`. State is session-only; no new persistence.
+- Theme is applied in `main.tsx` before `createRoot` and before the platform read; `useTheme` seeds from the applied class and never re-applies it on mount.
+- One quit path: `onCloseRequested` → `preventDefault` → confirm when `isCompressing` → `quit`. `WindowControls` Close calls `getCurrentWindow().close()`.
+- `src-tauri/tauri.windows.conf.json` is modified, never replaced — it already carries bundle engine config. No Linux overlay in this slice.
+- Platform detection only via `@tauri-apps/plugin-os`; `platform()` is synchronous (compile-time injected); values map `macos → darwin`, `windows → win32`, `linux → linux`, anything else → `unknown`.
+- macOS window: `titleBarStyle: "Overlay"`, `trafficLightPosition: { x: 16, y: 26 }`, empty title. Windows: `decorations: false`; no `transparent`. Linux: deferred, no config.
 - Theme: `localStorage["yard-theme"]` = `"light" | "dark"`; absent means follow `prefers-color-scheme`; syncing `setTheme` failures are ignored.
 - Settings auto-save debounce: 400 ms, flushed on close.
 - Filter dialog commits with Apply/Cancel; Clear all resets only the draft.
@@ -28,23 +31,24 @@
 
 ## Review Focus
 
-1. **Minimum size (760×500):** the sidebar's Compress/History rows, search, pagination, and Settings must never scroll out of view; only the batch list scrolls. Task 11.
-2. **Platform detection failure:** if `platform()` rejects, the app still boots and renders non-macOS chrome. Task 1.
-3. **Settings autosave race:** closing with a pending edit flushes exactly once; a failed save keeps the dialog open and toasts. Task 8.
+1. **Minimum size (760×500):** the batch list is the only scroller; nav, search, pagination and Settings stay pinned. At 760 the sidebar is the stock Sheet, not the desktop rail. Task 11.
+2. **Platform detection failure:** if the injected internals are missing (bare-browser dev), the app boots with `unknown` and renders non-macOS chrome. Task 1.
+3. **Settings autosave race:** closing with a pending edit flushes exactly once; a failed save keeps the dialog open and toasts — which requires the close to await the flush. Task 8.
 4. **History selection after filters/page changes:** a selected batch that no longer exists falls back to the first row, then to empty — never a stale detail pane. Task 6.
 5. **Filter draft semantics:** Cancel discards, Apply commits, Clear all only clears the draft, and a custom date maps to `sinceMs`. Task 10.
+6. **Quit while busy:** close is always intercepted; confirm-cancel leaves the window open; confirm or idle quits exactly once. Task 4.
 
 ---
 
 ### Task 1: Platform foundation
 
 **Files:**
-- Modify: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `src-tauri/src/commands.rs`, `src-tauri/capabilities/default.json`, `src-tauri/tauri.conf.json`, `src/main.tsx`
-- Create: `src/lib/platform.ts`, `src/providers/PlatformProvider.tsx`, `src-tauri/tauri.windows.conf.json`, `src-tauri/tauri.linux.conf.json`
+- Modify: `package.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/src/lib.rs`, `src-tauri/src/commands.rs`, `src-tauri/capabilities/default.json`, `src-tauri/tauri.conf.json`, `src-tauri/tauri.windows.conf.json`, `src/main.tsx`
+- Create: `src/lib/platform.ts`, `src/providers/PlatformProvider.tsx`, `src/lib/test-tauri.ts`
 - Test: `src/lib/platform.test.ts`, `src/providers/PlatformProvider.test.tsx`
 
 **Interfaces:**
-- Produces: `type Platform = "darwin" | "win32" | "linux" | "unknown"`; `detectPlatform(): Promise<Platform>`; `<PlatformProvider platform={Platform}>`; `usePlatform(): Platform`; JS-invokable `quit` command.
+- Produces: `type Platform = "darwin" | "win32" | "linux" | "unknown"`; `detectPlatform(): Platform` (synchronous); `<PlatformProvider platform={Platform}>`; `usePlatform(): Platform`; JS-invokable `quit` command.
 
 - [ ] **Step 1: Write the failing platform tests**
 
@@ -58,19 +62,21 @@ import { detectPlatform } from "./platform"
 
 describe("detectPlatform", () => {
   beforeEach(() => platformMock.mockReset())
-  it("maps macOS", async () => {
-    platformMock.mockResolvedValue("macos")
-    await expect(detectPlatform()).resolves.toBe("darwin")
+  it("maps macOS", () => {
+    platformMock.mockReturnValue("macos")
+    expect(detectPlatform()).toBe("darwin")
   })
-  it("maps windows and linux", async () => {
-    platformMock.mockResolvedValue("windows")
-    await expect(detectPlatform()).resolves.toBe("win32")
-    platformMock.mockResolvedValue("linux")
-    await expect(detectPlatform()).resolves.toBe("linux")
+  it("maps windows and linux", () => {
+    platformMock.mockReturnValue("windows")
+    expect(detectPlatform()).toBe("win32")
+    platformMock.mockReturnValue("linux")
+    expect(detectPlatform()).toBe("linux")
   })
-  it("falls back to unknown on rejection", async () => {
-    platformMock.mockRejectedValue(new Error("ipc down"))
-    await expect(detectPlatform()).resolves.toBe("unknown")
+  it("falls back to unknown when the injected internals are missing", () => {
+    platformMock.mockImplementation(() => {
+      throw new Error("__TAURI_OS_PLUGIN_INTERNALS__ is undefined")
+    })
+    expect(detectPlatform()).toBe("unknown")
   })
 })
 ```
@@ -85,31 +91,33 @@ Expected: FAIL — modules not found.
 - [ ] **Step 3: Add the dependencies and native plugin**
 
 ```bash
-yarn add @tauri-apps/plugin-os@^2.3.1
+yarn add @tauri-apps/plugin-os@^2.4.0
 ```
 
 `src-tauri/Cargo.toml`: add `tauri-plugin-os = "2"` under `[dependencies]`.
 `src-tauri/src/lib.rs`: register `.plugin(tauri_plugin_os::init())` before `run()`. Add `pub fn quit(app: tauri::AppHandle) { app.exit(0) }` to `commands.rs`, mark it `#[tauri::command]`, and include `commands::quit` in the `generate_handler!` list.
-`src-tauri/capabilities/default.json`: add `"os:default"`, `"core:window:allow-start-dragging"`, `"core:window:allow-minimize"`, `"core:window:allow-toggle-maximize"`, `"core:window:allow-set-theme"`.
+`src-tauri/capabilities/default.json`: add `"os:default"`, `"core:window:allow-start-dragging"`, `"core:window:allow-minimize"`, `"core:window:allow-toggle-maximize"`, `"core:window:allow-set-theme"`, `"core:window:allow-close"`, `"window-state:default"`.
+
+`src-tauri/Cargo.toml`: add `tauri-plugin-window-state = "2"` and `tauri-plugin-single-instance = "2"`. Register single-instance **first**, then window-state: `.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| { if let Some(w) = app.get_webview_window("main") { let _ = w.set_focus(); } }))` then `.plugin(tauri_plugin_window_state::Builder::new().build())`.
+
+`src/lib/test-tauri.ts`: one helper exporting `mockWindow()` (`getCurrentWindow` with `startDragging`, `minimize`, `toggleMaximize`, `close`, `setTheme`, `onCloseRequested`) and `mockPlatform(value)`; every new test file uses it instead of hand-rolling Tauri mocks.
 
 - [ ] **Step 4: Implement detection and the provider**
 
-`src/lib/platform.ts`: `detectPlatform` calls `platform()` from `@tauri-apps/plugin-os`, maps the three known values, and catches rejection to `"unknown"`.
+`src/lib/platform.ts`: `detectPlatform` calls `platform()` from `@tauri-apps/plugin-os` (synchronous — compile-time injected via `window.__TAURI_OS_PLUGIN_INTERNALS__`, no IPC), maps the three known values, and wraps the call in try/catch so a missing global logs once and returns `"unknown"`.
 `src/providers/PlatformProvider.tsx`: context + `usePlatform` throwing outside the provider.
 
 - [ ] **Step 5: Window configuration**
 
-Base `src-tauri/tauri.conf.json` window: `"title": ""`, `"titleBarStyle": "Overlay"`, `"trafficLightPosition": { "x": 16, "y": 26 }`. Keep 900×640, min 760×500, resizable.
+Base `src-tauri/tauri.conf.json` window: `"title": ""`, `"titleBarStyle": "Overlay"`, `"trafficLightPosition": { "x": 16, "y": 26 }`. Keep 900×640, min 760×500, resizable, `"center": true` (window-state overrides on later launches).
 
-Create both overlays with the **full** window object (arrays are replaced, not merged):
-- `tauri.windows.conf.json`: label `main`, title `""`, 900×640, min 760×500, resizable, `"decorations": false`.
-- `tauri.linux.conf.json`: same plus `"decorations": false`.
+Edit `tauri.windows.conf.json` in place with the **full** window object (arrays are replaced, not merged): keep the existing `bundle` object byte-for-byte and add `"app": { "windows": [{ label: main, title: "", 900×640, min 760×500, resizable, decorations: false }] }`. Do not create a Linux overlay.
 
 Do not add `transparent` and keep `dragDropEnabled` at its default.
 
 - [ ] **Step 6: Bootstrap with the detected platform**
 
-`src/main.tsx`: `async function start()` awaits `detectPlatform()`, then renders `PlatformProvider` → `ErrorBoundary` → `App`. Remove the theme listener block (Task 3 takes ownership). Log detection failures once inside `detectPlatform`.
+`src/main.tsx`: call `detectPlatform()` synchronously (no `async start()`, no await — the platform value and the pre-paint theme need nothing async), then render `PlatformProvider` → `ErrorBoundary` → `App`. Remove the theme listener block (Task 3 takes ownership). Log detection failures once inside `detectPlatform`.
 
 - [ ] **Step 7: Run tests and the build**
 
@@ -119,7 +127,7 @@ Expected: PASS and a clean Vite build.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add package.json yarn.lock src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/src/lib.rs src-tauri/src/commands.rs src-tauri/capabilities/default.json src-tauri/tauri.conf.json src-tauri/tauri.windows.conf.json src-tauri/tauri.linux.conf.json src/lib/platform.ts src/lib/platform.test.ts src/providers/PlatformProvider.tsx src/providers/PlatformProvider.test.tsx src/main.tsx
+git add package.json yarn.lock src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/src/lib.rs src-tauri/src/commands.rs src-tauri/capabilities/default.json src-tauri/tauri.conf.json src-tauri/tauri.windows.conf.json src/lib/platform.ts src/lib/platform.test.ts src/lib/test-tauri.ts src/providers/PlatformProvider.tsx src/providers/PlatformProvider.test.tsx src/main.tsx
 git commit -m "feat(shell): add plugin-os platform detection and window chrome config"
 ```
 
@@ -137,7 +145,7 @@ git commit -m "feat(shell): add plugin-os platform detection and window chrome c
 - [ ] **Step 1: Add the shadcn components**
 
 ```bash
-yarn dlx shadcn@latest add dialog dropdown-menu popover toggle-group calendar tabs collapsible scroll-area --yes
+yarn shadcn add dialog dropdown-menu popover toggle-group calendar tabs collapsible scroll-area --yes
 ```
 
 Read every generated file. Replace any non-remixicon icon import with the remixicon equivalent. Do not modify behavior; only imports/formatting. `calendar` adds `react-day-picker` and `date-fns`.
@@ -184,7 +192,7 @@ git commit -m "feat(ui): add shell primitives and shared category icon"
 ### Task 3: Theme system and toggle
 
 **Files:**
-- Create: `src/hooks/useTheme.ts`, `src/hooks/useTheme.test.ts`, `src/components/shell/ThemeToggle.tsx`, `src/components/shell/ThemeToggle.test.tsx`
+- Create: `src/lib/theme.ts`, `src/lib/theme.test.ts`, `src/hooks/useTheme.ts`, `src/hooks/useTheme.test.ts`, `src/components/shell/ThemeToggle.tsx`, `src/components/shell/ThemeToggle.test.tsx`
 - Modify: `src/main.tsx`
 
 **Interfaces:**
@@ -193,7 +201,7 @@ git commit -m "feat(ui): add shell primitives and shared category icon"
 - [ ] **Step 1: Write failing tests**
 
 Cover:
-- no stored key + `matchMedia` dark → `theme` is `"dark"` and `.dark` is on `<html>`;
+- `readInitialTheme()`: stored value wins; absent follows `matchMedia`; `useTheme` seeds from the class `main.tsx` already applied;
 - clicking the toggle writes `"light"` when starting dark and removes `.dark`;
 - `getCurrentWindow().setTheme` is called with the resolved value (mock `@tauri-apps/api/window`);
 - a stored `"light"` wins over a dark OS preference.
@@ -205,7 +213,7 @@ Expected: FAIL — modules not found.
 
 - [ ] **Step 3: Implement**
 
-`useTheme`: read `localStorage["yard-theme"]`; when absent subscribe to `matchMedia`; apply `.dark` in an effect; persist explicit choices; call `setTheme` and swallow errors. `ThemeToggle` is an icon-only shadcn `Button` (`variant="ghost"`, `size="icon-sm"`) using `RiSunLine`/`RiMoonLine`. Remove the theme listener from `main.tsx`.
+Create `src/lib/theme.ts` with `readInitialTheme()`. `main.tsx` applies `.dark` from it as its first statement, **before** `createRoot` and before the `detectPlatform()` await. `useTheme` seeds from `readInitialTheme()`, does not re-apply on mount, subscribes to `matchMedia` only while no stored value exists, persists explicit choices, and calls `setTheme` once after bootstrap (failures swallowed). `ThemeToggle` is an icon-only shadcn `Button` (`variant="ghost"`, `size="icon-sm"`) using `RiSunLine`/`RiMoonLine`. Remove the theme listener from `main.tsx`.
 
 - [ ] **Step 4: Run tests**
 
@@ -215,16 +223,16 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/hooks/useTheme.ts src/hooks/useTheme.test.ts src/components/shell/ThemeToggle.tsx src/components/shell/ThemeToggle.test.tsx src/main.tsx
+git add src/lib/theme.ts src/lib/theme.test.ts src/hooks/useTheme.ts src/hooks/useTheme.test.ts src/components/shell/ThemeToggle.tsx src/components/shell/ThemeToggle.test.tsx src/main.tsx
 git commit -m "feat(shell): add persisted theme toggle with native window sync"
 ```
 
 ---
 
-### Task 4: Drag surface and window controls
+### Task 4: Drag surface, window controls, and quit guard
 
 **Files:**
-- Create: `src/components/shell/DragSurface.tsx`, `src/components/shell/DragSurface.test.tsx`, `src/components/shell/WindowControls.tsx`, `src/components/shell/WindowControls.test.tsx`
+- Create: `src/components/shell/DragSurface.tsx`, `src/components/shell/DragSurface.test.tsx`, `src/components/shell/WindowControls.tsx`, `src/components/shell/WindowControls.test.tsx`, `src/components/shell/QuitGuard.tsx`, `src/components/shell/QuitGuard.test.tsx`
 
 **Interfaces:**
 - Produces: `<DragSurface {...divProps} />`; `<WindowControls />` calling `minimize`, `toggleMaximize`, and `invoke("quit")`.
@@ -232,27 +240,30 @@ git commit -m "feat(shell): add persisted theme toggle with native window sync"
 - [ ] **Step 1: Write failing tests**
 
 DragSurface: left `mousedown` with `detail === 1` calls `startDragging`; `detail === 2` does not; `dblclick` calls `toggleMaximize`; a child button's `onMouseDown` stopPropagation prevents the call.
-WindowControls: three buttons with accessible names `Minimize`, `Maximize`, `Close`; each calls the expected API; Close calls `invoke("quit")`; every button stops mousedown propagation.
+WindowControls: three buttons with accessible names `Minimize`, `Maximize`, `Close`; each calls the expected API; Close calls `getCurrentWindow().close()`; every button stops mousedown propagation.
+QuitGuard: `preventDefault` always; `confirm` false → no `quit`; `confirm` true → exactly one `quit`; idle → one `quit`.
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `yarn test src/components/shell/DragSurface.test.tsx src/components/shell/WindowControls.test.tsx`
+Run: `yarn test src/components/shell/DragSurface.test.tsx src/components/shell/WindowControls.test.tsx src/components/shell/QuitGuard.test.tsx`
 Expected: FAIL — modules not found.
 
 - [ ] **Step 3: Implement**
 
-`DragSurface` uses `getCurrentWindow()`; spread caller props before its handlers so callers cannot silently disable dragging. `WindowControls` renders `Separator orientation="vertical"` then three shadcn ghost icon buttons (`RiSubtractLine`, `RiWindowLine`, `RiCloseLine`), native `title`, mousedown stopPropagation.
+`DragSurface` uses `getCurrentWindow()`; spread caller props before its handlers so callers cannot silently disable dragging. `WindowControls` renders `Separator orientation="vertical"` then three shadcn ghost icon buttons (`RiSubtractLine`, `RiWindowLine`, `RiCloseLine`), native `title`, mousedown stopPropagation. Close calls `getCurrentWindow().close()`, never `invoke("quit")` directly.
+
+`QuitGuard` (mounted once in `App`) registers `getCurrentWindow().onCloseRequested`: always `event.preventDefault()`, then `if (isCompressing && !(await confirm(...)))` return, else `await invoke("quit")`. Tests: preventDefault always; confirm false → no quit; confirm true → one quit; idle → one quit. Note in a comment: `shortcut: ⌘Q bypasses onCloseRequested and exits directly, acceptable for a deliberate OS quit`.
 
 - [ ] **Step 4: Run tests**
 
-Run: `yarn test src/components/shell/DragSurface.test.tsx src/components/shell/WindowControls.test.tsx`
+Run: `yarn test src/components/shell/DragSurface.test.tsx src/components/shell/WindowControls.test.tsx src/components/shell/QuitGuard.test.tsx`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/components/shell/DragSurface.tsx src/components/shell/DragSurface.test.tsx src/components/shell/WindowControls.tsx src/components/shell/WindowControls.test.tsx
-git commit -m "feat(shell): add drag surface and custom window controls"
+git add src/components/shell/DragSurface.tsx src/components/shell/DragSurface.test.tsx src/components/shell/WindowControls.tsx src/components/shell/WindowControls.test.tsx src/components/shell/QuitGuard.tsx src/components/shell/QuitGuard.test.tsx
+git commit -m "feat(shell): add drag surface, window controls, and quit guard"
 ```
 
 ---
@@ -277,7 +288,7 @@ Expected: FAIL — `HistoryFilters` has no `sort` field.
 
 - [ ] **Step 3: Implement**
 
-Add `pub sort: Option<String>` with `#[serde(default)]` to `HistoryFilters`. In `query_history`, after filtering and before `skip/take`, sort sessions ascending or descending by `started_at`; `oldest` → ascending, everything else → descending. Add `sort?: "newest" | "oldest"` to the TS interface.
+Add `pub sort: Option<String>` to `HistoryFilters` (`deny_unknown_fields` is on, so this must land before any TS caller sends `sort`; `Option` defaults to `None`, no `#[serde(default)]` needed). In `query_history`, after filtering and before `skip/take`, sort sessions by `started_at`; `oldest` → ascending, absent/unknown/`null` → descending. Add `sort?: "newest" | "oldest"` to the TS interface.
 
 - [ ] **Step 4: Run tests**
 
@@ -322,7 +333,7 @@ type HistoryContextValue = {
 }
 useHistoryContext(): HistoryContextValue
 ```
-- `historyFormat` adds `batchLabel(ms: number, now: Date): string` (`Today · 2:31 PM`), `savedPercent(original, compressed): number`, and `describeSince(ms: number | undefined, now: Date): string`.
+- `historyFormat` adds `batchLabel(ms: number, now: Date): string` (`Today · 2:31 PM`), `savedPercent(original, compressed): number`, and `describeSince(ms: number | undefined, now: Date): string`, and absorbs `savedLabel`, `fileCountLabel`, `countOutcome` from `HistoryView.tsx:196-268` (single source; Task 12 deletes the local copies).
 
 - [ ] **Step 1: Write failing tests**
 
@@ -335,7 +346,7 @@ Expected: FAIL — exports missing.
 
 - [ ] **Step 3: Implement**
 
-Provider wraps `useHistory`, owns `selectedSessionId`, `expanded`, and `searchText`, and syncs selection whenever `response.sessions` changes. `setSearchText` debounces into `setFilters({ search: trimmed || undefined })` via a ref, like the old view. Selection fallback: first session, then `null`.
+Provider wraps `useHistory`, owns `selectedSessionId`, `expanded`, and `searchText`, and syncs selection whenever `response.sessions` changes. It mounts at app level, so `get_history` runs once at boot and once per `batch:complete` (async IPC, off the UI thread; no per-file fetch). Record in `docs/bugs.md`: cache the fold in `HistoryStore` keyed by `(mtime, len)` if history grows past ~10k records. `setSearchText` debounces into `setFilters({ search: trimmed || undefined })` via a ref, like the old view. Selection fallback: first session, then `null`.
 
 - [ ] **Step 4: Run tests**
 
@@ -351,10 +362,11 @@ git commit -m "feat(history): add history provider and formatting helpers"
 
 ---
 
-### Task 7: Nav menu, app menu, About
+### Task 7: Nav menu, app menu, About, native menu
 
 **Files:**
 - Create: `src/components/shell/NavMenu.tsx`, `src/components/shell/NavMenu.test.tsx`, `src/components/shell/AppMenu.tsx`, `src/components/shell/AppMenu.test.tsx`, `src/components/AboutDialog.tsx`, `src/components/AboutDialog.test.tsx`
+- Modify: `src-tauri/src/lib.rs`
 
 **Interfaces:**
 - `NavMenu({ activeView, onNavigate, onOpenSettings })`, trigger `aria-label="Open navigation"`.
@@ -374,7 +386,9 @@ Expected: FAIL — modules not found.
 
 - [ ] **Step 3: Implement**
 
-Both menus use `DropdownMenu` + `DropdownMenuTrigger render={<Button …/>}` + `DropdownMenuGroup`; items carry the sidebar glyphs via `data-icon`. `AboutDialog` uses `Dialog`, `DialogTitle`, `DialogHeader` and a `ScrollArea` for `THIRD_PARTY_LICENSES.md?raw`; version comes from `import { version } from "../../package.json"`.
+Both menus use `DropdownMenu` + `DropdownMenuTrigger render={<Button …/>}` + `DropdownMenuGroup`; items carry the sidebar glyphs via `data-icon`. `AboutDialog` uses `Dialog`, `DialogTitle`, `DialogHeader` and a `ScrollArea` for `THIRD_PARTY_LICENSES.md?raw`; version comes from `import { version } from "../../package.json"`. `AppMenu`'s Quit item executes `onQuit`; the wiring (Task 9) connects it to `getCurrentWindow().close()` — never `invoke("quit")` — so the click crosses QuitGuard.
+
+Native macOS menu (`src-tauri/src/lib.rs`, `#[cfg(target_os = "macos")]` in `setup`): build a `MenuBuilder` with three `SubmenuBuilder`s — app (`hide`, `hide_others`, separator, `quit`), `Edit` (`undo`, `redo`, separator, `cut`, `copy`, `paste`, `select_all`), `Window` (`minimize`, `maximize`, separator, `close_window`) — and `app.set_menu(menu)?`. **No About item**, so the only About is the dialog. Windows/Linux get no menu bar. This is the app's only native code in this task; `cargo test` must stay green.
 
 - [ ] **Step 4: Run tests**
 
@@ -384,8 +398,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/components/shell/NavMenu.tsx src/components/shell/NavMenu.test.tsx src/components/shell/AppMenu.tsx src/components/shell/AppMenu.test.tsx src/components/AboutDialog.tsx src/components/AboutDialog.test.tsx
-git commit -m "feat(shell): add navigation menu, app menu, and about dialog"
+git add src/components/shell/NavMenu.tsx src/components/shell/NavMenu.test.tsx src/components/shell/AppMenu.tsx src/components/shell/AppMenu.test.tsx src/components/AboutDialog.tsx src/components/AboutDialog.test.tsx src-tauri/src/lib.rs
+git commit -m "feat(shell): add menus, about dialog, and a native macOS menu without About"
 ```
 
 ---
@@ -394,14 +408,14 @@ git commit -m "feat(shell): add navigation menu, app menu, and about dialog"
 
 **Files:**
 - Create: `src/components/SettingsDialog.tsx`, `src/components/SettingsDialog.test.tsx`
-- Modify: `src/hooks/useSettings.ts` only if a flush is needed (do not change the public shape otherwise)
+- Modify: `src/hooks/useSettings.ts`, `src/hooks/useSettings.test.ts`: `saveSettings` returns `Promise<boolean>` (false on failure) and a repeated identical failure must still notify (bump a counter or rethrow). The existing test file pins the old `Promise<void>`/error-state contract — update it in this task. The dialog awaits the flush before it accepts a close.
 
 **Interfaces:**
-- `SettingsDialog({ open, onOpenChange })`; sections `general | targets | floors | performance | history`; changes call `save_settings` after 400 ms; close flushes.
+- `SettingsDialog({ open, onOpenChange })`; sections `general | targets | floors | performance | history`; changes call `save_settings` after 400 ms; a close request awaits the flush and only then commits.
 
 - [ ] **Step 1: Write failing tests**
 
-Render with mocked `invoke` (`get_settings` returns defaults). Assert: the five `TabsTrigger`s render; changing retention to 30 then advancing 400 ms calls `save_settings` once; closing within 400 ms flushes the save once; a rejected save shows `Could not save settings` and keeps the dialog open; Reset calls `reset_settings` and shows returned defaults.
+Render with mocked `invoke` (`get_settings` returns defaults). Assert: the five `TabsTrigger`s render; changing retention to 30 then advancing 400 ms calls `save_settings` once; closing within 400 ms flushes the save once; a rejected save shows `Could not save settings` and keeps the dialog open; Reset calls `reset_settings` and shows returned defaults. Update `src/hooks/useSettings.test.ts` for the new contract (boolean return, repeated-failure notification still fires).
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -410,7 +424,7 @@ Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
 
-`Dialog` + `DialogContent` (720×540, `max-h-[90%]`, `p-0`, `overflow-hidden`) + visually hidden `DialogHeader`. Vertical `Tabs` rail; `ScrollArea` body; `FieldSet`/`FieldGroup`/`Field` rows; existing `NumberStepper`, `Select`, `Input`. Repack the five cards from `SettingsView.tsx` into section components inside this file. Debounce with a ref; flush on `onOpenChange(false)`; toast failures.
+`Dialog` + `DialogContent` (720×540, `max-h-[90%]`, `p-0`, `overflow-hidden`) + visually hidden `DialogHeader`. Vertical `Tabs` rail; `ScrollArea` body; `FieldSet`/`FieldGroup`/`Field` rows; existing `NumberStepper`, `Select`, `Input`. Repack the five cards from `SettingsView.tsx` into section components inside this file. Debounce with a ref. On a close request: `await flush()`; if `saveSettings` returned false, keep the dialog open and toast (`Could not save settings`); otherwise let the owner close. Reset replaces the draft and handles a `null` return.
 
 - [ ] **Step 4: Run tests**
 
@@ -420,7 +434,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/components/SettingsDialog.tsx src/components/SettingsDialog.test.tsx src/hooks/useSettings.ts
+git add src/components/SettingsDialog.tsx src/components/SettingsDialog.test.tsx src/hooks/useSettings.ts src/hooks/useSettings.test.ts
 git commit -m "feat(settings): move settings into an auto-saving dialog"
 ```
 
@@ -440,7 +454,7 @@ git commit -m "feat(settings): move settings into an auto-saving dialog"
 
 - [ ] **Step 1: Write failing shell tests**
 
-Replace `App.test.tsx` assertions: no `Yard` brand in the sidebar, no version/GPL badges; nav has Compress and History; Settings exists only in the footer; toggling collapses the sidebar and shows `☰`; breadcrumb reads Compress/History; macOS shows the toggle in both states; win32 shows window controls and hides the top-bar toggle while the sidebar is open. `SidebarNav.test.tsx`: Settings click calls `onOpenSettings`; History click calls `onNavigate("history")`.
+Replace `App.test.tsx` assertions: no `Yard` brand in the sidebar, no version/GPL badges; nav has Compress and History; Settings exists only in the footer; toggling collapses the sidebar and shows `☰`; breadcrumb reads Compress/History; macOS shows the toggle in both states; win32 shows window controls and hides the top-bar toggle while the sidebar is visible; no `SidebarRail`; the ⋯ menu's Quit calls `getCurrentWindow().close()` (never `invoke("quit")`); at a 760px viewport (set `window.innerWidth` before render — `useIsMobile` reads it directly in its initial effect) the sidebar renders as the `Sheet` and selecting a nav row closes it. `SidebarNav.test.tsx`: Settings click calls `onOpenSettings`; History click calls `onNavigate("history")`.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -449,7 +463,7 @@ Expected: FAIL — old shell renders brand/settings nav.
 
 - [ ] **Step 3: Implement the shell**
 
-`App`: `CompressionProvider` → `HistoryProvider` → `SidebarProvider` → `Sidebar collapsible="offcanvas"` + `SidebarInset`. Mount `SettingsDialog` and `AboutDialog`. `activeView` is local state; Settings no longer a view. Remove the `SettingsView` route and its import. `TopBar`: `DragSurface` row, left cluster (toggle rules by platform, `☰` when collapsed, breadcrumb `History › batch` via `batchLabel`), right cluster (`ThemeToggle`, `AppMenu`, `WindowControls` on non-darwin). `SidebarHeader`: empty on macOS; glyph + `SidebarTrigger` on non-darwin. Remove `useAutoCollapse(boardRef)` from `CompressView` only (HistoryView/Settings cleanup comes in Tasks 12/13).
+`App`: `CompressionProvider` → `HistoryProvider` → `SidebarProvider` → `Sidebar collapsible="offcanvas"` + `SidebarInset`. Pass `className="overflow-hidden"` to `SidebarContent` (vendored default is `overflow-auto`). Do not render `SidebarRail`. On macOS the `SidebarHeader` is empty on desktop; inside the mobile Sheet it shows the collapse trigger on every platform. Mount `QuitGuard` under `CompressionProvider` (it reads `isCompressing`), then `SettingsDialog`, `AboutDialog`, and `HistoryFilterDialog` (wired in Task 11). Wire `AppMenu` with `onQuit={() => getCurrentWindow().close()}` so every quit crosses the guard — never `invoke("quit")` from the menu. The sidebar's History row and batch rows close the Sheet on mobile (`if (isMobile) setOpenMobile(false)`). `activeView` is local state; Settings no longer a view. Remove the `SettingsView` route and its import. `TopBar`: `DragSurface` row, left cluster (toggle rules by platform, `☰` when hidden, breadcrumb `History › batch` via `batchLabel`), right cluster (`ThemeToggle`, `AppMenu`, `WindowControls` on non-darwin). Use `const visible = isMobile ? openMobile : open`; the `pl-22` clearance applies whenever `!visible` on darwin. `SidebarHeader`: empty on macOS desktop; otherwise glyph + `SidebarTrigger` (in the Sheet: close). Remove `useAutoCollapse(boardRef)` from `CompressView` only (HistoryView/Settings cleanup comes in Tasks 12/13).
 
 - [ ] **Step 4: Run tests**
 
@@ -477,7 +491,7 @@ git commit -m "feat(shell): replace the app shell with native-style chrome"
 
 - [ ] **Step 1: Write failing tests**
 
-Assert: two sort segments (`Newest first`, `Oldest first`); toggling Cancelled marks it pressed (multi); toggling Image marks it pressed; choosing `Last 7 days` sets `sinceMs` to start of day six days ago; a custom calendar date sets that day's start; Apply emits the draft; Cancel emits nothing; Clear all resets chips and sort; reopening after Apply seeds the applied values.
+Assert: two sort segments (`Newest first`, `Oldest first`); toggling Cancelled marks it pressed (multi); toggling Image and Other marks them pressed; the category group renders five chips; choosing `Last 7 days` sets `sinceMs` to start of day six days ago; a custom calendar date sets that day's start; Apply emits the draft; Cancel emits nothing; Clear all resets chips and sort; reopening after Apply seeds the applied values.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -486,7 +500,7 @@ Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
 
-`Dialog` + title row (`DialogTitle`, active `Badge`, close). Groups with `FieldSet`/`FieldLegend`. Sort/Since use single `ToggleGroup`; Status/Category use `ToggleGroup multiple`. Category chips render `CategoryIcon` with category tones. Since is a `Popover` + `Calendar` (`mode="single"`) with preset buttons; use `date-fns` (`startOfDay`, `subDays`, `startOfMonth`, `subMonths`) and `describeSince` for the trigger label. Footer `Clear all` / `Cancel` / `Apply`.
+`Dialog` + title row (`DialogTitle`, active `Badge`, close). Groups with `FieldSet`/`FieldLegend`. Sort/Since use single `ToggleGroup`; Status/Category use `ToggleGroup multiple`. Base UI single-select allows deselecting the pressed value (emitting an empty array) — guard the sort callback with `value[0] ?? previousSort` so a sort is always set. Category chips render `CategoryIcon` with category tones for all five values (Image, Video, PDF, Document, Other). Since is a `Popover` + `Calendar` (`mode="single"`) with preset buttons; use `date-fns` (`startOfDay`, `subDays`, `startOfMonth`, `subMonths`) and `describeSince` for the trigger label. Footer `Clear all` / `Cancel` / `Apply`.
 
 - [ ] **Step 4: Run tests**
 
@@ -509,7 +523,7 @@ git commit -m "feat(history): add filter dialog with chips and date presets"
 - Modify: `src/components/shell/SidebarNav.tsx`, `src/App.tsx`, `src/components/shell/SidebarNav.test.tsx`
 
 **Interfaces:**
-- `HistoryList({ onOpenFilter })`; consumes `useHistoryContext`. Renders `SidebarInput` search, `ScrollArea` list, `Button` pagination. History row gets `aria-expanded`, filter `SidebarMenuAction`.
+- `HistoryList({ onOpenFilter })`; consumes `useHistoryContext`. Renders `SidebarInput` search, `ScrollArea` list, `Button` pagination. History row gets `aria-expanded` + `aria-controls`, the list wrapper `role="group"`, and the filter `SidebarMenuAction className="size-6"` (24px; stock is 20px on desktop). Selecting a batch closes the mobile Sheet (`if (isMobile) setOpenMobile(false)`).
 - `SidebarNav` gains `onOpenFilter` and passes it to `HistoryList`.
 - `App` owns `filterOpen`; mounts `HistoryFilterDialog` with `applied={filters}` and `onApply={setFilters}`.
 
@@ -524,7 +538,7 @@ Expected: FAIL — module not found.
 
 - [ ] **Step 3: Implement**
 
-History row click toggles `expanded` and selects History. List uses `SidebarMenuSub`/`SidebarMenuSubItem`/`SidebarMenuSubButton` with `h-auto py-1.5`; selected row `isActive`. ScrollArea contains only rows. Search uses `SidebarInput`; pagination uses ghost icon `Button`s. Wire `filterOpen` in `App`.
+History row click toggles `expanded` and selects History. List uses `SidebarMenuSub`/`SidebarMenuSubItem`/`SidebarMenuSubButton` with `h-auto py-1.5`; selected row `isActive`. ScrollArea contains only rows. Search uses `SidebarInput`; pagination uses ghost icon `Button`s. Wire `filterOpen` in `App`; close it when the sidebar collapses (`useEffect(() => { if (!visible) setFilterOpen(false) }, [visible])`).
 
 - [ ] **Step 4: Run tests**
 
@@ -560,7 +574,7 @@ Expected: FAIL — old view still expects filters/pagination.
 
 - [ ] **Step 3: Implement**
 
-Rewrite the view as a detail pane. Reuse `StatusMarker`, badges, and helpers (`savedLabel`, `fileCountLabel`, `savedPercent`, `formatDuration`, `countOutcome`) from the shared format module. Keep `openSessionFolder`/`revealFile` behavior. Remove `useAutoCollapse`. Add the `Clear history` ghost button + `AlertDialog` in the detail header, disabled when there are no sessions.
+Rewrite the view as a detail pane. Import `savedLabel`, `fileCountLabel`, `savedPercent`, `formatDuration`, `countOutcome` from `src/lib/historyFormat.ts` and **delete the local copies at `HistoryView.tsx:196-268`**; keep `StatusMarker` as a component. Keep `openSessionFolder`/`revealFile` behavior. Remove `useAutoCollapse`. Add the `Clear history` ghost button + `AlertDialog` in the detail header, disabled when there are no sessions.
 
 - [ ] **Step 4: Run tests**
 
@@ -581,20 +595,20 @@ git commit -m "feat(history): focus the history view on the selected batch"
 
 **Files:**
 - Delete: `src/hooks/useAutoCollapse.ts`, `src/hooks/useAutoCollapse.test.ts`
-- Modify: `docs/ARCHITECTURE.md`, `docs/FEATURES.md`, `docs/bugs.md`, `GLOSSARY.md`
+- Modify: `docs/ARCHITECTURE.md`, `docs/FEATURES.md`, `docs/bugs.md`, `GLOSSARY.md`, `docs/superpowers/specs/mocks/app-shell/README.md`
 - Create: `docs/adr/0007-platform-window-chrome.md`
 
 - [ ] **Step 1: Delete the auto-collapse hook and remaining references**
 
-Remove the hook, its tests, and any remaining imports. `grep -r useAutoCollapse src` must return nothing.
+Remove the hook, its tests, and any remaining imports. `grep -r useAutoCollapse src` must return nothing. Also remove the ResizeObserver assertions it left behind in `App.test.tsx:305-334` and `CompressView.test.tsx:636-660`.
 
 - [ ] **Step 2: Write the ADR**
 
-Record: overlay title bar on macOS, frameless on Windows/Linux with default shadow, plugin-os detection, custom drag/zoom, no native menu, no transparent windows, rejected alternatives.
+Record: overlay title bar on macOS, frameless on Windows with default shadow (Linux deferred), plugin-os detection, custom drag/zoom, stock shadcn sidebar (offcanvas + Sheet, no fork), custom macOS menu without About, guarded quit path, window-state + single-instance, no transparent windows, Overlay drag limitation (window cannot be dragged while unfocused, tauri#4316), rejected alternatives.
 
 - [ ] **Step 3: Update the durable docs**
 
-ARCHITECTURE §3–§4 (components, state ownership, no settings view, `sort`, plugin-os); FEATURES rows 1/3/11/12 plus this slice; bugs (remove the auto-collapse item); GLOSSARY (shell, top bar, batch list).
+ARCHITECTURE §3–§4 (components, state ownership, no settings view, `sort`, plugin-os, window-state, single-instance, stock sidebar); FEATURES rows 1/3/11/12 plus this slice; bugs (remove the auto-collapse item; add `history.jsonl` fold-cache note and "Linux chrome unverified"); GLOSSARY (shell, top bar, batch list). ADR 0007 records the custom macOS menu and the guarded quit path.
 
 - [ ] **Step 4: Run the full gate**
 
@@ -615,4 +629,5 @@ git commit -m "chore(shell): remove auto-collapse and document the new chrome"
 - Spec coverage: platform/window (§4), shell/sidebar (§5–6), history/filter (§7), settings (§8), about/menus (§9), theme (§10), state/IPC (§11–12), errors (§13), a11y (§14), tests (§15), docs (§16) each map to a task.
 - Deliberate order: Settings and filter components are built standalone before the shell mounts them, so no task leaves dead state or a half-wired route.
 - Types are introduced in the Interfaces block of the task that creates them; later tasks reference those names exactly (`HistoryContextValue`, `Platform`, `ViewId`).
+- Revision 2 coverage: stock sidebar (Tasks 2/9/11), pre-paint theme (3), guarded quit (4), sort null (5), shared helpers (6/12), settings save contract (8), five categories (10), conf overlay/clobber (1), window-state + single-instance (1), filter close (11), test helper (1).
 - Every Review Focus line has a test named in its owning task (1 → Task 11, 2 → Task 1, 3 → Task 8, 4 → Task 6, 5 → Task 10).
