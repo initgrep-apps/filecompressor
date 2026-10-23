@@ -345,7 +345,7 @@ Removed: brand header, `v1.0.0` / `GPLv3` pills, Settings view entry, `useAutoCo
 
 Detail pane:
 
-- Header: batch label (`Today · 2:31 PM`), meta (`N files · duration · Output: <folder>`), `Button variant="outline"` Reveal folder.
+- Header: batch label (`Today · 2:31 PM`), meta (`N files · duration · Output: <folder>`), `Button variant="outline"` Reveal folder, and a ghost `Clear history` action guarded by `AlertDialog`.
 - Stats: Saved, Files (or `N / M` when filtered), Best effort, Failed.
 - Files: `Card`-style list using existing row markup; category glyph, name, strategy/quality, `original → compressed`, percent, status `Badge`.
 - States: loading skeleton (`Skeleton`), error banner, empty message.
