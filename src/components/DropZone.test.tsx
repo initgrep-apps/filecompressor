@@ -36,6 +36,19 @@ const GROUP_MEMBERSHIP: Record<string, string> = {
   PPTX: 'docs',
 }
 
+const CATEGORY_MEMBERSHIP: Record<string, string> = {
+  JPEG: 'image',
+  PNG: 'image',
+  WebP: 'image',
+  HEIC: 'image',
+  MP4: 'video',
+  MOV: 'video',
+  PDF: 'pdf',
+  DOCX: 'document',
+  XLSX: 'document',
+  PPTX: 'document',
+}
+
 function emit(evt: unknown) {
   act(() => {
     for (const h of handlers) h(evt)
@@ -176,7 +189,7 @@ describe('DropZone', () => {
     for (const ext of ALL_EXTENSIONS) {
       const pill = screen.getByText(ext)
       expect(pill).toBeInTheDocument()
-      expect(pill.querySelector('svg')).not.toBeNull()
+      expect(pill.querySelector('svg')?.getAttribute('data-category')).toBe(CATEGORY_MEMBERSHIP[ext])
     }
     expect(screen.getByText('JPEG').className).toContain('text-blue-600')
     expect(screen.getByText('HEIC').className).toContain('text-blue-600')

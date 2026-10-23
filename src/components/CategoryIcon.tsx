@@ -14,10 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import type { ReactNode } from 'react'
+import type { ReactElement } from 'react'
 import type { Category } from '@/types'
 
-const CATEGORY_GLYPHS: Record<Category, ReactNode> = {
+const FILE_GLYPH = (
+  <>
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+    <polyline points="14 2 14 8 20 8" />
+  </>
+)
+
+const CATEGORY_GLYPHS: Record<Category, ReactElement> = {
   image: (
     <>
       <rect x="3" y="3" width="18" height="18" rx="2" />
@@ -31,26 +38,15 @@ const CATEGORY_GLYPHS: Record<Category, ReactNode> = {
       <rect x="2" y="6" width="14" height="12" rx="2" />
     </>
   ),
-  pdf: (
-    <>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-    </>
-  ),
+  pdf: FILE_GLYPH,
   document: (
     <>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
+      {FILE_GLYPH}
       <line x1="16" y1="13" x2="8" y2="13" />
       <line x1="16" y1="17" x2="8" y2="17" />
     </>
   ),
-  other: (
-    <>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
-    </>
-  ),
+  other: FILE_GLYPH,
 }
 
 export function CategoryIcon({
@@ -64,6 +60,7 @@ export function CategoryIcon({
 }) {
   return (
     <svg
+      aria-hidden="true"
       data-category={category}
       className={className}
       width={size}
