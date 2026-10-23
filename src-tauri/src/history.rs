@@ -443,6 +443,23 @@ fn file_matches(
         && needle.is_none_or(|needle| file_hit(file, needle))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum HistorySort {
+    Newest,
+    Oldest,
+}
+
+fn effective_sort(raw: Option<&str>) -> HistorySort {
+    match normalize_text(raw) {
+        Some("oldest") => HistorySort::Oldest,
+        Some("newest") | None => HistorySort::Newest,
+        Some(other) => {
+            eprintln!("warn: history query unknown sort {other:?}, falling back to newest");
+            HistorySort::Newest
+        }
+    }
+}
+
 pub fn query_history(
     fold: FoldResult,
     filters: &HistoryFilters,
@@ -506,15 +523,9 @@ pub fn query_history(
         visible.push(session);
     }
 
-    match filters.sort.as_deref() {
-        Some("oldest") => visible.sort_by_key(|session| session.started_at),
-        None | Some("newest") => {
-            visible.sort_by_key(|session| std::cmp::Reverse(session.started_at))
-        }
-        Some(other) => {
-            eprintln!("warn: history query unknown sort {other:?}, falling back to newest");
-            visible.sort_by_key(|session| std::cmp::Reverse(session.started_at));
-        }
+    match effective_sort(filters.sort.as_deref()) {
+        HistorySort::Oldest => visible.sort_by_key(|session| session.started_at),
+        HistorySort::Newest => visible.sort_by_key(|session| std::cmp::Reverse(session.started_at)),
     }
 
     let total_sessions = visible.len();
@@ -2277,29 +2288,91 @@ mod tests {
     }
 
     #[test]
+    fn effective_sort_normalizes_values() {
+        assert_eq!(effective_sort(None), HistorySort::Newest);
+        assert_eq!(effective_sort(Some("")), HistorySort::Newest);
+        assert_eq!(effective_sort(Some("   ")), HistorySort::Newest);
+        assert_eq!(effective_sort(Some("newest")), HistorySort::Newest);
+        assert_eq!(effective_sort(Some("  newest  ")), HistorySort::Newest);
+        assert_eq!(effective_sort(Some("oldest")), HistorySort::Oldest);
+        assert_eq!(effective_sort(Some(" oldest ")), HistorySort::Oldest);
+        assert_eq!(effective_sort(Some("OLDEST")), HistorySort::Newest);
+        assert_eq!(effective_sort(Some("recent")), HistorySort::Newest);
+    }
+
+    #[test]
     fn sort_ties_keep_every_session_across_pages() {
         let fold = || FoldResult {
-            sessions: vec![bare_session("b", 100), bare_session("a", 100)],
+            sessions: (0..40)
+                .map(|i| bare_session(&format!("t{i}"), (i as i64 % 4) * 10))
+                .collect(),
             skipped_lines: 0,
         };
-        for sort in ["newest", "oldest"] {
+        let expected = |groups: [i64; 4]| -> Vec<String> {
             let mut ids = Vec::new();
-            for page in 0..2 {
-                let resp = query_history(fold(), &sort_filter(sort), page, 1);
-                assert_eq!(resp.sessions.len(), 1, "sort {sort:?} page {page}");
-                assert_eq!(resp.total_sessions, 2);
+            for group in groups {
+                ids.extend(
+                    (0..40)
+                        .filter(|i| ((*i % 4) as i64) * 10 == group)
+                        .map(|i| format!("t{i}")),
+                );
+            }
+            ids
+        };
+        let newest = expected([30, 20, 10, 0]);
+        let oldest = expected([0, 10, 20, 30]);
+        let mut newest_reversed = newest.clone();
+        newest_reversed.reverse();
+        assert_ne!(
+            oldest, newest_reversed,
+            "oldest is not newest reversed: ties keep fold order in both directions"
+        );
+        for (sort, want) in [("newest", &newest), ("oldest", &oldest)] {
+            let mut ids = Vec::new();
+            for page in 0..8 {
+                let resp = query_history(fold(), &sort_filter(sort), page, 5);
+                assert_eq!(resp.sessions.len(), 5, "sort {sort:?} page {page}");
+                assert_eq!(resp.total_sessions, 40);
                 ids.extend(
                     resp.sessions
                         .into_iter()
                         .map(|session| session.session_id),
                 );
             }
+            assert_eq!(ids.len(), 40, "sort {sort:?} walks every session once");
             assert_eq!(
-                ids,
-                vec!["b", "a"],
-                "sort {sort:?} keeps fold order for equal started_at and never drops or duplicates"
+                &ids, want,
+                "sort {sort:?} is stable: ties stay in fold order across pages"
             );
         }
+    }
+
+    #[test]
+    fn sort_oldest_applies_after_status_filter() {
+        let filters = HistoryFilters {
+            statuses: Some(vec!["failed".into()]),
+            sort: Some("oldest".into()),
+            ..no_filters()
+        };
+        let mut ids = Vec::new();
+        for page in 0..3 {
+            let resp = query_history(scrambled_sessions(), &filters, page, 1);
+            assert_eq!(resp.sessions.len(), 1, "page {page}");
+            assert_eq!(resp.total_sessions, 3);
+            assert!(
+                resp.sessions[0]
+                    .files
+                    .iter()
+                    .all(|file| file.status == "failed"),
+                "only sessions surviving the status filter appear"
+            );
+            ids.extend(
+                resp.sessions
+                    .into_iter()
+                    .map(|session| session.session_id),
+            );
+        }
+        assert_eq!(ids, vec!["s1", "s2", "s4"]);
     }
 
     #[test]
