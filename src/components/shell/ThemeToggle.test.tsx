@@ -102,7 +102,7 @@ describe("ThemeToggle", () => {
     expect(win.setTheme).toHaveBeenLastCalledWith("dark")
   })
 
-  it("flips back on a double click without a stale closure", async () => {
+  it("flips back across two successive clicks", async () => {
     stubMatchMedia(false)
     const user = userEvent.setup()
     render(<ThemeToggle />)

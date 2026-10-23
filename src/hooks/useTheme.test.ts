@@ -81,7 +81,7 @@ describe("useTheme", () => {
     expect(document.documentElement.classList.contains("dark")).toBe(true)
     expect(applyTheme).not.toHaveBeenCalled()
     expect(win.setTheme).toHaveBeenCalledTimes(1)
-    expect(win.setTheme).toHaveBeenCalledWith("dark")
+    expect(win.setTheme).toHaveBeenCalledWith(null)
   })
 
   it("does not re-apply the class on mount but applies it after a toggle", () => {
@@ -136,12 +136,14 @@ describe("useTheme", () => {
     expect(result.current.theme).toBe("dark")
     expect(document.documentElement.classList.contains("dark")).toBe(true)
     expect(media.listenerCount()).toBe(1)
+    expect(win.setTheme).toHaveBeenLastCalledWith(null)
 
     act(() => media.setDark(false))
 
     expect(result.current.theme).toBe("light")
     expect(document.documentElement.classList.contains("dark")).toBe(false)
     expect(media.listenerCount()).toBe(1)
+    expect(win.setTheme).toHaveBeenLastCalledWith(null)
     expect(localStorage.getItem(THEME_STORAGE_KEY)).toBeNull()
   })
 

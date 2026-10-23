@@ -27,6 +27,7 @@ import {
 
 let storageWriteWarned = false
 let nativeSyncWarned = false
+let mediaListenerWarned = false
 
 const persistTheme = (theme: Theme) => {
   try {
@@ -44,7 +45,13 @@ const warnNativeSyncOnce = (error: unknown) => {
   console.warn("native window theme sync failed", error)
 }
 
-const syncNativeTheme = (theme: Theme) => {
+const warnMediaListenerOnce = (error: unknown) => {
+  if (mediaListenerWarned) return
+  mediaListenerWarned = true
+  console.warn("theme media listener failed", error)
+}
+
+const syncNativeTheme = (theme: Theme | null) => {
   try {
     void getCurrentWindow().setTheme(theme).catch(warnNativeSyncOnce)
   } catch (error) {
@@ -60,7 +67,7 @@ export function useTheme(): { theme: Theme; toggleTheme: () => void } {
   useEffect(() => {
     if (bootstrapped.current) applyTheme(theme)
     bootstrapped.current = true
-    syncNativeTheme(theme)
+    syncNativeTheme(explicitChoice.current ? theme : null)
   }, [theme])
 
   useEffect(() => {
@@ -68,10 +75,22 @@ export function useTheme(): { theme: Theme; toggleTheme: () => void } {
     const mediaQuery = getDarkMediaQuery()
     if (!mediaQuery) return
     const handleChange = (event: MediaQueryListEvent) => {
+      if (explicitChoice.current) return
       setTheme(event.matches ? "dark" : "light")
     }
-    mediaQuery.addEventListener("change", handleChange)
-    return () => mediaQuery.removeEventListener("change", handleChange)
+    try {
+      mediaQuery.addEventListener("change", handleChange)
+    } catch (error) {
+      warnMediaListenerOnce(error)
+      return
+    }
+    return () => {
+      try {
+        mediaQuery.removeEventListener("change", handleChange)
+      } catch (error) {
+        warnMediaListenerOnce(error)
+      }
+    }
   }, [theme])
 
   const toggleTheme = useCallback(() => {

@@ -50,6 +50,41 @@ beforeEach(() => {
 })
 
 describe("useTheme warnings", () => {
+  it("warns once across blocked matchMedia calls and falls back to light", () => {
+    window.matchMedia = vi.fn(() => {
+      throw new Error("matchMedia blocked")
+    })
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+
+    try {
+      expect(readInitialTheme()).toBe("light")
+      expect(readInitialTheme()).toBe("light")
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn).toHaveBeenCalledWith(
+        "theme media query failed",
+        expect.any(Error),
+      )
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it("renders light without a dark class when matchMedia throws", () => {
+    window.matchMedia = vi.fn(() => {
+      throw new Error("matchMedia blocked")
+    })
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+
+    try {
+      const { result } = renderHook(() => useTheme())
+
+      expect(result.current.theme).toBe("light")
+      expect(document.documentElement.classList.contains("dark")).toBe(false)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it("warns once across two blocked storage reads", () => {
     stubMatchMedia(false)
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
@@ -83,6 +118,8 @@ describe("useTheme warnings", () => {
       act(() => result.current.toggleTheme())
       await act(async () => {})
 
+      expect(result.current.theme).toBe("dark")
+      expect(document.documentElement.classList.contains("dark")).toBe(true)
       expect(win.setTheme).toHaveBeenCalledTimes(2)
       expect(warn).toHaveBeenCalledTimes(1)
       expect(warn).toHaveBeenCalledWith(

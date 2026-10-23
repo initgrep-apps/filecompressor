@@ -24,6 +24,7 @@ export const DARK_QUERY = "(prefers-color-scheme: dark)"
 
 let storageReadWarned = false
 let mediaQueryWarned = false
+let invalidStoredWarned = false
 
 const warnStorageReadOnce = (error: unknown) => {
   if (storageReadWarned) return
@@ -37,10 +38,18 @@ const warnMediaQueryOnce = (error: unknown) => {
   console.warn("theme media query failed", error)
 }
 
+const warnInvalidStoredOnce = (value: string) => {
+  if (invalidStoredWarned) return
+  invalidStoredWarned = true
+  console.warn("theme storage value invalid", value)
+}
+
 export function readStoredTheme(): Theme | null {
   try {
     const stored = localStorage.getItem(THEME_STORAGE_KEY)
-    return THEMES.find((theme) => theme === stored) ?? null
+    const theme = THEMES.find((candidate) => candidate === stored) ?? null
+    if (theme === null && stored !== null) warnInvalidStoredOnce(stored)
+    return theme
   } catch (error) {
     warnStorageReadOnce(error)
     return null
@@ -56,12 +65,10 @@ export function getDarkMediaQuery(): MediaQueryList | null {
   }
 }
 
-export function prefersDark(): boolean {
-  return getDarkMediaQuery()?.matches ?? false
-}
-
 export function readInitialTheme(): Theme {
-  return readStoredTheme() ?? (prefersDark() ? "dark" : "light")
+  const stored = readStoredTheme()
+  if (stored) return stored
+  return getDarkMediaQuery()?.matches ? "dark" : "light"
 }
 
 export function readAppliedTheme(): Theme {
