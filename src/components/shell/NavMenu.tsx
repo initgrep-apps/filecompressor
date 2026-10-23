@@ -43,6 +43,12 @@ export function NavMenu({
   onNavigate,
   onOpenSettings,
 }: NavMenuProps) {
+  const activeCheck = (
+    <DropdownMenuShortcut>
+      <RiCheckLine aria-hidden />
+    </DropdownMenuShortcut>
+  )
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -59,23 +65,21 @@ export function NavMenu({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-48">
         <DropdownMenuGroup>
-          <DropdownMenuItem onClick={() => onNavigate("compress")}>
+          <DropdownMenuItem
+            aria-current={activeView === "compress" ? "page" : undefined}
+            onClick={() => onNavigate("compress")}
+          >
             <RiContractUpDownLine data-icon="inline-start" />
             Compress
-            {activeView === "compress" && (
-              <DropdownMenuShortcut>
-                <RiCheckLine />
-              </DropdownMenuShortcut>
-            )}
+            {activeView === "compress" && activeCheck}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => onNavigate("history")}>
+          <DropdownMenuItem
+            aria-current={activeView === "history" ? "page" : undefined}
+            onClick={() => onNavigate("history")}
+          >
             <RiHistoryLine data-icon="inline-start" />
             History
-            {activeView === "history" && (
-              <DropdownMenuShortcut>
-                <RiCheckLine />
-              </DropdownMenuShortcut>
-            )}
+            {activeView === "history" && activeCheck}
           </DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />

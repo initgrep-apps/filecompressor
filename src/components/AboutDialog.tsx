@@ -43,8 +43,13 @@ interface AboutDialogProps {
 export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
   const [showNotices, setShowNotices] = useState(false)
 
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) setShowNotices(false)
+    onOpenChange(nextOpen)
+  }
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader className="items-center text-center">
           <span className="flex size-12 items-center justify-center rounded-2xl bg-muted text-primary">
@@ -57,10 +62,7 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
           <p className="text-muted-foreground">No accounts and no telemetry.</p>
           <p className="text-muted-foreground">Version {version}</p>
         </div>
-        <ul
-          data-testid="license-rows"
-          className="flex flex-col gap-2 text-sm"
-        >
+        <ul className="flex flex-col gap-2 text-sm">
           {LICENSE_ROWS.map((row) => (
             <li key={row.name} className="flex items-center justify-between gap-4">
               <span>{row.name}</span>

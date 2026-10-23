@@ -14,61 +14,120 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { render, screen, within } from "@testing-library/react"
+import { useState } from "react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
+import { version } from "../../package.json"
+import thirdPartyNotices from "../../THIRD_PARTY_LICENSES.md?raw"
 import { AboutDialog } from "@/components/AboutDialog"
 
-function renderDialog() {
-  return render(<AboutDialog open onOpenChange={vi.fn()} />)
+const LICENSE_ROWS = [
+  ["Yard", "GPL-3.0"],
+  ["FFmpeg / ffprobe", "GPL-2.0-or-later"],
+  ["Ghostscript", "AGPL-3.0"],
+  ["libvips", "LGPL-3.0"],
+  ["qpdf", "Apache-2.0"],
+]
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+function ControlledDialog() {
+  const [open, setOpen] = useState(true)
+
+  return (
+    <div>
+      <button onClick={() => setOpen(true)}>Open about</button>
+      <AboutDialog open={open} onOpenChange={setOpen} />
+    </div>
+  )
 }
 
 describe("AboutDialog", () => {
-  it("shows the app identity and version", () => {
-    renderDialog()
+  it("shows the app identity and the package version", () => {
+    render(<AboutDialog open onOpenChange={vi.fn()} />)
 
     expect(screen.getByRole("heading", { name: "Yard" })).toBeInTheDocument()
     expect(screen.getByText("Offline file compression tool")).toBeInTheDocument()
     expect(screen.getByText("No accounts and no telemetry.")).toBeInTheDocument()
-    expect(screen.getByText("Version 0.1.0")).toBeInTheDocument()
+    expect(screen.getByText(`Version ${version}`)).toBeInTheDocument()
     expect(screen.getByText("© 2026 Yard Contributors")).toBeInTheDocument()
   })
 
-  it("lists the five license rows", () => {
-    renderDialog()
+  it("lists the five license rows as name and license pairs", () => {
+    render(<AboutDialog open onOpenChange={vi.fn()} />)
 
-    const rows = within(screen.getByTestId("license-rows")).getAllByRole("listitem")
+    const dialog = screen.getByRole("dialog")
+    const rows = within(dialog).getAllByRole("listitem")
 
     expect(rows).toHaveLength(5)
-    expect(within(rows[0]).getByText("Yard")).toBeInTheDocument()
-    expect(screen.getByText("GPL-3.0")).toBeInTheDocument()
-    expect(screen.getByText("FFmpeg / ffprobe")).toBeInTheDocument()
-    expect(screen.getByText("GPL-2.0-or-later")).toBeInTheDocument()
-    expect(screen.getByText("Ghostscript")).toBeInTheDocument()
-    expect(screen.getByText("AGPL-3.0")).toBeInTheDocument()
-    expect(screen.getByText("libvips")).toBeInTheDocument()
-    expect(screen.getByText("LGPL-3.0")).toBeInTheDocument()
-    expect(screen.getByText("qpdf")).toBeInTheDocument()
-    expect(screen.getByText("Apache-2.0")).toBeInTheDocument()
+    LICENSE_ROWS.forEach(([name, license], index) => {
+      expect(within(rows[index]).getByText(name)).toBeInTheDocument()
+      expect(within(rows[index]).getByText(license)).toBeInTheDocument()
+    })
   })
 
-  it("expands the bundled third-party notices without a network request", async () => {
+  it("expands the bundled notices verbatim without a network request", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch")
-    renderDialog()
+    render(<AboutDialog open onOpenChange={vi.fn()} />)
     const user = userEvent.setup()
 
-    expect(screen.queryByTestId("third-party-notices")).not.toBeInTheDocument()
+    expect(screen.getByRole("dialog").querySelector("pre")).toBeNull()
 
     await user.click(screen.getByRole("button", { name: /Third-party notices/ }))
 
-    expect(screen.getByTestId("third-party-notices").textContent).toContain(
-      "# Third-Party Licenses",
-    )
+    const notices = screen.getByRole("dialog").querySelector("pre")
+
+    expect(notices?.textContent).toBe(thirdPartyNotices)
     expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it("requests a close from the close button", async () => {
+    const onOpenChange = vi.fn()
+    render(<AboutDialog open onOpenChange={onOpenChange} />)
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole("button", { name: "Close" }))
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("requests a close on Escape", async () => {
+    const onOpenChange = vi.fn()
+    render(<AboutDialog open onOpenChange={onOpenChange} />)
+    const user = userEvent.setup()
+
+    await user.keyboard("{Escape}")
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it("renders no dialog while closed", () => {
+    render(<AboutDialog open={false} onOpenChange={vi.fn()} />)
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole("heading", { name: "Yard" }),
+    ).not.toBeInTheDocument()
+  })
+
+  it("starts with the notices collapsed when reopened", async () => {
+    render(<ControlledDialog />)
+    const user = userEvent.setup()
 
     await user.click(screen.getByRole("button", { name: /Third-party notices/ }))
+    expect(screen.getByRole("dialog").querySelector("pre")).not.toBeNull()
 
-    expect(screen.queryByTestId("third-party-notices")).not.toBeInTheDocument()
-    fetchSpy.mockRestore()
+    await user.click(screen.getByRole("button", { name: "Close" }))
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    )
+
+    await user.click(screen.getByRole("button", { name: "Open about" }))
+    expect(
+      (await screen.findByRole("dialog")).querySelector("pre"),
+    ).toBeNull()
   })
 })

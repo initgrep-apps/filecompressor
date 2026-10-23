@@ -19,6 +19,19 @@ import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 import { NavMenu } from "@/components/shell/NavMenu"
 
+function renderMenu(activeView: "compress" | "history" = "compress") {
+  const onNavigate = vi.fn()
+  const onOpenSettings = vi.fn()
+  render(
+    <NavMenu
+      activeView={activeView}
+      onNavigate={onNavigate}
+      onOpenSettings={onOpenSettings}
+    />,
+  )
+  return { onNavigate, onOpenSettings }
+}
+
 async function openMenu() {
   const user = userEvent.setup()
   await user.click(screen.getByRole("button", { name: "Open navigation" }))
@@ -26,37 +39,36 @@ async function openMenu() {
   return user
 }
 
-function renderMenu(activeView: "compress" | "history") {
-  return render(
-    <NavMenu
-      activeView={activeView}
-      onNavigate={vi.fn()}
-      onOpenSettings={vi.fn()}
-    />,
+function menuOrder() {
+  return Array.from(
+    document.querySelectorAll('[role="menuitem"], [role="separator"]'),
+  ).map((element) =>
+    element.getAttribute("role") === "separator"
+      ? "—"
+      : element.textContent?.trim(),
   )
 }
 
 describe("NavMenu", () => {
-  it("shows Compress, History, one separator, and Settings", async () => {
-    renderMenu("compress")
+  it("renders Compress and History, a separator, then Settings", async () => {
+    renderMenu()
 
     await openMenu()
 
-    expect(screen.getByRole("menuitem", { name: /Compress/ })).toBeInTheDocument()
-    expect(screen.getByRole("menuitem", { name: /History/ })).toBeInTheDocument()
-    expect(screen.getAllByRole("separator")).toHaveLength(1)
-    expect(screen.getByRole("menuitem", { name: /Settings/ })).toBeInTheDocument()
+    expect(menuOrder()).toEqual(["Compress", "History", "—", "Settings"])
+  })
+
+  it("navigates to Compress", async () => {
+    const { onNavigate } = renderMenu("history")
+    const user = await openMenu()
+
+    await user.click(screen.getByRole("menuitem", { name: /Compress/ }))
+
+    expect(onNavigate).toHaveBeenCalledWith("compress")
   })
 
   it("navigates to History", async () => {
-    const onNavigate = vi.fn()
-    render(
-      <NavMenu
-        activeView="compress"
-        onNavigate={onNavigate}
-        onOpenSettings={vi.fn()}
-      />,
-    )
+    const { onNavigate } = renderMenu("compress")
     const user = await openMenu()
 
     await user.click(screen.getByRole("menuitem", { name: /History/ }))
@@ -64,39 +76,29 @@ describe("NavMenu", () => {
     expect(onNavigate).toHaveBeenCalledWith("history")
   })
 
-  it("opens Settings", async () => {
-    const onOpenSettings = vi.fn()
-    render(
-      <NavMenu
-        activeView="compress"
-        onNavigate={vi.fn()}
-        onOpenSettings={onOpenSettings}
-      />,
-    )
+  it("opens Settings without navigating", async () => {
+    const { onNavigate, onOpenSettings } = renderMenu()
     const user = await openMenu()
 
     await user.click(screen.getByRole("menuitem", { name: /Settings/ }))
 
     expect(onOpenSettings).toHaveBeenCalledTimes(1)
+    expect(onNavigate).not.toHaveBeenCalled()
   })
 
-  it("marks the active view with a checkmark", async () => {
+  it("marks the active view with aria-current and a hidden checkmark", async () => {
     renderMenu("history")
 
     await openMenu()
 
-    const settings = screen.getByRole("menuitem", { name: /Settings/ })
-    const history = screen.getByRole("menuitem", { name: /History/ })
     const compress = screen.getByRole("menuitem", { name: /Compress/ })
+    const history = screen.getByRole("menuitem", { name: /History/ })
+    const settings = screen.getByRole("menuitem", { name: /Settings/ })
 
-    expect(
-      history.querySelector("[data-slot='dropdown-menu-shortcut'] svg"),
-    ).not.toBeNull()
-    expect(
-      compress.querySelector("[data-slot='dropdown-menu-shortcut']"),
-    ).toBeNull()
-    expect(
-      settings.querySelector("[data-slot='dropdown-menu-shortcut']"),
-    ).toBeNull()
+    expect(history).toHaveAttribute("aria-current", "page")
+    expect(compress).not.toHaveAttribute("aria-current")
+    expect(settings).not.toHaveAttribute("aria-current")
+    expect(history.querySelector("svg[aria-hidden='true']")).not.toBeNull()
+    expect(compress.querySelector("svg[aria-hidden='true']")).toBeNull()
   })
 })

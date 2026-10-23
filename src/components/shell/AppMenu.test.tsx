@@ -19,6 +19,13 @@ import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
 import { AppMenu } from "@/components/shell/AppMenu"
 
+function renderMenu() {
+  const onAbout = vi.fn()
+  const onQuit = vi.fn()
+  render(<AppMenu onAbout={onAbout} onQuit={onQuit} />)
+  return { onAbout, onQuit }
+}
+
 async function openMenu() {
   const user = userEvent.setup()
   await user.click(screen.getByRole("button", { name: "App menu" }))
@@ -26,32 +33,42 @@ async function openMenu() {
   return user
 }
 
+function menuOrder() {
+  return Array.from(
+    document.querySelectorAll('[role="menuitem"], [role="separator"]'),
+  ).map((element) =>
+    element.getAttribute("role") === "separator"
+      ? "—"
+      : element.textContent?.trim(),
+  )
+}
+
 describe("AppMenu", () => {
-  it("opens About", async () => {
-    const onAbout = vi.fn()
-    render(<AppMenu onAbout={onAbout} onQuit={vi.fn()} />)
+  it("renders About, a separator, then Quit", async () => {
+    renderMenu()
+
+    await openMenu()
+
+    expect(menuOrder()).toEqual(["About Yard", "—", "Quit"])
+  })
+
+  it("opens About without quitting", async () => {
+    const { onAbout, onQuit } = renderMenu()
     const user = await openMenu()
 
     await user.click(screen.getByRole("menuitem", { name: /About/ }))
 
     expect(onAbout).toHaveBeenCalledTimes(1)
+    expect(onQuit).not.toHaveBeenCalled()
   })
 
-  it("quits through the supplied handler", async () => {
-    const onQuit = vi.fn()
-    render(<AppMenu onAbout={vi.fn()} onQuit={onQuit} />)
+  it("quits without opening About", async () => {
+    const { onAbout, onQuit } = renderMenu()
     const user = await openMenu()
 
     await user.click(screen.getByRole("menuitem", { name: /Quit/ }))
 
     expect(onQuit).toHaveBeenCalledTimes(1)
-  })
-
-  it("separates About from Quit with exactly one separator", async () => {
-    render(<AppMenu onAbout={vi.fn()} onQuit={vi.fn()} />)
-
-    await openMenu()
-
-    expect(screen.getAllByRole("separator")).toHaveLength(1)
+    expect(onAbout).not.toHaveBeenCalled()
   })
 })
