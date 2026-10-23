@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
 # verify-dev.sh — smoke-check that `yarn dev` serves the app shell and that
-# tauri.conf.json declares the expected window title. Exits 0 on success, 1 on
-# failure. Does NOT launch the Tauri webview (impractical in CI); instead
-# validates the dev server payload + Tauri manifest, which is the actionable
-# surface for Task 1's "dev launches" acceptance criterion.
+# tauri.conf.json declares the intentionally untitled window (macOS overlay
+# chrome). Exits 0 on success, 1 on failure. Does NOT launch the Tauri webview
+# (impractical in CI); instead validates the dev server payload + Tauri
+# manifest, which is the actionable surface for Task 1's "dev launches"
+# acceptance criterion.
 set -euo pipefail
 
 DEV_URL="http://localhost:5173"
 TAURI_CONF="src-tauri/tauri.conf.json"
-EXPECTED_TITLE="Yard"
+EXPECTED_TITLE=""
 
 fail() { echo "verify-dev: FAIL — $*" >&2; exit 1; }
 
-# 1. tauri.conf.json must exist and declare the expected window title.
+# 1. tauri.conf.json must exist and declare the intentionally untitled window
+# (macOS overlay chrome).
 [ -f "$TAURI_CONF" ] || fail "$TAURI_CONF missing"
 node -e "
 const fs = require('fs');
 const cfg = JSON.parse(fs.readFileSync('$TAURI_CONF', 'utf8'));
 const win = (cfg.app && cfg.app.windows && cfg.app.windows[0]) || {};
 if (win.title !== '$EXPECTED_TITLE') {
-  process.stderr.write('verify-dev: window title expected \"$EXPECTED_TITLE\", got \"' + String(win.title) + '\"\\n');
+  process.stderr.write('verify-dev: window must be intentionally untitled for macOS overlay chrome, got \"' + String(win.title) + '\"\\n');
   process.exit(1);
 }
 const csp = (cfg.app && cfg.app.security && cfg.app.security.csp) || null;
@@ -27,7 +29,7 @@ if (!csp || csp === 'null') {
   process.stderr.write('verify-dev: CSP must be set\\n');
   process.exit(1);
 }
-console.log('verify-dev: tauri.conf.json ok (title=' + win.title + ', csp set)');
+console.log('verify-dev: tauri.conf.json ok (intentionally untitled for overlay chrome, csp set)');
 " || fail "tauri.conf.json validation failed"
 
 # 2. Start vite dev server in background, curl root, kill, exit 0/1.

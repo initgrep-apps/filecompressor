@@ -157,6 +157,7 @@ describe("window chrome contract", () => {
     expect(window.title).toBe("");
     expect(window.titleBarStyle).toBe("Overlay");
     expect(window.trafficLightPosition).toEqual({ x: 16, y: 26 });
+    expect(window.decorations).toBe(true);
     expect(window.width).toBe(900);
     expect(window.height).toBe(640);
     expect(window.minWidth).toBe(760);
@@ -166,15 +167,18 @@ describe("window chrome contract", () => {
 
   it("keeps the Windows overlay frameless with the same bounds", () => {
     const window = windowsConf.app.windows[0];
-    expect(window.decorations).toBe(false);
-    expect(window.width).toBe(900);
-    expect(window.height).toBe(640);
-    expect(window.minWidth).toBe(760);
-    expect(window.minHeight).toBe(500);
+    expect(window.label).toBe("main");
+    const { titleBarStyle, trafficLightPosition, decorations, ...rest } =
+      baseConf.app.windows[0];
+    expect(window).toMatchObject({ ...rest, decorations: false });
+    expect(window).not.toHaveProperty("titleBarStyle");
+    expect(window).not.toHaveProperty("trafficLightPosition");
     expect(window).not.toHaveProperty("transparent");
   });
 
   it("grants the window and platform permissions the shell relies on", () => {
+    expect(capabilitiesConf.identifier).toBe("default");
+    expect(capabilitiesConf.windows).toEqual(["main"]);
     for (const permission of [
       "os:default",
       "window-state:default",

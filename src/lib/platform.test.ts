@@ -14,25 +14,35 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { describe, it, expect, vi } from "vitest"
-const platformMock = vi.hoisted(() => vi.fn())
-vi.mock("@tauri-apps/plugin-os", () => ({ platform: platformMock }))
-import { detectPlatform } from "./platform"
+import { describe, it, expect, vi, beforeEach } from "vitest"
+import type { Platform as OsPlatform } from "@tauri-apps/plugin-os"
+
+vi.mock("@tauri-apps/plugin-os", async () => {
+  const { platformMock } = await import("./test-tauri")
+  return { platform: platformMock }
+})
+
+import { detectPlatform, type Platform } from "./platform"
+import { mockPlatform, platformMock } from "./test-tauri"
+
+const cases: Array<[OsPlatform, Platform]> = [
+  ["macos", "darwin"],
+  ["windows", "win32"],
+  ["linux", "linux"],
+  ["freebsd", "unknown"],
+]
 
 describe("detectPlatform", () => {
-  it.each([
-    ["macos", "darwin"],
-    ["windows", "win32"],
-    ["linux", "linux"],
-    ["freebsd", "unknown"],
-  ])("maps %s to %s", (input, expected) => {
+  beforeEach(() => {
     platformMock.mockReset()
-    platformMock.mockReturnValue(input)
+  })
+
+  it.each(cases)("maps %s to %s", (input, expected) => {
+    mockPlatform(input)
     expect(detectPlatform()).toBe(expected)
   })
 
   it("returns unknown when the plugin throws", () => {
-    platformMock.mockReset()
     platformMock.mockImplementation(() => {
       throw new Error("__TAURI_OS_PLUGIN_INTERNALS__ is undefined")
     })
@@ -42,11 +52,10 @@ describe("detectPlatform", () => {
   it("logs a detection failure exactly once", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
     try {
-      platformMock.mockReset()
+      vi.resetModules()
       platformMock.mockImplementation(() => {
         throw new Error("__TAURI_OS_PLUGIN_INTERNALS__ is undefined")
       })
-      vi.resetModules()
       const { detectPlatform: detectAfterReset } = await import("./platform")
       expect(detectAfterReset()).toBe("unknown")
       expect(detectAfterReset()).toBe("unknown")
