@@ -12,14 +12,16 @@
   "app": {
     "windows": [
       {
-        "title": "Yard",
+        "title": "",
         "width": 900,
         "height": 640,
         "minWidth": 760,
         "minHeight": 500,
         "decorations": true,
         "resizable": true,
-        "center": true
+        "center": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 16, "y": 26 }
       }
     ],
     "security": {

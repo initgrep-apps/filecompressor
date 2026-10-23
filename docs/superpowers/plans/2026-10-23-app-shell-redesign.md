@@ -50,7 +50,7 @@
 **Interfaces:**
 - Produces: `type Platform = "darwin" | "win32" | "linux" | "unknown"`; `detectPlatform(): Platform` (synchronous); `<PlatformProvider platform={Platform}>`; `usePlatform(): Platform`; JS-invokable `quit` command.
 
-- [ ] **Step 1: Write the failing platform tests**
+- [x] **Step 1: Write the failing platform tests**
 
 `src/lib/platform.test.ts`:
 
@@ -83,12 +83,12 @@ describe("detectPlatform", () => {
 
 `src/providers/PlatformProvider.test.tsx`: render a probe that reads `usePlatform()` and assert it returns the supplied value; assert `usePlatform` outside the provider throws.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `yarn test src/lib/platform.test.ts src/providers/PlatformProvider.test.tsx`
 Expected: FAIL — modules not found.
 
-- [ ] **Step 3: Add the dependencies and native plugin**
+- [x] **Step 3: Add the dependencies and native plugin**
 
 ```bash
 yarn add @tauri-apps/plugin-os@^2.4.0
@@ -102,12 +102,12 @@ yarn add @tauri-apps/plugin-os@^2.4.0
 
 `src/lib/test-tauri.ts`: one helper exporting `mockWindow()` (`getCurrentWindow` with `startDragging`, `minimize`, `toggleMaximize`, `close`, `setTheme`, `onCloseRequested`) and `mockPlatform(value)`; every new test file uses it instead of hand-rolling Tauri mocks.
 
-- [ ] **Step 4: Implement detection and the provider**
+- [x] **Step 4: Implement detection and the provider**
 
 `src/lib/platform.ts`: `detectPlatform` calls `platform()` from `@tauri-apps/plugin-os` (synchronous — compile-time injected via `window.__TAURI_OS_PLUGIN_INTERNALS__`, no IPC), maps the three known values, and wraps the call in try/catch so a missing global logs once and returns `"unknown"`.
 `src/providers/PlatformProvider.tsx`: context + `usePlatform` throwing outside the provider.
 
-- [ ] **Step 5: Window configuration**
+- [x] **Step 5: Window configuration**
 
 Base `src-tauri/tauri.conf.json` window: `"title": ""`, `"titleBarStyle": "Overlay"`, `"trafficLightPosition": { "x": 16, "y": 26 }`. Keep 900×640, min 760×500, resizable, `"center": true` (window-state overrides on later launches).
 
@@ -115,16 +115,16 @@ Edit `tauri.windows.conf.json` in place with the **full** window object (arrays 
 
 Do not add `transparent` and keep `dragDropEnabled` at its default.
 
-- [ ] **Step 6: Bootstrap with the detected platform**
+- [x] **Step 6: Bootstrap with the detected platform**
 
 `src/main.tsx`: call `detectPlatform()` synchronously (no `async start()`, no await — the platform value and the pre-paint theme need nothing async), then render `PlatformProvider` → `ErrorBoundary` → `App`. Remove the theme listener block (Task 3 takes ownership). Log detection failures once inside `detectPlatform`.
 
-- [ ] **Step 7: Run tests and the build**
+- [x] **Step 7: Run tests and the build**
 
 Run: `yarn test src/lib/platform.test.ts src/providers/PlatformProvider.test.tsx && yarn build`
 Expected: PASS and a clean Vite build.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add package.json yarn.lock src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/src/lib.rs src-tauri/src/commands.rs src-tauri/capabilities/default.json src-tauri/tauri.conf.json src-tauri/tauri.windows.conf.json src/lib/platform.ts src/lib/platform.test.ts src/lib/test-tauri.ts src/providers/PlatformProvider.tsx src/providers/PlatformProvider.test.tsx src/main.tsx

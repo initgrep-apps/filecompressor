@@ -20,21 +20,25 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { detectPlatform } from "./lib/platform";
+import { PlatformProvider } from "./providers/PlatformProvider";
 
-const media = window.matchMedia("(prefers-color-scheme: dark)");
-const applyTheme = (dark: boolean) =>
-  document.documentElement.classList.toggle("dark", dark);
-applyTheme(media.matches);
-media.addEventListener("change", (e) => applyTheme(e.matches));
+document.documentElement.classList.toggle(
+  "dark",
+  window.matchMedia("(prefers-color-scheme: dark)").matches,
+);
 
 const rootEl = document.getElementById("root");
 if (!rootEl) {
   throw new Error("Fatal: #root element missing from index.html — build corrupted");
 }
+const platform = detectPlatform();
 ReactDOM.createRoot(rootEl).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
+      <PlatformProvider platform={platform}>
+        <App />
+      </PlatformProvider>
     </ErrorBoundary>
   </React.StrictMode>,
 );

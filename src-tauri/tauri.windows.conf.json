@@ -1,4 +1,19 @@
 {
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "",
+        "width": 900,
+        "height": 640,
+        "minWidth": 760,
+        "minHeight": 500,
+        "resizable": true,
+        "center": true,
+        "decorations": false
+      }
+    ]
+  },
   "bundle": {
     "externalBin": [
       "binaries/ffmpeg",

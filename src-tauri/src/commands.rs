@@ -289,6 +289,11 @@ pub fn clear_history<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), 
 }
 
 #[tauri::command]
+pub fn quit<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    app.exit(0);
+}
+
+#[tauri::command]
 pub fn open_folder<R: tauri::Runtime>(
     path: String,
     app: tauri::AppHandle<R>,

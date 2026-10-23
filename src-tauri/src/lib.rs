@@ -79,13 +79,40 @@ macro_rules! invoke_handlers {
             commands::get_history,
             commands::clear_history,
             commands::open_folder,
+            commands::quit,
         ]
     };
+}
+
+fn window_state_flags() -> tauri_plugin_window_state::StateFlags {
+    tauri_plugin_window_state::StateFlags::all()
+        & !tauri_plugin_window_state::StateFlags::DECORATIONS
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            let Some(window) = app.get_webview_window("main") else {
+                eprintln!("warn: second launch: main window missing, cannot focus");
+                return;
+            };
+            if let Err(e) = window.unminimize() {
+                eprintln!("warn: second launch: unminimize failed: {e}");
+            }
+            if let Err(e) = window.show() {
+                eprintln!("warn: second launch: show failed: {e}");
+            }
+            if let Err(e) = window.set_focus() {
+                eprintln!("warn: second launch: set_focus failed: {e}");
+            }
+        }))
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(window_state_flags())
+                .build(),
+        )
+        .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -114,6 +141,19 @@ mod wiring_tests {
                 tauri::utils::config::AppDirectoriesOverride::Root(root.to_path_buf()),
             ))
             .unwrap()
+    }
+
+    #[test]
+    fn window_state_flags_never_restore_decorations() {
+        let flags = window_state_flags();
+        assert!(
+            flags.contains(tauri_plugin_window_state::StateFlags::SIZE),
+            "window-state must keep restoring size"
+        );
+        assert!(
+            !flags.contains(tauri_plugin_window_state::StateFlags::DECORATIONS),
+            "window-state must never restore decorations: a stale state file would re-decorate the frameless Windows window"
+        );
     }
 
     #[test]
@@ -174,6 +214,51 @@ mod wiring_tests {
             request("clear_history", serde_json::json!({})),
         );
         response.expect("registered clear_history must answer the ipc dispatch with Ok");
+    }
+
+    #[test]
+    fn registered_quit_command_reaches_the_exit_request() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = wiring_app(root.path());
+        app.run_iteration(|_, _| {});
+        let webview = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let request = |cmd: &str| tauri::webview::InvokeRequest {
+            cmd: cmd.into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: if cfg!(any(windows, target_os = "android")) {
+                "http://tauri.localhost"
+            } else {
+                "tauri://localhost"
+            }
+            .parse()
+            .unwrap(),
+            body: tauri::ipc::InvokeBody::Json(serde_json::json!({})),
+            headers: Default::default(),
+            invoke_key: tauri::test::INVOKE_KEY.to_string(),
+        };
+
+        let unknown = tauri::test::get_ipc_response(&webview, request("definitely_not_a_command"));
+        assert!(
+            unknown.is_err(),
+            "an unregistered command must fail, so the quit assertion cannot pass vacuously"
+        );
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = tauri::test::get_ipc_response(&webview, request("quit"));
+        }))
+        .expect_err("quit must be registered: neither Ok nor a panic means it never reached request_exit");
+        let msg = panic
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| panic.downcast_ref::<&str>().copied())
+            .unwrap_or("<non-string panic payload>");
+        assert_eq!(
+            msg, "not implemented",
+            "quit must panic only from MockRuntime::request_exit, whose unimplemented!() payload is \"not implemented\"; got: {msg}"
+        );
     }
 
     #[test]
