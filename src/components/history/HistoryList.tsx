@@ -114,7 +114,7 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
           {error !== null ? (
             <li
               role="alert"
-              className="flex items-start gap-2 px-2 py-1.5 text-xs text-muted-foreground"
+              className="flex items-start gap-2 px-2 py-1 text-xs text-muted-foreground"
             >
               <span className="min-w-0 flex-1">{error}</span>
               <Button
@@ -135,18 +135,18 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
                 data-testid="batch-skeleton"
                 aria-hidden
               >
-                <div className="flex flex-col gap-1.5 px-3 py-1.5">
+                <div className="flex flex-col gap-1.5 px-2 py-1">
                   <Skeleton className="h-3.5 w-3/4" />
                   <Skeleton className="h-2.5 w-1/2" />
                 </div>
               </SidebarMenuSubItem>
             ))
           ) : filteredEmpty ? (
-            <li className="px-2 py-1.5 text-xs text-muted-foreground">
+            <li className="px-2 py-1 text-xs text-muted-foreground">
               No batches match these filters.
             </li>
           ) : response !== null && sessions.length === 0 ? (
-            <li className="px-2 py-1.5 text-xs text-muted-foreground">
+            <li className="px-2 py-1 text-xs text-muted-foreground">
               No batches yet.
             </li>
           ) : (
@@ -157,7 +157,7 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
                   <SidebarMenuSubButton
                     render={<button type="button" />}
                     isActive={selectedSessionId === session.sessionId}
-                    className="h-auto items-start py-1.5"
+                    className="h-auto w-full items-start px-2 py-1"
                     data-testid={`batch-${session.sessionId}`}
                     onClick={() => openSession(session.sessionId)}
                   >

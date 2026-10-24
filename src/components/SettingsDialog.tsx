@@ -23,7 +23,6 @@ import {
   RiTimeLine,
 } from "@remixicon/react"
 import { toast } from "sonner"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -52,8 +51,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { NumberStepper } from "@/components/NumberStepper"
 import { useSettings } from "@/hooks/useSettings"
-import { CATEGORY_TONES } from "@/lib/tokens"
-import { cn } from "@/lib/utils"
 import type {
   Category,
   CategoryTarget,
@@ -82,10 +79,10 @@ const SECTIONS = [
 type SectionId = (typeof SECTIONS)[number]["value"]
 
 const CATEGORIES = [
-  { key: "image", label: "Images", badge: "Image", formats: "JPEG, PNG, WebP, HEIC" },
-  { key: "video", label: "Videos", badge: "Video", formats: "MP4, MOV" },
-  { key: "pdf", label: "PDF", badge: "PDF", formats: "PDF documents" },
-  { key: "document", label: "Documents", badge: "Document", formats: "DOCX, XLSX, PPTX" },
+  { key: "image", label: "Images", formats: "JPEG, PNG, WebP, HEIC" },
+  { key: "video", label: "Videos", formats: "MP4, MOV" },
+  { key: "pdf", label: "PDF", formats: "PDF documents" },
+  { key: "document", label: "Documents", formats: "DOCX, XLSX, PPTX" },
 ] as const
 
 function targetFor(settings: Settings, key: Category): CategoryTarget {
@@ -173,23 +170,14 @@ function TargetsSection({ draft, onChange }: SectionProps) {
       <FieldGroup>
         {CATEGORIES.map((category) => {
           const target = targetFor(draft, category.key)
-          const tone = CATEGORY_TONES[category.key]
           return (
             <Field key={category.key} orientation="horizontal">
-              <div className="flex min-w-0 flex-1 items-center gap-2.5">
-                <Badge
-                  variant="secondary"
-                  className={cn(tone.tint, tone.border, tone.text)}
-                >
-                  {category.badge}
-                </Badge>
-                <FieldContent>
-                  <FieldLabel htmlFor={`${category.key}-size`}>
-                    {category.label}
-                  </FieldLabel>
-                  <FieldDescription>{category.formats}</FieldDescription>
-                </FieldContent>
-              </div>
+              <FieldContent>
+                <FieldLabel htmlFor={`${category.key}-size`}>
+                  {category.label}
+                </FieldLabel>
+                <FieldDescription>{category.formats}</FieldDescription>
+              </FieldContent>
               <div className="flex shrink-0 items-center gap-1.5">
                 <NumberStepper
                   id={`${category.key}-size`}

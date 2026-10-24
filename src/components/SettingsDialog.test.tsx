@@ -15,7 +15,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { useState } from "react"
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { invoke } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
@@ -121,6 +128,52 @@ describe("SettingsDialog", () => {
     expect(screen.getByRole("tablist")).toHaveAccessibleName(
       "Settings sections",
     )
+  })
+
+  it("lists the four target categories with controls and no badges", async () => {
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "Targets" }))
+
+    const formats = await screen.findByText("JPEG, PNG, WebP, HEIC")
+    const section = formats.closest('[data-slot="field-set"]') as HTMLElement
+    expect(section).not.toBeNull()
+
+    for (const label of ["Images", "Videos", "PDF", "Documents"]) {
+      expect(within(section).getByText(label)).toBeInTheDocument()
+    }
+    expect(section.querySelector('[data-slot="badge"]')).toBeNull()
+    for (const pill of ["Image", "Video", "Document"]) {
+      expect(within(section).queryByText(pill)).toBeNull()
+    }
+    expect(within(section).getByLabelText("Images")).toBe(
+      within(section).getByLabelText("Images target size"),
+    )
+    expect(within(section).getByLabelText("Documents")).toBe(
+      within(section).getByLabelText("Documents target size"),
+    )
+  })
+
+  it("saves an edited video target without touching other categories", async () => {
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "Targets" }))
+    vi.useFakeTimers()
+
+    fireEvent.change(screen.getByLabelText("Videos target size"), {
+      target: { value: "5" },
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(savedSettings().categoryTargets).toEqual({
+      image: { size: 200, unit: "KB" },
+      video: { size: 5, unit: "MB" },
+      pdf: { size: 1, unit: "MB" },
+      document: { size: 2, unit: "MB" },
+    })
   })
 
   it("saves the full draft once the 400 ms debounce elapses", async () => {
