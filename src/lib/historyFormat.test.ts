@@ -276,7 +276,9 @@ describe('sessionSummary', () => {
 
   it('nets savings across done and failed files', () => {
     const summary = sessionSummary(
-      sessionWith([sizedFile(1_000, 250), sizedFile(1_000, null)]),
+      sessionWith([sizedFile(1_000, 250), sizedFile(1_000, null)], {
+        totalSavedBytes: 750,
+      }),
     )
 
     expect(summary.fileCount).toBe(2)
@@ -284,35 +286,72 @@ describe('sessionSummary', () => {
     expect(summary.percent).toBe(38)
   })
 
+  it('trusts totalSavedBytes over the file sum for an unfiltered session', () => {
+    const summary = sessionSummary(
+      sessionWith([sizedFile(1_000, 250)], { totalSavedBytes: 500 }),
+    )
+
+    expect(summary.savedBytes).toBe(500)
+    expect(summary.percent).toBe(50)
+  })
+
+  it('clamps a grown output instead of netting a negative saving', () => {
+    const summary = sessionSummary(
+      sessionWith([sizedFile(1_000, 1_500)], { matchedFiles: 1 }),
+    )
+
+    expect(summary.savedBytes).toBe(0)
+    expect(summary.percent).toBe(0)
+  })
+
   it('returns a null percent when the population has no original bytes', () => {
     expect(sessionSummary(sessionWith([])).percent).toBeNull()
   })
 
-  it('uses the matched count for a filtered population', () => {
+  it('uses the matched count and matched file sum for a filtered session', () => {
     const summary = sessionSummary(
       sessionWith([sizedFile(1_000, 250)], {
         fileCount: 9,
         matchedFiles: 3,
+        totalSavedBytes: 999_999,
       }),
     )
 
     expect(summary.fileCount).toBe(3)
+    expect(summary.savedBytes).toBe(750)
+    expect(summary.percent).toBe(75)
+  })
+
+  it('counts the files actually seen for an interrupted session', () => {
+    const summary = sessionSummary(
+      sessionWith([sizedFile(1_000, 250)], {
+        fileCount: 12,
+        interrupted: true,
+      }),
+    )
+
+    expect(summary.fileCount).toBe(1)
   })
 })
 
 describe('activeFilterCount', () => {
   it('ignores the default and empty filters', () => {
     expect(activeFilterCount({})).toBe(0)
-    expect(activeFilterCount({ sort: 'newest' })).toBe(0)
     expect(activeFilterCount({ statuses: [], categories: [] })).toBe(0)
     expect(activeFilterCount({ search: '' })).toBe(0)
   })
 
-  it('counts every visible filter dimension', () => {
+  it('does not count sort because it only orders results', () => {
+    expect(activeFilterCount({ sort: 'newest' })).toBe(0)
+    expect(activeFilterCount({ sort: 'oldest' })).toBe(0)
+  })
+
+  it('counts every narrowing filter dimension', () => {
     expect(activeFilterCount({ search: 'hero' })).toBe(1)
     expect(activeFilterCount({ outputFolder: '/out' })).toBe(1)
-    expect(activeFilterCount({ sort: 'oldest' })).toBe(1)
     expect(activeFilterCount({ sinceMs: 1 })).toBe(1)
+    expect(activeFilterCount({ statuses: ['failed', 'done'] })).toBe(2)
+    expect(activeFilterCount({ categories: ['image'] })).toBe(1)
     expect(
       activeFilterCount({
         statuses: ['failed', 'done'],
@@ -322,6 +361,6 @@ describe('activeFilterCount', () => {
         search: 'hero',
         outputFolder: '/out',
       }),
-    ).toBe(7)
+    ).toBe(6)
   })
 })

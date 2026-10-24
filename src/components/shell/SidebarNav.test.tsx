@@ -278,18 +278,52 @@ describe("SidebarNav", () => {
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
-  it("marks the funnel when filters are applied", () => {
+  it("leaves the funnel unmarked by default", () => {
+    renderNav()
+
+    expect(screen.queryByTestId("history-filter-dot")).toBeNull()
+  })
+
+  it("leaves the funnel unmarked for newest-first", () => {
+    renderNav({ filters: { sort: "newest" } })
+
+    expect(screen.queryByTestId("history-filter-dot")).toBeNull()
+  })
+
+  it("leaves the funnel unmarked for oldest-first", () => {
+    renderNav({ filters: { sort: "oldest" } })
+
+    expect(screen.queryByTestId("history-filter-dot")).toBeNull()
+  })
+
+  it("marks the funnel for a status filter", () => {
     renderNav({ filters: { statuses: ["failed"] } })
 
     expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
   })
 
-  it("marks the funnel for search and folder filters", () => {
-    renderNav({ filters: { search: "hero" } })
-    expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
+  it("marks the funnel for a category filter", () => {
+    renderNav({ filters: { categories: ["image"] } })
 
+    expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
+  })
+
+  it("marks the funnel for a since filter", () => {
+    renderNav({ filters: { sinceMs: 1 } })
+
+    expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
+  })
+
+  it("marks the funnel for a search filter", () => {
+    renderNav({ filters: { search: "hero" } })
+
+    expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
+  })
+
+  it("marks the funnel for an output folder filter", () => {
     renderNav({ filters: { outputFolder: "/out" } })
-    expect(screen.getAllByTestId("history-filter-dot")).toHaveLength(2)
+
+    expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
   })
 
   it("omits aria-controls while the list is collapsed", () => {

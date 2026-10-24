@@ -33,7 +33,7 @@ import {
   sessionSummary,
 } from "@/lib/historyFormat"
 import { useHistoryContext } from "@/providers/HistoryProvider"
-import type { HistorySession, ViewId } from "@/types"
+import type { HistorySession } from "@/types"
 
 export const HISTORY_LIST_ID = "history-batch-list"
 
@@ -47,15 +47,19 @@ const sessionRow = (session: HistorySession) => {
         : `−${summary.percent}%`
   return {
     meta: `${fileCountLabel(summary.fileCount)} · ${savedLabel(summary.savedBytes)} saved`,
-    right: session.cancelled ? "cancelled" : percent,
+    right: session.interrupted
+      ? "interrupted"
+      : session.cancelled
+        ? "cancelled"
+        : percent,
   }
 }
 
 interface HistoryListProps {
-  onNavigate: (view: ViewId) => void
+  onOpenHistory: () => void
 }
 
-export function HistoryList({ onNavigate }: HistoryListProps) {
+export function HistoryList({ onOpenHistory }: HistoryListProps) {
   const {
     response,
     loading,
@@ -67,6 +71,8 @@ export function HistoryList({ onNavigate }: HistoryListProps) {
     setPage,
     selectedSessionId,
     selectSession,
+    clearError,
+    refresh,
   } = useHistoryContext()
   const { isMobile, setOpenMobile } = useSidebar()
 
@@ -83,7 +89,7 @@ export function HistoryList({ onNavigate }: HistoryListProps) {
 
   const openSession = (sessionId: string) => {
     selectSession(sessionId)
-    onNavigate("history")
+    onOpenHistory()
     if (isMobile) setOpenMobile(false)
   }
 
@@ -103,14 +109,32 @@ export function HistoryList({ onNavigate }: HistoryListProps) {
           role="group"
           aria-label="Batches"
           aria-busy={loading}
+          className={loading && response !== null ? "opacity-60" : undefined}
         >
           {error !== null ? (
-            <li className="px-2 py-1.5 text-xs text-muted-foreground">
-              {error}
+            <li
+              role="alert"
+              className="flex items-start gap-2 px-2 py-1.5 text-xs text-muted-foreground"
+            >
+              <span className="min-w-0 flex-1">{error}</span>
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => {
+                  clearError()
+                  refresh()
+                }}
+              >
+                Retry
+              </Button>
             </li>
           ) : initialLoading ? (
             Array.from({ length: 3 }, (_, index) => (
-              <SidebarMenuSubItem key={`skeleton-${index}`} aria-hidden>
+              <SidebarMenuSubItem
+                key={`skeleton-${index}`}
+                data-testid="batch-skeleton"
+                aria-hidden
+              >
                 <div className="flex flex-col gap-1.5 px-3 py-1.5">
                   <Skeleton className="h-3.5 w-3/4" />
                   <Skeleton className="h-2.5 w-1/2" />
@@ -147,7 +171,7 @@ export function HistoryList({ onNavigate }: HistoryListProps) {
                     </span>
                     <span
                       className={
-                        session.cancelled
+                        session.cancelled || session.interrupted
                           ? "ml-auto text-xs text-destructive tabular-nums"
                           : "ml-auto text-xs text-muted-foreground tabular-nums"
                       }
@@ -163,14 +187,16 @@ export function HistoryList({ onNavigate }: HistoryListProps) {
       </ScrollArea>
       <div className="flex items-center justify-between px-3 pb-1">
         <span className="text-xs text-muted-foreground tabular-nums">
-          {response !== null ? `Page ${page + 1} of ${totalPages}` : null}
+          {response !== null && error === null
+            ? `Page ${response.page + 1} of ${totalPages}`
+            : null}
         </span>
         <div className="flex gap-0.5">
           <Button
             variant="ghost"
             size="icon-xs"
             aria-label="Previous page"
-            disabled={loading || page === 0}
+            disabled={loading || error !== null || page === 0}
             onClick={() => setPage(page - 1)}
           >
             <RiArrowLeftSLine />
@@ -179,7 +205,7 @@ export function HistoryList({ onNavigate }: HistoryListProps) {
             variant="ghost"
             size="icon-xs"
             aria-label="Next page"
-            disabled={loading || page + 1 >= totalPages}
+            disabled={loading || error !== null || page + 1 >= totalPages}
             onClick={() => setPage(page + 1)}
           >
             <RiArrowRightSLine />

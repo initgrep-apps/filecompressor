@@ -45,17 +45,26 @@ export function sessionSummary(session: HistorySession): {
   savedBytes: number
   percent: number | null
 } {
+  const matched = session.matchedFiles !== null
   const totalOriginal = session.files.reduce(
     (sum, file) => sum + file.originalSize,
     0,
   )
-  const savedBytes = session.files.reduce(
-    (sum, file) =>
-      sum + (file.originalSize - (file.compressedSize ?? file.originalSize)),
-    0,
-  )
+  const savedBytes = matched
+    ? session.files.reduce(
+        (sum, file) =>
+          sum +
+          Math.max(
+            0,
+            file.originalSize - (file.compressedSize ?? file.originalSize),
+          ),
+        0,
+      )
+    : session.totalSavedBytes
   return {
-    fileCount: session.matchedFiles ?? session.fileCount,
+    fileCount:
+      session.matchedFiles ??
+      (session.interrupted ? session.files.length : session.fileCount),
     savedBytes,
     percent: savedPercent(totalOriginal, totalOriginal - savedBytes),
   }
@@ -66,7 +75,6 @@ export function activeFilterCount(filters: HistoryFilters): number {
     (filters.statuses?.length ?? 0) +
     (filters.categories?.length ?? 0) +
     (filters.sinceMs !== undefined ? 1 : 0) +
-    (filters.sort !== undefined && filters.sort !== 'newest' ? 1 : 0) +
     (filters.search ? 1 : 0) +
     (filters.outputFolder ? 1 : 0)
   )

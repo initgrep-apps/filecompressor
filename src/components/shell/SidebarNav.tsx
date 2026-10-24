@@ -162,7 +162,9 @@ export function SidebarNav({
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
-      {expanded && <HistoryList onNavigate={onNavigate} />}
+      {expanded && (
+        <HistoryList onOpenHistory={() => onNavigate("history")} />
+      )}
       <SidebarFooter className="mt-auto">
         <SidebarMenu>
           <SidebarMenuItem>

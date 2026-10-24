@@ -74,12 +74,16 @@ function makeSession({
   files = [],
   totalSavedBytes = 0,
   cancelled = false,
+  interrupted = false,
+  matchedFiles = null,
 }: {
   id: string
   startedAt: number
   files?: HistoryFile[]
   totalSavedBytes?: number
   cancelled?: boolean
+  interrupted?: boolean
+  matchedFiles?: number | null
 }): HistorySession {
   return {
     sessionId: id,
@@ -98,8 +102,8 @@ function makeSession({
     },
     totalSavedBytes,
     cancelled,
-    interrupted: false,
-    matchedFiles: null,
+    interrupted,
+    matchedFiles,
   }
 }
 
@@ -133,6 +137,7 @@ function SelectionProbe() {
 function renderList({
   sessions = [],
   page = 0,
+  responsePage = page,
   pageSize = 50,
   totalSessions = sessions.length,
   loading = false,
@@ -142,6 +147,7 @@ function renderList({
 }: {
   sessions?: HistorySession[]
   page?: number
+  responsePage?: number
   pageSize?: number
   totalSessions?: number
   loading?: boolean
@@ -151,12 +157,18 @@ function renderList({
 } = {}) {
   const setFilters = vi.fn()
   const setPage = vi.fn()
-  const onNavigate = vi.fn()
+  const clearError = vi.fn()
+  const refresh = vi.fn()
+  const onOpenHistory = vi.fn()
 
   useHistoryMock.mockReturnValue({
     response:
       response === undefined
-        ? makeResponse(sessions, { page, pageSize, totalSessions })
+        ? makeResponse(sessions, {
+            page: responsePage,
+            pageSize,
+            totalSessions,
+          })
         : response,
     loading,
     error,
@@ -164,9 +176,9 @@ function renderList({
     setFilters,
     page,
     setPage,
-    refresh: vi.fn(),
+    refresh,
     clearHistory: vi.fn().mockResolvedValue(undefined),
-    clearError: vi.fn(),
+    clearError,
   })
 
   render(
@@ -175,7 +187,7 @@ function renderList({
       <SidebarProvider>
         <Sidebar>
           <SidebarContent>
-            <HistoryList onNavigate={onNavigate} />
+            <HistoryList onOpenHistory={onOpenHistory} />
           </SidebarContent>
         </Sidebar>
         <main />
@@ -183,11 +195,12 @@ function renderList({
     </HistoryProvider>,
   )
 
-  return { setFilters, setPage, onNavigate }
+  return { setFilters, setPage, clearError, refresh, onOpenHistory }
 }
 
 const scrollArea = () =>
   document.querySelector('[data-slot="scroll-area"]') as HTMLElement | null
+const batchList = () => screen.getByRole("group", { name: "Batches" })
 
 beforeEach(() => {
   useHistoryMock.mockReset()
@@ -208,12 +221,12 @@ describe("HistoryList", () => {
     expect(area).not.toContainElement(
       screen.getByLabelText("Search history"),
     )
-    expect(area).not.toContainElement(screen.getByText(/Page 1 of/))
+    expect(area).not.toContainElement(screen.getByText(/Page \d+ of/))
 
     const root = area!.parentElement!
     const children = [...root.children]
     const search = screen.getByLabelText("Search history").parentElement!
-    const pagination = screen.getByText(/Page 1 of/).parentElement!
+    const pagination = screen.getByText(/Page \d+ of/).parentElement!
 
     expect(children.indexOf(search)).toBeLessThan(children.indexOf(area!))
     expect(children.indexOf(area!)).toBeLessThan(children.indexOf(pagination))
@@ -240,6 +253,33 @@ describe("HistoryList", () => {
     expect(screen.getByText("−75%")).toBeInTheDocument()
   })
 
+  it("uses totalSavedBytes for an unfiltered session", () => {
+    const session = makeSession({
+      id: "s1",
+      startedAt: Date.now(),
+      files: [makeFile(1, 1_000, 250)],
+      totalSavedBytes: 500,
+    })
+    renderList({ sessions: [session] })
+
+    expect(screen.getByText("1 file · 500 B saved")).toBeInTheDocument()
+    expect(screen.getByText("−50%")).toBeInTheDocument()
+  })
+
+  it("uses the matched file sum for a filtered session", () => {
+    const session = makeSession({
+      id: "s1",
+      startedAt: Date.now(),
+      files: [makeFile(1, 1_000, 250)],
+      totalSavedBytes: 500,
+      matchedFiles: 1,
+    })
+    renderList({ sessions: [session], filters: { statuses: ["done"] } })
+
+    expect(screen.getByText("1 file · 750 B saved")).toBeInTheDocument()
+    expect(screen.getByText("−75%")).toBeInTheDocument()
+  })
+
   it("shows 0% for a failed-only batch instead of a full saving", () => {
     const startedAt = new Date().setHours(9, 12, 0, 0)
     renderList({
@@ -259,13 +299,27 @@ describe("HistoryList", () => {
     ).toBeInTheDocument()
   })
 
-  it("shows cancelled instead of a percent for a cancelled batch", () => {
-    const startedAt = new Date().setHours(9, 12, 0, 0)
+  it("shows 0 B saved for a grown output", () => {
     renderList({
       sessions: [
         makeSession({
           id: "s1",
-          startedAt,
+          startedAt: Date.now(),
+          files: [makeFile(1, 1_000, 1_500)],
+        }),
+      ],
+    })
+
+    expect(screen.getByText("1 file · 0 B saved")).toBeInTheDocument()
+    expect(screen.queryByText("− saved")).toBeNull()
+  })
+
+  it("shows cancelled instead of a percent for a cancelled batch", () => {
+    renderList({
+      sessions: [
+        makeSession({
+          id: "s1",
+          startedAt: Date.now(),
           files: [makeFile(1, 1_000, null)],
           cancelled: true,
         }),
@@ -276,17 +330,35 @@ describe("HistoryList", () => {
     expect(screen.queryByText("0%")).toBeNull()
   })
 
-  it("selects a batch and navigates to History when its row is clicked", async () => {
+  it("shows interrupted before cancelled or the percent", () => {
+    renderList({
+      sessions: [
+        makeSession({
+          id: "s1",
+          startedAt: Date.now(),
+          files: [makeFile(1, 1_000, 250)],
+          totalSavedBytes: 750,
+          interrupted: true,
+          cancelled: true,
+        }),
+      ],
+    })
+
+    expect(screen.getByText("interrupted")).toBeInTheDocument()
+    expect(screen.queryByText("cancelled")).toBeNull()
+    expect(screen.queryByText("−75%")).toBeNull()
+  })
+
+  it("opens History and selects the batch when a row is clicked", async () => {
     const user = userEvent.setup()
     const first = makeSession({ id: "s1", startedAt: Date.now() })
     const second = makeSession({ id: "s2", startedAt: Date.now() - 60_000 })
-    const { onNavigate } = renderList({ sessions: [first, second] })
+    const { onOpenHistory } = renderList({ sessions: [first, second] })
 
-    const row = screen.getByTestId("batch-s2")
-    await user.click(row)
+    await user.click(screen.getByTestId("batch-s2"))
 
     expect(screen.getByTestId("selected-session")).toHaveTextContent("s2")
-    expect(onNavigate).toHaveBeenCalledWith("history")
+    expect(onOpenHistory).toHaveBeenCalledTimes(1)
   })
 
   it("debounces the search into the history filters", async () => {
@@ -330,25 +402,54 @@ describe("HistoryList", () => {
     expect(setPage).toHaveBeenCalledWith(1)
   })
 
+  it("labels the page from the response after a failed page change", () => {
+    renderList({
+      page: 1,
+      responsePage: 0,
+      totalSessions: 1,
+      sessions: [makeSession({ id: "s1", startedAt: Date.now() })],
+    })
+
+    expect(screen.getByText("Page 1 of 1")).toBeInTheDocument()
+  })
+
   it("renders skeleton rows and hides the page count on the first load", () => {
     renderList({ response: null, loading: true })
 
-    expect(screen.getByRole("group", { name: "Batches" })).toHaveAttribute(
-      "aria-busy",
-      "true",
-    )
+    expect(batchList()).toHaveAttribute("aria-busy", "true")
+    expect(screen.getAllByTestId("batch-skeleton")).toHaveLength(3)
     expect(
       document.querySelectorAll('[data-slot="skeleton"]').length,
-    ).toBeGreaterThanOrEqual(2)
+    ).toBeGreaterThan(0)
     expect(screen.queryByText(/Page \d+ of/)).toBeNull()
     expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled()
     expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled()
   })
 
-  it("shows the empty state when no filters are active", () => {
+  it("keeps the rows and dims them while refreshing", () => {
+    const session = makeSession({ id: "s1", startedAt: Date.now() })
+    renderList({ sessions: [session], loading: true })
+
+    expect(screen.getByTestId("batch-s1")).toBeInTheDocument()
+    expect(document.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(0)
+    expect(batchList()).toHaveAttribute("aria-busy", "true")
+    expect(batchList().className).toContain("opacity-60")
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled()
+  })
+
+  it("clears aria-busy after loading", () => {
+    renderList({ sessions: [makeSession({ id: "s1", startedAt: Date.now() })] })
+
+    expect(batchList()).toHaveAttribute("aria-busy", "false")
+    expect(batchList().className).not.toContain("opacity-60")
+  })
+
+  it("shows the empty state with page 1 of 1", () => {
     renderList()
 
     expect(screen.getByText("No batches yet.")).toBeInTheDocument()
+    expect(screen.getByText("Page 1 of 1")).toBeInTheDocument()
     expect(scrollArea()).not.toBeNull()
   })
 
@@ -361,14 +462,45 @@ describe("HistoryList", () => {
     expect(screen.queryByText("No batches yet.")).toBeNull()
   })
 
-  it("renders a muted load error", () => {
+  it("does not treat a sort-only filter as narrowing", () => {
+    renderList({ filters: { sort: "oldest" } })
+
+    expect(screen.getByText("No batches yet.")).toBeInTheDocument()
+    expect(screen.queryByText("No batches match these filters.")).toBeNull()
+  })
+
+  it("keeps rows when filters are active", () => {
     renderList({
+      sessions: [makeSession({ id: "s1", startedAt: Date.now() })],
+      filters: { statuses: ["failed"] },
+    })
+
+    expect(screen.getByTestId("batch-s1")).toBeInTheDocument()
+    expect(
+      screen.queryByText("No batches match these filters."),
+    ).toBeNull()
+  })
+
+  it("renders a muted alert with a Retry that clears the error and refetches", async () => {
+    const user = userEvent.setup()
+    const { clearError, refresh } = renderList({
       response: null,
       error: "Could not load history: boom",
     })
 
-    const message = screen.getByText("Could not load history: boom")
-    expect(message).toBeInTheDocument()
-    expect(message.className).toContain("text-muted-foreground")
+    const alert = screen.getByRole("alert")
+    expect(alert).toHaveTextContent("Could not load history: boom")
+    expect(alert.className).toContain("text-muted-foreground")
+    expect(screen.queryByText(/Page \d+ of/)).toBeNull()
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled()
+
+    await user.click(screen.getByRole("button", { name: "Retry" }))
+
+    expect(clearError).toHaveBeenCalledTimes(1)
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(clearError.mock.invocationCallOrder[0]).toBeLessThan(
+      refresh.mock.invocationCallOrder[0],
+    )
   })
 })
