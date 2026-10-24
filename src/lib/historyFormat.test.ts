@@ -16,6 +16,7 @@
 
 import { describe, it, expect } from 'vitest'
 import {
+  activeFilterCount,
   batchLabel,
   countOutcome,
   describeSince,
@@ -24,6 +25,8 @@ import {
   presetSinceMs,
   dayLabel,
   dayKey,
+  DATE_PRESETS,
+  DATE_PRESET_LABELS,
   savedLabel,
   savedPercent,
 } from '@/lib/historyFormat'
@@ -43,6 +46,8 @@ describe('historyFormat', () => {
     expect(presetSinceMs('today', now)).toBe(today)
     expect(presetSinceMs('last7', now)).toBe(new Date(2026, 8, 26).getTime())
     expect(presetSinceMs('last30', now)).toBe(new Date(2026, 8, 3).getTime())
+    expect(presetSinceMs('month', now)).toBe(new Date(2026, 9, 1).getTime())
+    expect(presetSinceMs('last3months', now)).toBe(new Date(2026, 6, 2).getTime())
     expect(presetSinceMs('all', now)).toBeUndefined()
   })
 
@@ -119,13 +124,25 @@ describe('batchLabel', () => {
 describe('describeSince', () => {
   const now = new Date(2026, 9, 23, 15, 0)
 
-  it('names the presets', () => {
+  it('names each preset', () => {
     expect(describeSince(undefined, now)).toBe('All time')
     expect(describeSince(presetSinceMs('today', now), now)).toBe('Today')
     expect(describeSince(presetSinceMs('last7', now), now)).toBe('Last 7 days')
     expect(describeSince(presetSinceMs('last30', now), now)).toBe('Last 30 days')
-    expect(describeSince(new Date(2026, 9, 1).getTime(), now)).toBe('This month')
+    expect(describeSince(presetSinceMs('month', now), now)).toBe('This month')
+    expect(describeSince(presetSinceMs('last3months', now), now)).toBe(
+      'Last 3 months',
+    )
   })
+
+  it.each(DATE_PRESETS.filter((preset) => preset !== 'all'))(
+    'labels %s',
+    (preset) => {
+      expect(describeSince(presetSinceMs(preset, now), now)).toBe(
+        DATE_PRESET_LABELS[preset],
+      )
+    },
+  )
 
   it('falls back to the calendar date for a custom start', () => {
     const custom = new Date(2026, 8, 20).getTime()
@@ -140,6 +157,30 @@ describe('describeSince', () => {
     expect(batchLabel(Number.POSITIVE_INFINITY, now)).toBe('—')
     expect(describeSince(Number.NaN, now)).toBe('—')
     expect(describeSince(Number.POSITIVE_INFINITY, now)).toBe('—')
+  })
+})
+
+describe('activeFilterCount', () => {
+  it('counts every chip, the date, a non-default sort, search, and folder', () => {
+    expect(activeFilterCount({})).toBe(0)
+    expect(activeFilterCount({ sort: 'newest' })).toBe(0)
+    expect(
+      activeFilterCount({ statuses: ['done', 'failed'], categories: ['image'] }),
+    ).toBe(3)
+    expect(activeFilterCount({ sinceMs: 1_700_000_000_000 })).toBe(1)
+    expect(activeFilterCount({ sort: 'oldest' })).toBe(1)
+    expect(activeFilterCount({ search: 'report' })).toBe(1)
+    expect(activeFilterCount({ outputFolder: '/tmp/out' })).toBe(1)
+    expect(
+      activeFilterCount({
+        statuses: ['done'],
+        categories: ['image'],
+        sinceMs: 1,
+        sort: 'oldest',
+        search: 'report',
+        outputFolder: '/tmp/out',
+      }),
+    ).toBe(6)
   })
 })
 

@@ -20,7 +20,7 @@ import {
   RiCalendarLine,
   RiCloseLine,
 } from "@remixicon/react"
-import { startOfDay, startOfMonth, subDays, subMonths } from "date-fns"
+import { startOfDay } from "date-fns"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
@@ -39,64 +39,59 @@ import {
 } from "@/components/ui/popover"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { CategoryIcon } from "@/components/CategoryIcon"
-import { describeSince } from "@/lib/historyFormat"
+import {
+  activeFilterCount,
+  DATE_PRESET_LABELS,
+  DATE_PRESETS,
+  describeSince,
+  presetSinceMs,
+} from "@/lib/historyFormat"
 import { CATEGORY_TONES, STATUS_TONES } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
-import type { Category, FileStatus, HistoryFilters } from "@/types"
+import {
+  CATEGORIES,
+  type Category,
+  type FileStatus,
+  type HistoryFilters,
+} from "@/types"
 
-const STATUS_CHOICES: readonly { value: FileStatus; label: string }[] = [
-  { value: "done", label: "Done" },
-  { value: "best_effort", label: "Best effort" },
-  { value: "failed", label: "Failed" },
-  { value: "cancelled", label: "Cancelled" },
-  { value: "already_under_target", label: "Already under target" },
-  { value: "unsupported", label: "Unsupported" },
-]
-
-const CATEGORY_CHOICES: readonly { value: Category; label: string }[] = [
-  { value: "image", label: "Image" },
-  { value: "video", label: "Video" },
-  { value: "pdf", label: "PDF" },
-  { value: "document", label: "Document" },
-  { value: "other", label: "Other" },
-]
-
-const SINCE_PRESETS = [
-  { value: "all", label: "All time" },
-  { value: "today", label: "Today" },
-  { value: "last7", label: "Last 7 days" },
-  { value: "last30", label: "Last 30 days" },
-  { value: "month", label: "This month" },
-  { value: "last3months", label: "Last 3 months" },
-] as const
-
-type SincePreset = (typeof SINCE_PRESETS)[number]["value"]
-
-function presetSince(preset: SincePreset, now: Date): number | undefined {
-  switch (preset) {
-    case "all":
-      return undefined
-    case "today":
-      return startOfDay(now).getTime()
-    case "last7":
-      return startOfDay(subDays(now, 6)).getTime()
-    case "last30":
-      return startOfDay(subDays(now, 29)).getTime()
-    case "month":
-      return startOfMonth(now).getTime()
-    case "last3months":
-      return startOfDay(subMonths(now, 3)).getTime()
-  }
+const EMPTY_DRAFT: HistoryFilters = {
+  search: undefined,
+  outputFolder: undefined,
+  statuses: undefined,
+  categories: undefined,
+  sinceMs: undefined,
+  sort: "newest",
 }
 
-function activeFilterCount(filters: HistoryFilters): number {
-  return (
-    (filters.statuses?.length ?? 0) +
-    (filters.categories?.length ?? 0) +
-    (filters.sinceMs !== undefined ? 1 : 0) +
-    (filters.sort !== undefined && filters.sort !== "newest" ? 1 : 0)
-  )
+type FilterableStatus = Exclude<FileStatus, "pending" | "compressing">
+
+const STATUS_LABELS: Record<FilterableStatus, string> = {
+  done: "Done",
+  best_effort: "Best effort",
+  failed: "Failed",
+  cancelled: "Cancelled",
+  already_under_target: "Already under target",
+  unsupported: "Unsupported",
 }
+
+const STATUS_CHOICES = Object.entries(STATUS_LABELS).map(([value, label]) => ({
+  value: value as FilterableStatus,
+  label,
+}))
+
+const CATEGORY_LABELS: Record<Category, string> = {
+  image: "Image",
+  video: "Video",
+  pdf: "PDF",
+  document: "Document",
+  other: "Other",
+}
+
+const CATEGORY_CHOICES = CATEGORIES.map((value) => ({
+  value,
+  label: CATEGORY_LABELS[value],
+}))
 
 interface HistoryFilterDialogProps {
   open: boolean
@@ -111,13 +106,19 @@ export function HistoryFilterDialog({
   applied,
   onApply,
 }: HistoryFilterDialogProps) {
-  const [draft, setDraft] = useState<HistoryFilters>({ sort: "newest" })
+  const [draft, setDraft] = useState<HistoryFilters>(EMPTY_DRAFT)
   const [sinceOpen, setSinceOpen] = useState(false)
   const wasOpen = useRef(false)
 
   useEffect(() => {
     if (open && !wasOpen.current) {
-      setDraft({ ...applied })
+      const seed: HistoryFilters = {
+        ...EMPTY_DRAFT,
+        ...applied,
+        sort: applied.sort === "oldest" ? "oldest" : "newest",
+        sinceMs: Number.isFinite(applied.sinceMs) ? applied.sinceMs : undefined,
+      }
+      setDraft(seed)
       setSinceOpen(false)
     }
     wasOpen.current = open
@@ -129,6 +130,8 @@ export function HistoryFilterDialog({
   const now = new Date()
   const sortValue = draft.sort === "oldest" ? "oldest" : "newest"
   const activeCount = activeFilterCount(draft)
+  const selectedDate =
+    draft.sinceMs === undefined ? undefined : new Date(draft.sinceMs)
 
   const apply = () => {
     onApply(draft)
@@ -177,6 +180,7 @@ export function HistoryFilterDialog({
               Sort by
             </FieldLegend>
             <ToggleGroup
+              aria-label="Sort by"
               value={[sortValue]}
               onValueChange={(value) => update({ sort: value[0] ?? sortValue })}
               className="w-full rounded-xl border border-border bg-muted/40 p-0.5"
@@ -195,6 +199,7 @@ export function HistoryFilterDialog({
               Status
             </FieldLegend>
             <ToggleGroup
+              aria-label="Status"
               multiple
               value={draft.statuses ?? []}
               onValueChange={(value) =>
@@ -228,6 +233,7 @@ export function HistoryFilterDialog({
               Category
             </FieldLegend>
             <ToggleGroup
+              aria-label="Category"
               multiple
               value={draft.categories ?? []}
               onValueChange={(value) =>
@@ -275,36 +281,35 @@ export function HistoryFilterDialog({
                 className="w-auto flex-row gap-0 p-0"
               >
                 <div className="flex w-32 flex-col gap-0.5 border-r border-border p-1.5">
-                  {SINCE_PRESETS.map((preset) => {
-                    const active =
-                      draft.sinceMs === presetSince(preset.value, now)
+                  {DATE_PRESETS.map((preset) => {
+                    const since = presetSinceMs(preset, now)
+                    const active = draft.sinceMs === since
                     return (
                       <Button
-                        key={preset.value}
+                        key={preset}
                         variant={active ? "secondary" : "ghost"}
                         size="sm"
                         aria-pressed={active}
                         className="justify-start"
                         onClick={() => {
-                          update({ sinceMs: presetSince(preset.value, now) })
+                          update({ sinceMs: since })
                           setSinceOpen(false)
                         }}
                       >
-                        {preset.label}
+                        {DATE_PRESET_LABELS[preset]}
                       </Button>
                     )
                   })}
                 </div>
                 <Calendar
                   mode="single"
-                  selected={
-                    draft.sinceMs !== undefined
-                      ? new Date(draft.sinceMs)
-                      : undefined
-                  }
+                  selected={selectedDate}
+                  defaultMonth={selectedDate}
+                  disabled={{ after: new Date() }}
                   onSelect={(date) => {
-                    if (!date) return
-                    update({ sinceMs: startOfDay(date).getTime() })
+                    update({
+                      sinceMs: date ? startOfDay(date).getTime() : undefined,
+                    })
                     setSinceOpen(false)
                   }}
                 />
@@ -314,10 +319,7 @@ export function HistoryFilterDialog({
         </div>
 
         <div className="flex shrink-0 items-center gap-2 border-t border-border px-5 py-3">
-          <Button
-            variant="ghost"
-            onClick={() => setDraft({ sort: "newest" })}
-          >
+          <Button variant="ghost" onClick={() => setDraft(EMPTY_DRAFT)}>
             Clear all
           </Button>
           <span className="flex-1" />

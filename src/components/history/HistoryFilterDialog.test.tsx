@@ -17,18 +17,49 @@
 import { useState } from "react"
 import { fireEvent, render, screen, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { startOfDay, subDays } from "date-fns"
+import { startOfDay, startOfMonth, subDays, subMonths } from "date-fns"
 import { HistoryFilterDialog } from "@/components/history/HistoryFilterDialog"
 import type { HistoryFilters } from "@/types"
 
 const NEWEST: HistoryFilters = { sort: "newest" }
+const NOW = new Date(2026, 9, 23, 14, 30)
 
-const button = (name: string) => screen.getByRole("button", { name })
+const mainDialog = () => screen.getByRole("dialog", { name: "Filter history" })
+const dialogButton = (name: string) =>
+  within(mainDialog()).getByRole("button", { name })
+const button = dialogButton
 
-function setup(applied: HistoryFilters = NEWEST) {
+const sinceTrigger = () =>
+  mainDialog().querySelector<HTMLButtonElement>('[data-slot="popover-trigger"]')!
+
+const popoverContent = () => {
+  const contents = document.querySelectorAll('[data-slot="popover-content"]')
+  const content = contents[contents.length - 1]
+  if (!content) throw new Error("date popover is not open")
+  return within(content as HTMLElement)
+}
+
+const openSince = () => {
+  fireEvent.click(sinceTrigger())
+  return popoverContent()
+}
+
+const clickDay = (iso: string) => {
+  const cells = document.querySelectorAll(`[data-day="${iso}"]`)
+  const cell = cells[cells.length - 1]
+  if (!cell) throw new Error(`day ${iso} is not rendered`)
+  fireEvent.click(cell.querySelector("button")!)
+}
+
+const setNow = (now = NOW) => {
+  vi.useFakeTimers({ toFake: ["Date"] })
+  vi.setSystemTime(now)
+}
+
+function renderDialog(applied: HistoryFilters = NEWEST) {
   const onApply = vi.fn()
   const onOpenChange = vi.fn()
-  render(
+  const view = render(
     <HistoryFilterDialog
       open
       onOpenChange={onOpenChange}
@@ -36,12 +67,18 @@ function setup(applied: HistoryFilters = NEWEST) {
       onApply={onApply}
     />,
   )
-  return { onApply, onOpenChange }
+  return { ...view, onApply, onOpenChange }
 }
 
-function ControlledDialog({ onApply }: { onApply: (next: HistoryFilters) => void }) {
+function ControlledDialog({
+  initial = NEWEST,
+  onApply,
+}: {
+  initial?: HistoryFilters
+  onApply: (next: HistoryFilters) => void
+}) {
   const [open, setOpen] = useState(true)
-  const [applied, setApplied] = useState<HistoryFilters>(NEWEST)
+  const [applied, setApplied] = useState(initial)
 
   return (
     <>
@@ -64,15 +101,28 @@ afterEach(() => {
 })
 
 describe("HistoryFilterDialog", () => {
-  it("renders exactly two sort segments with the applied sort pressed", () => {
-    setup()
+  it("renders exactly two sort segments and five category chips", () => {
+    renderDialog()
 
+    const sortGroup = mainDialog().querySelector(
+      '[data-slot="toggle-group"][aria-label="Sort by"]',
+    )
+    const categoryGroup = mainDialog().querySelector(
+      '[data-slot="toggle-group"][aria-label="Category"]',
+    )
+
+    expect(within(sortGroup as HTMLElement).getAllByRole("button")).toHaveLength(
+      2,
+    )
+    expect(
+      within(categoryGroup as HTMLElement).getAllByRole("button"),
+    ).toHaveLength(5)
     expect(button("Newest first")).toHaveAttribute("aria-pressed", "true")
     expect(button("Oldest first")).toHaveAttribute("aria-pressed", "false")
   })
 
   it("keeps a sort set when the pressed segment is clicked again", () => {
-    setup({ sort: "oldest" })
+    renderDialog({ sort: "oldest" })
 
     fireEvent.click(button("Oldest first"))
 
@@ -80,7 +130,7 @@ describe("HistoryFilterDialog", () => {
   })
 
   it("toggles statuses independently and counts the active filters", () => {
-    const { onApply } = setup()
+    const { onApply } = renderDialog()
 
     fireEvent.click(button("Cancelled"))
     expect(button("Cancelled")).toHaveAttribute("aria-pressed", "true")
@@ -91,14 +141,13 @@ describe("HistoryFilterDialog", () => {
     expect(screen.getByText("2 active")).toBeInTheDocument()
 
     fireEvent.click(button("Apply"))
-    expect(onApply).toHaveBeenCalledWith({
-      sort: "newest",
-      statuses: ["cancelled", "done"],
-    })
+    expect(onApply).toHaveBeenCalledWith(
+      expect.objectContaining({ statuses: ["cancelled", "done"] }),
+    )
   })
 
   it("renders five category chips with the shared glyphs", () => {
-    setup()
+    renderDialog()
 
     const categories = [
       ["Image", "image"],
@@ -115,7 +164,7 @@ describe("HistoryFilterDialog", () => {
   })
 
   it("toggles Image and Other", () => {
-    const { onApply } = setup()
+    const { onApply } = renderDialog()
 
     fireEvent.click(button("Image"))
     fireEvent.click(button("Other"))
@@ -125,68 +174,175 @@ describe("HistoryFilterDialog", () => {
     expect(button("Video")).toHaveAttribute("aria-pressed", "false")
 
     fireEvent.click(button("Apply"))
-    expect(onApply).toHaveBeenCalledWith({
-      sort: "newest",
-      categories: ["image", "other"],
-    })
+    expect(onApply).toHaveBeenCalledWith(
+      expect.objectContaining({ categories: ["image", "other"] }),
+    )
   })
 
-  it("sets sinceMs to the start of the day six days ago for Last 7 days", () => {
-    vi.useFakeTimers({ toFake: ["Date"] })
-    const now = new Date(2026, 9, 23, 14, 30)
-    vi.setSystemTime(now)
-    const { onApply } = setup()
+  it("seeds every non-default applied filter on open", () => {
+    setNow()
 
-    fireEvent.click(button("All time"))
-    fireEvent.click(button("Last 7 days"))
-
-    expect(
-      within(
-        screen.getByRole("dialog", { name: "Filter history" }),
-      ).getByRole("button", {
-        name: "Last 7 days",
-      }),
-    ).toBeInTheDocument()
-    fireEvent.click(button("Apply"))
-    expect(onApply).toHaveBeenCalledWith({
-      sort: "newest",
-      sinceMs: startOfDay(subDays(now, 6)).getTime(),
+    renderDialog({
+      sort: "oldest",
+      statuses: ["failed"],
+      categories: ["pdf"],
+      sinceMs: startOfDay(subDays(NOW, 6)).getTime(),
     })
+
+    expect(button("Oldest first")).toHaveAttribute("aria-pressed", "true")
+    expect(button("Newest first")).toHaveAttribute("aria-pressed", "false")
+    expect(button("Failed")).toHaveAttribute("aria-pressed", "true")
+    expect(button("PDF")).toHaveAttribute("aria-pressed", "true")
+    expect(button("Last 7 days")).toBeInTheDocument()
+  })
+
+  it("keeps search and outputFolder through the draft", () => {
+    const { onApply } = renderDialog({
+      search: "report",
+      outputFolder: "/tmp/out",
+    })
+
+    fireEvent.click(button("Done"))
+    fireEvent.click(button("Apply"))
+
+    expect(onApply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        search: "report",
+        outputFolder: "/tmp/out",
+        statuses: ["done"],
+      }),
+    )
+  })
+
+  it("discards a chip change on Cancel and reseeds on reopen", () => {
+    render(
+      <ControlledDialog
+        initial={{ statuses: ["failed"] }}
+        onApply={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(button("Done"))
+    fireEvent.click(button("Cancel"))
+
+    fireEvent.click(screen.getByRole("button", { name: "Open filters" }))
+
+    expect(button("Done")).toHaveAttribute("aria-pressed", "false")
+    expect(button("Failed")).toHaveAttribute("aria-pressed", "true")
+  })
+
+  it.each([
+    ["Today", (now: Date) => startOfDay(now)],
+    ["Last 7 days", (now: Date) => startOfDay(subDays(now, 6))],
+    ["Last 30 days", (now: Date) => startOfDay(subDays(now, 29))],
+    ["This month", (now: Date) => startOfMonth(now)],
+    ["Last 3 months", (now: Date) => startOfDay(subMonths(now, 3))],
+  ])("maps %s to the start of its range", (label, start) => {
+    setNow()
+    const { onApply } = renderDialog()
+
+    const popover = openSince()
+    fireEvent.click(popover.getByRole("button", { name: label }))
+    fireEvent.click(button("Apply"))
+
+    expect(onApply).toHaveBeenCalledWith(
+      expect.objectContaining({ sinceMs: start(NOW).getTime() }),
+    )
+  })
+
+  it("labels the trigger and counts the badge after a preset", () => {
+    setNow()
+    renderDialog()
+
+    const popover = openSince()
+    fireEvent.click(popover.getByRole("button", { name: "This month" }))
+
+    expect(button("This month")).toBeInTheDocument()
+    expect(screen.getByText("1 active")).toBeInTheDocument()
   })
 
   it("maps a custom calendar date to that day's start", () => {
-    vi.useFakeTimers({ toFake: ["Date"] })
-    vi.setSystemTime(new Date(2026, 9, 23, 14, 30))
-    const { onApply } = setup()
+    setNow()
+    const { onApply } = renderDialog()
 
-    fireEvent.click(button("All time"))
-    const cell = document.querySelector('[data-day="2026-10-16"]')
-    expect(cell).not.toBeNull()
-    fireEvent.click(cell!.querySelector("button")!)
+    openSince()
+    clickDay("2026-10-16")
 
     fireEvent.click(button("Apply"))
-    expect(onApply).toHaveBeenCalledWith({
-      sort: "newest",
-      sinceMs: new Date(2026, 9, 16).getTime(),
-    })
+    expect(onApply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sinceMs: new Date(2026, 9, 16).getTime(),
+      }),
+    )
+  })
+
+  it("clears the date when the selected custom day is clicked again", () => {
+    setNow()
+    const { onApply } = renderDialog()
+
+    openSince()
+    clickDay("2026-10-16")
+
+    openSince()
+    clickDay("2026-10-16")
+
+    expect(button("All time")).toBeInTheDocument()
+    fireEvent.click(button("Apply"))
+    expect(onApply).toHaveBeenCalledWith(
+      expect.objectContaining({ sinceMs: undefined }),
+    )
+  })
+
+  it("disables future days but not today", () => {
+    setNow()
+    renderDialog()
+
+    openSince()
+
+    expect(
+      document.querySelector('[data-day="2026-10-23"] button'),
+    ).not.toBeDisabled()
+    expect(
+      document.querySelector('[data-day="2026-10-24"] button'),
+    ).toBeDisabled()
+  })
+
+  it("reopens the popover and clears the date with All time", () => {
+    setNow()
+    const onApply = vi.fn()
+    render(<ControlledDialog onApply={onApply} />)
+
+    const popover = openSince()
+    fireEvent.click(popover.getByRole("button", { name: "Last 7 days" }))
+    fireEvent.click(button("Apply"))
+
+    fireEvent.click(screen.getByRole("button", { name: "Open filters" }))
+    expect(button("Last 7 days")).toBeInTheDocument()
+
+    const reopened = openSince()
+    fireEvent.click(reopened.getByRole("button", { name: "All time" }))
+    fireEvent.click(button("Apply"))
+
+    expect(onApply).toHaveBeenLastCalledWith(
+      expect.objectContaining({ sinceMs: undefined }),
+    )
   })
 
   it("applies the draft and closes", () => {
-    const { onApply, onOpenChange } = setup()
+    const { onApply, onOpenChange } = renderDialog()
 
     fireEvent.click(button("Oldest first"))
     fireEvent.click(button("Done"))
     fireEvent.click(button("Apply"))
 
-    expect(onApply).toHaveBeenCalledWith({
-      sort: "oldest",
-      statuses: ["done"],
-    })
+    expect(onApply).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: "oldest", statuses: ["done"] }),
+    )
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
   it("closes from the title-row close button", () => {
-    const { onApply, onOpenChange } = setup()
+    const { onApply, onOpenChange } = renderDialog()
 
     fireEvent.click(button("Close"))
 
@@ -195,7 +351,7 @@ describe("HistoryFilterDialog", () => {
   })
 
   it("discards the draft on Cancel", () => {
-    const { onApply, onOpenChange } = setup()
+    const { onApply, onOpenChange } = renderDialog()
 
     fireEvent.click(button("Done"))
     fireEvent.click(button("Cancel"))
@@ -205,11 +361,12 @@ describe("HistoryFilterDialog", () => {
   })
 
   it("clears only the draft on Clear all", () => {
-    const { onApply, onOpenChange } = setup({
+    setNow()
+    const { onApply, onOpenChange } = renderDialog({
       sort: "oldest",
       statuses: ["done"],
       categories: ["image"],
-      sinceMs: 1_790_000_000_000,
+      sinceMs: startOfDay(subDays(NOW, 6)).getTime(),
     })
 
     fireEvent.click(button("Clear all"))
@@ -223,7 +380,14 @@ describe("HistoryFilterDialog", () => {
     expect(onOpenChange).not.toHaveBeenCalled()
 
     fireEvent.click(button("Apply"))
-    expect(onApply).toHaveBeenCalledWith({ sort: "newest" })
+    expect(onApply).toHaveBeenCalledWith({
+      search: undefined,
+      outputFolder: undefined,
+      statuses: undefined,
+      categories: undefined,
+      sinceMs: undefined,
+      sort: "newest",
+    })
   })
 
   it("seeds the draft from the applied filters on reopen", () => {
@@ -234,11 +398,44 @@ describe("HistoryFilterDialog", () => {
     fireEvent.click(button("Image"))
     fireEvent.click(button("Apply"))
 
-    fireEvent.click(button("Open filters"))
+    fireEvent.click(screen.getByRole("button", { name: "Open filters" }))
 
     expect(button("Oldest first")).toHaveAttribute("aria-pressed", "true")
     expect(button("Newest first")).toHaveAttribute("aria-pressed", "false")
     expect(button("Image")).toHaveAttribute("aria-pressed", "true")
     expect(button("Video")).toHaveAttribute("aria-pressed", "false")
+  })
+
+  it("normalizes an unknown sort and a non-finite since", () => {
+    const { onApply } = renderDialog({
+      sort: "asc" as unknown as HistoryFilters["sort"],
+      sinceMs: Number.NaN,
+    })
+
+    expect(button("Newest first")).toHaveAttribute("aria-pressed", "true")
+    expect(button("All time")).toBeInTheDocument()
+
+    fireEvent.click(button("Apply"))
+    expect(onApply).toHaveBeenCalledWith(
+      expect.objectContaining({ sort: "newest", sinceMs: undefined }),
+    )
+  })
+
+  it("does not reset the draft when applied changes identity while open", () => {
+    const { onApply, rerender } = renderDialog()
+
+    fireEvent.click(button("Done"))
+    rerender(
+      <HistoryFilterDialog
+        open
+        onOpenChange={vi.fn()}
+        applied={{ sort: "oldest" }}
+        onApply={onApply}
+      />,
+    )
+
+    expect(button("Done")).toHaveAttribute("aria-pressed", "true")
+    expect(button("Newest first")).toHaveAttribute("aria-pressed", "true")
+    expect(button("Oldest first")).toHaveAttribute("aria-pressed", "false")
   })
 })

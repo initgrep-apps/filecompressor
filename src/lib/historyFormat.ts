@@ -14,8 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import { startOfDay, startOfMonth, subDays, subMonths } from 'date-fns'
 import { formatSize } from '@/lib/sizeFormat'
-import type { FileStatus, HistoryFile, SessionOutcome } from '@/types'
+import type { FileStatus, HistoryFile, HistoryFilters, SessionOutcome } from '@/types'
 
 export function savedLabel(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '—'
@@ -74,13 +75,22 @@ export function batchLabel(ms: number, now: Date): string {
 }
 
 export function describeSince(ms: number | undefined, now: Date): string {
-  if (ms === undefined) return 'All time'
+  if (ms === undefined) return DATE_PRESET_LABELS.all
   if (!Number.isFinite(ms)) return '—'
-  if (ms === presetSinceMs('today', now)) return 'Today'
-  if (ms === presetSinceMs('last7', now)) return 'Last 7 days'
-  if (ms === presetSinceMs('last30', now)) return 'Last 30 days'
-  if (ms === new Date(now.getFullYear(), now.getMonth(), 1).getTime()) return 'This month'
+  for (const preset of DATE_PRESETS) {
+    if (preset === 'all') continue
+    if (ms === presetSinceMs(preset, now)) return DATE_PRESET_LABELS[preset]
+  }
   return dayLabel(ms, now)
+}
+
+export function activeFilterCount(filters: HistoryFilters): number {
+  let count = (filters.statuses?.length ?? 0) + (filters.categories?.length ?? 0)
+  if (filters.sinceMs !== undefined) count += 1
+  if (filters.sort === 'oldest') count += 1
+  if (filters.search) count += 1
+  if (filters.outputFolder) count += 1
+  return count
 }
 
 export function formatDuration(ms: number): string {
@@ -99,15 +109,41 @@ export function formatDuration(ms: number): string {
   return `${hours}h ${String(minutes).padStart(2, '0')}m`
 }
 
-export type DatePreset = 'today' | 'last7' | 'last30' | 'all'
+export const DATE_PRESETS = [
+  'all',
+  'today',
+  'last7',
+  'last30',
+  'month',
+  'last3months',
+] as const
+
+export type DatePreset = (typeof DATE_PRESETS)[number]
+
+export const DATE_PRESET_LABELS: Record<DatePreset, string> = {
+  all: 'All time',
+  today: 'Today',
+  last7: 'Last 7 days',
+  last30: 'Last 30 days',
+  month: 'This month',
+  last3months: 'Last 3 months',
+}
 
 export function presetSinceMs(preset: DatePreset, now: Date): number | undefined {
-  if (preset === 'all') return undefined
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  if (preset === 'today') return start.getTime()
-  const days = preset === 'last7' ? 6 : 29
-  start.setDate(start.getDate() - days)
-  return start.getTime()
+  switch (preset) {
+    case 'all':
+      return undefined
+    case 'today':
+      return startOfDay(now).getTime()
+    case 'last7':
+      return startOfDay(subDays(now, 6)).getTime()
+    case 'last30':
+      return startOfDay(subDays(now, 29)).getTime()
+    case 'month':
+      return startOfMonth(now).getTime()
+    case 'last3months':
+      return startOfDay(subMonths(now, 3)).getTime()
+  }
 }
 
 export function dayKey(ms: number): string {
