@@ -32,7 +32,14 @@ vi.mock("@/providers/HistoryProvider", () => ({
 
 import { SidebarNav } from "@/components/shell/SidebarNav"
 import { SidebarContent, SidebarProvider } from "@/components/ui/sidebar"
-import type { FileEntry, ViewId } from "@/types"
+import { HISTORY_LIST_ID } from "@/components/history/HistoryList"
+import type {
+  FileEntry,
+  HistoryFilters,
+  HistoryResponse,
+  HistorySession,
+  ViewId,
+} from "@/types"
 
 const makeEntry = (n: number): FileEntry => ({
   id: `f${n}`,
@@ -49,20 +56,74 @@ const makeEntry = (n: number): FileEntry => ({
   qualityUsed: null,
 })
 
+const emptyHistory: HistoryResponse = {
+  sessions: [],
+  page: 0,
+  pageSize: 50,
+  totalSessions: 0,
+  totalFiles: 0,
+  summary: { sessions: 0, files: 0, savedBytes: 0, failedFiles: 0 },
+  outputFolders: [],
+  skippedLines: 0,
+}
+
+const makeSession = (id: string): HistorySession => ({
+  sessionId: id,
+  startedAt: Date.now(),
+  endedAt: Date.now() + 1_000,
+  outputFolder: "/out",
+  fileCount: 0,
+  files: [],
+  outcome: {
+    done: 0,
+    bestEffort: 0,
+    failed: 0,
+    cancelled: 0,
+    unsupported: 0,
+    alreadyUnderTarget: 0,
+  },
+  totalSavedBytes: 0,
+  cancelled: false,
+  interrupted: false,
+  matchedFiles: null,
+})
+
 function renderNav({
   activeView = "compress",
   files = [],
   expanded = false,
+  filters = {},
+  sessions = [],
 }: {
   activeView?: ViewId
   files?: FileEntry[]
   expanded?: boolean
+  filters?: HistoryFilters
+  sessions?: HistorySession[]
 } = {}) {
   compressionMock.mockReturnValue({ files })
   const setExpanded = vi.fn()
-  historyMock.mockReturnValue({ expanded, setExpanded })
+  historyMock.mockReturnValue({
+    response: { ...emptyHistory, sessions, totalSessions: sessions.length },
+    loading: false,
+    error: null,
+    filters,
+    setFilters: vi.fn(),
+    page: 0,
+    setPage: vi.fn(),
+    searchText: "",
+    setSearchText: vi.fn(),
+    selectedSessionId: null,
+    selectSession: vi.fn(),
+    expanded,
+    setExpanded,
+    refresh: vi.fn(),
+    clearHistory: vi.fn(),
+    clearError: vi.fn(),
+  })
   const onNavigate = vi.fn()
   const onOpenSettings = vi.fn()
+  const onOpenFilter = vi.fn()
 
   render(
     <SidebarProvider>
@@ -71,13 +132,19 @@ function renderNav({
           activeView={activeView}
           onNavigate={onNavigate}
           onOpenSettings={onOpenSettings}
+          onOpenFilter={onOpenFilter}
         />
       </SidebarContent>
     </SidebarProvider>,
   )
 
-  return { onNavigate, onOpenSettings, setExpanded }
+  return { onNavigate, onOpenSettings, onOpenFilter, setExpanded }
 }
+
+const content = () =>
+  document.querySelector('[data-slot="sidebar-content"]') as HTMLElement
+const scrollArea = () =>
+  document.querySelector('[data-slot="scroll-area"]') as HTMLElement | null
 
 beforeEach(() => {
   compressionMock.mockReset()
@@ -168,6 +235,19 @@ describe("SidebarNav", () => {
     }
   })
 
+  it("reserves room for the funnel beside the chevron", () => {
+    renderNav()
+
+    const row = screen.getByTestId("nav-history")
+    const last = row.lastElementChild
+    expect(last?.tagName).toBe("SPAN")
+    expect(last).toHaveClass("ml-auto")
+    expect(last?.querySelector("svg")).not.toBeNull()
+
+    const funnel = screen.getByRole("button", { name: "Filter history" })
+    expect(funnel.className).toContain("size-6!")
+  })
+
   it("shows the staged file count on the Compress row", () => {
     renderNav({ files: [makeEntry(1), makeEntry(2), makeEntry(3)] })
 
@@ -175,5 +255,144 @@ describe("SidebarNav", () => {
     expect(badge).toHaveTextContent("3")
     expect(badge.closest('[data-slot="sidebar-menu-item"]')).not.toBeNull()
     expect(badge.closest('[data-slot="sidebar-menu-button"]')).toBeNull()
+  })
+
+  it("renders the history list only while expanded", () => {
+    renderNav({ expanded: false })
+    expect(screen.queryByLabelText("Search history")).toBeNull()
+
+    renderNav({ expanded: true })
+    expect(screen.getAllByLabelText("Search history")).toHaveLength(1)
+  })
+
+  it("links the History row to the batch list", () => {
+    renderNav({ expanded: true })
+
+    const row = screen.getByTestId("nav-history")
+    expect(row).toHaveAttribute("aria-controls", HISTORY_LIST_ID)
+    expect(row).toHaveAttribute("aria-expanded", "true")
+
+    const list = document.getElementById(HISTORY_LIST_ID)
+    expect(list).not.toBeNull()
+    expect(list).toHaveAttribute("role", "group")
+  })
+
+  it("opens the filter from the History row without navigating", async () => {
+    const user = userEvent.setup()
+    const { onNavigate, onOpenFilter } = renderNav()
+
+    const funnel = screen.getByRole("button", { name: "Filter history" })
+    expect(funnel).toHaveAttribute("title", "Filter")
+    expect(funnel.className).toContain("size-6")
+
+    await user.click(funnel)
+
+    expect(onOpenFilter).toHaveBeenCalledTimes(1)
+    expect(onNavigate).not.toHaveBeenCalled()
+  })
+
+  it("leaves the funnel unmarked by default", () => {
+    renderNav()
+
+    expect(screen.queryByTestId("history-filter-dot")).toBeNull()
+  })
+
+  it("leaves the funnel unmarked for newest-first", () => {
+    renderNav({ filters: { sort: "newest" } })
+
+    expect(screen.queryByTestId("history-filter-dot")).toBeNull()
+  })
+
+  it("leaves the funnel unmarked for oldest-first", () => {
+    renderNav({ filters: { sort: "oldest" } })
+
+    expect(screen.queryByTestId("history-filter-dot")).toBeNull()
+  })
+
+  it("marks the funnel for a status filter", () => {
+    renderNav({ filters: { statuses: ["failed"] } })
+
+    expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
+  })
+
+  it("marks the funnel for a category filter", () => {
+    renderNav({ filters: { categories: ["image"] } })
+
+    expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
+  })
+
+  it("marks the funnel for a since filter", () => {
+    renderNav({ filters: { sinceMs: 1 } })
+
+    expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
+  })
+
+  it("marks the funnel for a search filter", () => {
+    renderNav({ filters: { search: "hero" } })
+
+    expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
+  })
+
+  it("marks the funnel for an output folder filter", () => {
+    renderNav({ filters: { outputFolder: "/out" } })
+
+    expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
+  })
+
+  it("omits aria-controls while the list is collapsed", () => {
+    renderNav({ expanded: false })
+
+    expect(screen.getByTestId("nav-history")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    )
+    expect(screen.getByTestId("nav-history")).not.toHaveAttribute(
+      "aria-controls",
+    )
+  })
+
+  it("navigates to History when a batch row is selected from Compress", async () => {
+    const user = userEvent.setup()
+    const session = makeSession("s1")
+    const { onNavigate } = renderNav({
+      activeView: "compress",
+      expanded: true,
+      sessions: [session],
+    })
+
+    await user.click(screen.getByTestId(`batch-${session.sessionId}`))
+
+    expect(onNavigate).toHaveBeenCalledWith("history")
+  })
+
+  it("pins the nav, search, pagination, and footer around the list", () => {
+    renderNav({ expanded: true })
+
+    const area = scrollArea()
+    expect(area).not.toBeNull()
+    expect(area!.className).toContain("min-h-0")
+    expect(area!.className).toContain("flex-1")
+
+    const root = content()
+    expect(area!.parentElement).toBe(root)
+
+    const navGroup = screen
+      .getByTestId("nav-compress")
+      .closest('[data-slot="sidebar-group"]')
+    const search = screen.getByLabelText("Search history")
+    const pagination = screen.getByText(/Page 1 of/)
+    const footer = screen
+      .getByTestId("nav-settings")
+      .closest('[data-slot="sidebar-footer"]')
+
+    for (const sibling of [navGroup, search, pagination, footer]) {
+      expect(sibling).not.toBeNull()
+      expect(area).not.toContainElement(sibling as HTMLElement)
+    }
+
+    expect(navGroup!.parentElement).toBe(root)
+    expect(footer!.parentElement).toBe(root)
+    expect(search.closest('[data-slot="sidebar-content"]')).toBe(root)
+    expect(pagination.closest('[data-slot="sidebar-content"]')).toBe(root)
   })
 })

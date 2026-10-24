@@ -16,7 +16,13 @@
 
 import { startOfDay, startOfMonth, subDays, subMonths } from 'date-fns'
 import { formatSize } from '@/lib/sizeFormat'
-import type { FileStatus, HistoryFile, SessionOutcome } from '@/types'
+import type {
+  FileStatus,
+  HistoryFile,
+  HistoryFilters,
+  HistorySession,
+  SessionOutcome,
+} from '@/types'
 
 export function savedLabel(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '—'
@@ -32,6 +38,46 @@ export function savedPercent(original: number, compressed: number | null): numbe
   if (!Number.isFinite(original) || original <= 0) return null
   if (compressed === null || !Number.isFinite(compressed) || compressed < 0) return null
   return Math.max(0, Math.round(((original - compressed) / original) * 100))
+}
+
+export function sessionSummary(session: HistorySession): {
+  fileCount: number
+  savedBytes: number
+  percent: number | null
+} {
+  const matched = session.matchedFiles !== null
+  const totalOriginal = session.files.reduce(
+    (sum, file) => sum + file.originalSize,
+    0,
+  )
+  const savedBytes = matched
+    ? session.files.reduce(
+        (sum, file) =>
+          sum +
+          Math.max(
+            0,
+            file.originalSize - (file.compressedSize ?? file.originalSize),
+          ),
+        0,
+      )
+    : session.totalSavedBytes
+  return {
+    fileCount:
+      session.matchedFiles ??
+      (session.interrupted ? session.files.length : session.fileCount),
+    savedBytes,
+    percent: savedPercent(totalOriginal, totalOriginal - savedBytes),
+  }
+}
+
+export function activeFilterCount(filters: HistoryFilters): number {
+  return (
+    (filters.statuses?.length ?? 0) +
+    (filters.categories?.length ?? 0) +
+    (filters.sinceMs !== undefined ? 1 : 0) +
+    (filters.search ? 1 : 0) +
+    (filters.outputFolder ? 1 : 0)
+  )
 }
 
 const OUTCOME_COUNT_KEYS: Record<FileStatus, keyof SessionOutcome | null> = {

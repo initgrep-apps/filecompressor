@@ -527,25 +527,25 @@ git commit -m "feat(history): add filter dialog with chips and date presets"
 - `SidebarNav` gains `onOpenFilter` and passes it to `HistoryList`.
 - `App` owns `filterOpen`; mounts `HistoryFilterDialog` with `applied={filters}` and `onApply={setFilters}`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Assert: only the list is inside `ScrollArea` (nav/search/pagination/footer are siblings, list wrapper has `min-h-0 flex-1`); rows show label, `N files · X saved`, and percent or `cancelled`; clicking a row calls `selectSession`; search debounce updates `setFilters`; pagination is disabled at bounds; the funnel calls `onOpenFilter`; `aria-expanded` flips with `expanded`.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `yarn test src/components/history/HistoryList.test.tsx`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 History row click toggles `expanded` and selects History. List uses `SidebarMenuSub`/`SidebarMenuSubItem`/`SidebarMenuSubButton` with `h-auto py-1.5`; selected row `isActive`. ScrollArea contains only rows. Search uses `SidebarInput`; pagination uses ghost icon `Button`s. Wire `filterOpen` in `App`; close it when the sidebar collapses (`useEffect(() => { if (!visible) setFilterOpen(false) }, [visible])`).
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `yarn test src/components/history/HistoryList.test.tsx src/components/shell/SidebarNav.test.tsx src/App.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/history/HistoryList.tsx src/components/history/HistoryList.test.tsx src/components/shell/SidebarNav.tsx src/components/shell/SidebarNav.test.tsx src/App.tsx

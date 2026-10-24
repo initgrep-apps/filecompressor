@@ -14,7 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useState, type ComponentType, type MouseEvent } from "react"
+import {
+  useEffect,
+  useState,
+  type ComponentType,
+  type MouseEvent,
+} from "react"
 import { RiFileShield2Line } from "@remixicon/react"
 import {
   Sidebar,
@@ -28,13 +33,14 @@ import {
 import { Toaster } from "@/components/ui/sonner"
 import { AboutDialog } from "@/components/AboutDialog"
 import { SettingsDialog } from "@/components/SettingsDialog"
+import { HistoryFilterDialog } from "@/components/history/HistoryFilterDialog"
 import { DragSurface } from "@/components/shell/DragSurface"
 import type { DialogId } from "@/components/shell/nav"
 import { SidebarNav } from "@/components/shell/SidebarNav"
 import { QuitGuard } from "@/components/shell/QuitGuard"
 import { TopBar } from "@/components/shell/TopBar"
 import { CompressionProvider } from "@/providers/CompressionProvider"
-import { HistoryProvider } from "@/providers/HistoryProvider"
+import { HistoryProvider, useHistoryContext } from "@/providers/HistoryProvider"
 import { usePlatform } from "@/providers/PlatformProvider"
 import { CompressView } from "@/views/CompressView"
 import { HistoryView } from "@/views/HistoryView"
@@ -75,13 +81,21 @@ function ShellSidebarHeader() {
 function Shell() {
   const [activeView, setActiveView] = useState<ViewId>("compress")
   const [dialog, setDialog] = useState<DialogId | null>(null)
+  const [filterOpen, setFilterOpen] = useState(false)
+  const { filters, setFilters } = useHistoryContext()
+  const { isMobile, open, openMobile } = useSidebar()
+  const visible = isMobile ? openMobile : open
   const View = VIEWS[activeView]
+
+  useEffect(() => {
+    if (!visible) setFilterOpen(false)
+  }, [visible])
 
   const setDialogOpen = (id: DialogId) => (open: boolean) =>
     setDialog((current) => (open ? id : current === id ? null : current))
 
   return (
-    <SidebarProvider className="h-svh overflow-hidden">
+    <>
       <Sidebar collapsible="offcanvas">
         <ShellSidebarHeader />
         <SidebarContent className="overflow-hidden">
@@ -89,6 +103,7 @@ function Shell() {
             activeView={activeView}
             onNavigate={setActiveView}
             onOpenSettings={() => setDialog("settings")}
+            onOpenFilter={() => setFilterOpen(true)}
           />
         </SidebarContent>
       </Sidebar>
@@ -116,6 +131,20 @@ function Shell() {
         open={dialog === "about"}
         onOpenChange={setDialogOpen("about")}
       />
+      <HistoryFilterDialog
+        open={filterOpen}
+        onOpenChange={setFilterOpen}
+        applied={filters}
+        onApply={setFilters}
+      />
+    </>
+  )
+}
+
+function ShellFrame() {
+  return (
+    <SidebarProvider className="h-svh overflow-hidden">
+      <Shell />
     </SidebarProvider>
   )
 }
@@ -125,7 +154,7 @@ function App() {
     <CompressionProvider>
       <QuitGuard />
       <HistoryProvider>
-        <Shell />
+        <ShellFrame />
       </HistoryProvider>
     </CompressionProvider>
   )
