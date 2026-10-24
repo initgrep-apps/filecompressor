@@ -19,7 +19,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 import { startOfDay, startOfMonth, subDays, subMonths } from "date-fns"
 import { HistoryFilterDialog } from "@/components/history/HistoryFilterDialog"
-import type { HistoryFilters } from "@/types"
+import type { Category, HistoryFilters } from "@/types"
 
 const NEWEST: HistoryFilters = { sort: "newest" }
 const NOW = new Date(2026, 9, 23, 14, 30)
@@ -133,6 +133,16 @@ describe("HistoryFilterDialog", () => {
     expect(button("Oldest first")).toHaveAttribute("aria-pressed", "false")
   })
 
+  it("uses a flex column layout with compact legends", () => {
+    renderDialog()
+
+    expect(mainDialog()).toHaveClass("flex", "flex-col")
+    expect(mainDialog()).not.toHaveClass("grid")
+    const legend = mainDialog().querySelector('[data-slot="field-legend"]')
+    expect(legend).toHaveClass("data-[variant=legend]:text-xs")
+    expect(legend?.className).not.toContain("data-[variant=legend]:text-base")
+  })
+
   it("keeps a sort set when the pressed segment is clicked again", () => {
     renderDialog({ sort: "oldest" })
 
@@ -153,11 +163,11 @@ describe("HistoryFilterDialog", () => {
     expect(screen.getByText("2 active")).toBeInTheDocument()
 
     fireEvent.click(button("Apply"))
-    expect(onApply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        statuses: expect.arrayContaining(["cancelled", "done"]),
-      }),
+    const payload = onApply.mock.calls[0][0]
+    expect(payload.statuses).toEqual(
+      expect.arrayContaining(["cancelled", "done"]),
     )
+    expect(payload.statuses).toHaveLength(2)
   })
 
   it("renders six status chips including the three terminal outcomes", () => {
@@ -180,6 +190,26 @@ describe("HistoryFilterDialog", () => {
 
     expect(screen.queryByText("1 active")).not.toBeInTheDocument()
     expect(screen.queryByText(/active/)).not.toBeInTheDocument()
+  })
+
+  it("omits the active badge for an output folder only", () => {
+    renderDialog({ outputFolder: "/tmp/out" })
+
+    expect(screen.queryByText(/active/)).not.toBeInTheDocument()
+  })
+
+  it("counts an Image-only selection in the badge", () => {
+    renderDialog()
+
+    fireEvent.click(button("Image"))
+
+    expect(screen.getByText("1 active")).toBeInTheDocument()
+  })
+
+  it("counts Oldest-only in the badge", () => {
+    renderDialog({ sort: "oldest" })
+
+    expect(screen.getByText("1 active")).toBeInTheDocument()
   })
 
   it("renders five category chips with the shared glyphs", () => {
@@ -210,11 +240,11 @@ describe("HistoryFilterDialog", () => {
     expect(button("Video")).toHaveAttribute("aria-pressed", "false")
 
     fireEvent.click(button("Apply"))
-    expect(onApply).toHaveBeenCalledWith(
-      expect.objectContaining({
-        categories: expect.arrayContaining(["image", "other"]),
-      }),
+    const payload = onApply.mock.calls[0][0]
+    expect(payload.categories).toEqual(
+      expect.arrayContaining(["image", "other"]),
     )
+    expect(payload.categories).toHaveLength(2)
   })
 
   it("seeds every non-default applied filter on open", () => {
@@ -248,6 +278,22 @@ describe("HistoryFilterDialog", () => {
     expect(onApply.mock.calls[0][0].categories).toEqual(["image"])
   })
 
+  it("drops unknown seeded categories", () => {
+    const { onApply } = renderDialog({
+      categories: ["image", "archive" as Category],
+    })
+
+    fireEvent.click(button("Apply"))
+    expect(onApply.mock.calls[0][0].categories).toEqual(["image"])
+  })
+
+  it("emits undefined when the seed only has transient statuses", () => {
+    const { onApply } = renderDialog({ statuses: ["pending"] })
+
+    fireEvent.click(button("Apply"))
+    expect(onApply.mock.calls[0][0].statuses).toBeUndefined()
+  })
+
   it("emits undefined when the last status chip is deselected", () => {
     const { onApply } = renderDialog()
 
@@ -256,6 +302,36 @@ describe("HistoryFilterDialog", () => {
     fireEvent.click(button("Apply"))
 
     expect(onApply.mock.calls[0][0].statuses).toBeUndefined()
+  })
+
+  it("emits undefined when the last category chip is deselected", () => {
+    const { onApply } = renderDialog()
+
+    fireEvent.click(button("Image"))
+    fireEvent.click(button("Image"))
+    fireEvent.click(button("Apply"))
+
+    expect(onApply.mock.calls[0][0].categories).toBeUndefined()
+  })
+
+  it("uses the live applied hidden fields at apply time", () => {
+    const { onApply, onOpenChange, rerender } = renderDialog({
+      search: "alpha",
+    })
+
+    fireEvent.click(button("Image"))
+    rerender(
+      <HistoryFilterDialog
+        open
+        onOpenChange={onOpenChange}
+        applied={{ search: "beta" }}
+        onApply={onApply}
+      />,
+    )
+    fireEvent.click(button("Apply"))
+
+    expect(onApply.mock.calls[0][0].search).toBe("beta")
+    expect(onApply.mock.calls[0][0].categories).toEqual(["image"])
   })
 
   it("keeps search and outputFolder through the draft", () => {
@@ -322,6 +398,61 @@ describe("HistoryFilterDialog", () => {
 
     expect(pressedPresetNames()).toEqual(["Today"])
     expect(button("Today")).toBeInTheDocument()
+    expect(
+      popoverContent().getByRole("button", { name: "All time" }),
+    ).toHaveAttribute("aria-pressed", "false")
+  })
+
+  it("marks only Last 7 days when it collides with This month", () => {
+    setNow(new Date(2026, 9, 7, 10, 0))
+    renderDialog({ sinceMs: new Date(2026, 9, 1).getTime() })
+
+    openSince()
+
+    expect(pressedPresetNames()).toEqual(["Last 7 days"])
+  })
+
+  it("marks All time on a fresh popover and not Today", () => {
+    setNow()
+    renderDialog()
+
+    const popover = openSince()
+
+    expect(popover.getByRole("button", { name: "All time" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
+    expect(popover.getByRole("button", { name: "Today" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
+  })
+
+  it("closes the date popover when the dialog is closed and reopened", () => {
+    setNow()
+    const { onApply, onOpenChange, rerender } = renderDialog()
+
+    openSince()
+    expect(popoverIsClosed()).toBe(false)
+
+    rerender(
+      <HistoryFilterDialog
+        open={false}
+        onOpenChange={onOpenChange}
+        applied={NEWEST}
+        onApply={onApply}
+      />,
+    )
+    rerender(
+      <HistoryFilterDialog
+        open
+        onOpenChange={onOpenChange}
+        applied={NEWEST}
+        onApply={onApply}
+      />,
+    )
+
+    expect(popoverIsClosed()).toBe(true)
   })
 
   it("labels the trigger and counts the badge after a preset", () => {

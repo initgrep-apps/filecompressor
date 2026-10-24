@@ -151,7 +151,13 @@ export function HistoryFilterDialog({
     draft.sinceMs === undefined ? undefined : new Date(draft.sinceMs)
 
   const apply = () => {
-    onApply(draft)
+    onApply({
+      ...applied,
+      statuses: draft.statuses,
+      categories: draft.categories,
+      sinceMs: draft.sinceMs,
+      sort: draft.sort,
+    })
     onOpenChange(false)
   }
 
@@ -159,7 +165,7 @@ export function HistoryFilterDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="max-h-[90%] gap-0 overflow-hidden p-0 sm:max-w-[600px]"
+        className="flex max-h-[90%] flex-col gap-0 overflow-hidden p-0 sm:max-w-[600px]"
       >
         <DialogHeader className="flex h-[54px] shrink-0 flex-row items-center gap-2.5 border-b border-border px-5">
           <DialogTitle>Filter history</DialogTitle>
@@ -191,9 +197,9 @@ export function HistoryFilterDialog({
           </DialogClose>
         </DialogHeader>
 
-        <div className="min-h-0 overflow-y-auto px-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5">
           <FieldSet className="min-w-0 gap-2.5 border-b border-border py-3">
-            <FieldLegend className="mb-0 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            <FieldLegend className="mb-0 data-[variant=legend]:text-xs font-medium tracking-wide text-muted-foreground uppercase">
               Sort by
             </FieldLegend>
             <ToggleGroup
@@ -212,7 +218,7 @@ export function HistoryFilterDialog({
           </FieldSet>
 
           <FieldSet className="min-w-0 gap-2.5 border-b border-border py-3">
-            <FieldLegend className="mb-0 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            <FieldLegend className="mb-0 data-[variant=legend]:text-xs font-medium tracking-wide text-muted-foreground uppercase">
               Status
             </FieldLegend>
             <ToggleGroup
@@ -246,7 +252,7 @@ export function HistoryFilterDialog({
           </FieldSet>
 
           <FieldSet className="min-w-0 gap-2.5 border-b border-border py-3">
-            <FieldLegend className="mb-0 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            <FieldLegend className="mb-0 data-[variant=legend]:text-xs font-medium tracking-wide text-muted-foreground uppercase">
               Category
             </FieldLegend>
             <ToggleGroup
@@ -277,7 +283,7 @@ export function HistoryFilterDialog({
           </FieldSet>
 
           <FieldSet className="min-w-0 gap-2.5 py-3">
-            <FieldLegend className="mb-0 text-xs font-medium tracking-wide text-muted-foreground uppercase">
+            <FieldLegend className="mb-0 data-[variant=legend]:text-xs font-medium tracking-wide text-muted-foreground uppercase">
               Since
             </FieldLegend>
             <Popover open={sinceOpen} onOpenChange={setSinceOpen}>

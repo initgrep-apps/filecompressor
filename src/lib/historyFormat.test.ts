@@ -16,7 +16,6 @@
 
 import { describe, it, expect } from 'vitest'
 import {
-  activeFilterCount,
   batchLabel,
   countOutcome,
   describeSince,
@@ -157,30 +156,6 @@ describe('describeSince', () => {
     expect(batchLabel(Number.POSITIVE_INFINITY, now)).toBe('—')
     expect(describeSince(Number.NaN, now)).toBe('—')
     expect(describeSince(Number.POSITIVE_INFINITY, now)).toBe('—')
-  })
-})
-
-describe('activeFilterCount', () => {
-  it('counts every chip, the date, a non-default sort, search, and folder', () => {
-    expect(activeFilterCount({})).toBe(0)
-    expect(activeFilterCount({ sort: 'newest' })).toBe(0)
-    expect(
-      activeFilterCount({ statuses: ['done', 'failed'], categories: ['image'] }),
-    ).toBe(3)
-    expect(activeFilterCount({ sinceMs: 1_700_000_000_000 })).toBe(1)
-    expect(activeFilterCount({ sort: 'oldest' })).toBe(1)
-    expect(activeFilterCount({ search: 'report' })).toBe(1)
-    expect(activeFilterCount({ outputFolder: '/tmp/out' })).toBe(1)
-    expect(
-      activeFilterCount({
-        statuses: ['done'],
-        categories: ['image'],
-        sinceMs: 1,
-        sort: 'oldest',
-        search: 'report',
-        outputFolder: '/tmp/out',
-      }),
-    ).toBe(6)
   })
 })
 

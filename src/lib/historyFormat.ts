@@ -16,7 +16,7 @@
 
 import { startOfDay, startOfMonth, subDays, subMonths } from 'date-fns'
 import { formatSize } from '@/lib/sizeFormat'
-import type { FileStatus, HistoryFile, HistoryFilters, SessionOutcome } from '@/types'
+import type { FileStatus, HistoryFile, SessionOutcome } from '@/types'
 
 export function savedLabel(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '—'
@@ -82,15 +82,6 @@ export function describeSince(ms: number | undefined, now: Date): string {
     if (ms === presetSinceMs(preset, now)) return DATE_PRESET_LABELS[preset]
   }
   return dayLabel(ms, now)
-}
-
-export function activeFilterCount(filters: HistoryFilters): number {
-  let count = (filters.statuses?.length ?? 0) + (filters.categories?.length ?? 0)
-  if (filters.sinceMs !== undefined) count += 1
-  if (filters.sort === 'oldest') count += 1
-  if (filters.search) count += 1
-  if (filters.outputFolder) count += 1
-  return count
 }
 
 export function formatDuration(ms: number): string {
