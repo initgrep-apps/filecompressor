@@ -15,9 +15,16 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, within } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import type { HistoryFile, HistoryFilters, HistoryResponse, HistorySession } from "@/types"
+import type {
+  Category,
+  FileStatus,
+  HistoryFile,
+  HistoryFilters,
+  HistoryResponse,
+  HistorySession,
+} from "@/types"
 
 const { useHistoryContextMock } = vi.hoisted(() => ({
   useHistoryContextMock: vi.fn(),
@@ -33,6 +40,7 @@ vi.mock("sonner", () => ({
 
 import { HistoryView } from "@/views/HistoryView"
 import { invoke } from "@tauri-apps/api/core"
+import { toast } from "sonner"
 import { batchLabel } from "@/lib/historyFormat"
 
 const invokeMock = vi.mocked(invoke)
@@ -139,15 +147,17 @@ function renderView({
   const clearHistory = vi.fn().mockResolvedValue(undefined)
   const clearError = vi.fn()
   const refresh = vi.fn()
+  const setFilters = vi.fn()
+  const setPage = vi.fn()
 
   useHistoryContextMock.mockReturnValue({
     response: response === undefined ? responseWith(sessions) : response,
     loading,
     error,
     filters,
-    setFilters: vi.fn(),
+    setFilters,
     page: 0,
-    setPage: vi.fn(),
+    setPage,
     searchText: "",
     setSearchText: vi.fn(),
     selectedSessionId:
@@ -163,8 +173,17 @@ function renderView({
   })
 
   const view = render(<HistoryView />)
-  return { ...view, clearHistory, clearError, refresh }
+  return {
+    ...view,
+    clearHistory,
+    clearError,
+    refresh,
+    setFilters,
+    setPage,
+  }
 }
+
+const stat = (name: string) => screen.getByTestId(`stat-${name}`)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -182,20 +201,75 @@ describe("HistoryView", () => {
   })
 
   it("renders file rows with glyph, strategy, sizes, percent, and status", () => {
-    const { container } = renderView({ sessions: [session()] })
+    renderView({ sessions: [session()] })
 
     const row = screen.getByText("a.jpg").closest("li")!
     expect(within(row).getByText("Image · quality=70")).toBeInTheDocument()
     expect(within(row).getByText("1 KB → 512 B")).toBeInTheDocument()
     expect(within(row).getByText("50%")).toBeInTheDocument()
     expect(within(row).getByText("Done")).toBeInTheDocument()
-    expect(container.querySelector('svg[data-category="image"]')).not.toBeNull()
+    expect(row.querySelector('svg[data-category="image"]')).not.toBeNull()
 
     const failedRow = screen.getByText("broken.pdf").closest("li")!
-    expect(within(failedRow).getByText("10 B")).toBeInTheDocument()
-    expect(within(failedRow).getByText("—")).toBeInTheDocument()
+    expect(within(failedRow).getByText("10 B → —")).toBeInTheDocument()
     expect(within(failedRow).getByText("Failed")).toBeInTheDocument()
     expect(within(failedRow).getByText("Cannot read file: locked")).toBeInTheDocument()
+  })
+
+  it("renders only the selected batch and never touches filters or pagination", async () => {
+    const user = userEvent.setup()
+    invokeMock.mockResolvedValue(undefined)
+    const first = new Date().setHours(10, 0, 0, 0)
+    const second = new Date().setHours(14, 31, 0, 0)
+    const { setFilters, setPage } = renderView({
+      sessions: [
+        session({
+          sessionId: "s1",
+          startedAt: first,
+          outputFolder: "/out-a",
+          fileCount: 1,
+          files: [doneFile({ name: "a.jpg", path: "/in/a.jpg", outputPath: "/out/a.jpg" })],
+          outcome: {
+            done: 1,
+            bestEffort: 0,
+            failed: 0,
+            cancelled: 0,
+            unsupported: 0,
+            alreadyUnderTarget: 0,
+          },
+          totalSavedBytes: 512,
+        }),
+        session({
+          sessionId: "s2",
+          startedAt: second,
+          outputFolder: "/out-b",
+          fileCount: 1,
+          files: [doneFile({ name: "b.jpg", path: "/in/b.jpg", outputPath: "/out/b.jpg" })],
+          outcome: {
+            done: 1,
+            bestEffort: 0,
+            failed: 0,
+            cancelled: 0,
+            unsupported: 0,
+            alreadyUnderTarget: 0,
+          },
+          totalSavedBytes: 512,
+        }),
+      ],
+      selectedSessionId: "s2",
+    })
+
+    expect(screen.getByText(batchLabel(second, new Date()))).toBeInTheDocument()
+    expect(screen.getByText(/1 file · 45s · Output: \/out-b/)).toBeInTheDocument()
+    expect(screen.getByText("b.jpg")).toBeInTheDocument()
+    expect(screen.queryByText("a.jpg")).not.toBeInTheDocument()
+    expect(screen.queryByRole("textbox", { name: /search/i })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Page \d+ of/)).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "Reveal folder" }))
+    expect(invokeMock).toHaveBeenCalledWith("open_folder", { path: "/out-b" })
+    expect(setFilters).not.toHaveBeenCalled()
+    expect(setPage).not.toHaveBeenCalled()
   })
 
   it("shows the empty state when no batch is selected", () => {
@@ -211,10 +285,45 @@ describe("HistoryView", () => {
     expect(screen.getByRole("button", { name: "Clear history" })).toBeDisabled()
   })
 
+  it("shows a filtered-empty state with a clear filters action", async () => {
+    const user = userEvent.setup()
+    const { setFilters } = renderView({
+      response: {
+        ...responseWith([]),
+        totalSessions: 9,
+      },
+      filters: { statuses: ["failed"] },
+    })
+
+    expect(screen.getByText("No batches match these filters.")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Clear history" })).toBeEnabled()
+
+    await user.click(screen.getByRole("button", { name: "Clear filters" }))
+    expect(setFilters).toHaveBeenCalledWith({
+      search: undefined,
+      statuses: undefined,
+      categories: undefined,
+      sinceMs: undefined,
+      outputFolder: undefined,
+      sort: undefined,
+    })
+  })
+
   it("shows skeleton rows while loading", () => {
     const { container } = renderView({ response: null, loading: true })
 
     expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(3)
+  })
+
+  it("keeps the batch visible and marks it busy while refreshing", () => {
+    const { container } = renderView({ sessions: [session()], loading: true })
+
+    expect(screen.getByText("a.jpg")).toBeInTheDocument()
+    expect(container.querySelector('[data-slot="card-content"]')).toHaveAttribute(
+      "aria-busy",
+      "true",
+    )
+    expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(0)
   })
 
   it("shows the provider error in a banner", () => {
@@ -227,15 +336,60 @@ describe("HistoryView", () => {
     expect(within(banner).getByRole("button", { name: "Retry" })).toBeInTheDocument()
   })
 
-  it("shows matched and total counts for a filtered batch", () => {
-    const files = [
-      doneFile(),
-      doneFile({ name: "b.jpg", path: "/in/b.jpg", outputPath: "/out/b.jpg" }),
-      doneFile({ name: "c.jpg", path: "/in/c.jpg", outputPath: "/out/c.jpg" }),
-    ]
-    renderView({ sessions: [session({ fileCount: 9, matchedFiles: 3, files })] })
+  it("hides stale stats and files when an error follows a loaded response", () => {
+    renderView({ sessions: [session()], error: "refresh failed" })
 
-    expect(screen.getByText("3 / 9")).toBeInTheDocument()
+    expect(screen.getByRole("alert")).toHaveTextContent("refresh failed")
+    expect(screen.queryByTestId("stat-saved")).not.toBeInTheDocument()
+    expect(screen.queryByText("a.jpg")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Reveal folder" })).not.toBeInTheDocument()
+  })
+
+  it("retries by clearing the error and refreshing", async () => {
+    const user = userEvent.setup()
+    const { clearError, refresh } = renderView({ response: null, error: "boom" })
+
+    await user.click(screen.getByRole("button", { name: "Retry" }))
+
+    expect(clearError).toHaveBeenCalledTimes(1)
+    expect(refresh).toHaveBeenCalledTimes(1)
+  })
+
+  it("uses matched files for the stats of a filtered batch", () => {
+    renderView({
+      sessions: [
+        session({
+          fileCount: 9,
+          matchedFiles: 2,
+          totalSavedBytes: 999_999,
+          files: [
+            doneFile({ originalSize: 4096, compressedSize: 2048 }),
+            doneFile({
+              name: "b.jpg",
+              path: "/in/b.jpg",
+              outputPath: "/out/b.jpg",
+              status: "best_effort",
+              originalSize: 4096,
+              compressedSize: 2048,
+            }),
+          ],
+          outcome: {
+            done: 5,
+            bestEffort: 9,
+            failed: 7,
+            cancelled: 0,
+            unsupported: 0,
+            alreadyUnderTarget: 0,
+          },
+        }),
+      ],
+    })
+
+    expect(within(stat("saved")).getByText("4 KB")).toBeInTheDocument()
+    expect(within(stat("saved")).getByText("50% saved")).toBeInTheDocument()
+    expect(within(stat("files")).getByText("2 / 9")).toBeInTheDocument()
+    expect(within(stat("best-effort")).getByText("1")).toBeInTheDocument()
+    expect(within(stat("failed")).getByText("0")).toBeInTheDocument()
   })
 
   it("guards clear history behind a confirmation dialog", async () => {
@@ -247,6 +401,19 @@ describe("HistoryView", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete history" }))
     expect(clearHistory).toHaveBeenCalledTimes(1)
+  })
+
+  it("leaves history intact when clearing is cancelled", async () => {
+    const user = userEvent.setup()
+    const { clearHistory } = renderView({ sessions: [session()] })
+
+    await user.click(screen.getByRole("button", { name: "Clear history" }))
+    await user.click(screen.getByRole("button", { name: "Cancel" }))
+
+    expect(clearHistory).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    )
   })
 
   it("never reports 100% saved for a failed-only batch", () => {
@@ -268,8 +435,9 @@ describe("HistoryView", () => {
       ],
     })
 
-    expect(screen.getByText("0% saved")).toBeInTheDocument()
-    expect(screen.queryByText(/100%/)).not.toBeInTheDocument()
+    expect(within(stat("saved")).getByText("0 B")).toBeInTheDocument()
+    expect(within(stat("saved")).getByText("0% saved")).toBeInTheDocument()
+    expect(within(stat("saved")).queryByText("100% saved")).not.toBeInTheDocument()
   })
 
   it("renders an em dash for a null aggregate percent", () => {
@@ -277,9 +445,7 @@ describe("HistoryView", () => {
       sessions: [session({ fileCount: 0, files: [], totalSavedBytes: 0 })],
     })
 
-    expect(
-      within(screen.getByTestId("stat-saved")).getByText("—"),
-    ).toBeInTheDocument()
+    expect(within(stat("saved")).getByText("—")).toBeInTheDocument()
   })
 
   it("opens the batch folder and reveals output and source files", async () => {
@@ -300,5 +466,113 @@ describe("HistoryView", () => {
     expect(invokeMock).toHaveBeenCalledWith("reveal_in_folder", {
       filePath: "/in/a.jpg",
     })
+  })
+
+  it("toasts a backend reveal/open error exactly once without duplicating its prefix", async () => {
+    const user = userEvent.setup()
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    const row = () => screen.getByText("a.jpg").closest("li")!
+
+    invokeMock.mockImplementation((command: unknown) =>
+      command === "open_folder"
+        ? Promise.reject(new Error("Could not open folder: explorer died"))
+        : Promise.reject(new Error("Could not reveal file: gone")),
+    )
+    const view = renderView({ sessions: [session()] })
+
+    await user.click(screen.getByRole("button", { name: "Reveal folder" }))
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Could not open folder: explorer died"),
+    )
+    expect(toast.error).toHaveBeenCalledTimes(1)
+
+    await user.click(within(row()).getByRole("button", { name: "Reveal output" }))
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Could not reveal file: gone"),
+    )
+    expect(toast.error).toHaveBeenCalledTimes(2)
+
+    view.unmount()
+    invokeMock.mockImplementation(() => Promise.reject(new Error("denied")))
+    renderView({ sessions: [session()] })
+    await user.click(screen.getByRole("button", { name: "Reveal folder" }))
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Could not open folder: denied"),
+    )
+    errSpy.mockRestore()
+  })
+
+  it("disables reveal output without an output path but keeps reveal source", () => {
+    renderView({
+      sessions: [session({ files: [failedFile()], fileCount: 1 })],
+    })
+
+    const row = screen.getByText("broken.pdf").closest("li")!
+    expect(within(row).getByRole("button", { name: "Reveal output" })).toBeDisabled()
+    expect(within(row).getByRole("button", { name: "Reveal source" })).toBeEnabled()
+  })
+
+  it("shows cancelled and interrupted badges on the batch header", () => {
+    renderView({
+      sessions: [session({ cancelled: true, interrupted: true })],
+    })
+
+    expect(screen.getByText("Cancelled")).toBeInTheDocument()
+    expect(screen.getByText("Interrupted")).toBeInTheDocument()
+  })
+
+  it("uses a status-specific message when no files finished", () => {
+    const cancelled = renderView({
+      sessions: [session({ files: [], fileCount: 0, cancelled: true })],
+    })
+    expect(
+      screen.getByText("No files finished before this batch was cancelled."),
+    ).toBeInTheDocument()
+    cancelled.unmount()
+
+    const interrupted = renderView({
+      sessions: [session({ files: [], fileCount: 0, interrupted: true })],
+    })
+    expect(
+      screen.getByText("No files finished before this batch was interrupted."),
+    ).toBeInTheDocument()
+    interrupted.unmount()
+
+    renderView({ sessions: [session({ files: [], fileCount: 0 })] })
+    expect(screen.getByText("No files in this batch.")).toBeInTheDocument()
+  })
+
+  it("renders an em dash duration for an unfinished batch", () => {
+    renderView({ sessions: [session({ endedAt: null })] })
+
+    expect(screen.getByText(/2 files · — · Output: \/out/)).toBeInTheDocument()
+  })
+
+  it("shows the skipped lines notice", () => {
+    renderView({
+      response: { ...responseWith([session()]), skippedLines: 3 },
+    })
+
+    expect(
+      screen.getByText("Some history entries could not be read."),
+    ).toBeInTheDocument()
+  })
+
+  it("does not throw for unknown runtime statuses or categories", () => {
+    renderView({
+      sessions: [
+        session({
+          files: [
+            doneFile({
+              status: "mystery" as FileStatus,
+              category: "mystery" as Category,
+            }),
+          ],
+          fileCount: 1,
+        }),
+      ],
+    })
+
+    expect(screen.getAllByText("mystery").length).toBeGreaterThan(0)
   })
 })
