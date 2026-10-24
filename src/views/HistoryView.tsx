@@ -206,16 +206,10 @@ function BatchStats({ session }: { session: HistorySession }) {
   )
 }
 
-function ClearHistoryButton({
-  disabled,
-  onClear,
-}: {
-  disabled: boolean
-  onClear: () => Promise<void>
-}) {
+function ClearHistoryButton({ onClear }: { onClear: () => Promise<void> }) {
   return (
     <AlertDialog>
-      <AlertDialogTrigger render={<Button variant="ghost" size="sm" disabled={disabled} />}>
+      <AlertDialogTrigger render={<Button variant="ghost" size="sm" />}>
         Clear history
       </AlertDialogTrigger>
       <AlertDialogContent>
@@ -338,11 +332,6 @@ export function HistoryView() {
     response.totalSessions === 0 &&
     activeFilterCount(filters) === 0 &&
     response.skippedLines > 0
-  const clearDisabled =
-    response !== null &&
-    response.totalSessions === 0 &&
-    activeFilterCount(filters) === 0 &&
-    response.skippedLines === 0
   const showSession = session !== null && error === null
 
   const clearFilters = () =>
@@ -372,7 +361,9 @@ export function HistoryView() {
                   Reveal folder
                 </Button>
               )}
-              <ClearHistoryButton disabled={clearDisabled} onClear={clearHistory} />
+              {(showSession || unreadable) && (
+                <ClearHistoryButton onClear={clearHistory} />
+              )}
             </div>
           </div>
           {showSession && <BatchStats session={session} />}

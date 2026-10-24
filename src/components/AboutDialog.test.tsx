@@ -56,6 +56,12 @@ describe("AboutDialog", () => {
     expect(screen.getByText("© 2026 Yard Contributors")).toBeInTheDocument()
   })
 
+  it("shows the official app icon", () => {
+    render(<AboutDialog open onOpenChange={vi.fn()} />)
+
+    expect(screen.getByTestId("app-icon")).toHaveAttribute("src", "/favicon.png")
+  })
+
   it("lists the five license rows as name and license pairs", () => {
     render(<AboutDialog open onOpenChange={vi.fn()} />)
 

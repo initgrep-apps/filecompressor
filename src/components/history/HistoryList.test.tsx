@@ -209,7 +209,7 @@ beforeEach(() => {
 
 describe("HistoryList", () => {
   it("pins the search above, and the pagination below, the only scroller", () => {
-    renderList()
+    renderList({ totalSessions: 120 })
 
     const area = scrollArea()
     expect(area).not.toBeNull()
@@ -416,11 +416,11 @@ describe("HistoryList", () => {
     renderList({
       page: 1,
       responsePage: 0,
-      totalSessions: 1,
+      totalSessions: 120,
       sessions: [makeSession({ id: "s1", startedAt: Date.now() })],
     })
 
-    expect(screen.getByText("Page 1 of 1")).toBeInTheDocument()
+    expect(screen.getByText("Page 1 of 3")).toBeInTheDocument()
   })
 
   it("derives the page count from the response page size", () => {
@@ -429,7 +429,31 @@ describe("HistoryList", () => {
     expect(screen.getByText("Page 1 of 3")).toBeInTheDocument()
   })
 
-  it("renders skeleton rows and hides the page count on the first load", () => {
+  it("hides pagination when everything fits on one page", () => {
+    renderList({ totalSessions: 5, pageSize: 50 })
+
+    expect(screen.queryByText(/Page \d+ of/)).toBeNull()
+    expect(screen.queryByRole("button", { name: "Previous page" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Next page" })).toBeNull()
+  })
+
+  it("hides pagination exactly when the totals equal the page size", () => {
+    renderList({ totalSessions: 50, pageSize: 50 })
+
+    expect(screen.queryByText(/Page \d+ of/)).toBeNull()
+    expect(screen.queryByRole("button", { name: "Previous page" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Next page" })).toBeNull()
+  })
+
+  it("shows pagination as soon as the totals exceed the page size", () => {
+    renderList({ totalSessions: 51, pageSize: 50 })
+
+    expect(screen.getByText("Page 1 of 2")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Next page" })).toBeEnabled()
+  })
+
+  it("renders skeleton rows and hides the pager on the first load", () => {
     renderList({ response: null, loading: true })
 
     expect(batchList()).toHaveAttribute("aria-busy", "true")
@@ -438,13 +462,13 @@ describe("HistoryList", () => {
       document.querySelectorAll('[data-slot="skeleton"]').length,
     ).toBeGreaterThan(0)
     expect(screen.queryByText(/Page \d+ of/)).toBeNull()
-    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled()
-    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled()
+    expect(screen.queryByRole("button", { name: "Previous page" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Next page" })).toBeNull()
   })
 
   it("keeps the rows and dims them while refreshing", () => {
     const session = makeSession({ id: "s1", startedAt: Date.now() })
-    renderList({ sessions: [session], loading: true })
+    renderList({ sessions: [session], totalSessions: 120, loading: true })
 
     expect(screen.getByTestId("batch-s1")).toBeInTheDocument()
     expect(document.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(0)
@@ -461,11 +485,13 @@ describe("HistoryList", () => {
     expect(batchList().className).not.toContain("opacity-60")
   })
 
-  it("shows the empty state with page 1 of 1", () => {
+  it("shows the empty state without pagination", () => {
     renderList()
 
     expect(screen.getByText("No batches yet.")).toBeInTheDocument()
-    expect(screen.getByText("Page 1 of 1")).toBeInTheDocument()
+    expect(screen.queryByText(/Page \d+ of/)).toBeNull()
+    expect(screen.queryByRole("button", { name: "Previous page" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Next page" })).toBeNull()
     expect(scrollArea()).not.toBeNull()
   })
 
@@ -508,8 +534,8 @@ describe("HistoryList", () => {
     expect(alert).toHaveTextContent("Could not load history: boom")
     expect(alert.className).toContain("text-muted-foreground")
     expect(screen.queryByText(/Page \d+ of/)).toBeNull()
-    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled()
-    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled()
+    expect(screen.queryByRole("button", { name: "Previous page" })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Next page" })).toBeNull()
 
     await user.click(screen.getByRole("button", { name: "Retry" }))
 

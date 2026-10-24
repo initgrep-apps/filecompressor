@@ -185,33 +185,35 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
           )}
         </SidebarMenuSub>
       </ScrollArea>
-      <div className="flex items-center justify-between px-3 pb-1">
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {response !== null && error === null
-            ? `Page ${response.page + 1} of ${totalPages}`
-            : null}
-        </span>
-        <div className="flex gap-0.5">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Previous page"
-            disabled={loading || error !== null || page === 0}
-            onClick={() => setPage(page - 1)}
-          >
-            <RiArrowLeftSLine />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Next page"
-            disabled={loading || error !== null || page + 1 >= totalPages}
-            onClick={() => setPage(page + 1)}
-          >
-            <RiArrowRightSLine />
-          </Button>
+      {response !== null && totalPages > 1 && (
+        <div className="flex items-center justify-between px-3 pb-1">
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {error === null
+              ? `Page ${response.page + 1} of ${totalPages}`
+              : null}
+          </span>
+          <div className="flex gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Previous page"
+              disabled={loading || error !== null || page === 0}
+              onClick={() => setPage(page - 1)}
+            >
+              <RiArrowLeftSLine />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Next page"
+              disabled={loading || error !== null || page + 1 >= totalPages}
+              onClick={() => setPage(page + 1)}
+            >
+              <RiArrowRightSLine />
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
     </>
   )
 }

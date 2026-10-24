@@ -308,14 +308,15 @@ describe("HistoryView", () => {
     renderView({ sessions: [session()], selectedSessionId: null })
 
     expect(screen.getByText("No batch selected")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Clear history" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Clear filters" })).not.toBeInTheDocument()
   })
 
-  it("shows the empty history state and disables clearing", () => {
+  it("shows the empty history state without a clear action", () => {
     renderView({ sessions: [] })
 
     expect(screen.getByText("No history yet")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Clear history" })).toBeDisabled()
+    expect(screen.queryByRole("button", { name: "Clear history" })).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Clear filters" })).not.toBeInTheDocument()
   })
 
@@ -327,7 +328,7 @@ describe("HistoryView", () => {
     })
 
     expect(screen.getByText("No batches match these filters.")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Clear history" })).toBeEnabled()
+    expect(screen.queryByRole("button", { name: "Clear history" })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole("button", { name: "Clear filters" }))
     expect(setFilters).toHaveBeenCalledTimes(1)
@@ -349,7 +350,7 @@ describe("HistoryView", () => {
     expect(
       screen.getByText("Some history entries could not be read (3)."),
     ).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Clear history" })).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Clear history" })).toBeInTheDocument()
     expect(screen.queryByText("No history yet")).not.toBeInTheDocument()
   })
 
@@ -408,7 +409,7 @@ describe("HistoryView", () => {
       within(banner).getByText("Could not load history: disk error"),
     ).toBeInTheDocument()
     expect(within(banner).getByRole("button", { name: "Retry" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Clear history" })).toBeEnabled()
+    expect(screen.queryByRole("button", { name: "Clear history" })).not.toBeInTheDocument()
   })
 
   it("hides stale stats and files when an error follows a loaded response", () => {

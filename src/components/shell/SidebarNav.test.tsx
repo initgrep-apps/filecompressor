@@ -94,17 +94,19 @@ function renderNav({
   expanded = false,
   filters = {},
   sessions = [],
+  totalSessions = sessions.length,
 }: {
   activeView?: ViewId
   files?: FileEntry[]
   expanded?: boolean
   filters?: HistoryFilters
   sessions?: HistorySession[]
+  totalSessions?: number
 } = {}) {
   compressionMock.mockReturnValue({ files })
   const setExpanded = vi.fn()
   historyMock.mockReturnValue({
-    response: { ...emptyHistory, sessions, totalSessions: sessions.length },
+    response: { ...emptyHistory, sessions, totalSessions },
     loading: false,
     error: null,
     filters,
@@ -366,7 +368,7 @@ describe("SidebarNav", () => {
   })
 
   it("pins the nav, search, pagination, and footer around the list", () => {
-    renderNav({ expanded: true })
+    renderNav({ expanded: true, totalSessions: 120 })
 
     const area = scrollArea()
     expect(area).not.toBeNull()

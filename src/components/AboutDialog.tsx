@@ -15,7 +15,6 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { useEffect, useState } from "react"
-import { RiContractUpDownLine } from "@remixicon/react"
 import { version } from "../../package.json"
 import thirdPartyNotices from "../../THIRD_PARTY_LICENSES.md?raw"
 import { Button } from "@/components/ui/button"
@@ -51,9 +50,12 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader className="items-center text-center">
-          <span className="flex size-12 items-center justify-center rounded-2xl bg-muted text-primary">
-            <RiContractUpDownLine className="size-7" />
-          </span>
+          <img
+            src="/favicon.png"
+            alt=""
+            data-testid="app-icon"
+            className="size-12 rounded-2xl object-cover"
+          />
           <DialogTitle>Yard</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-1 text-center">
