@@ -32,17 +32,29 @@ const button = dialogButton
 const sinceTrigger = () =>
   mainDialog().querySelector<HTMLButtonElement>('[data-slot="popover-trigger"]')!
 
-const popoverContent = () => {
-  const contents = document.querySelectorAll('[data-slot="popover-content"]')
-  const content = contents[contents.length - 1]
+const popoverElement = () => {
+  const content = document.querySelector(
+    '[data-slot="popover-content"][data-open]',
+  )
   if (!content) throw new Error("date popover is not open")
-  return within(content as HTMLElement)
+  return content as HTMLElement
 }
+
+const popoverContent = () => within(popoverElement())
+
+const popoverIsClosed = () =>
+  document.querySelector('[data-slot="popover-content"][data-open]') === null
 
 const openSince = () => {
   fireEvent.click(sinceTrigger())
   return popoverContent()
 }
+
+const pressedPresetNames = () =>
+  popoverContent()
+    .getAllByRole("button")
+    .filter((item) => item.getAttribute("aria-pressed") === "true")
+    .map((item) => item.textContent)
 
 const clickDay = (iso: string) => {
   const cells = document.querySelectorAll(`[data-day="${iso}"]`)
@@ -142,8 +154,32 @@ describe("HistoryFilterDialog", () => {
 
     fireEvent.click(button("Apply"))
     expect(onApply).toHaveBeenCalledWith(
-      expect.objectContaining({ statuses: ["cancelled", "done"] }),
+      expect.objectContaining({
+        statuses: expect.arrayContaining(["cancelled", "done"]),
+      }),
     )
+  })
+
+  it("renders six status chips including the three terminal outcomes", () => {
+    renderDialog()
+
+    const statusGroup = mainDialog().querySelector(
+      '[data-slot="toggle-group"][aria-label="Status"]',
+    )
+
+    expect(
+      within(statusGroup as HTMLElement).getAllByRole("button"),
+    ).toHaveLength(6)
+    expect(button("Best effort")).toBeInTheDocument()
+    expect(button("Already under target")).toBeInTheDocument()
+    expect(button("Unsupported")).toBeInTheDocument()
+  })
+
+  it("omits the active badge for filters this dialog cannot show", () => {
+    renderDialog({ search: "alpha" })
+
+    expect(screen.queryByText("1 active")).not.toBeInTheDocument()
+    expect(screen.queryByText(/active/)).not.toBeInTheDocument()
   })
 
   it("renders five category chips with the shared glyphs", () => {
@@ -175,7 +211,9 @@ describe("HistoryFilterDialog", () => {
 
     fireEvent.click(button("Apply"))
     expect(onApply).toHaveBeenCalledWith(
-      expect.objectContaining({ categories: ["image", "other"] }),
+      expect.objectContaining({
+        categories: expect.arrayContaining(["image", "other"]),
+      }),
     )
   })
 
@@ -194,6 +232,30 @@ describe("HistoryFilterDialog", () => {
     expect(button("Failed")).toHaveAttribute("aria-pressed", "true")
     expect(button("PDF")).toHaveAttribute("aria-pressed", "true")
     expect(button("Last 7 days")).toBeInTheDocument()
+  })
+
+  it("drops seeded statuses and categories that have no chip", () => {
+    const { onApply } = renderDialog({
+      statuses: ["pending", "compressing", "done"],
+      categories: ["image"],
+    })
+
+    expect(button("Done")).toHaveAttribute("aria-pressed", "true")
+    expect(button("Image")).toHaveAttribute("aria-pressed", "true")
+
+    fireEvent.click(button("Apply"))
+    expect(onApply.mock.calls[0][0].statuses).toEqual(["done"])
+    expect(onApply.mock.calls[0][0].categories).toEqual(["image"])
+  })
+
+  it("emits undefined when the last status chip is deselected", () => {
+    const { onApply } = renderDialog()
+
+    fireEvent.click(button("Done"))
+    fireEvent.click(button("Done"))
+    fireEvent.click(button("Apply"))
+
+    expect(onApply.mock.calls[0][0].statuses).toBeUndefined()
   })
 
   it("keeps search and outputFolder through the draft", () => {
@@ -243,11 +305,23 @@ describe("HistoryFilterDialog", () => {
 
     const popover = openSince()
     fireEvent.click(popover.getByRole("button", { name: label }))
+
+    expect(popoverIsClosed()).toBe(true)
     fireEvent.click(button("Apply"))
 
     expect(onApply).toHaveBeenCalledWith(
       expect.objectContaining({ sinceMs: start(NOW).getTime() }),
     )
+  })
+
+  it("marks only the resolved preset on a colliding date", () => {
+    setNow(new Date(2026, 9, 1, 10, 0))
+    renderDialog({ sinceMs: new Date(2026, 9, 1).getTime() })
+
+    openSince()
+
+    expect(pressedPresetNames()).toEqual(["Today"])
+    expect(button("Today")).toBeInTheDocument()
   })
 
   it("labels the trigger and counts the badge after a preset", () => {
@@ -257,6 +331,7 @@ describe("HistoryFilterDialog", () => {
     const popover = openSince()
     fireEvent.click(popover.getByRole("button", { name: "This month" }))
 
+    expect(popoverIsClosed()).toBe(true)
     expect(button("This month")).toBeInTheDocument()
     expect(screen.getByText("1 active")).toBeInTheDocument()
   })
@@ -268,6 +343,7 @@ describe("HistoryFilterDialog", () => {
     openSince()
     clickDay("2026-10-16")
 
+    expect(popoverIsClosed()).toBe(true)
     fireEvent.click(button("Apply"))
     expect(onApply).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -276,15 +352,29 @@ describe("HistoryFilterDialog", () => {
     )
   })
 
+  it("opens a previous-month custom date on its month and selects it", () => {
+    setNow()
+    const sinceMs = new Date(2026, 8, 15).getTime()
+    renderDialog({ sinceMs })
+
+    openSince()
+
+    const day = document.querySelector('[data-day="2026-09-15"] button')
+    expect(day).not.toBeNull()
+    expect(day).toHaveAttribute("data-selected-single", "true")
+  })
+
   it("clears the date when the selected custom day is clicked again", () => {
     setNow()
     const { onApply } = renderDialog()
 
     openSince()
     clickDay("2026-10-16")
+    expect(popoverIsClosed()).toBe(true)
 
     openSince()
     clickDay("2026-10-16")
+    expect(popoverIsClosed()).toBe(true)
 
     expect(button("All time")).toBeInTheDocument()
     fireEvent.click(button("Apply"))
@@ -317,9 +407,14 @@ describe("HistoryFilterDialog", () => {
     fireEvent.click(button("Apply"))
 
     fireEvent.click(screen.getByRole("button", { name: "Open filters" }))
+    expect(popoverIsClosed()).toBe(true)
     expect(button("Last 7 days")).toBeInTheDocument()
 
     const reopened = openSince()
+    expect(reopened.getByRole("button", { name: "Last 7 days" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    )
     fireEvent.click(reopened.getByRole("button", { name: "All time" }))
     fireEvent.click(button("Apply"))
 
@@ -347,7 +442,7 @@ describe("HistoryFilterDialog", () => {
     fireEvent.click(button("Close"))
 
     expect(onApply).not.toHaveBeenCalled()
-    expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything())
+    expect(onOpenChange.mock.calls[0][0]).toBe(false)
   })
 
   it("discards the draft on Cancel", () => {

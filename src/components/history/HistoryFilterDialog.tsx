@@ -40,7 +40,6 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { CategoryIcon } from "@/components/CategoryIcon"
 import {
-  activeFilterCount,
   DATE_PRESET_LABELS,
   DATE_PRESETS,
   describeSince,
@@ -55,14 +54,14 @@ import {
   type HistoryFilters,
 } from "@/types"
 
-const EMPTY_DRAFT: HistoryFilters = {
+const EMPTY_DRAFT: HistoryFilters = Object.freeze({
   search: undefined,
   outputFolder: undefined,
   statuses: undefined,
   categories: undefined,
   sinceMs: undefined,
   sort: "newest",
-}
+})
 
 type FilterableStatus = Exclude<FileStatus, "pending" | "compressing">
 
@@ -73,6 +72,18 @@ const STATUS_LABELS: Record<FilterableStatus, string> = {
   cancelled: "Cancelled",
   already_under_target: "Already under target",
   unsupported: "Unsupported",
+}
+
+const isFilterableStatus = (status: FileStatus): status is FilterableStatus =>
+  Object.prototype.hasOwnProperty.call(STATUS_LABELS, status)
+
+function visibleFilterCount(filters: HistoryFilters): number {
+  return (
+    (filters.statuses?.length ?? 0) +
+    (filters.categories?.length ?? 0) +
+    (filters.sinceMs !== undefined ? 1 : 0) +
+    (filters.sort === "oldest" ? 1 : 0)
+  )
 }
 
 const STATUS_CHOICES = Object.entries(STATUS_LABELS).map(([value, label]) => ({
@@ -112,9 +123,15 @@ export function HistoryFilterDialog({
 
   useEffect(() => {
     if (open && !wasOpen.current) {
+      const statuses = applied.statuses?.filter(isFilterableStatus)
+      const categories = applied.categories?.filter((category) =>
+        CATEGORIES.includes(category),
+      )
       const seed: HistoryFilters = {
         ...EMPTY_DRAFT,
         ...applied,
+        statuses: statuses?.length ? statuses : undefined,
+        categories: categories?.length ? categories : undefined,
         sort: applied.sort === "oldest" ? "oldest" : "newest",
         sinceMs: Number.isFinite(applied.sinceMs) ? applied.sinceMs : undefined,
       }
@@ -129,7 +146,7 @@ export function HistoryFilterDialog({
 
   const now = new Date()
   const sortValue = draft.sort === "oldest" ? "oldest" : "newest"
-  const activeCount = activeFilterCount(draft)
+  const activeCount = visibleFilterCount(draft)
   const selectedDate =
     draft.sinceMs === undefined ? undefined : new Date(draft.sinceMs)
 
@@ -282,8 +299,9 @@ export function HistoryFilterDialog({
               >
                 <div className="flex w-32 flex-col gap-0.5 border-r border-border p-1.5">
                   {DATE_PRESETS.map((preset) => {
-                    const since = presetSinceMs(preset, now)
-                    const active = draft.sinceMs === since
+                    const active =
+                      DATE_PRESET_LABELS[preset] ===
+                      describeSince(draft.sinceMs, now)
                     return (
                       <Button
                         key={preset}
@@ -292,7 +310,9 @@ export function HistoryFilterDialog({
                         aria-pressed={active}
                         className="justify-start"
                         onClick={() => {
-                          update({ sinceMs: since })
+                          update({
+                            sinceMs: presetSinceMs(preset, new Date()),
+                          })
                           setSinceOpen(false)
                         }}
                       >
