@@ -143,12 +143,37 @@ describe("SettingsDialog", () => {
       expect(within(section).getByText(label)).toBeInTheDocument()
     }
     expect(section.querySelector('[data-slot="badge"]')).toBeNull()
-    expect(
+    for (const pill of ["Image", "Video", "Document"]) {
+      expect(within(section).queryByText(pill)).toBeNull()
+    }
+    expect(within(section).getByLabelText("Images")).toBe(
       within(section).getByLabelText("Images target size"),
-    ).toBeInTheDocument()
-    expect(
-      within(section).getByLabelText("Documents target unit"),
-    ).toBeInTheDocument()
+    )
+    expect(within(section).getByLabelText("Documents")).toBe(
+      within(section).getByLabelText("Documents target size"),
+    )
+  })
+
+  it("saves an edited video target without touching other categories", async () => {
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "Targets" }))
+    vi.useFakeTimers()
+
+    fireEvent.change(screen.getByLabelText("Videos target size"), {
+      target: { value: "5" },
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(400)
+    })
+
+    expect(savedSettings().categoryTargets).toEqual({
+      image: { size: 200, unit: "KB" },
+      video: { size: 5, unit: "MB" },
+      pdf: { size: 1, unit: "MB" },
+      document: { size: 2, unit: "MB" },
+    })
   })
 
   it("saves the full draft once the 400 ms debounce elapses", async () => {

@@ -172,7 +172,7 @@ function TargetsSection({ draft, onChange }: SectionProps) {
           const target = targetFor(draft, category.key)
           return (
             <Field key={category.key} orientation="horizontal">
-              <FieldContent className="min-w-0">
+              <FieldContent>
                 <FieldLabel htmlFor={`${category.key}-size`}>
                   {category.label}
                 </FieldLabel>
