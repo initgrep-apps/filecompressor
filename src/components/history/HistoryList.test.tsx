@@ -305,9 +305,12 @@ describe("HistoryList", () => {
         makeSession({
           id: "s1",
           startedAt: Date.now(),
-          files: [makeFile(1, 1_000, 1_500)],
+          files: [makeFile(1, 1_000, 2_000)],
+          totalSavedBytes: 0,
+          matchedFiles: 1,
         }),
       ],
+      filters: { statuses: ["done"] },
     })
 
     expect(screen.getByText("1 file · 0 B saved")).toBeInTheDocument()
@@ -344,7 +347,9 @@ describe("HistoryList", () => {
       ],
     })
 
-    expect(screen.getByText("interrupted")).toBeInTheDocument()
+    const label = screen.getByText("interrupted")
+    expect(label).toBeInTheDocument()
+    expect(label.className).toContain("text-destructive")
     expect(screen.queryByText("cancelled")).toBeNull()
     expect(screen.queryByText("−75%")).toBeNull()
   })
@@ -355,9 +360,14 @@ describe("HistoryList", () => {
     const second = makeSession({ id: "s2", startedAt: Date.now() - 60_000 })
     const { onOpenHistory } = renderList({ sessions: [first, second] })
 
-    await user.click(screen.getByTestId("batch-s2"))
+    const row = screen.getByTestId("batch-s2")
+    await user.click(row)
 
     expect(screen.getByTestId("selected-session")).toHaveTextContent("s2")
+    expect(row.hasAttribute("data-active")).toBe(true)
+    expect(screen.getByTestId("batch-s1").hasAttribute("data-active")).toBe(
+      false,
+    )
     expect(onOpenHistory).toHaveBeenCalledTimes(1)
   })
 
@@ -411,6 +421,12 @@ describe("HistoryList", () => {
     })
 
     expect(screen.getByText("Page 1 of 1")).toBeInTheDocument()
+  })
+
+  it("derives the page count from the response page size", () => {
+    renderList({ totalSessions: 30, pageSize: 10 })
+
+    expect(screen.getByText("Page 1 of 3")).toBeInTheDocument()
   })
 
   it("renders skeleton rows and hides the page count on the first load", () => {
@@ -502,5 +518,23 @@ describe("HistoryList", () => {
     expect(clearError.mock.invocationCallOrder[0]).toBeLessThan(
       refresh.mock.invocationCallOrder[0],
     )
+  })
+
+  it("replaces stale rows with the alert and freezes the pager mid-page", () => {
+    renderList({
+      sessions: [makeSession({ id: "s1", startedAt: Date.now() })],
+      page: 1,
+      responsePage: 0,
+      totalSessions: 120,
+      error: "Could not load history: boom",
+    })
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Could not load history: boom",
+    )
+    expect(screen.queryByTestId("batch-s1")).toBeNull()
+    expect(screen.queryByText(/Page \d+ of/)).toBeNull()
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled()
   })
 })

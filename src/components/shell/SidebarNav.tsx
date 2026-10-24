@@ -122,20 +122,24 @@ export function SidebarNav({
                     </span>
                     <span className={labelClass(active)}>{item.label}</span>
                     {item.id === "history" && (
-                      <RiArrowDownSLine
+                      <span
                         aria-hidden
-                        className={cn(
-                          "pointer-events-none ml-auto transition-transform",
-                          expanded && "rotate-180",
-                        )}
-                      />
+                        className="pointer-events-none ml-auto flex"
+                      >
+                        <RiArrowDownSLine
+                          className={cn(
+                            "transition-transform",
+                            expanded && "rotate-180",
+                          )}
+                        />
+                      </span>
                     )}
                   </SidebarMenuButton>
                   {item.id === "history" && (
                     <SidebarMenuAction
                       aria-label="Filter history"
                       title="Filter"
-                      className="size-6"
+                      className="size-6!"
                       onClick={onOpenFilter}
                     >
                       <RiFilter3Line />

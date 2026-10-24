@@ -235,6 +235,19 @@ describe("SidebarNav", () => {
     }
   })
 
+  it("reserves room for the funnel beside the chevron", () => {
+    renderNav()
+
+    const row = screen.getByTestId("nav-history")
+    const last = row.lastElementChild
+    expect(last?.tagName).toBe("SPAN")
+    expect(last).toHaveClass("ml-auto")
+    expect(last?.querySelector("svg")).not.toBeNull()
+
+    const funnel = screen.getByRole("button", { name: "Filter history" })
+    expect(funnel.className).toContain("size-6!")
+  })
+
   it("shows the staged file count on the Compress row", () => {
     renderNav({ files: [makeEntry(1), makeEntry(2), makeEntry(3)] })
 
