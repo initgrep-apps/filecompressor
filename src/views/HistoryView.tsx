@@ -372,7 +372,9 @@ export function HistoryView() {
                   Reveal folder
                 </Button>
               )}
-              <ClearHistoryButton disabled={clearDisabled} onClear={clearHistory} />
+              {(showSession || unreadable) && (
+                <ClearHistoryButton disabled={clearDisabled} onClear={clearHistory} />
+              )}
             </div>
           </div>
           {showSession && <BatchStats session={session} />}
