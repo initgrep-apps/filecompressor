@@ -515,6 +515,59 @@ describe("App shell", () => {
     expect(await screen.findByRole("dialog")).toBeInTheDocument()
   })
 
+  it("opens the filter from the History row and closes it when the sidebar collapses", async () => {
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    await user.click(
+      within(sidebar()!).getByRole("button", { name: "Filter history" }),
+    )
+
+    const dialog = await screen.findByRole("dialog")
+    expect(
+      within(dialog).getByRole("heading", { name: "Filter history" }),
+    ).toBeInTheDocument()
+
+    fireEvent.keyDown(window, { key: "b", ctrlKey: true })
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+  })
+
+  it("closes the mobile Sheet when a batch row is selected", async () => {
+    window.innerWidth = 760
+    const user = userEvent.setup()
+    const session = makeSession(new Date().setHours(10, 30, 0, 0))
+    stubInvoke({
+      ...emptyHistory,
+      sessions: [session],
+      totalSessions: 1,
+      totalFiles: 2,
+    })
+    renderApp("darwin")
+
+    await waitFor(() =>
+      expect(document.querySelector('[data-slot="sidebar-gap"]')).toBeNull(),
+    )
+    await user.click(
+      within(topBar()).getByRole("button", { name: "Expand sidebar" }),
+    )
+    const sheet = await waitFor(() => {
+      const element = document.querySelector(
+        '[data-slot="sidebar"][data-mobile="true"]',
+      )
+      expect(element).not.toBeNull()
+      return element as HTMLElement
+    })
+
+    await user.click(within(sheet).getByTestId(`batch-${session.sessionId}`))
+
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
+      ).toBeNull(),
+    )
+  })
+
   it("renders the matching view when navigating", async () => {
     const user = userEvent.setup()
     renderApp("darwin")

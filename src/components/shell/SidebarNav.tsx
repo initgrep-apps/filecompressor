@@ -14,12 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { RiArrowDownSLine, RiSettings3Line } from "@remixicon/react"
+import {
+  RiArrowDownSLine,
+  RiFilter3Line,
+  RiSettings3Line,
+} from "@remixicon/react"
 import {
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -28,6 +33,10 @@ import {
 import { cn } from "@/lib/utils"
 import { useCompressionContext } from "@/providers/CompressionProvider"
 import { useHistoryContext } from "@/providers/HistoryProvider"
+import {
+  HistoryList,
+  HISTORY_LIST_ID,
+} from "@/components/history/HistoryList"
 import { NAV_ITEMS, type ShellNavProps } from "@/components/shell/nav"
 import type { ViewId } from "@/types"
 
@@ -48,14 +57,25 @@ const glyphClass = (active: boolean) =>
 const labelClass = (active: boolean) =>
   active ? undefined : "text-muted-foreground"
 
+interface SidebarNavProps extends ShellNavProps {
+  onOpenFilter: () => void
+}
+
 export function SidebarNav({
   activeView,
   onNavigate,
   onOpenSettings,
-}: ShellNavProps) {
+  onOpenFilter,
+}: SidebarNavProps) {
   const { files } = useCompressionContext()
-  const { expanded, setExpanded } = useHistoryContext()
+  const { expanded, setExpanded, filters } = useHistoryContext()
   const { isMobile, setOpenMobile } = useSidebar()
+
+  const hasActiveFilters =
+    (filters.statuses?.length ?? 0) > 0 ||
+    (filters.categories?.length ?? 0) > 0 ||
+    filters.sinceMs !== undefined ||
+    filters.sort === "oldest"
 
   const closeSheet = () => {
     if (isMobile) setOpenMobile(false)
@@ -91,6 +111,9 @@ export function SidebarNav({
                     aria-expanded={
                       item.id === "history" ? expanded : undefined
                     }
+                    aria-controls={
+                      item.id === "history" ? HISTORY_LIST_ID : undefined
+                    }
                     onClick={() => handleNavigate(item.id)}
                     data-testid={`nav-${item.id}`}
                     className={rowClass(active)}
@@ -103,12 +126,29 @@ export function SidebarNav({
                       <RiArrowDownSLine
                         aria-hidden
                         className={cn(
-                          "ml-auto transition-transform",
+                          "pointer-events-none ml-auto transition-transform",
                           expanded && "rotate-180",
                         )}
                       />
                     )}
                   </SidebarMenuButton>
+                  {item.id === "history" && (
+                    <SidebarMenuAction
+                      aria-label="Filter history"
+                      title="Filter"
+                      className="size-6"
+                      onClick={onOpenFilter}
+                    >
+                      <RiFilter3Line />
+                      {hasActiveFilters && (
+                        <span
+                          data-testid="history-filter-dot"
+                          aria-hidden
+                          className="absolute top-1 right-1 size-1.5 rounded-full bg-primary"
+                        />
+                      )}
+                    </SidebarMenuAction>
+                  )}
                   {item.id === "compress" && files.length > 0 && (
                     <SidebarMenuBadge
                       data-testid="nav-count"
@@ -123,6 +163,7 @@ export function SidebarNav({
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
+      {expanded && <HistoryList />}
       <SidebarFooter className="mt-auto">
         <SidebarMenu>
           <SidebarMenuItem>
