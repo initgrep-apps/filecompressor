@@ -57,6 +57,18 @@ A dedicated GitHub Release (tag prefix `sidecars-`) holding freeze bundles for a
 The required pre-build test command (`yarn build && yarn test && cd src-tauri && cargo test`) that must pass on every platform.
 _Avoid_: tests, checks
 
+**Shell**:
+The persistent window frame around the views: sidebar, top bar, dialogs, and the providers that own their state. It never unmounts; only the active view changes.
+_Avoid_: layout, chrome (window chrome is the OS frame — ADR 0007)
+
+**Top bar**:
+The 48px row across the content area: breadcrumb, sidebar toggle, theme toggle, ⋯ menu, and — on Windows/Linux — the window controls. The toggle is always shown on macOS and only while the sidebar is hidden elsewhere; ☰ appears only while it is hidden. It doubles as the drag surface.
+_Avoid_: header, title bar (the title bar belongs to the OS or the macOS overlay)
+
+**Batch list**:
+The scrollable list of history sessions inside the sidebar. Selecting a row focuses that batch's detail and adds its label to the breadcrumb.
+_Avoid_: history list, sidebar list
+
 **Batch**:
 One Compress action: the files staged when the user presses Compress, processed as one unit. Batches never overlap.
 _Avoid_: run, job, queue (a job is one file inside a batch)

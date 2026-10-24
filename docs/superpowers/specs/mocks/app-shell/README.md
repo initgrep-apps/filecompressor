@@ -23,6 +23,10 @@ Static HTML fragments from the design session. Open directly in a browser; each 
 - Category chips ship **five** values — Image, Video, PDF, Document, **Other** — keeping the existing filter scope (the mock shows four; `Other` was cut, current behavior wins).
 - Windows is frameless with the default shadow (Windows 11 rounded corners); no transparent window.
 
+## Revision 2
+
+The 760×500 frames predate the 768px breakpoint decision and still show the old persistent sidebar; read them for content density, not for sidebar state. The 900×640 frames are the desktop reference. The stock mobile Sheet at 760px must be verified separately.
+
 ## Not shown in the mocks
 
 - The search input above the history list (added to preserve the existing search feature).

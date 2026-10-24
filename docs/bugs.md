@@ -4,17 +4,16 @@ Open items only. Resolved investigations belong in git history or as a durable r
 
 ## Bugs
 
-- **Sidebar auto-collapse fights the user** — reported 2026-10-08. At the default 900 px window the sidebar can load already collapsed; opening it manually gets re-collapsed almost immediately once the board is judged cramped. Root: `useAutoCollapse` decides from content width, not user intent. Options: (a) manual-only sidebar + horizontal board scroll, (b) auto-collapse once at run start, sticky afterwards, (c) keep the feature but never re-collapse after a manual open. Sidebar-state persistence (plugin-store vs cookie) is part of the decision. Not fixed.
+No open bugs; the known gaps and accepted limitations below still apply.
 
 ## Known gaps
 
 | Gap | Impact |
 |---|---|
 | No row memoization, list virtualization, or progress throttling | 1000-file batches re-render the active view on every `file:progress`; measurable webview CPU |
-| Sidebar footer hardcodes `v1.0.0` | `package.json` and Tauri say `0.1.0` |
 | File picker passes `filters: []` | Unsupported files are only rejected after selection |
-| History filters/page/search reset on view change | Views unmount; state is view-local by design |
 | `history.jsonl` is re-folded on every `get_history` call | Acceptable while history stays small; cache the fold in `HistoryStore` keyed by `(mtime, len)` if history grows past ~10k records |
+| Linux chrome unverified | Linux builds from source with native decorations while the shell renders non-macOS controls and drag surfaces; no packaging or acceptance run |
 | Manual acceptance matrix not yet run on released builds | CI proves packages start and compress; the UI matrix in `docs/distribution-acceptance.md` is manual |
 
 ## Accepted limitations

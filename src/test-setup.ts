@@ -16,38 +16,6 @@
 
 import '@testing-library/jest-dom/vitest'
 
-export class CapturingResizeObserver implements ResizeObserver {
-  static instances: CapturingResizeObserver[] = []
-
-  observed: Element[] = []
-  callback: ResizeObserverCallback
-
-  constructor(callback: ResizeObserverCallback) {
-    this.callback = callback
-    CapturingResizeObserver.instances.push(this)
-  }
-
-  observe(target: Element): void {
-    this.observed.push(target)
-  }
-
-  unobserve(target: Element): void {
-    this.observed = this.observed.filter((el) => el !== target)
-  }
-
-  disconnect(): void {
-    const instances = CapturingResizeObserver.instances
-    const index = instances.indexOf(this)
-    if (index !== -1) instances.splice(index, 1)
-  }
-}
-
-export function resetCapturedResizeObservers(): void {
-  CapturingResizeObserver.instances = []
-}
-
-globalThis.ResizeObserver = CapturingResizeObserver
-
 if (typeof Element !== 'undefined' && !Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => []
 }

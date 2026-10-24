@@ -31,7 +31,7 @@ Superpowers specs and plans are working artifacts. When a slice merges: digest t
 - **Frontend:** React 19.3 + TypeScript 7.0 + Vite 8.3 (Rolldown)
 - **UI:** shadcn/ui 4.21 on Base UI + Tailwind CSS 4.3 (green oklch theme, preset `bNRvlrmDx`), motion 14, sonner
 - **Font:** Inter (`@fontsource-variable/inter` 5.3)
-- **Plugin:** tauri-plugin-store 2.5, tauri-plugin-dialog 2.8, tauri-plugin-opener 2.7 (no shell plugin)
+- **Plugin:** tauri-plugin-store 2.5, tauri-plugin-dialog 2.8, tauri-plugin-opener 2.7, tauri-plugin-os 2.4, tauri-plugin-window-state 2.5, tauri-plugin-single-instance 2.5 (no shell plugin)
 - **Async:** Tokio 1.x + tokio-util 0.7 (via Tauri)
 - **Image processing:** libvips 8.18.7 (`vips` sidecar; Intel macOS frozen at 8.18.6)
 - **Video processing:** FFmpeg 9.0.2 + ffprobe (sidecars)

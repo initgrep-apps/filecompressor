@@ -598,24 +598,24 @@ git commit -m "feat(history): focus the history view on the selected batch"
 - Modify: `docs/ARCHITECTURE.md`, `docs/FEATURES.md`, `docs/bugs.md`, `GLOSSARY.md`, `docs/superpowers/specs/mocks/app-shell/README.md`
 - Create: `docs/adr/0007-platform-window-chrome.md`
 
-- [ ] **Step 1: Delete the auto-collapse hook and remaining references**
+- [x] **Step 1: Delete the auto-collapse hook and remaining references**
 
 Remove the hook, its tests, and any remaining imports. `grep -r useAutoCollapse src` must return nothing. Also remove the ResizeObserver assertions it left behind in `App.test.tsx:305-334` and `CompressView.test.tsx:636-660`.
 
-- [ ] **Step 2: Write the ADR**
+- [x] **Step 2: Write the ADR**
 
 Record: overlay title bar on macOS, frameless on Windows with default shadow (Linux deferred), plugin-os detection, custom drag/zoom, stock shadcn sidebar (offcanvas + Sheet, no fork), custom macOS menu without About, guarded quit path, window-state + single-instance, no transparent windows, Overlay drag limitation (window cannot be dragged while unfocused, tauri#4316), rejected alternatives.
 
-- [ ] **Step 3: Update the durable docs**
+- [x] **Step 3: Update the durable docs**
 
 ARCHITECTURE §3–§4 (components, state ownership, no settings view, `sort`, plugin-os, window-state, single-instance, stock sidebar); FEATURES rows 1/3/11/12 plus this slice; bugs (remove the auto-collapse item; add `history.jsonl` fold-cache note and "Linux chrome unverified"); GLOSSARY (shell, top bar, batch list). ADR 0007 records the custom macOS menu and the guarded quit path.
 
-- [ ] **Step 4: Run the full gate**
+- [x] **Step 4: Run the full gate**
 
 Run: `yarn build && yarn test && cd src-tauri && cargo test`
 Expected: PASS, exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add -A
