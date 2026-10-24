@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 const { useHistoryMock } = vi.hoisted(() => ({
@@ -208,28 +208,28 @@ beforeEach(() => {
 })
 
 describe("HistoryList", () => {
-  it("pins the search above, and the pagination below, the only scroller", () => {
+  it("pins the pagination below the only scroller", () => {
     renderList({ totalSessions: 120 })
 
     const area = scrollArea()
     expect(area).not.toBeNull()
     expect(area!.className).toContain("min-h-0")
     expect(area!.className).toContain("flex-1")
-    expect(
-      area!.querySelector('[data-slot="sidebar-menu-sub"]'),
-    ).not.toBeNull()
-    expect(area).not.toContainElement(
-      screen.getByLabelText("Search history"),
-    )
+    expect(batchList()).toBeInTheDocument()
+    expect(area).toContainElement(batchList())
     expect(area).not.toContainElement(screen.getByText(/Page \d+ of/))
 
     const root = area!.parentElement!
     const children = [...root.children]
-    const search = screen.getByLabelText("Search history").parentElement!
     const pagination = screen.getByText(/Page \d+ of/).parentElement!
 
-    expect(children.indexOf(search)).toBeLessThan(children.indexOf(area!))
     expect(children.indexOf(area!)).toBeLessThan(children.indexOf(pagination))
+  })
+
+  it("does not render a history search field", () => {
+    renderList()
+
+    expect(screen.queryByRole("textbox", { name: /search/i })).toBeNull()
   })
 
   it("renders each batch with its label, meta line, and saved percent", () => {
@@ -382,19 +382,13 @@ describe("HistoryList", () => {
     expect(onOpenHistory).toHaveBeenCalledTimes(1)
   })
 
-  it("debounces the search into the history filters", async () => {
-    const user = userEvent.setup()
-    const { setFilters } = renderList()
+  it("keeps the batch list free of the sub-menu inset and left rule", () => {
+    renderList()
 
-    await user.type(screen.getByLabelText("Search history"), "hero")
-
-    await waitFor(
-      () =>
-        expect(setFilters).toHaveBeenCalledWith(
-          expect.objectContaining({ search: "hero" }),
-        ),
-      { timeout: 2_000 },
-    )
+    const list = batchList()
+    expect(list.tagName).toBe("UL")
+    expect(list.className).not.toContain("border-l")
+    expect(list.className).not.toContain("mx-3.5")
   })
 
   it("disables Previous on the first page and pages forward", async () => {

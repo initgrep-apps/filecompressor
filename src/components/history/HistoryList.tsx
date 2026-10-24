@@ -14,15 +14,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { RiArrowLeftSLine, RiArrowRightSLine } from "@remixicon/react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  SidebarInput,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
+  SidebarMenuButton,
   useSidebar,
 } from "@/components/ui/sidebar"
 import {
@@ -33,7 +29,9 @@ import {
   sessionSummary,
 } from "@/lib/historyFormat"
 import { useHistoryContext } from "@/providers/HistoryProvider"
+import { cn } from "@/lib/utils"
 import type { HistorySession } from "@/types"
+import { RiArrowLeftSLine, RiArrowRightSLine } from "@remixicon/react"
 
 export const HISTORY_LIST_ID = "history-batch-list"
 
@@ -65,8 +63,6 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
     loading,
     error,
     filters,
-    searchText,
-    setSearchText,
     page,
     setPage,
     selectedSessionId,
@@ -95,21 +91,16 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
 
   return (
     <>
-      <div className="px-2">
-        <SidebarInput
-          aria-label="Search history"
-          placeholder="Search history"
-          value={searchText}
-          onChange={(event) => setSearchText(event.target.value)}
-        />
-      </div>
       <ScrollArea className="min-h-0 flex-1">
-        <SidebarMenuSub
+        <ul
           id={HISTORY_LIST_ID}
           role="group"
           aria-label="Batches"
           aria-busy={loading}
-          className={loading && response !== null ? "opacity-60" : undefined}
+          className={cn(
+            "flex min-w-0 flex-col gap-0.5 px-2 py-1",
+            loading && response !== null && "opacity-60",
+          )}
         >
           {error !== null ? (
             <li
@@ -130,16 +121,12 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
             </li>
           ) : initialLoading ? (
             Array.from({ length: 3 }, (_, index) => (
-              <SidebarMenuSubItem
-                key={`skeleton-${index}`}
-                data-testid="batch-skeleton"
-                aria-hidden
-              >
+              <li key={`skeleton-${index}`} data-testid="batch-skeleton" aria-hidden>
                 <div className="flex flex-col gap-1.5 px-2 py-1">
                   <Skeleton className="h-3.5 w-3/4" />
                   <Skeleton className="h-2.5 w-1/2" />
                 </div>
-              </SidebarMenuSubItem>
+              </li>
             ))
           ) : filteredEmpty ? (
             <li className="px-2 py-1 text-xs text-muted-foreground">
@@ -153,11 +140,10 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
             sessions.map((session) => {
               const row = sessionRow(session)
               return (
-                <SidebarMenuSubItem key={session.sessionId}>
-                  <SidebarMenuSubButton
-                    render={<button type="button" />}
+                <li key={session.sessionId}>
+                  <SidebarMenuButton
                     isActive={selectedSessionId === session.sessionId}
-                    className="h-auto w-full items-start px-2 py-1"
+                    className="h-auto items-start px-2 py-1"
                     data-testid={`batch-${session.sessionId}`}
                     onClick={() => openSession(session.sessionId)}
                   >
@@ -178,12 +164,12 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
                     >
                       {row.right}
                     </span>
-                  </SidebarMenuSubButton>
-                </SidebarMenuSubItem>
+                  </SidebarMenuButton>
+                </li>
               )
             })
           )}
-        </SidebarMenuSub>
+        </ul>
       </ScrollArea>
       {response !== null && totalPages > 1 && (
         <div className="flex items-center justify-between px-3 pb-1">

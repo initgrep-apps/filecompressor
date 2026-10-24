@@ -41,23 +41,6 @@ import {
 import { NAV_ITEMS, type ShellNavProps } from "@/components/shell/nav"
 import type { ViewId } from "@/types"
 
-const rowClass = (active: boolean) =>
-  cn(
-    "border",
-    active
-      ? "border-primary/30 [&[data-active]]:bg-primary/10"
-      : "border-transparent",
-  )
-
-const glyphClass = (active: boolean) =>
-  cn(
-    "flex size-7 items-center justify-center rounded-lg",
-    active ? "bg-primary/15 text-primary" : "bg-muted",
-  )
-
-const labelClass = (active: boolean) =>
-  active ? undefined : "text-muted-foreground"
-
 interface SidebarNavProps extends ShellNavProps {
   onOpenFilter: () => void
 }
@@ -79,7 +62,7 @@ export function SidebarNav({
   }
 
   const handleNavigate = (view: ViewId) => {
-    if (view === "history" && activeView === "history") {
+    if (view === "history") {
       setExpanded(!expanded)
       closeSheet()
       return
@@ -115,31 +98,30 @@ export function SidebarNav({
                     }
                     onClick={() => handleNavigate(item.id)}
                     data-testid={`nav-${item.id}`}
-                    className={rowClass(active)}
+                    className="text-muted-foreground data-active:text-sidebar-accent-foreground"
                   >
-                    <span className={glyphClass(active)}>
-                      <Icon />
-                    </span>
-                    <span className={labelClass(active)}>{item.label}</span>
+                    <Icon />
+                    <span>{item.label}</span>
                     {item.id === "history" && (
-                      <span
+                      <RiArrowDownSLine
                         aria-hidden
-                        className="pointer-events-none ml-auto flex"
-                      >
-                        <RiArrowDownSLine
-                          className={cn(
-                            "transition-transform",
-                            expanded && "rotate-180",
-                          )}
-                        />
-                      </span>
+                        className={cn(
+                          "ml-0.5 shrink-0 text-muted-foreground transition-transform",
+                          !expanded && "-rotate-90",
+                        )}
+                      />
                     )}
                   </SidebarMenuButton>
                   {item.id === "history" && (
                     <SidebarMenuAction
                       aria-label="Filter history"
                       title="Filter"
-                      className="size-6!"
+                      className={cn(
+                        "size-6! transition-opacity",
+                        hasActiveFilters
+                          ? "opacity-100"
+                          : "opacity-0 group-hover/menu-item:opacity-100 focus-visible:opacity-100 group-focus-within/menu-item:opacity-100",
+                      )}
                       onClick={onOpenFilter}
                     >
                       <RiFilter3Line />
@@ -176,10 +158,9 @@ export function SidebarNav({
               size="lg"
               onClick={openSettings}
               data-testid="nav-settings"
+              className="text-muted-foreground"
             >
-              <span className={glyphClass(false)}>
-                <RiSettings3Line />
-              </span>
+              <RiSettings3Line />
               <span>Settings</span>
             </SidebarMenuButton>
           </SidebarMenuItem>

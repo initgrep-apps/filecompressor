@@ -176,17 +176,17 @@ describe("SidebarNav", () => {
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
-  it("navigates to History without collapsing the list from another view", async () => {
+  it("toggles the batch list without navigating", async () => {
     const user = userEvent.setup()
     const { onNavigate, setExpanded } = renderNav()
 
     await user.click(screen.getByRole("button", { name: /History/ }))
 
-    expect(onNavigate).toHaveBeenCalledWith("history")
-    expect(setExpanded).not.toHaveBeenCalled()
+    expect(setExpanded).toHaveBeenCalledWith(true)
+    expect(onNavigate).not.toHaveBeenCalled()
   })
 
-  it("toggles the expanded list when History is already active", async () => {
+  it("collapses the expanded list when History is clicked again", async () => {
     const user = userEvent.setup()
     const { onNavigate, setExpanded } = renderNav({
       activeView: "history",
@@ -228,26 +228,32 @@ describe("SidebarNav", () => {
     )
   })
 
-  it("renders a glyph in every nav row", () => {
+  it("renders an icon in every nav row", () => {
     renderNav()
 
-    for (const id of ["nav-compress", "nav-history"]) {
+    for (const id of ["nav-compress", "nav-history", "nav-settings"]) {
       const row = screen.getByTestId(id)
-      expect(row.firstElementChild?.querySelector("svg")).not.toBeNull()
+      expect(row.querySelector(":scope > svg")).not.toBeNull()
     }
   })
 
-  it("reserves room for the funnel beside the chevron", () => {
-    renderNav()
+  it("puts the chevron beside the label and the funnel at the far edge", () => {
+    renderNav({ expanded: false })
 
     const row = screen.getByTestId("nav-history")
-    const last = row.lastElementChild
-    expect(last?.tagName).toBe("SPAN")
-    expect(last).toHaveClass("ml-auto")
-    expect(last?.querySelector("svg")).not.toBeNull()
+    expect(row.querySelector(":scope > svg:last-of-type")).not.toBeNull()
 
     const funnel = screen.getByRole("button", { name: "Filter history" })
     expect(funnel.className).toContain("size-6!")
+    expect(funnel.className).toContain("opacity-0")
+    expect(funnel.className).toContain("group-hover/menu-item:opacity-100")
+  })
+
+  it("keeps the funnel visible while filters are active", () => {
+    renderNav({ filters: { categories: ["image"] } })
+
+    const funnel = screen.getByRole("button", { name: "Filter history" })
+    expect(funnel.className).not.toContain("opacity-0")
   })
 
   it("shows the staged file count on the Compress row", () => {
@@ -261,10 +267,10 @@ describe("SidebarNav", () => {
 
   it("renders the history list only while expanded", () => {
     renderNav({ expanded: false })
-    expect(screen.queryByLabelText("Search history")).toBeNull()
+    expect(document.getElementById(HISTORY_LIST_ID)).toBeNull()
 
     renderNav({ expanded: true })
-    expect(screen.getAllByLabelText("Search history")).toHaveLength(1)
+    expect(document.getElementById(HISTORY_LIST_ID)).not.toBeNull()
   })
 
   it("links the History row to the batch list", () => {
@@ -367,7 +373,7 @@ describe("SidebarNav", () => {
     expect(onNavigate).toHaveBeenCalledWith("history")
   })
 
-  it("pins the nav, search, pagination, and footer around the list", () => {
+  it("pins the nav, pagination, and footer around the list", () => {
     renderNav({ expanded: true, totalSessions: 120 })
 
     const area = scrollArea()
@@ -381,20 +387,18 @@ describe("SidebarNav", () => {
     const navGroup = screen
       .getByTestId("nav-compress")
       .closest('[data-slot="sidebar-group"]')
-    const search = screen.getByLabelText("Search history")
     const pagination = screen.getByText(/Page 1 of/)
     const footer = screen
       .getByTestId("nav-settings")
       .closest('[data-slot="sidebar-footer"]')
 
-    for (const sibling of [navGroup, search, pagination, footer]) {
+    for (const sibling of [navGroup, pagination, footer]) {
       expect(sibling).not.toBeNull()
       expect(area).not.toContainElement(sibling as HTMLElement)
     }
 
     expect(navGroup!.parentElement).toBe(root)
     expect(footer!.parentElement).toBe(root)
-    expect(search.closest('[data-slot="sidebar-content"]')).toBe(root)
     expect(pagination.closest('[data-slot="sidebar-content"]')).toBe(root)
   })
 })

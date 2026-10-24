@@ -229,6 +229,18 @@ describe("HistoryFilterDialog", () => {
     }
   })
 
+  it("marks the pressed chips with a visible selected style", () => {
+    renderDialog()
+
+    fireEvent.click(button("PDF"))
+
+    const chip = button("PDF")
+    expect(chip).toHaveAttribute("aria-pressed", "true")
+    expect(chip).toHaveAttribute("data-pressed")
+    expect(chip.className).toContain("data-[pressed]:bg-primary/15")
+    expect(chip.className).toContain("data-[pressed]:border-primary/50")
+  })
+
   it("toggles Image and Other", () => {
     const { onApply } = renderDialog()
 

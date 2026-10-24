@@ -71,7 +71,7 @@ export function TopBar({
     <DragSurface
       data-testid="top-bar"
       className={cn(
-        "flex h-12 shrink-0 items-center gap-1.5 border-b border-border px-3",
+        "flex h-12 shrink-0 items-center gap-1.5 px-3",
         isDarwin && !visible && "pl-22",
       )}
     >

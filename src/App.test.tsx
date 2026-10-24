@@ -293,13 +293,18 @@ describe("App shell", () => {
 
   it("updates the breadcrumb when switching views", async () => {
     const user = userEvent.setup()
+    const session = makeSession(new Date().getTime())
+    stubInvoke({
+      ...emptyHistory,
+      sessions: [session],
+      totalSessions: 1,
+      totalFiles: 2,
+    })
     renderApp("darwin")
 
     expect(within(topBar()).getByText("Compress")).toBeInTheDocument()
 
-    await user.click(
-      within(sidebar()!).getByRole("button", { name: /History/ }),
-    )
+    await user.click(await screen.findByTestId("batch-s1"))
 
     expect(within(topBar()).getByText("History")).toBeInTheDocument()
     expect(within(topBar()).queryByText("Compress")).toBeNull()
@@ -324,9 +329,7 @@ describe("App shell", () => {
     })
     renderApp("darwin")
 
-    await user.click(
-      within(sidebar()!).getByRole("button", { name: /History/ }),
-    )
+    await user.click(await screen.findByTestId("batch-s1"))
 
     const label = batchLabel(started.getTime(), new Date())
     await waitFor(() =>
@@ -376,7 +379,7 @@ describe("App shell", () => {
         document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
       ).toBeNull(),
     )
-    expect(within(topBar()).getByText("History")).toBeInTheDocument()
+    expect(within(topBar()).getByText("Compress")).toBeInTheDocument()
     expect(topBar().className).toContain("pl-22")
 
     await user.click(
@@ -392,7 +395,7 @@ describe("App shell", () => {
     const activeHistoryRow = within(reopenedSheet).getByRole("button", {
       name: /History/,
     })
-    expect(activeHistoryRow).toHaveAttribute("aria-expanded", "true")
+    expect(activeHistoryRow).toHaveAttribute("aria-expanded", "false")
 
     await user.click(activeHistoryRow)
 
@@ -401,6 +404,7 @@ describe("App shell", () => {
         document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
       ).toBeNull(),
     )
+    expect(within(topBar()).getByText("Compress")).toBeInTheDocument()
   })
 
   it("caps the shell height and keeps the view container clipped", () => {
@@ -604,6 +608,13 @@ describe("App shell", () => {
 
   it("renders the matching view when navigating", async () => {
     const user = userEvent.setup()
+    const session = makeSession(new Date().getTime())
+    stubInvoke({
+      ...emptyHistory,
+      sessions: [session],
+      totalSessions: 1,
+      totalFiles: 2,
+    })
     renderApp("darwin")
 
     expect(screen.getByTestId("view-container")).toHaveAttribute(
@@ -614,13 +625,12 @@ describe("App shell", () => {
       screen.getByRole("button", { name: /drop files/i }),
     ).toBeInTheDocument()
 
-    await user.click(within(sidebar()!).getByRole("button", { name: /History/ }))
+    await user.click(await screen.findByTestId("batch-s1"))
 
     expect(screen.getByTestId("view-container")).toHaveAttribute(
       "data-view",
       "history",
     )
-    expect(await screen.findByText("No history yet")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /drop files/i })).toBeNull()
 
     await user.click(
@@ -652,10 +662,7 @@ describe("App shell", () => {
     })
     renderApp("darwin")
 
-    await user.click(
-      await screen.findByRole("button", { name: "Select second session" }),
-    )
-    await user.click(within(sidebar()!).getByRole("button", { name: /History/ }))
+    await user.click(await screen.findByTestId("batch-s2"))
 
     const secondLabel = batchLabel(secondSession.startedAt, new Date())
     const firstLabel = batchLabel(firstSession.startedAt, new Date())
