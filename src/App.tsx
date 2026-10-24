@@ -27,7 +27,6 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarProvider,
-  SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
 import { Toaster } from "@/components/ui/sonner"
@@ -36,6 +35,7 @@ import { SettingsDialog } from "@/components/SettingsDialog"
 import { HistoryFilterDialog } from "@/components/history/HistoryFilterDialog"
 import { DragSurface } from "@/components/shell/DragSurface"
 import type { DialogId } from "@/components/shell/nav"
+import { SidebarActions } from "@/components/shell/SidebarActions"
 import { SidebarNav } from "@/components/shell/SidebarNav"
 import { QuitGuard } from "@/components/shell/QuitGuard"
 import { TopBar } from "@/components/shell/TopBar"
@@ -56,12 +56,12 @@ const stopPropagation = (event: MouseEvent) => event.stopPropagation()
 function ShellSidebarHeader() {
   const platform = usePlatform()
   const { isMobile } = useSidebar()
-  const showControls = isMobile || platform !== "darwin"
+  const showBrand = isMobile || platform !== "darwin"
 
   return (
-    <SidebarHeader className="h-12 justify-center p-2">
-      <DragSurface className="flex h-full items-center gap-1">
-        {showControls && (
+    <SidebarHeader className="h-12 flex-row items-center gap-1 p-2">
+      <DragSurface className="flex h-full flex-1 items-center gap-1">
+        {showBrand && (
           <div
             className="flex items-center gap-1"
             onMouseDown={stopPropagation}
@@ -70,10 +70,10 @@ function ShellSidebarHeader() {
             <span className="flex size-7 items-center justify-center rounded-lg bg-primary/15 text-primary">
               <RiFileShield2Line size={16} />
             </span>
-            <SidebarTrigger title="Toggle sidebar" />
           </div>
         )}
       </DragSurface>
+      <SidebarActions />
     </SidebarHeader>
   )
 }

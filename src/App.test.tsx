@@ -225,13 +225,18 @@ describe("App shell", () => {
     ).toContain("overflow-hidden")
   })
 
-  it("keeps the macOS toggle in both states and reveals ☰ with clearance when collapsed", async () => {
+  it("moves the toggle from the sidebar header to the top bar when collapsed", async () => {
     const user = userEvent.setup()
     renderApp("darwin")
 
     expect(
-      within(topBar()).getByRole("button", { name: "Collapse sidebar" }),
+      within(sidebarHeader()).getByRole("button", {
+        name: "Collapse sidebar",
+      }),
     ).toBeInTheDocument()
+    expect(
+      within(topBar()).queryByRole("button", { name: /sidebar/i }),
+    ).toBeNull()
     expect(
       within(topBar()).queryByRole("button", { name: "Open navigation" }),
     ).toBeNull()
@@ -239,10 +244,11 @@ describe("App shell", () => {
       within(topBar()).queryByRole("button", { name: "Minimize" }),
     ).toBeNull()
     expect(topBar().className).not.toContain("pl-22")
-    expect(sidebarHeader().textContent).toBe("")
 
     await user.click(
-      within(topBar()).getByRole("button", { name: "Collapse sidebar" }),
+      within(sidebarHeader()).getByRole("button", {
+        name: "Collapse sidebar",
+      }),
     )
 
     const root = sidebar()!
@@ -746,7 +752,9 @@ describe("App shell", () => {
     renderApp("darwin")
 
     await user.click(
-      within(topBar()).getByRole("button", { name: "Collapse sidebar" }),
+      within(sidebarHeader()).getByRole("button", {
+        name: "Collapse sidebar",
+      }),
     )
     await user.click(
       within(topBar()).getByRole("button", { name: "Open navigation" }),

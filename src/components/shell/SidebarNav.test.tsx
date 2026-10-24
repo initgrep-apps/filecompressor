@@ -213,6 +213,9 @@ describe("SidebarNav", () => {
   it("marks the active row", () => {
     renderNav({ activeView: "history" })
 
+    expect(screen.getByTestId("nav-history").getAttribute("data-slot")).toBe(
+      "item",
+    )
     expect(screen.getByTestId("nav-compress").hasAttribute("data-active")).toBe(
       false,
     )
@@ -233,7 +236,7 @@ describe("SidebarNav", () => {
 
     for (const id of ["nav-compress", "nav-history", "nav-settings"]) {
       const row = screen.getByTestId(id)
-      expect(row.querySelector(":scope > svg")).not.toBeNull()
+      expect(row.querySelector('[data-slot="item-media"] svg')).not.toBeNull()
     }
   })
 
@@ -241,7 +244,9 @@ describe("SidebarNav", () => {
     renderNav({ expanded: false })
 
     const row = screen.getByTestId("nav-history")
-    expect(row.querySelector(":scope > svg:last-of-type")).not.toBeNull()
+    expect(
+      row.querySelector('[data-slot="item-title"] svg'),
+    ).not.toBeNull()
 
     const funnel = screen.getByRole("button", { name: "Filter history" })
     expect(funnel.className).toContain("size-6!")

@@ -26,10 +26,15 @@ import {
   SidebarMenu,
   SidebarMenuAction,
   SidebarMenuBadge,
-  SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
+import {
+  Item,
+  ItemContent,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item"
 import { cn } from "@/lib/utils"
 import { activeFilterCount } from "@/lib/historyFormat"
 import { useCompressionContext } from "@/providers/CompressionProvider"
@@ -80,14 +85,16 @@ export function SidebarNav({
     <>
       <SidebarGroup>
         <SidebarGroupContent>
-          <SidebarMenu>
+          <SidebarMenu className="gap-1.5">
             {NAV_ITEMS.map((item) => {
               const active = activeView === item.id
               const Icon = item.icon
               return (
                 <SidebarMenuItem key={item.id}>
-                  <SidebarMenuButton
-                    isActive={active}
+                  <Item
+                    render={<button type="button" />}
+                    size="sm"
+                    data-active={active ? "" : undefined}
                     aria-expanded={
                       item.id === "history" ? expanded : undefined
                     }
@@ -98,26 +105,32 @@ export function SidebarNav({
                     }
                     onClick={() => handleNavigate(item.id)}
                     data-testid={`nav-${item.id}`}
-                    className="text-muted-foreground data-active:text-sidebar-accent-foreground"
+                    className="text-muted-foreground hover:bg-sidebar-accent data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
                   >
-                    <Icon />
-                    <span>{item.label}</span>
-                    {item.id === "history" && (
-                      <RiArrowDownSLine
-                        aria-hidden
-                        className={cn(
-                          "ml-0.5 shrink-0 text-muted-foreground transition-transform",
-                          !expanded && "-rotate-90",
+                    <ItemMedia variant="icon">
+                      <Icon />
+                    </ItemMedia>
+                    <ItemContent>
+                      <ItemTitle>
+                        {item.label}
+                        {item.id === "history" && (
+                          <RiArrowDownSLine
+                            aria-hidden
+                            className={cn(
+                              "size-4 shrink-0 text-muted-foreground transition-transform",
+                              !expanded && "-rotate-90",
+                            )}
+                          />
                         )}
-                      />
-                    )}
-                  </SidebarMenuButton>
+                      </ItemTitle>
+                    </ItemContent>
+                  </Item>
                   {item.id === "history" && (
                     <SidebarMenuAction
                       aria-label="Filter history"
                       title="Filter"
                       className={cn(
-                        "size-6! transition-opacity",
+                        "top-1/2 right-2 size-6! -translate-y-1/2 transition-opacity",
                         hasActiveFilters
                           ? "opacity-100"
                           : "opacity-0 group-hover/menu-item:opacity-100 focus-visible:opacity-100 group-focus-within/menu-item:opacity-100",
@@ -154,15 +167,19 @@ export function SidebarNav({
       <SidebarFooter className="mt-auto">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton
-              size="lg"
+            <Item
+              render={<button type="button" />}
               onClick={openSettings}
               data-testid="nav-settings"
-              className="text-muted-foreground"
+              className="text-muted-foreground hover:bg-sidebar-accent"
             >
-              <RiSettings3Line />
-              <span>Settings</span>
-            </SidebarMenuButton>
+              <ItemMedia variant="icon">
+                <RiSettings3Line />
+              </ItemMedia>
+              <ItemContent>
+                <ItemTitle>Settings</ItemTitle>
+              </ItemContent>
+            </Item>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>

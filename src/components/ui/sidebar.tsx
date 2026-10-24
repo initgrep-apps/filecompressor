@@ -23,7 +23,10 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { RiSideBarLine } from "@remixicon/react"
+import {
+  RiSidebarFoldLine,
+  RiSidebarUnfoldLine,
+} from "@remixicon/react"
 
 const SIDEBAR_COOKIE_NAME = "sidebar_state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
@@ -256,7 +259,9 @@ function SidebarTrigger({
   onClick,
   ...props
 }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar } = useSidebar()
+  const { isMobile, open, openMobile, toggleSidebar } = useSidebar()
+  const expanded = isMobile ? openMobile : open
+  const label = expanded ? "Collapse sidebar" : "Expand sidebar"
 
   return (
     <Button
@@ -265,14 +270,15 @@ function SidebarTrigger({
       variant="ghost"
       size="icon-sm"
       className={cn(className)}
+      aria-label={label}
+      title={label}
       onClick={(event) => {
         onClick?.(event)
         toggleSidebar()
       }}
       {...props}
     >
-      <RiSideBarLine />
-      <span className="sr-only">Toggle Sidebar</span>
+      {expanded ? <RiSidebarFoldLine /> : <RiSidebarUnfoldLine />}
     </Button>
   )
 }

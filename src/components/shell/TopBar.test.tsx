@@ -131,13 +131,13 @@ afterEach(() => {
 })
 
 describe("TopBar", () => {
-  it("shows the toggle, breadcrumb, theme toggle, and app menu on macOS with the sidebar open", () => {
+  it("leaves the toggle to the sidebar and keeps the breadcrumb on macOS", () => {
     renderTopBar()
 
     const bar = topBar()
     expect(
-      within(bar).getByRole("button", { name: "Collapse sidebar" }),
-    ).toBeInTheDocument()
+      within(bar).queryByRole("button", { name: /sidebar/i }),
+    ).toBeNull()
     expect(
       within(bar).queryByRole("button", { name: "Open navigation" }),
     ).toBeNull()
@@ -212,10 +212,10 @@ describe("TopBar", () => {
   })
 
   it("starts dragging from the bar but not from its buttons", () => {
-    renderTopBar()
+    renderTopBar({ open: false })
 
     fireEvent.mouseDown(
-      within(topBar()).getByRole("button", { name: "Collapse sidebar" }),
+      within(topBar()).getByRole("button", { name: "Expand sidebar" }),
       { buttons: 1, detail: 1 },
     )
     expect(win.startDragging).not.toHaveBeenCalled()
@@ -268,8 +268,8 @@ describe("TopBar", () => {
       .click(within(topBar()).getByRole("button", { name: "Expand sidebar" }))
 
     expect(
-      within(topBar()).getByRole("button", { name: "Collapse sidebar" }),
-    ).toBeInTheDocument()
+      within(topBar()).queryByRole("button", { name: /sidebar/i }),
+    ).toBeNull()
     expect(
       within(topBar()).queryByRole("button", { name: "Open navigation" }),
     ).toBeNull()

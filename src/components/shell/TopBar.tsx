@@ -18,20 +18,16 @@ import type { MouseEvent } from "react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { toast } from "sonner"
 import {
-  RiSidebarFoldLine,
-  RiSidebarUnfoldLine,
-} from "@remixicon/react"
-import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbList,
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
-import { Button } from "@/components/ui/button"
 import { useSidebar } from "@/components/ui/sidebar"
 import { AppMenu } from "@/components/shell/AppMenu"
 import { DragSurface } from "@/components/shell/DragSurface"
+import { SidebarActions } from "@/components/shell/SidebarActions"
 import { NavMenu } from "@/components/shell/NavMenu"
 import { ThemeToggle } from "@/components/shell/ThemeToggle"
 import { WindowControls } from "@/components/shell/WindowControls"
@@ -54,7 +50,7 @@ export function TopBar({
   onOpenAbout,
 }: TopBarProps) {
   const platform = usePlatform()
-  const { isMobile, open, openMobile, toggleSidebar } = useSidebar()
+  const { isMobile, open, openMobile } = useSidebar()
   const { response, selectedSessionId } = useHistoryContext()
 
   const visible = isMobile ? openMobile : open
@@ -80,17 +76,7 @@ export function TopBar({
         onMouseDown={stopPropagation}
         onDoubleClick={stopPropagation}
       >
-        {(isDarwin || !visible) && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={visible ? "Collapse sidebar" : "Expand sidebar"}
-            title={visible ? "Collapse sidebar" : "Expand sidebar"}
-            onClick={toggleSidebar}
-          >
-            {visible ? <RiSidebarFoldLine /> : <RiSidebarUnfoldLine />}
-          </Button>
-        )}
+        {!visible && <SidebarActions />}
         {!visible && (
           <NavMenu
             activeView={activeView}

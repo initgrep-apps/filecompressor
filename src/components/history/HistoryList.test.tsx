@@ -260,8 +260,9 @@ describe("HistoryList", () => {
 
     const row = screen.getByTestId("batch-s1")
     expect(row.className).toContain("w-full")
-    expect(row.className).toContain("px-2")
-    expect(row.className).toContain("py-1")
+    expect(row.className).toContain("px-2.5")
+    expect(row.className).toContain("py-2")
+    expect(row.getAttribute("data-slot")).toBe("item")
   })
 
   it("uses totalSavedBytes for an unfiltered session", () => {
@@ -464,8 +465,8 @@ describe("HistoryList", () => {
     expect(batchList()).toHaveAttribute("aria-busy", "true")
     expect(screen.getAllByTestId("batch-skeleton")).toHaveLength(3)
     const skeletonRow = screen.getAllByTestId("batch-skeleton")[0].firstElementChild!
-    expect(skeletonRow.className).toContain("px-2")
-    expect(skeletonRow.className).toContain("py-1")
+    expect(skeletonRow.className).toContain("px-2.5")
+    expect(skeletonRow.className).toContain("py-2")
     expect(
       document.querySelectorAll('[data-slot="skeleton"]').length,
     ).toBeGreaterThan(0)
@@ -497,7 +498,7 @@ describe("HistoryList", () => {
     renderList()
 
     expect(screen.getByText("No batches yet.")).toBeInTheDocument()
-    expect(screen.getByText("No batches yet.").className).toContain("px-2 py-1")
+    expect(screen.getByText("No batches yet.").className).toContain("px-2.5 py-2")
     expect(screen.queryByText(/Page \d+ of/)).toBeNull()
     expect(screen.queryByRole("button", { name: "Previous page" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Next page" })).toBeNull()
@@ -542,7 +543,7 @@ describe("HistoryList", () => {
     const alert = screen.getByRole("alert")
     expect(alert).toHaveTextContent("Could not load history: boom")
     expect(alert.className).toContain("text-muted-foreground")
-    expect(alert.className).toContain("px-2 py-1")
+    expect(alert.className).toContain("px-2.5 py-2")
     expect(screen.queryByText(/Page \d+ of/)).toBeNull()
     expect(screen.queryByRole("button", { name: "Previous page" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Next page" })).toBeNull()
