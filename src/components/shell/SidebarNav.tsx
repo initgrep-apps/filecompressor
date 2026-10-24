@@ -31,6 +31,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
+import { activeFilterCount } from "@/lib/historyFormat"
 import { useCompressionContext } from "@/providers/CompressionProvider"
 import { useHistoryContext } from "@/providers/HistoryProvider"
 import {
@@ -71,11 +72,7 @@ export function SidebarNav({
   const { expanded, setExpanded, filters } = useHistoryContext()
   const { isMobile, setOpenMobile } = useSidebar()
 
-  const hasActiveFilters =
-    (filters.statuses?.length ?? 0) > 0 ||
-    (filters.categories?.length ?? 0) > 0 ||
-    filters.sinceMs !== undefined ||
-    filters.sort === "oldest"
+  const hasActiveFilters = activeFilterCount(filters) > 0
 
   const closeSheet = () => {
     if (isMobile) setOpenMobile(false)
@@ -112,7 +109,9 @@ export function SidebarNav({
                       item.id === "history" ? expanded : undefined
                     }
                     aria-controls={
-                      item.id === "history" ? HISTORY_LIST_ID : undefined
+                      item.id === "history" && expanded
+                        ? HISTORY_LIST_ID
+                        : undefined
                     }
                     onClick={() => handleNavigate(item.id)}
                     data-testid={`nav-${item.id}`}
@@ -163,7 +162,7 @@ export function SidebarNav({
           </SidebarMenu>
         </SidebarGroupContent>
       </SidebarGroup>
-      {expanded && <HistoryList />}
+      {expanded && <HistoryList onNavigate={onNavigate} />}
       <SidebarFooter className="mt-auto">
         <SidebarMenu>
           <SidebarMenuItem>

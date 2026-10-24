@@ -30,7 +30,10 @@ import {
   SidebarContent,
   SidebarProvider,
 } from "@/components/ui/sidebar"
-import { HistoryProvider } from "@/providers/HistoryProvider"
+import {
+  HistoryProvider,
+  useHistoryContext,
+} from "@/providers/HistoryProvider"
 import {
   batchLabel,
   fileCountLabel,
@@ -38,6 +41,7 @@ import {
 } from "@/lib/historyFormat"
 import type {
   HistoryFile,
+  HistoryFilters,
   HistoryResponse,
   HistorySession,
 } from "@/types"
@@ -119,27 +123,44 @@ function makeResponse(
   }
 }
 
+function SelectionProbe() {
+  const { selectedSessionId } = useHistoryContext()
+  return (
+    <span data-testid="selected-session">{selectedSessionId ?? "none"}</span>
+  )
+}
+
 function renderList({
   sessions = [],
   page = 0,
   pageSize = 50,
   totalSessions = sessions.length,
+  loading = false,
+  error = null,
+  filters = {},
+  response,
 }: {
   sessions?: HistorySession[]
   page?: number
   pageSize?: number
   totalSessions?: number
+  loading?: boolean
+  error?: string | null
+  filters?: HistoryFilters
+  response?: HistoryResponse | null
 } = {}) {
   const setFilters = vi.fn()
   const setPage = vi.fn()
-  const setSearchText = vi.fn()
-  const selectSession = vi.fn()
+  const onNavigate = vi.fn()
 
   useHistoryMock.mockReturnValue({
-    response: makeResponse(sessions, { page, pageSize, totalSessions }),
-    loading: false,
-    error: null,
-    filters: {},
+    response:
+      response === undefined
+        ? makeResponse(sessions, { page, pageSize, totalSessions })
+        : response,
+    loading,
+    error,
+    filters,
     setFilters,
     page,
     setPage,
@@ -150,10 +171,11 @@ function renderList({
 
   render(
     <HistoryProvider>
+      <SelectionProbe />
       <SidebarProvider>
         <Sidebar>
           <SidebarContent>
-            <HistoryList />
+            <HistoryList onNavigate={onNavigate} />
           </SidebarContent>
         </Sidebar>
         <main />
@@ -161,7 +183,7 @@ function renderList({
     </HistoryProvider>,
   )
 
-  return { setFilters, setPage, selectSession, setSearchText }
+  return { setFilters, setPage, onNavigate }
 }
 
 const scrollArea = () =>
@@ -173,7 +195,7 @@ beforeEach(() => {
 })
 
 describe("HistoryList", () => {
-  it("keeps the search and pagination outside the only scroller", () => {
+  it("pins the search above, and the pagination below, the only scroller", () => {
     renderList()
 
     const area = scrollArea()
@@ -187,6 +209,14 @@ describe("HistoryList", () => {
       screen.getByLabelText("Search history"),
     )
     expect(area).not.toContainElement(screen.getByText(/Page 1 of/))
+
+    const root = area!.parentElement!
+    const children = [...root.children]
+    const search = screen.getByLabelText("Search history").parentElement!
+    const pagination = screen.getByText(/Page 1 of/).parentElement!
+
+    expect(children.indexOf(search)).toBeLessThan(children.indexOf(area!))
+    expect(children.indexOf(area!)).toBeLessThan(children.indexOf(pagination))
   })
 
   it("renders each batch with its label, meta line, and saved percent", () => {
@@ -210,6 +240,25 @@ describe("HistoryList", () => {
     expect(screen.getByText("−75%")).toBeInTheDocument()
   })
 
+  it("shows 0% for a failed-only batch instead of a full saving", () => {
+    const startedAt = new Date().setHours(9, 12, 0, 0)
+    renderList({
+      sessions: [
+        makeSession({
+          id: "s1",
+          startedAt,
+          files: [makeFile(1, 1_000, null)],
+        }),
+      ],
+    })
+
+    expect(screen.getByText("0%")).toBeInTheDocument()
+    expect(screen.queryByText("−100%")).toBeNull()
+    expect(
+      screen.getByText(`${fileCountLabel(1)} · 0 B saved`),
+    ).toBeInTheDocument()
+  })
+
   it("shows cancelled instead of a percent for a cancelled batch", () => {
     const startedAt = new Date().setHours(9, 12, 0, 0)
     renderList({
@@ -224,22 +273,20 @@ describe("HistoryList", () => {
     })
 
     expect(screen.getByText("cancelled")).toBeInTheDocument()
-    expect(screen.queryByText("−100%")).toBeNull()
+    expect(screen.queryByText("0%")).toBeNull()
   })
 
-  it("selects a batch when its row is clicked", async () => {
+  it("selects a batch and navigates to History when its row is clicked", async () => {
     const user = userEvent.setup()
     const first = makeSession({ id: "s1", startedAt: Date.now() })
     const second = makeSession({ id: "s2", startedAt: Date.now() - 60_000 })
-    renderList({ sessions: [first, second] })
+    const { onNavigate } = renderList({ sessions: [first, second] })
 
     const row = screen.getByTestId("batch-s2")
     await user.click(row)
 
-    expect(row.hasAttribute("data-active")).toBe(true)
-    expect(screen.getByTestId("batch-s1").hasAttribute("data-active")).toBe(
-      false,
-    )
+    expect(screen.getByTestId("selected-session")).toHaveTextContent("s2")
+    expect(onNavigate).toHaveBeenCalledWith("history")
   })
 
   it("debounces the search into the history filters", async () => {
@@ -283,10 +330,45 @@ describe("HistoryList", () => {
     expect(setPage).toHaveBeenCalledWith(1)
   })
 
-  it("shows the empty state without a layout shift", () => {
+  it("renders skeleton rows and hides the page count on the first load", () => {
+    renderList({ response: null, loading: true })
+
+    expect(screen.getByRole("group", { name: "Batches" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    )
+    expect(
+      document.querySelectorAll('[data-slot="skeleton"]').length,
+    ).toBeGreaterThanOrEqual(2)
+    expect(screen.queryByText(/Page \d+ of/)).toBeNull()
+    expect(screen.getByRole("button", { name: "Previous page" })).toBeDisabled()
+    expect(screen.getByRole("button", { name: "Next page" })).toBeDisabled()
+  })
+
+  it("shows the empty state when no filters are active", () => {
     renderList()
 
     expect(screen.getByText("No batches yet.")).toBeInTheDocument()
     expect(scrollArea()).not.toBeNull()
+  })
+
+  it("distinguishes an empty filtered result", () => {
+    renderList({ filters: { statuses: ["failed"] } })
+
+    expect(
+      screen.getByText("No batches match these filters."),
+    ).toBeInTheDocument()
+    expect(screen.queryByText("No batches yet.")).toBeNull()
+  })
+
+  it("renders a muted load error", () => {
+    renderList({
+      response: null,
+      error: "Could not load history: boom",
+    })
+
+    const message = screen.getByText("Could not load history: boom")
+    expect(message).toBeInTheDocument()
+    expect(message.className).toContain("text-muted-foreground")
   })
 })

@@ -37,6 +37,7 @@ import type {
   FileEntry,
   HistoryFilters,
   HistoryResponse,
+  HistorySession,
   ViewId,
 } from "@/types"
 
@@ -66,21 +67,44 @@ const emptyHistory: HistoryResponse = {
   skippedLines: 0,
 }
 
+const makeSession = (id: string): HistorySession => ({
+  sessionId: id,
+  startedAt: Date.now(),
+  endedAt: Date.now() + 1_000,
+  outputFolder: "/out",
+  fileCount: 0,
+  files: [],
+  outcome: {
+    done: 0,
+    bestEffort: 0,
+    failed: 0,
+    cancelled: 0,
+    unsupported: 0,
+    alreadyUnderTarget: 0,
+  },
+  totalSavedBytes: 0,
+  cancelled: false,
+  interrupted: false,
+  matchedFiles: null,
+})
+
 function renderNav({
   activeView = "compress",
   files = [],
   expanded = false,
   filters = {},
+  sessions = [],
 }: {
   activeView?: ViewId
   files?: FileEntry[]
   expanded?: boolean
   filters?: HistoryFilters
+  sessions?: HistorySession[]
 } = {}) {
   compressionMock.mockReturnValue({ files })
   const setExpanded = vi.fn()
   historyMock.mockReturnValue({
-    response: emptyHistory,
+    response: { ...emptyHistory, sessions, totalSessions: sessions.length },
     loading: false,
     error: null,
     filters,
@@ -258,6 +282,40 @@ describe("SidebarNav", () => {
     renderNav({ filters: { statuses: ["failed"] } })
 
     expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
+  })
+
+  it("marks the funnel for search and folder filters", () => {
+    renderNav({ filters: { search: "hero" } })
+    expect(screen.getByTestId("history-filter-dot")).toBeInTheDocument()
+
+    renderNav({ filters: { outputFolder: "/out" } })
+    expect(screen.getAllByTestId("history-filter-dot")).toHaveLength(2)
+  })
+
+  it("omits aria-controls while the list is collapsed", () => {
+    renderNav({ expanded: false })
+
+    expect(screen.getByTestId("nav-history")).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    )
+    expect(screen.getByTestId("nav-history")).not.toHaveAttribute(
+      "aria-controls",
+    )
+  })
+
+  it("navigates to History when a batch row is selected from Compress", async () => {
+    const user = userEvent.setup()
+    const session = makeSession("s1")
+    const { onNavigate } = renderNav({
+      activeView: "compress",
+      expanded: true,
+      sessions: [session],
+    })
+
+    await user.click(screen.getByTestId(`batch-${session.sessionId}`))
+
+    expect(onNavigate).toHaveBeenCalledWith("history")
   })
 
   it("pins the nav, search, pagination, and footer around the list", () => {

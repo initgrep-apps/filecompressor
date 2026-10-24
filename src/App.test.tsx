@@ -533,6 +533,40 @@ describe("App shell", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
   })
 
+  it("applies the history filter and reseeds the dialog from it", async () => {
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    await user.click(
+      within(sidebar()!).getByRole("button", { name: "Filter history" }),
+    )
+    const dialog = await screen.findByRole("dialog")
+    await user.click(within(dialog).getByRole("button", { name: "Failed" }))
+    await user.click(within(dialog).getByRole("button", { name: "Apply" }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).toBeNull(),
+    )
+
+    await waitFor(() => {
+      const calls = vi
+        .mocked(invoke)
+        .mock.calls.filter(([command]) => command === "get_history")
+      const last = calls[calls.length - 1]?.[1] as
+        | { filters?: { statuses?: string[] } }
+        | undefined
+      expect(last?.filters?.statuses).toEqual(["failed"])
+    })
+
+    await user.click(
+      within(sidebar()!).getByRole("button", { name: "Filter history" }),
+    )
+    const reopened = await screen.findByRole("dialog")
+    expect(
+      within(reopened).getByRole("button", { name: "Failed" }),
+    ).toHaveAttribute("aria-pressed", "true")
+  })
+
   it("closes the mobile Sheet when a batch row is selected", async () => {
     window.innerWidth = 760
     const user = userEvent.setup()
