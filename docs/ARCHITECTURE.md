@@ -35,12 +35,11 @@ flowchart TB
         APP --> CV
         APP --> HV
         CV --> CP
-        HV --> CP
         HV --> HP
     end
 
     subgraph CORE["Rust core — src-tauri/src"]
-        CMD["commands.rs<br/>13 IPC commands"]
+        CMD["commands.rs<br/>IPC commands"]
         Q["queue.rs<br/>one worker · batch lifecycle · cancel map"]
         SCH["scheduler.rs<br/>one lane per category, weighted slots"]
         ENG["engine/<br/>processor trait · sidecar runner · progress"]
@@ -104,10 +103,10 @@ PlatformProvider
             └── SettingsDialog · AboutDialog · HistoryFilterDialog · Toaster
 ```
 
-- `App` owns `activeView` (`compress` | `history`) plus the settings, About and filter dialog state. One view is mounted at a time; there is no router.
-- The top bar holds the breadcrumb, sidebar toggle, theme toggle and ⋯ app menu; on non-macOS platforms it adds minimize/maximize/close. The whole bar is a drag surface and interactive children stop propagation. See ADR 0007.
-- The sidebar is the stock shadcn `Sidebar`: `offcanvas` on desktop, the vendored Sheet below 768px, stock widths (16rem / 18rem). `src/components/ui/sidebar.tsx` is not modified. Open state is session-only.
-- `HistoryList` lives inside the sidebar — search, batch rows, pagination, the only scroller. Selecting a batch focuses its detail in `HistoryView` and adds its label to the breadcrumb.
+- `Shell` (inside `App.tsx`; `App` itself only mounts the providers) owns `activeView` (`compress` | `history`) plus the settings, About and filter dialog state. One view is mounted at a time; there is no router.
+- The top bar holds the breadcrumb, the sidebar toggle, theme toggle and ⋯ app menu; on non-macOS platforms it adds minimize/maximize/close. The toggle is always present on macOS and only while the sidebar is hidden elsewhere (the open sidebar header carries the collapse trigger); ☰ appears only while the sidebar is hidden. The whole bar is a drag surface and interactive children stop propagation. See ADR 0007.
+- The sidebar is the stock shadcn `Sidebar`: `offcanvas` on desktop, the vendored Sheet below 768px, stock widths (16rem / 18rem). `src/components/ui/sidebar.tsx` is not forked; the only local tweak is `min-w-0` on `SidebarInset`. Open state is session-only.
+- `HistoryList` lives inside the sidebar — search, batch rows, pagination; it is the only scroller in the sidebar. Selecting a batch focuses its detail in `HistoryView` and adds its label to the breadcrumb; the detail card scrolls its own content.
 - Settings and About are dialogs; there is no settings view. Settings auto-save after a 400 ms debounce and flush on close.
 
 ### Views
@@ -121,7 +120,7 @@ PlatformProvider
 
 | State | Owner |
 |---|---|
-| `activeView`, settings/About/filter dialog open | `App` |
+| `activeView`, settings/About/filter dialog open | `Shell` inside `App.tsx` |
 | sidebar open (desktop `open`, mobile Sheet `openMobile`) | `SidebarProvider` — session-only |
 | history expanded, selected batch, filters/sort/page/search/data | `HistoryProvider` over `useHistory` |
 | `files`, list error | `useFileList` — every mutation calls Rust first, then stores the returned list |
@@ -130,7 +129,7 @@ PlatformProvider
 | window-close interception | `QuitGuard` under `CompressionProvider` — reads `isCompressing` |
 | platform | `PlatformProvider` over `plugin-os` |
 | theme | `useTheme` — localStorage, OS fallback |
-| settings draft | `useSettings` inside `SettingsDialog` — JSON dirty check, debounced auto-save, one load/save race guard |
+| settings draft | `SettingsDialog` — boolean dirty ref, 400 ms debounce and flush on close; `useSettings` owns the loaded settings and the load/save race guard |
 
 During a batch Rust is authoritative: the frontend applies events and ignores events for files that left the list. See ADR 0004.
 
@@ -144,7 +143,7 @@ Events (Rust → frontend): `file:progress`, `file:complete`, `file:error`, `fil
 
 Capabilities grant plugin defaults, `os:default`, `window-state:default`, and window start-dragging/minimize/toggle-maximize/close/set-theme to window `main`; custom commands need no entry. CSP is `script-src 'self'` with `style-src 'unsafe-inline'` for Tailwind.
 
-Window chrome and plugin wiring: macOS uses an overlay title bar, Windows is frameless with the default shadow, Linux keeps native decorations and is not packaged. `window-state` restores size/position/maximized but never decorations; `single-instance` focuses the existing window on a second launch. See ADR 0007.
+Window chrome and plugin wiring: macOS uses an overlay title bar, Windows is frameless with the default shadow, Linux keeps native decorations and is not packaged. `window-state` restores size, position, maximized, visible and fullscreen, but never decorations; `single-instance` focuses the existing window on a second launch. See ADR 0007.
 
 ### Rendering cost
 

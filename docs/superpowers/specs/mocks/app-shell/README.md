@@ -25,7 +25,7 @@ Static HTML fragments from the design session. Open directly in a browser; each 
 
 ## Revision 2
 
-The 760×500 frames are the **Sheet state**: that width is below the 768px breakpoint, so the desktop sidebar is replaced by the stock mobile Sheet. The 900×640 frames remain the desktop reference. Read both when checking the approved layout.
+The 760×500 frames predate the 768px breakpoint decision and still show the old persistent sidebar; read them for content density, not for sidebar state. The 900×640 frames are the desktop reference. The stock mobile Sheet at 760px must be verified separately.
 
 ## Not shown in the mocks
 

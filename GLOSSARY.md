@@ -62,7 +62,7 @@ The persistent window frame around the views: sidebar, top bar, dialogs, and the
 _Avoid_: layout, chrome (window chrome is the OS frame — ADR 0007)
 
 **Top bar**:
-The 48px row across the content area: breadcrumb, sidebar toggle, theme toggle, ⋯ menu, and — on Windows/Linux — the window controls. It doubles as the drag surface.
+The 48px row across the content area: breadcrumb, sidebar toggle, theme toggle, ⋯ menu, and — on Windows/Linux — the window controls. The toggle is always shown on macOS and only while the sidebar is hidden elsewhere; ☰ appears only while it is hidden. It doubles as the drag surface.
 _Avoid_: header, title bar (the title bar belongs to the OS or the macOS overlay)
 
 **Batch list**:

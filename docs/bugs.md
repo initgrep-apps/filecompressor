@@ -4,7 +4,7 @@ Open items only. Resolved investigations belong in git history or as a durable r
 
 ## Bugs
 
-None open.
+No open bugs; the known gaps and accepted limitations below still apply.
 
 ## Known gaps
 

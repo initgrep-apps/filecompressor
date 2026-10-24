@@ -22,7 +22,7 @@ With the macOS overlay title bar the window cannot be dragged while it is unfocu
 ## Considered Options
 
 - **One decorated window on every platform (previous)** — the in-app title row duplicated the OS chrome and wasted 48px.
-- **Frameless everywhere, including Linux** — Linux is not packaged; shipping untested chrome would put duplicate controls over native decorations.
+- **Frameless everywhere, including Linux** — Linux is not packaged in this slice; shipping untested frameless chrome and controls would be unverified. Keep native decorations until a dedicated Linux pass.
 - **Transparent Windows window** — the content is opaque, so it buys nothing and costs composition.
 - **Icon-rail sidebar or a forked shadcn Sidebar** — the stock offcanvas branch plus the Sheet already covers 760–900px; a fork would be maintained forever for a behavior the redesign removed.
 - **Auto-collapse the sidebar on cramped boards** — it decided from content width and overrode the user; removed with `useAutoCollapse`, boards scroll instead.
