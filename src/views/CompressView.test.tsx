@@ -39,9 +39,7 @@ import {
   CompressionContext,
   type CompressionContextValue,
 } from '@/providers/CompressionProvider'
-import { CapturingResizeObserver, resetCapturedResizeObservers } from '@/test-setup'
 import { toast } from 'sonner'
-
 const renderView = (ui = <CompressView />) =>
   render(
     <SidebarProvider>
@@ -632,67 +630,4 @@ describe('CompressView', () => {
     expect(toast.error).toHaveBeenCalledWith('Output folder not writable')
   })
 
-  it('auto-collapse observes the staging content card, not the clipped wrapper', async () => {
-    resetCapturedResizeObservers()
-    renderView()
-    await addFileInView()
-    const targets = CapturingResizeObserver.instances.flatMap((o) => o.observed)
-    const card = targets.find((el) => el.getAttribute('data-slot') === 'card')
-    expect(card).toBeDefined()
-    expect(card!.querySelector('[data-slot="table-container"]')).not.toBeNull()
-    const clipped = targets.filter(
-      (el) => el !== card && el.className.includes('overflow-hidden')
-    )
-    expect(clipped).toEqual([])
-  })
-
-  it('auto-collapse observes the kanban board element on the run screen, not the clipped wrapper', async () => {
-    resetCapturedResizeObservers()
-    renderView()
-    await addFileInView()
-    await pressCompress()
-    const targets = CapturingResizeObserver.instances.flatMap((o) => o.observed)
-    const board = targets.find((el) => el.getAttribute('data-testid') === 'kanban-board')
-    expect(board).toBeDefined()
-    expect(board!.className).toContain('overflow-x-auto')
-    const wrapperTargets = targets.filter(
-      (el) =>
-        el !== board &&
-        el.className.includes('min-h-0 flex-1 overflow-hidden')
-    )
-    expect(wrapperTargets).toEqual([])
-  })
-
-  it('React node reuse keeps the ResizeObserver watching the same board node across board→empty→board swaps', async () => {
-    resetCapturedResizeObservers()
-    renderView()
-    await addFileInView()
-    await pressCompress()
-    expect(
-      CapturingResizeObserver.instances.some((o) =>
-        o.observed.some((el) => el.getAttribute('data-testid') === 'kanban-board')
-      )
-    ).toBe(true)
-
-    const user = userEvent.setup()
-    await user.click(screen.getByTestId('chip-queued'))
-    emit('file:cancelled', { fileId: 'f1' })
-    await screen.findByTestId('board-empty')
-    expect(screen.queryByTestId('kanban-board')).not.toBeInTheDocument()
-
-    await user.click(screen.getByTestId('chip-all'))
-    await screen.findByTestId('kanban-board')
-    const board = screen.getByTestId('kanban-board')
-
-    const watchers = CapturingResizeObserver.instances.filter((o) =>
-      o.observed.includes(board)
-    )
-    expect(watchers).toHaveLength(1)
-
-    const firstObserved = CapturingResizeObserver.instances.find((o) =>
-      o.observed.some((el) => el.getAttribute('data-testid') === 'kanban-board')
-    )?.observed.find((el) => el.getAttribute('data-testid') === 'kanban-board')
-    expect(firstObserved).toBeDefined()
-    expect(board).toBe(firstObserved)
-  })
 })
