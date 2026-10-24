@@ -489,25 +489,25 @@ git commit -m "feat(shell): replace the app shell with native-style chrome"
 - `HistoryFilterDialog({ open, onOpenChange, applied, onApply })` where `applied: HistoryFilters` and `onApply(filters: HistoryFilters): void`.
 - Draft seeded on open; Apply calls `onApply` then closes; Cancel closes; Clear all resets the draft (`{ sort: "newest" }`).
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Assert: two sort segments (`Newest first`, `Oldest first`); toggling Cancelled marks it pressed (multi); toggling Image and Other marks them pressed; the category group renders five chips; choosing `Last 7 days` sets `sinceMs` to start of day six days ago; a custom calendar date sets that day's start; Apply emits the draft; Cancel emits nothing; Clear all resets chips and sort; reopening after Apply seeds the applied values.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `yarn test src/components/history/HistoryFilterDialog.test.tsx`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `Dialog` + title row (`DialogTitle`, active `Badge`, close). Groups with `FieldSet`/`FieldLegend`. Sort/Since use single `ToggleGroup`; Status/Category use `ToggleGroup multiple`. Base UI single-select allows deselecting the pressed value (emitting an empty array) — guard the sort callback with `value[0] ?? previousSort` so a sort is always set. Category chips render `CategoryIcon` with category tones for all five values (Image, Video, PDF, Document, Other). Since is a `Popover` + `Calendar` (`mode="single"`) with preset buttons; use `date-fns` (`startOfDay`, `subDays`, `startOfMonth`, `subMonths`) and `describeSince` for the trigger label. Footer `Clear all` / `Cancel` / `Apply`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `yarn test src/components/history/HistoryFilterDialog.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/components/history/HistoryFilterDialog.tsx src/components/history/HistoryFilterDialog.test.tsx
