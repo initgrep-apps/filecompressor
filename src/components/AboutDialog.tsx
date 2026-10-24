@@ -79,10 +79,13 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
           Third-party notices…
         </Button>
         {showNotices && (
-          <ScrollArea id="third-party-notices" className="h-48 rounded-xl border">
+          <ScrollArea
+            id="third-party-notices"
+            className="h-48 w-full min-w-0 rounded-xl border"
+          >
             <pre
               data-testid="third-party-notices"
-              className="p-3 whitespace-pre-wrap font-mono text-xs"
+              className="p-3 whitespace-pre-wrap break-words font-mono text-xs"
             >
               {thirdPartyNotices}
             </pre>

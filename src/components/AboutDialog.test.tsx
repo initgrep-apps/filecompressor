@@ -85,6 +85,23 @@ describe("AboutDialog", () => {
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 
+  it("keeps the expanded notices from stretching the dialog", async () => {
+    render(<AboutDialog open onOpenChange={vi.fn()} />)
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole("button", { name: /Third-party notices/ }))
+
+    const notices = screen.getByRole("dialog").querySelector("pre")
+
+    expect(notices).toHaveClass("whitespace-pre-wrap")
+    expect(notices).toHaveClass("break-words")
+
+    const scrollArea = notices?.closest('[data-slot="scroll-area"]')
+
+    expect(scrollArea).toHaveClass("min-w-0")
+    expect(scrollArea).toHaveClass("w-full")
+  })
+
   it("ties the rendered license rows to the generated notices", () => {
     render(<AboutDialog open onOpenChange={vi.fn()} />)
 
