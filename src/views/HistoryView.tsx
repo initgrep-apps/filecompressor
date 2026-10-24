@@ -86,8 +86,7 @@ const MUTED_TONE = {
 }
 
 function toastOpenError(err: unknown, prefix: string) {
-  const message =
-    typeof err === "string" ? err : err instanceof Error ? err.message : String(err)
+  const message = String(err)
   const alreadyLabeled = /^Could not (reveal file|open folder)/.test(message)
   toast.error(alreadyLabeled ? message : `${prefix}: ${message}`)
 }
@@ -133,11 +132,9 @@ function fileResult(file: HistoryFile): string {
   return `${formatSize(file.originalSize)} → ${formatSize(file.compressedSize)}`
 }
 
-const clampPercent = (percent: number) => Math.min(100, Math.max(0, percent))
-
 function filePercent(file: HistoryFile): string {
   const percent = savedPercent(file.originalSize, file.compressedSize)
-  return percent === null ? '—' : `${clampPercent(percent)}%`
+  return percent === null ? '—' : `${percent}%`
 }
 
 function Stat({
@@ -192,9 +189,7 @@ function BatchStats({ session }: { session: HistorySession }) {
         testId="stat-saved"
         label="Saved"
         value={savedLabel(summary.savedBytes)}
-        hint={
-          summary.percent === null ? '—' : `${clampPercent(summary.percent)}% saved`
-        }
+        hint={summary.percent === null ? '—' : `${summary.percent}% saved`}
       />
       <Stat
         testId="stat-files"
@@ -339,7 +334,10 @@ export function HistoryView() {
   const refreshing = loading && response !== null
   const filteredEmpty = sessions.length === 0 && activeFilterCount(filters) > 0
   const unreadable =
-    response !== null && response.totalSessions === 0 && response.skippedLines > 0
+    response !== null &&
+    response.totalSessions === 0 &&
+    activeFilterCount(filters) === 0 &&
+    response.skippedLines > 0
   const clearDisabled =
     response !== null &&
     response.totalSessions === 0 &&
@@ -438,7 +436,7 @@ export function HistoryView() {
                         : 'Choose a batch from the sidebar.'}
                 </EmptyDescription>
               </EmptyHeader>
-              {filteredEmpty && !unreadable && (
+              {filteredEmpty && (
                 <Button variant="outline" size="sm" onClick={clearFilters}>
                   Clear filters
                 </Button>

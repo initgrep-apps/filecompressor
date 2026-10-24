@@ -214,13 +214,14 @@ describe("HistoryView", () => {
     expect(row.querySelector('svg[data-category="image"]')).not.toBeNull()
 
     const failedRow = screen.getByText("broken.pdf").closest("li")!
+    expect(within(failedRow).getByText("PDF")).toBeInTheDocument()
     expect(within(failedRow).getByText("10 B → —")).toBeInTheDocument()
     expect(within(failedRow).getByText("—")).toBeInTheDocument()
     expect(within(failedRow).getByText("Failed")).toBeInTheDocument()
     expect(within(failedRow).getByText("Cannot read file: locked")).toBeInTheDocument()
   })
 
-  it("clamps a grown-file row at 0%", () => {
+  it("renders 0% for a grown-file row", () => {
     renderView({
       sessions: [
         session({
@@ -350,6 +351,33 @@ describe("HistoryView", () => {
     ).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Clear history" })).toBeEnabled()
     expect(screen.queryByText("No history yet")).not.toBeInTheDocument()
+  })
+
+  it("uses the singular skipped count", () => {
+    renderView({ response: { ...responseWith([]), skippedLines: 1 } })
+
+    expect(screen.getByText("1 line could not be read.")).toBeInTheDocument()
+  })
+
+  it("prefers the filtered-empty state over corruption when filters hide everything", () => {
+    renderView({
+      response: { ...responseWith([]), skippedLines: 1 },
+      filters: { statuses: ["failed"] },
+    })
+
+    expect(screen.getByText("No batches match these filters.")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument()
+    expect(screen.queryByText("History could not be read")).not.toBeInTheDocument()
+  })
+
+  it("does not treat skipped lines as corruption when batches exist", () => {
+    renderView({
+      response: { ...responseWith([session()]), skippedLines: 3 },
+      selectedSessionId: null,
+    })
+
+    expect(screen.getByText("No batch selected")).toBeInTheDocument()
+    expect(screen.queryByText("History could not be read")).not.toBeInTheDocument()
   })
 
   it("shows skeleton rows while loading", () => {
