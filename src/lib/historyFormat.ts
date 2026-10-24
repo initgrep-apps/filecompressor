@@ -37,7 +37,7 @@ export function fileCountLabel(count: number): string {
 export function savedPercent(original: number, compressed: number | null): number | null {
   if (!Number.isFinite(original) || original <= 0) return null
   if (compressed === null || !Number.isFinite(compressed) || compressed < 0) return null
-  return Math.max(0, Math.round(((original - compressed) / original) * 100))
+  return Math.min(100, Math.max(0, Math.round(((original - compressed) / original) * 100)))
 }
 
 export function sessionSummary(session: HistorySession): {

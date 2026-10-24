@@ -563,25 +563,25 @@ git commit -m "feat(history): add scrollable sidebar batch list and filter trigg
 **Interfaces:**
 - `HistoryView()` consumes `useHistoryContext`; renders only the selected batch; no filters, no day groups, no pagination of its own.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 Render inside a mocked provider: selected batch shows label, file count, duration, output folder, and `Reveal folder`; file rows show sizes/percent/status; `null` selection shows the empty state; load error shows the banner; filtered counts show `N / M`; `Clear history` opens the `AlertDialog` and confirming calls `clearHistory`.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `yarn test src/views/HistoryView.test.tsx`
 Expected: FAIL — old view still expects filters/pagination.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Rewrite the view as a detail pane. Import `savedLabel`, `fileCountLabel`, `savedPercent`, `formatDuration`, `countOutcome` from `src/lib/historyFormat.ts` and **delete the local copies at `HistoryView.tsx:196-268`**; keep `StatusMarker` as a component. Keep `openSessionFolder`/`revealFile` behavior. Remove `useAutoCollapse`. Add the `Clear history` ghost button + `AlertDialog` in the detail header, disabled when there are no sessions.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `yarn test src/views/HistoryView.test.tsx`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/views/HistoryView.tsx src/views/HistoryView.test.tsx
