@@ -59,9 +59,7 @@ describe("AboutDialog", () => {
   it("shows the official app icon", () => {
     render(<AboutDialog open onOpenChange={vi.fn()} />)
 
-    const icon = screen.getByTestId("app-icon")
-    expect(icon.tagName).toBe("IMG")
-    expect(icon.getAttribute("src")).not.toBe("")
+    expect(screen.getByTestId("app-icon")).toHaveAttribute("src", "/favicon.png")
   })
 
   it("lists the five license rows as name and license pairs", () => {

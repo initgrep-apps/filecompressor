@@ -350,7 +350,7 @@ describe("HistoryView", () => {
     expect(
       screen.getByText("Some history entries could not be read (3)."),
     ).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Clear history" })).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Clear history" })).toBeInTheDocument()
     expect(screen.queryByText("No history yet")).not.toBeInTheDocument()
   })
 

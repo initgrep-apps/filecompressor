@@ -16,7 +16,6 @@
 
 import { useEffect, useState } from "react"
 import { version } from "../../package.json"
-import appIcon from "../../src-tauri/icons/128x128@2x.png"
 import thirdPartyNotices from "../../THIRD_PARTY_LICENSES.md?raw"
 import { Button } from "@/components/ui/button"
 import {
@@ -52,7 +51,7 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
       <DialogContent className="max-h-[90dvh] overflow-y-auto">
         <DialogHeader className="items-center text-center">
           <img
-            src={appIcon}
+            src="/favicon.png"
             alt=""
             data-testid="app-icon"
             className="size-12 rounded-2xl object-cover"
