@@ -274,6 +274,9 @@ describe("SidebarNav", () => {
 
     const badge = screen.getByTestId("nav-count")
     expect(badge).toHaveTextContent("3")
+    expect(badge.className).toContain("top-1/2")
+    expect(badge.className).toContain("-translate-y-1/2")
+    expect(badge.className).toContain("right-2")
     expect(badge.closest('[data-slot="sidebar-menu-item"]')).not.toBeNull()
     expect(badge.closest('[data-slot="sidebar-menu-button"]')).toBeNull()
   })
@@ -290,12 +293,14 @@ describe("SidebarNav", () => {
     renderNav({ expanded: true })
 
     const row = screen.getByTestId("nav-history")
+    expect(row.className).toContain("pr-9")
     expect(row).toHaveAttribute("aria-controls", HISTORY_LIST_ID)
     expect(row).toHaveAttribute("aria-expanded", "true")
 
     const list = document.getElementById(HISTORY_LIST_ID)
     expect(list).not.toBeNull()
     expect(list).toHaveAccessibleName("Batches")
+    expect(list).not.toHaveAttribute("role")
   })
 
   it("opens the filter from the History row without navigating", async () => {

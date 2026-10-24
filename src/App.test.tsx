@@ -265,6 +265,19 @@ describe("App shell", () => {
       within(topBar()).getByRole("button", { name: "Open navigation" }),
     ).toBeInTheDocument()
     expect(within(topBar()).getByText("Compress")).toBeInTheDocument()
+    expect(document.activeElement).toBe(
+      within(topBar()).getByRole("button", { name: "Expand sidebar" }),
+    )
+
+    await user.click(
+      within(topBar()).getByRole("button", { name: "Expand sidebar" }),
+    )
+
+    expect(document.activeElement).toBe(
+      within(sidebarHeader()).getByRole("button", {
+        name: "Collapse sidebar",
+      }),
+    )
   })
 
   it("shows window controls on Windows and hides the top-bar toggle while visible", async () => {

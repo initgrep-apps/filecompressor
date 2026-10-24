@@ -16,6 +16,7 @@
 
 import {
   useEffect,
+  useRef,
   useState,
   type ComponentType,
   type MouseEvent,
@@ -90,6 +91,16 @@ function Shell() {
 
   useEffect(() => {
     if (!visible) setFilterOpen(false)
+  }, [visible])
+
+  const wasVisible = useRef(visible)
+  useEffect(() => {
+    if (wasVisible.current === visible) return
+    wasVisible.current = visible
+    const selector = visible
+      ? '[data-slot="sidebar-header"] [data-slot="sidebar-trigger"]'
+      : '[data-testid="top-bar"] [data-slot="sidebar-trigger"]'
+    document.querySelector<HTMLElement>(selector)?.focus()
   }, [visible])
 
   const setDialogOpen = (id: DialogId) => (open: boolean) =>
