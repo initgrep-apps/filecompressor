@@ -253,6 +253,23 @@ describe("HistoryList", () => {
     expect(screen.getByText("−75%")).toBeInTheDocument()
   })
 
+  it("fills the sidebar width with each batch row", () => {
+    renderList({
+      sessions: [makeSession({ id: "s1", startedAt: Date.now() })],
+    })
+
+    const row = screen.getByTestId("batch-s1")
+    expect(row.className).toContain("w-full")
+    expect(row.className).toContain("px-2")
+    expect(row.className).toContain("py-1")
+
+    const item = row.parentElement!
+    expect(item.className).toContain("w-full")
+
+    const list = item.parentElement!
+    expect(list.className).toContain("w-full")
+  })
+
   it("uses totalSavedBytes for an unfiltered session", () => {
     const session = makeSession({
       id: "s1",

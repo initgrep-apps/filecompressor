@@ -15,7 +15,14 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { useState } from "react"
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { invoke } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
@@ -121,6 +128,27 @@ describe("SettingsDialog", () => {
     expect(screen.getByRole("tablist")).toHaveAccessibleName(
       "Settings sections",
     )
+  })
+
+  it("lists the four target categories with controls and no badges", async () => {
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+    fireEvent.click(screen.getByRole("tab", { name: "Targets" }))
+
+    const formats = await screen.findByText("JPEG, PNG, WebP, HEIC")
+    const section = formats.closest('[data-slot="field-set"]') as HTMLElement
+    expect(section).not.toBeNull()
+
+    for (const label of ["Images", "Videos", "PDF", "Documents"]) {
+      expect(within(section).getByText(label)).toBeInTheDocument()
+    }
+    expect(section.querySelector('[data-slot="badge"]')).toBeNull()
+    expect(
+      within(section).getByLabelText("Images target size"),
+    ).toBeInTheDocument()
+    expect(
+      within(section).getByLabelText("Documents target unit"),
+    ).toBeInTheDocument()
   })
 
   it("saves the full draft once the 400 ms debounce elapses", async () => {

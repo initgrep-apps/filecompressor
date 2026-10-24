@@ -109,7 +109,9 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
           role="group"
           aria-label="Batches"
           aria-busy={loading}
-          className={loading && response !== null ? "opacity-60" : undefined}
+          className={
+            loading && response !== null ? "w-full opacity-60" : "w-full"
+          }
         >
           {error !== null ? (
             <li
@@ -153,11 +155,11 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
             sessions.map((session) => {
               const row = sessionRow(session)
               return (
-                <SidebarMenuSubItem key={session.sessionId}>
+                <SidebarMenuSubItem key={session.sessionId} className="w-full">
                   <SidebarMenuSubButton
                     render={<button type="button" />}
                     isActive={selectedSessionId === session.sessionId}
-                    className="h-auto items-start py-1.5"
+                    className="h-auto w-full items-start px-2 py-1"
                     data-testid={`batch-${session.sessionId}`}
                     onClick={() => openSession(session.sessionId)}
                   >
