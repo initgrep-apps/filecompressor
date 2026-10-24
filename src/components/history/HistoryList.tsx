@@ -98,7 +98,6 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
       <ScrollArea className="min-h-0 flex-1">
         <ul
           id={HISTORY_LIST_ID}
-          role="group"
           aria-label="Batches"
           aria-busy={loading}
           className={cn(
@@ -157,11 +156,11 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
                     data-testid={`batch-${session.sessionId}`}
                     onClick={() => openSession(session.sessionId)}
                   >
-                    <ItemContent className="gap-0.5">
+                    <ItemContent>
                       <ItemTitle className="w-full text-left">
                         {batchLabel(session.startedAt, now)}
                       </ItemTitle>
-                      <ItemDescription className="line-clamp-1 text-left text-xs">
+                      <ItemDescription className="line-clamp-1 text-xs">
                         {row.meta}
                       </ItemDescription>
                     </ItemContent>

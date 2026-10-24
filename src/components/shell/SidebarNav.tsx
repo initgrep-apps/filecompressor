@@ -68,8 +68,7 @@ export function SidebarNav({
 
   const handleNavigate = (view: ViewId) => {
     if (view === "history") {
-      setExpanded(!expanded)
-      closeSheet()
+      setExpanded(isMobile ? true : !expanded)
       return
     }
     onNavigate(view)
@@ -105,7 +104,10 @@ export function SidebarNav({
                     }
                     onClick={() => handleNavigate(item.id)}
                     data-testid={`nav-${item.id}`}
-                    className="text-muted-foreground hover:bg-sidebar-accent data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+                    className={cn(
+                      "text-muted-foreground hover:bg-sidebar-accent data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground",
+                      item.id === "history" && "pr-9",
+                    )}
                   >
                     <ItemMedia variant="icon">
                       <Icon />
@@ -131,9 +133,9 @@ export function SidebarNav({
                       title="Filter"
                       className={cn(
                         "top-1/2 right-2 size-6! -translate-y-1/2 transition-opacity",
-                        hasActiveFilters
+                        hasActiveFilters || isMobile
                           ? "opacity-100"
-                          : "opacity-0 group-hover/menu-item:opacity-100 focus-visible:opacity-100 group-focus-within/menu-item:opacity-100",
+                          : "pointer-events-none opacity-0 group-hover/menu-item:pointer-events-auto group-hover/menu-item:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 group-focus-within/menu-item:pointer-events-auto group-focus-within/menu-item:opacity-100",
                       )}
                       onClick={onOpenFilter}
                     >
@@ -150,7 +152,7 @@ export function SidebarNav({
                   {item.id === "compress" && files.length > 0 && (
                     <SidebarMenuBadge
                       data-testid="nav-count"
-                      className="font-mono text-[10px] font-bold text-primary"
+                      className="top-1/2 right-2 -translate-y-1/2 font-mono text-[10px] font-bold text-primary"
                     >
                       {files.length}
                     </SidebarMenuBadge>

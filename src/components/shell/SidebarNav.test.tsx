@@ -149,6 +149,7 @@ const scrollArea = () =>
   document.querySelector('[data-slot="scroll-area"]') as HTMLElement | null
 
 beforeEach(() => {
+  window.innerWidth = 1024
   compressionMock.mockReset()
   historyMock.mockReset()
 })
@@ -251,7 +252,14 @@ describe("SidebarNav", () => {
     const funnel = screen.getByRole("button", { name: "Filter history" })
     expect(funnel.className).toContain("size-6!")
     expect(funnel.className).toContain("opacity-0")
+    expect(funnel.className).toContain("pointer-events-none")
     expect(funnel.className).toContain("group-hover/menu-item:opacity-100")
+    expect(funnel.className).toContain("focus-visible:opacity-100")
+    expect(funnel.className).toContain("group-focus-within/menu-item:opacity-100")
+    expect(funnel.className).toContain("right-2")
+    expect(
+      funnel.closest('[data-slot="sidebar-menu-item"]')!.className,
+    ).toContain("group/menu-item")
   })
 
   it("keeps the funnel visible while filters are active", () => {
@@ -287,7 +295,7 @@ describe("SidebarNav", () => {
 
     const list = document.getElementById(HISTORY_LIST_ID)
     expect(list).not.toBeNull()
-    expect(list).toHaveAttribute("role", "group")
+    expect(list).toHaveAccessibleName("Batches")
   })
 
   it("opens the filter from the History row without navigating", async () => {
@@ -302,6 +310,40 @@ describe("SidebarNav", () => {
 
     expect(onOpenFilter).toHaveBeenCalledTimes(1)
     expect(onNavigate).not.toHaveBeenCalled()
+  })
+
+  it("reveals the funnel from the keyboard and on hover", () => {
+    renderNav({ expanded: false })
+
+    const funnel = screen.getByRole("button", { name: "Filter history" })
+    expect(funnel.className).toContain("focus-visible:pointer-events-auto")
+    expect(funnel.className).toContain(
+      "group-focus-within/menu-item:pointer-events-auto",
+    )
+  })
+
+  it("rotates the chevron while collapsed", () => {
+    renderNav({ expanded: false })
+    const collapsed = screen
+      .getByTestId("nav-history")
+      .querySelector('[data-slot="item-title"] svg')!
+    expect(collapsed.getAttribute("class")).toContain("-rotate-90")
+  })
+
+  it("draws the expanded chevron upright", () => {
+    renderNav({ expanded: true })
+    const expanded = screen
+      .getByTestId("nav-history")
+      .querySelector('[data-slot="item-title"] svg')!
+    expect(expanded.getAttribute("class")).not.toContain("-rotate-90")
+  })
+
+  it("keeps the funnel visible on touch layouts", () => {
+    window.innerWidth = 760
+    renderNav({ expanded: false })
+
+    const funnel = screen.getByRole("button", { name: "Filter history" })
+    expect(funnel.className).not.toContain("opacity-0")
   })
 
   it("leaves the funnel unmarked by default", () => {

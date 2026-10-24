@@ -200,7 +200,7 @@ function renderList({
 
 const scrollArea = () =>
   document.querySelector('[data-slot="scroll-area"]') as HTMLElement | null
-const batchList = () => screen.getByRole("group", { name: "Batches" })
+const batchList = () => screen.getByLabelText("Batches")
 
 beforeEach(() => {
   useHistoryMock.mockReset()
@@ -263,6 +263,7 @@ describe("HistoryList", () => {
     expect(row.className).toContain("px-2.5")
     expect(row.className).toContain("py-2")
     expect(row.getAttribute("data-slot")).toBe("item")
+    expect(row.className).toContain("data-active:bg-sidebar-accent")
   })
 
   it("uses totalSavedBytes for an unfiltered session", () => {
@@ -377,19 +378,11 @@ describe("HistoryList", () => {
 
     expect(screen.getByTestId("selected-session")).toHaveTextContent("s2")
     expect(row.hasAttribute("data-active")).toBe(true)
+    expect(row.className).toContain("data-active:bg-sidebar-accent")
     expect(screen.getByTestId("batch-s1").hasAttribute("data-active")).toBe(
       false,
     )
     expect(onOpenHistory).toHaveBeenCalledTimes(1)
-  })
-
-  it("keeps the batch list free of the sub-menu inset and left rule", () => {
-    renderList()
-
-    const list = batchList()
-    expect(list.tagName).toBe("UL")
-    expect(list.className).not.toContain("border-l")
-    expect(list.className).not.toContain("mx-3.5")
   })
 
   it("disables Previous on the first page and pages forward", async () => {

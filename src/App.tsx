@@ -55,8 +55,9 @@ const stopPropagation = (event: MouseEvent) => event.stopPropagation()
 
 function ShellSidebarHeader() {
   const platform = usePlatform()
-  const { isMobile } = useSidebar()
+  const { isMobile, open } = useSidebar()
   const showBrand = isMobile || platform !== "darwin"
+  const showActions = isMobile || open
 
   return (
     <SidebarHeader className="h-12 flex-row items-center gap-1 p-2">
@@ -73,7 +74,7 @@ function ShellSidebarHeader() {
           </div>
         )}
       </DragSurface>
-      <SidebarActions />
+      {showActions && <SidebarActions />}
     </SidebarHeader>
   )
 }

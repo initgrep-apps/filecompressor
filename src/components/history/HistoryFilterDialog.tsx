@@ -55,6 +55,9 @@ import {
 } from "@/types"
 
 
+const CHIP_CLASS =
+  "rounded-full px-3 data-[pressed]:border-primary/50 data-[pressed]:bg-primary/15 data-[pressed]:text-foreground"
+
 const EMPTY_DRAFT: HistoryFilters = Object.freeze({
   search: undefined,
   outputFolder: undefined,
@@ -237,7 +240,7 @@ export function HistoryFilterDialog({
                   value={value}
                   variant="outline"
                   size="sm"
-                  className="rounded-full px-3 data-[pressed]:border-primary/50 data-[pressed]:bg-primary/15 data-[pressed]:text-foreground"
+                  className={CHIP_CLASS}
                 >
                   <span
                     aria-hidden="true"
@@ -271,7 +274,7 @@ export function HistoryFilterDialog({
                   value={value}
                   variant="outline"
                   size="sm"
-                  className="rounded-full px-3 data-[pressed]:border-primary/50 data-[pressed]:bg-primary/15 data-[pressed]:text-foreground"
+                  className={CHIP_CLASS}
                 >
                   <CategoryIcon
                     category={value}

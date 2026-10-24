@@ -104,9 +104,9 @@ PlatformProvider
 ```
 
 - `Shell` (inside `App.tsx`; `App` itself only mounts the providers) owns `activeView` (`compress` | `history`) plus the settings, About and filter dialog state. One view is mounted at a time; there is no router.
-- The top bar holds the breadcrumb, the sidebar toggle, theme toggle and ⋯ app menu; on non-macOS platforms it adds minimize/maximize/close. The toggle is always present on macOS and only while the sidebar is hidden elsewhere (the open sidebar header carries the collapse trigger); ☰ appears only while the sidebar is hidden. The whole bar is a drag surface and interactive children stop propagation. See ADR 0007.
-- The sidebar is the stock shadcn `Sidebar`: `offcanvas` on desktop, the vendored Sheet below 768px, stock widths (16rem / 18rem). `src/components/ui/sidebar.tsx` is not forked; the only local tweak is `min-w-0` on `SidebarInset`. Open state is session-only.
-- `HistoryList` lives inside the sidebar — search, batch rows, pagination; it is the only scroller in the sidebar. Selecting a batch focuses its detail in `HistoryView` and adds its label to the breadcrumb; the detail card scrolls its own content.
+- The top bar holds the breadcrumb, theme toggle and ⋯ app menu; on non-macOS platforms it adds minimize/maximize/close. The sidebar header owns the collapse trigger on every platform while the sidebar is open; the top bar renders `SidebarActions` only while the sidebar is hidden (on macOS it keeps the `pl-22` traffic-light clearance). ☰ appears only while the sidebar is hidden. The whole bar is a drag surface and interactive children stop propagation. See ADR 0007.
+- The sidebar is the stock shadcn `Sidebar`: `offcanvas` on desktop, the vendored Sheet below 768px, stock widths (16rem / 18rem). `src/components/ui/sidebar.tsx` keeps two local tweaks: `min-w-0` on `SidebarInset`, and `SidebarTrigger` carries the collapse/expand label with fold/unfold icons. Open state is session-only.
+- `HistoryList` lives inside the sidebar — batch rows and pagination, the only scroller in the sidebar. The History nav row is a disclosure that shows or hides that list and never changes the active view; only a batch row navigates. Selecting a batch focuses its detail in `HistoryView` and adds its label to the breadcrumb; the detail card scrolls its own content. There is no sidebar search field; `HistoryFilters.search` stays available below the UI.
 - Settings and About are dialogs; there is no settings view. Settings auto-save after a 400 ms debounce and flush on close.
 
 ### Views

@@ -235,6 +235,9 @@ describe("App shell", () => {
       }),
     ).toBeInTheDocument()
     expect(
+      within(sidebarHeader()).getByTestId("sidebar-actions"),
+    ).toBeInTheDocument()
+    expect(
       within(topBar()).queryByRole("button", { name: /sidebar/i }),
     ).toBeNull()
     expect(
@@ -356,7 +359,7 @@ describe("App shell", () => {
     expect(win.onCloseRequested).toHaveBeenCalled()
   })
 
-  it("uses the stock Sheet below 768px and closes it when a nav row is chosen", async () => {
+  it("keeps the mobile Sheet open while History expands and closes it from the header", async () => {
     window.innerWidth = 760
     const user = userEvent.setup()
     renderApp("darwin")
@@ -378,39 +381,47 @@ describe("App shell", () => {
       return element as HTMLElement
     })
 
+    expect(
+      within(sheet).getByRole("button", { name: "Collapse sidebar" }),
+    ).toBeInTheDocument()
+
     await user.click(within(sheet).getByRole("button", { name: /History/ }))
 
-    await waitFor(() =>
-      expect(
-        document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
-      ).toBeNull(),
-    )
+    expect(
+      document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
+    ).not.toBeNull()
+    expect(
+      within(sheet).getByRole("button", { name: /History/ }),
+    ).toHaveAttribute("aria-expanded", "true")
     expect(within(topBar()).getByText("Compress")).toBeInTheDocument()
-    expect(topBar().className).toContain("pl-22")
 
     await user.click(
-      within(topBar()).getByRole("button", { name: "Expand sidebar" }),
+      within(sheet).getByRole("button", { name: "Collapse sidebar" }),
     )
-    const reopenedSheet = await waitFor(() => {
-      const element = document.querySelector(
-        '[data-slot="sidebar"][data-mobile="true"]',
-      )
-      expect(element).not.toBeNull()
-      return element as HTMLElement
-    })
-    const activeHistoryRow = within(reopenedSheet).getByRole("button", {
-      name: /History/,
-    })
-    expect(activeHistoryRow).toHaveAttribute("aria-expanded", "false")
-
-    await user.click(activeHistoryRow)
 
     await waitFor(() =>
       expect(
         document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
       ).toBeNull(),
     )
-    expect(within(topBar()).getByText("Compress")).toBeInTheDocument()
+    expect(topBar().className).toContain("pl-22")
+  })
+
+  it("keeps Compress and shows the empty batch list when History has no sessions", async () => {
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    const row = within(sidebar()!).getByRole("button", { name: /History/ })
+
+    await user.click(row)
+    expect(within(sidebar()!).queryByText("No batches yet.")).toBeNull()
+
+    await user.click(row)
+    expect(screen.getByTestId("view-container")).toHaveAttribute(
+      "data-view",
+      "compress",
+    )
+    expect(within(sidebar()!).getByText("No batches yet.")).toBeInTheDocument()
   })
 
   it("caps the shell height and keeps the view container clipped", () => {
