@@ -24,6 +24,8 @@ import {
   presetSinceMs,
   dayLabel,
   dayKey,
+  DATE_PRESETS,
+  DATE_PRESET_LABELS,
   savedLabel,
   savedPercent,
 } from '@/lib/historyFormat'
@@ -43,6 +45,8 @@ describe('historyFormat', () => {
     expect(presetSinceMs('today', now)).toBe(today)
     expect(presetSinceMs('last7', now)).toBe(new Date(2026, 8, 26).getTime())
     expect(presetSinceMs('last30', now)).toBe(new Date(2026, 8, 3).getTime())
+    expect(presetSinceMs('month', now)).toBe(new Date(2026, 9, 1).getTime())
+    expect(presetSinceMs('last3months', now)).toBe(new Date(2026, 6, 2).getTime())
     expect(presetSinceMs('all', now)).toBeUndefined()
   })
 
@@ -119,13 +123,25 @@ describe('batchLabel', () => {
 describe('describeSince', () => {
   const now = new Date(2026, 9, 23, 15, 0)
 
-  it('names the presets', () => {
+  it('names each preset', () => {
     expect(describeSince(undefined, now)).toBe('All time')
     expect(describeSince(presetSinceMs('today', now), now)).toBe('Today')
     expect(describeSince(presetSinceMs('last7', now), now)).toBe('Last 7 days')
     expect(describeSince(presetSinceMs('last30', now), now)).toBe('Last 30 days')
-    expect(describeSince(new Date(2026, 9, 1).getTime(), now)).toBe('This month')
+    expect(describeSince(presetSinceMs('month', now), now)).toBe('This month')
+    expect(describeSince(presetSinceMs('last3months', now), now)).toBe(
+      'Last 3 months',
+    )
   })
+
+  it.each(DATE_PRESETS.filter((preset) => preset !== 'all'))(
+    'labels %s',
+    (preset) => {
+      expect(describeSince(presetSinceMs(preset, now), now)).toBe(
+        DATE_PRESET_LABELS[preset],
+      )
+    },
+  )
 
   it('falls back to the calendar date for a custom start', () => {
     const custom = new Date(2026, 8, 20).getTime()
