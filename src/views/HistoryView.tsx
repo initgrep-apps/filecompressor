@@ -86,7 +86,8 @@ const MUTED_TONE = {
 }
 
 function toastOpenError(err: unknown, prefix: string) {
-  const message = err instanceof Error ? err.message : String(err)
+  const message =
+    typeof err === "string" ? err : err instanceof Error ? err.message : String(err)
   const alreadyLabeled = /^Could not (reveal file|open folder)/.test(message)
   toast.error(alreadyLabeled ? message : `${prefix}: ${message}`)
 }
@@ -132,9 +133,11 @@ function fileResult(file: HistoryFile): string {
   return `${formatSize(file.originalSize)} → ${formatSize(file.compressedSize)}`
 }
 
+const clampPercent = (percent: number) => Math.min(100, Math.max(0, percent))
+
 function filePercent(file: HistoryFile): string {
   const percent = savedPercent(file.originalSize, file.compressedSize)
-  return percent === null ? '—' : `${percent}%`
+  return percent === null ? '—' : `${clampPercent(percent)}%`
 }
 
 function Stat({
@@ -183,14 +186,15 @@ function BatchStats({ session }: { session: HistorySession }) {
   const matched = session.matchedFiles !== null
   const summary = sessionSummary(session)
   const outcome = matched ? countOutcome(session.files) : session.outcome
-  const savedBytes = matched ? summary.savedBytes : session.totalSavedBytes
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
       <Stat
         testId="stat-saved"
         label="Saved"
-        value={savedLabel(savedBytes)}
-        hint={summary.percent === null ? '—' : `${summary.percent}% saved`}
+        value={savedLabel(summary.savedBytes)}
+        hint={
+          summary.percent === null ? '—' : `${clampPercent(summary.percent)}% saved`
+        }
       />
       <Stat
         testId="stat-files"
@@ -248,7 +252,10 @@ function BatchFiles({ session }: { session: HistorySession }) {
   }
   return (
     <div className="overflow-hidden rounded-2xl border bg-card">
-      <div className="flex items-center justify-between border-b px-4 py-2 text-xs font-medium text-muted-foreground">
+      <div
+        data-testid="files-header"
+        className="flex items-center justify-between border-b px-4 py-2 text-xs font-medium text-muted-foreground"
+      >
         <span>Files</span>
         <span>{fileCountLabel(sessionSummary(session).fileCount)}</span>
       </div>
@@ -331,7 +338,13 @@ export function HistoryView() {
   const initialLoading = loading && response === null
   const refreshing = loading && response !== null
   const filteredEmpty = sessions.length === 0 && activeFilterCount(filters) > 0
-  const noSessions = (response?.totalSessions ?? 0) === 0
+  const unreadable =
+    response !== null && response.totalSessions === 0 && response.skippedLines > 0
+  const clearDisabled =
+    response !== null &&
+    response.totalSessions === 0 &&
+    activeFilterCount(filters) === 0 &&
+    response.skippedLines === 0
   const showSession = session !== null && error === null
 
   const clearFilters = () =>
@@ -361,14 +374,14 @@ export function HistoryView() {
                   Reveal folder
                 </Button>
               )}
-              <ClearHistoryButton disabled={noSessions} onClear={clearHistory} />
+              <ClearHistoryButton disabled={clearDisabled} onClear={clearHistory} />
             </div>
           </div>
           {showSession && <BatchStats session={session} />}
         </CardHeader>
         {response !== null && response.skippedLines > 0 && error === null && (
           <p className="px-(--card-spacing) text-xs text-muted-foreground">
-            Some history entries could not be read.
+            Some history entries could not be read ({response.skippedLines}).
           </p>
         )}
         <CardContent
@@ -405,21 +418,27 @@ export function HistoryView() {
                   <RiHistoryLine />
                 </EmptyMedia>
                 <EmptyTitle>
-                  {filteredEmpty
-                    ? 'No batches match these filters.'
-                    : sessions.length === 0
-                      ? 'No history yet'
-                      : 'No batch selected'}
+                  {unreadable
+                    ? 'History could not be read'
+                    : filteredEmpty
+                      ? 'No batches match these filters.'
+                      : sessions.length === 0
+                        ? 'No history yet'
+                        : 'No batch selected'}
                 </EmptyTitle>
                 <EmptyDescription>
-                  {filteredEmpty
-                    ? 'Clear filters to see the full history.'
-                    : sessions.length === 0
-                      ? 'Compressed files and their results will appear here.'
-                      : 'Choose a batch from the sidebar.'}
+                  {unreadable
+                    ? `${response?.skippedLines ?? 0} ${
+                        (response?.skippedLines ?? 0) === 1 ? 'line' : 'lines'
+                      } could not be read.`
+                    : filteredEmpty
+                      ? 'Clear filters to see the full history.'
+                      : sessions.length === 0
+                        ? 'Compressed files and their results will appear here.'
+                        : 'Choose a batch from the sidebar.'}
                 </EmptyDescription>
               </EmptyHeader>
-              {filteredEmpty && (
+              {filteredEmpty && !unreadable && (
                 <Button variant="outline" size="sm" onClick={clearFilters}>
                   Clear filters
                 </Button>
