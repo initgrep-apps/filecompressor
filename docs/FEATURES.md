@@ -4,9 +4,9 @@ What shipped, in the order the slices were built. This replaces the per-slice sp
 
 | # | Slice | Shipped | Notes / decisions |
 |---|---|---|---|
-| 1 | App shell | Tauri + React shell, sidebar navigation, dark mode from OS preference, toast host | No router; views mount one at a time |
+| 1 | App shell | Tauri + React shell, two-entry sidebar with the history batch list, top bar with platform window controls, dark mode, toast host | No router and no settings view; shell state is session-only (ADR 0007) |
 | 2 | File detection | Extension → category, canonicalise + dedup, per-category target resolved in Rust | Frontend never guesses category or target |
-| 3 | Settings | Category targets, quality floors, parallelism, output folder, history retention | Editable draft with JSON dirty check; every field defaulted |
+| 3 | Settings | Settings dialog: General, targets, quality floors, performance, history retention | Every field defaulted; auto-saves after 400 ms and flushes on close |
 | 4 | Image compression | vips quality search then dimension reduction; JPG/PNG/WebP native, HEIC/HEIF → JPG | PNG uses palette compression; stops at the quality floor (ADR 0006) |
 | 5 | Video compression | Two-pass libx264 bitrate targeting, resolution ladder, CRF fallback | Never `-fs`; see `ARCHITECTURE.md` §6 |
 | 6 | PDF compression | qpdf lossless → qpdf image pass → gs `/screen` → gs dpi × jpegq grid | qpdf exit 2 accepted as warnings-only |
@@ -14,13 +14,14 @@ What shipped, in the order the slices were built. This replaces the per-slice sp
 | 8 | Self-contained engines | Manifest → fetch → prep → verify → audit pipeline; macOS dylib collection, Windows engine folders | Offline by construction; see `GLOSSARY.md` |
 | 9 | Parallel compression | Weighted lane scheduler, video = 2 slots, per-file cancel, cancel-all | ADR 0003 |
 | 10 | Cancelled batch signal | `batch:complete` carries `cancelled`; UI shows the cancelled outcome instead of a success toast | |
-| 11 | History audit trail | Append-only JSONL, session + file records, filters, day grouping, pagination, 90-day trim | ADR 0005 |
-| 12 | Compress run view | Staging list ⇄ run board, per-category lanes, live cards, batch footer, "New batch" clears staging | Auto-collapse sidebar on cramped boards is still under review (`docs/bugs.md`) |
+| 11 | History audit trail | Append-only JSONL, session + file records, sidebar batch list, modal filter dialog, day grouping, pagination, 90-day trim | ADR 0005; sort is `newest` / `oldest` only |
+| 12 | Compress run view | Staging list ⇄ run board, per-category lanes, live cards, batch footer, "New batch" clears staging | Boards scroll horizontally; the sidebar stays manual at 760px |
 | 13 | UI overhaul | Chip filters, status tones, lane-aware cards, reduced-motion-safe shimmer, compact bar | Design tokens live in `src/lib/tokens.ts` |
 | 14 | Release workflows | PR gate, freeze, release with four native rows, release-please changelog | `docs/ci-process.md` |
 | 15 | Snapshot pipelines | Freeze all four triples into `sidecars-<date>`; every consumer unfreezes and verifies | ADR 0001 |
 | 16 | Release integrity | Package-content gate per release row, macOS library-validation entitlement, Windows engine-path fixes, no console windows | ADRs 0001, 0002; `scripts/ci/package-gate.mjs` |
 | 17 | Yard rename | Product, package, crate, identifier and temp folder are all `yard` | Repo slug remains `initgrep-apps/filecompressor` |
+| 18 | App shell redesign | Native window chrome (macOS overlay, frameless Windows), stock shadcn sidebar with history batch list, filter dialog, settings/About dialogs, pre-paint theme | ADR 0007; Linux chrome unverified (`docs/bugs.md`) |
 
 ## Not shipped (deliberately)
 

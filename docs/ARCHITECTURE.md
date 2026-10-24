@@ -17,7 +17,7 @@ An offline desktop app that compresses batches of files toward a per-category si
 | Frontend | React 19.3 + TypeScript 7.0 + Vite 8.3 (Rolldown) |
 | UI | shadcn/ui 4.21 on Base UI (`@base-ui/react` 1.9), Tailwind CSS 4.3, motion 14, sonner |
 | Rust | Tokio, serde, uuid, dirs, `zip` (deflate only) |
-| Tauri plugins | opener, dialog, store — nothing else |
+| Tauri plugins | opener, dialog, store, os, window-state, single-instance |
 | Engines | vips 8.18.7, ffmpeg/ffprobe 9.0.2, qpdf 12.4.2, gs 10.08.0. Intel macOS is pinned one release behind: vips 8.18.6 / gs 10.07.1 (ADR 0001) |
 
 Release profile: `lto`, `codegen-units=1`, `opt-level=3`, `panic=abort`, `strip`.
@@ -27,12 +27,16 @@ Release profile: `lto`, `codegen-units=1`, `opt-level=3`, `panic=abort`, `strip`
 ```mermaid
 flowchart TB
     subgraph FE["Frontend — WebView"]
+        APP["App shell<br/>sidebar · top bar · dialogs"]
         CV["CompressView<br/>staging list ⇄ run board"]
-        HV["HistoryView<br/>filters · day groups · pagination"]
-        SV["SettingsView<br/>targets · floors · performance · history"]
+        HV["HistoryView<br/>selected batch detail"]
         CP["CompressionProvider<br/>owns list + run state"]
+        HP["HistoryProvider<br/>filters · selection · page"]
+        APP --> CV
+        APP --> HV
         CV --> CP
         HV --> CP
+        HV --> HP
     end
 
     subgraph CORE["Rust core — src-tauri/src"]
@@ -85,32 +89,62 @@ flowchart TB
 
 ## 4. Frontend
 
+### Shell
+
+`main.tsx` applies the stored or OS theme before the first render, detects the platform synchronously through `plugin-os`, then mounts `ErrorBoundary → PlatformProvider → App`.
+
+```
+PlatformProvider
+└── CompressionProvider
+    ├── QuitGuard
+    └── HistoryProvider
+        └── SidebarProvider
+            ├── Sidebar (stock shadcn, offcanvas)
+            ├── SidebarInset: TopBar + active view
+            └── SettingsDialog · AboutDialog · HistoryFilterDialog · Toaster
+```
+
+- `App` owns `activeView` (`compress` | `history`) plus the settings, About and filter dialog state. One view is mounted at a time; there is no router.
+- The top bar holds the breadcrumb, sidebar toggle, theme toggle and ⋯ app menu; on non-macOS platforms it adds minimize/maximize/close. The whole bar is a drag surface and interactive children stop propagation. See ADR 0007.
+- The sidebar is the stock shadcn `Sidebar`: `offcanvas` on desktop, the vendored Sheet below 768px, stock widths (16rem / 18rem). `src/components/ui/sidebar.tsx` is not modified. Open state is session-only.
+- `HistoryList` lives inside the sidebar — search, batch rows, pagination, the only scroller. Selecting a batch focuses its detail in `HistoryView` and adds its label to the breadcrumb.
+- Settings and About are dialogs; there is no settings view. Settings auto-save after a 400 ms debounce and flush on close.
+
 ### Views
 
-- No router. `App.tsx` holds `activeView` and mounts one view at a time; history and settings state reset when you navigate away.
-- `CompressionProvider` sits above the switch, so the staged list and an in-flight run survive navigation.
+- `CompressionProvider` and `HistoryProvider` sit above the view switch, so the staged list, an in-flight run, history filters and the selected batch survive navigation.
 - Compress has two screens: **staging** (drop zone + file list + summary footer) and **run** (header + kanban board, one lane per category). "New batch" clears the list and returns to an empty staging screen.
-- Dark mode follows `prefers-color-scheme` via the `.dark` class; there is no theme provider.
+- History is a detail pane for the batch selected in the sidebar; there is no third column.
+- Dark mode: `useTheme` reads `localStorage["yard-theme"]`, follows `prefers-color-scheme` when unset, toggles `.dark`, and syncs the native window theme. `main.tsx` applies the first value before `createRoot`.
 
 ### State ownership
 
 | State | Owner |
 |---|---|
+| `activeView`, settings/About/filter dialog open | `App` |
+| sidebar open (desktop `open`, mobile Sheet `openMobile`) | `SidebarProvider` — session-only |
+| history expanded, selected batch, filters/sort/page/search/data | `HistoryProvider` over `useHistory` |
 | `files`, list error | `useFileList` — every mutation calls Rust first, then stores the returned list |
 | run screen, batch number, roster, batch outcome | `CompressionProvider` |
 | `isCompressing`, `progressByFile` | `useCompression` — driven by events |
-| history filters/page/search | `useHistory` — local to the view |
-| settings draft | `useSettings` — JSON dirty check, one load/save race guard |
+| window-close interception | `QuitGuard` under `CompressionProvider` — reads `isCompressing` |
+| platform | `PlatformProvider` over `plugin-os` |
+| theme | `useTheme` — localStorage, OS fallback |
+| settings draft | `useSettings` inside `SettingsDialog` — JSON dirty check, debounced auto-save, one load/save race guard |
 
 During a batch Rust is authoritative: the frontend applies events and ignores events for files that left the list. See ADR 0004.
 
 ### IPC surface
 
-Commands (frontend → Rust): `add_files`, `remove_file`, `clear_list`, `get_settings`, `save_settings`, `reset_settings`, `compress_all`, `cancel_file`, `cancel_all`, `reveal_in_folder`, `get_history`, `clear_history`, `open_folder`.
+Commands (frontend → Rust): `add_files`, `remove_file`, `clear_list`, `get_settings`, `save_settings`, `reset_settings`, `compress_all`, `cancel_file`, `cancel_all`, `reveal_in_folder`, `get_history`, `clear_history`, `open_folder`, `quit`.
 
 Events (Rust → frontend): `file:progress`, `file:complete`, `file:error`, `file:cancelled`, `batch:complete`, `batch:error`, `history:error`. Payload fields are camelCase on the wire; `FileStatus` values are snake_case (`already_under_target`, `best_effort`, …) and categories are lowercase.
 
-Capabilities grant only plugin defaults to window `main`; custom commands need no entry. CSP is `script-src 'self'` with `style-src 'unsafe-inline'` for Tailwind.
+`HistoryFilters` carries `sort` (`newest` default, `oldest`). Sorting happens before pagination; an absent or unknown value falls back to `newest` (`sort: null` is valid).
+
+Capabilities grant plugin defaults, `os:default`, `window-state:default`, and window start-dragging/minimize/toggle-maximize/close/set-theme to window `main`; custom commands need no entry. CSP is `script-src 'self'` with `style-src 'unsafe-inline'` for Tailwind.
+
+Window chrome and plugin wiring: macOS uses an overlay title bar, Windows is frameless with the default shadow, Linux keeps native decorations and is not packaged. `window-state` restores size/position/maximized but never decorations; `single-instance` focuses the existing window on a second launch. See ADR 0007.
 
 ### Rendering cost
 
@@ -121,7 +155,7 @@ List rows and kanban cards are not memoized and lists are not virtualized. Every
 ### Module map
 
 ```
-lib.rs          plugin wiring, managed state, setup hook, command registry
+lib.rs          plugin wiring, macOS menu, managed state, setup hook, command registry
 commands.rs     IPC surface + settings load/save + file list state
 queue.rs        single worker task, batch lifecycle, cancel maps, events
 scheduler.rs    generic weighted-lane scheduler (no Tauri dependency)
