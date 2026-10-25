@@ -177,7 +177,7 @@ describe('DropZone', () => {
     expect(zone.className).toContain('bg-primary/5')
     emit({ payload: { type: 'leave' } })
     expect(zone.className).toContain('border-input')
-    expect(zone.className).toContain('bg-muted/30')
+    expect(zone.className).toContain('bg-muted/20')
     expect(zone.className).not.toContain('border-primary')
     expect(zone.className).not.toContain('bg-primary/5')
   })
@@ -186,7 +186,7 @@ describe('DropZone', () => {
     render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
     expect(screen.getByText('Drag and drop files here')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Browse your files' })).toBeInTheDocument()
-    expect(screen.getByText('…or click anywhere in this area')).toBeInTheDocument()
+    expect(screen.getByText('…or click anywhere in this card')).toBeInTheDocument()
     for (const ext of ALL_EXTENSIONS) {
       const pill = screen.getByText(ext)
       expect(pill).toBeInTheDocument()
@@ -217,10 +217,15 @@ describe('DropZone', () => {
     }
   })
 
-  it('zone container is rounded (rounded-2xl class present)', () => {
+  it('bounds the empty card and centres it via Empty slots', () => {
     render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
     const zone = screen.getByRole('button', { name: /drop files here or press/i })
-    expect(zone.className).toContain('rounded-2xl')
+    expect(zone.className).toContain('rounded-3xl')
+    expect(zone.className).toContain('max-w-xl')
+    expect(zone.className).toContain('min-h-[320px]')
+    expect(zone.className).toContain('flex-none')
+    expect(zone.getAttribute('data-slot')).toBe('empty')
+    expect(zone.querySelector('[data-slot="empty-media"], [data-slot="empty-icon"]')).not.toBeNull()
   })
 
   it('format pills live in their category group container and nowhere else', () => {
@@ -249,11 +254,11 @@ describe('DropZone', () => {
     expect(videos.compareDocumentPosition(docs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('group containers carry category border tones', () => {
+  it('drops the group borders in the empty card but keeps pill tints', () => {
     render(<DropZone onBrowse={vi.fn()} onDrop={vi.fn()} />)
-    expect(screen.getByTestId('format-group-images').className).toContain('border-blue-500/30')
-    expect(screen.getByTestId('format-group-videos').className).toContain('border-violet-500/30')
-    expect(screen.getByTestId('format-group-docs').className).toContain('border-destructive/35')
+    for (const testId of ['format-group-images', 'format-group-videos', 'format-group-docs']) {
+      expect(screen.getByTestId(testId).className).not.toContain('border')
+    }
     const docs = screen.getByTestId('format-group-docs')
     expect(within(docs).getByText('PDF').className).toContain('border-destructive/35')
     expect(within(docs).getByText('DOCX').className).toContain('border-amber-500/30')
@@ -322,7 +327,7 @@ describe('DropZone', () => {
     expect(screen.queryByText('1 files detected')).not.toBeInTheDocument()
     const zone = screen.getByRole('button', { name: /drop files here or press/i })
     expect(zone.className).toContain('border-input')
-    expect(zone.className).toContain('bg-muted/30')
+    expect(zone.className).toContain('bg-muted/20')
     expect(zone.className).not.toContain('border-primary')
     expect(zone.className).not.toContain('bg-primary/5')
     emit({ payload: { type: 'enter', position: { x: 0, y: 0 } } })

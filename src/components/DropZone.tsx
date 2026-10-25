@@ -18,6 +18,14 @@ import type { MouseEvent, KeyboardEvent } from 'react'
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { Button } from '@/components/ui/button'
+import {
+  Empty,
+  EmptyContent,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+} from '@/components/ui/empty'
 import { CategoryIcon } from '@/components/CategoryIcon'
 import { RiUploadCloud2Line } from '@remixicon/react'
 import type { Category } from '@/types'
@@ -99,9 +107,11 @@ function FormatGroups({ mini = false }: { mini?: boolean }) {
         <div
           key={group.testId}
           data-testid={group.testId}
-          className={`flex flex-wrap items-center border bg-background/50 ${
-            mini ? 'gap-1 rounded-lg px-2 py-1' : 'justify-center gap-1.5 rounded-xl px-2.5 py-1.5'
-          } ${group.border}`}
+          className={
+            mini
+              ? `flex flex-wrap items-center gap-1 rounded-lg border bg-background/50 px-2 py-1 ${group.border}`
+              : 'flex flex-wrap items-center justify-center gap-1.5'
+          }
         >
           <span
             className={`px-1 font-bold tracking-wider text-muted-foreground ${
@@ -225,45 +235,53 @@ export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZ
   }
 
   return (
-    <div
+    <Empty
       role="button"
       tabIndex={0}
       aria-label="Add files: drop files here or press Enter to browse"
       onClick={onBrowse}
       onKeyDown={handleKeyDown}
-      className={`flex w-full cursor-pointer flex-col items-center gap-3 rounded-2xl px-6 py-12 text-center transition-colors ${
+      className={`w-full max-w-xl min-h-[320px] flex-none cursor-pointer border bg-muted/20 p-8 outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 ${
         isDragging
-          ? 'border border-dashed border-primary bg-primary/5'
-          : 'border border-dashed border-input bg-muted/30 hover:bg-muted/50'
+          ? 'border-dashed border-primary bg-primary/5'
+          : 'border-dashed border-input hover:bg-muted/40'
       } ${className ?? ''}`}
     >
-      <div
-        className={`flex size-16 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_10px_26px_-10px_color-mix(in_oklab,var(--color-primary)_55%,transparent)] transition-transform ${
+      <EmptyMedia
+        className={`size-16 rounded-2xl bg-primary text-primary-foreground shadow-[0_10px_26px_-10px_color-mix(in_oklab,var(--color-primary)_55%,transparent)] transition-transform [&_svg:not([class*=size-])]:size-7 ${
           isDragging ? 'scale-110' : ''
         }`}
       >
-        <RiUploadCloud2Line size={28} />
-      </div>
-      <p className="text-lg font-bold">{isDragging ? 'Release to add files' : 'Drag and drop files here'}</p>
-      <Button size="lg" onClick={handleBrowseClick} onKeyDown={stopBrowseKey}>
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
+        <RiUploadCloud2Line />
+      </EmptyMedia>
+      <EmptyHeader>
+        <EmptyTitle>
+          {isDragging ? 'Release to add files' : 'Drag and drop files here'}
+        </EmptyTitle>
+        <EmptyDescription
+          className={isDragging ? 'font-semibold text-primary' : undefined}
         >
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-        </svg>
-        Browse your files
-      </Button>
-      <p className={`text-[11px] ${isDragging ? 'font-semibold text-primary' : 'text-muted-foreground'}`}>
-        {isDragging ? filesDetected : '…or click anywhere in this area'}
-      </p>
-      <FormatGroups />
-    </div>
+          {isDragging ? filesDetected : '…or click anywhere in this card'}
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button size="lg" onClick={handleBrowseClick} onKeyDown={stopBrowseKey}>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+          </svg>
+          Browse your files
+        </Button>
+        <FormatGroups />
+      </EmptyContent>
+    </Empty>
   )
 }

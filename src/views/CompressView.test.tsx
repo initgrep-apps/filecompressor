@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
@@ -136,13 +136,22 @@ describe('CompressView', () => {
     expect(screen.getByRole('alert').className).toContain('destructive')
   })
 
-  it('staging empty renders only the full-surface dropzone with no table and no card', () => {
+  it('staging empty renders only the centred drop card with no table and no card', () => {
     renderView()
     expect(screen.getByText('Drag and drop files here')).toBeInTheDocument()
     expect(screen.queryByText('No files yet')).not.toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     expect(screen.queryByTestId('batch-summary')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Compress' })).not.toBeInTheDocument()
+    const card = screen.getByRole('button', { name: /drop files here or press/i })
+    expect(card.className).toContain('max-w-xl')
+  })
+
+  it('does not open the picker when the canvas outside the card is clicked', () => {
+    renderView()
+    const card = screen.getByRole('button', { name: /drop files here or press/i })
+    fireEvent.click(card.parentElement!)
+    expect(open).not.toHaveBeenCalled()
   })
 
   it('staging with files renders compact hero, table, and footer counts of non-unsupported sizes', async () => {

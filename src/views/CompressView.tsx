@@ -189,8 +189,8 @@ function StagingScreen() {
       <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-hidden p-5">
         {error ? alert(error) : null}
         {batchError ? alert(batchError) : null}
-        <div className="flex min-h-0 flex-1 items-stretch">
-          <DropZone onBrowse={browseFiles} onDrop={addFiles} className="min-h-0 flex-1" />
+        <div className="flex min-h-0 flex-1 items-center justify-center">
+          <DropZone onBrowse={browseFiles} onDrop={addFiles} />
         </div>
       </div>
     )
