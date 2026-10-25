@@ -22,6 +22,7 @@ What shipped, in the order the slices were built. This replaces the per-slice sp
 | 16 | Release integrity | Package-content gate per release row, macOS library-validation entitlement, Windows engine-path fixes, no console windows | ADRs 0001, 0002; `scripts/ci/package-gate.mjs` |
 | 17 | Yard rename | Product, package, crate, identifier and temp folder are all `yard` | Repo slug remains `initgrep-apps/filecompressor` |
 | 18 | App shell redesign | Native window chrome (macOS overlay, frameless Windows), stock shadcn sidebar with history batch list, filter dialog, settings/About dialogs, pre-paint theme | ADR 0007; Linux chrome unverified (`docs/bugs.md`) |
+| 19 | Lucide icons | Every icon from `lucide-react`; `@remixicon/react` dropped, `components.json` declares `iconLibrary: lucide` | ADR 0008; sonner keeps shadcn's `OctagonX`/`TriangleAlert`, brand is `FileLock2` |
 
 ## Not shipped (deliberately)
 
