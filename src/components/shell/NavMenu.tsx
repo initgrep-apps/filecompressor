@@ -14,11 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import {
-  RiCheckLine,
-  RiMenuLine,
-  RiSettings3Line,
-} from "@remixicon/react"
+import { Check, Menu, Settings } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -41,7 +37,7 @@ export function NavMenu({
 }: ShellNavProps) {
   const activeCheck = (
     <DropdownMenuShortcut>
-      <RiCheckLine aria-hidden />
+      <Check aria-hidden />
     </DropdownMenuShortcut>
   )
 
@@ -57,7 +53,7 @@ export function NavMenu({
           />
         }
       >
-        <RiMenuLine />
+        <Menu />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-48">
         <DropdownMenuGroup>
@@ -79,7 +75,7 @@ export function NavMenu({
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuItem onClick={onOpenSettings}>
-            <RiSettings3Line data-icon="inline-start" />
+            <Settings data-icon="inline-start" />
             Settings
           </DropdownMenuItem>
         </DropdownMenuGroup>

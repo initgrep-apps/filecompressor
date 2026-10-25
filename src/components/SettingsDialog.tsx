@@ -15,14 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import {
-  RiEqualizerLine,
-  RiFlashlightLine,
-  RiFolderOpenLine,
-  RiSettings3Line,
-  RiShieldCheckLine,
-  RiTimeLine,
-} from "@remixicon/react"
+import { Clock, FolderOpen, Settings as SettingsIcon, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import {
@@ -70,11 +63,11 @@ const RESET_ERROR_ID = "settings-reset"
 type PersistResult = "saved" | "failed" | "pending"
 
 const SECTIONS = [
-  { value: "general", label: "General", icon: RiSettings3Line },
-  { value: "targets", label: "Targets", icon: RiEqualizerLine },
-  { value: "floors", label: "Quality floors", icon: RiShieldCheckLine },
-  { value: "performance", label: "Performance", icon: RiFlashlightLine },
-  { value: "history", label: "History", icon: RiTimeLine },
+  { value: "general", label: "General", icon: SettingsIcon },
+  { value: "targets", label: "Targets", icon: SlidersHorizontal },
+  { value: "floors", label: "Quality floors", icon: ShieldCheck },
+  { value: "performance", label: "Performance", icon: Zap },
+  { value: "history", label: "History", icon: Clock },
 ] as const
 
 type SectionId = (typeof SECTIONS)[number]["value"]
@@ -127,7 +120,7 @@ function GeneralSection({
               title="Choose folder"
               onClick={onChoose}
             >
-              <RiFolderOpenLine />
+              <FolderOpen />
             </Button>
           </div>
         </Field>

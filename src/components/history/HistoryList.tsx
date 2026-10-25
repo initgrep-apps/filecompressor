@@ -35,7 +35,7 @@ import {
 import { useHistoryContext } from "@/providers/HistoryProvider"
 import { cn } from "@/lib/utils"
 import type { HistorySession } from "@/types"
-import { RiArrowLeftSLine, RiArrowRightSLine } from "@remixicon/react"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 
 export const HISTORY_LIST_ID = "history-batch-list"
 
@@ -197,7 +197,7 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
               disabled={loading || error !== null || page === 0}
               onClick={() => setPage(page - 1)}
             >
-              <RiArrowLeftSLine />
+              <ChevronLeft />
             </Button>
             <Button
               variant="ghost"
@@ -206,7 +206,7 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
               disabled={loading || error !== null || page + 1 >= totalPages}
               onClick={() => setPage(page + 1)}
             >
-              <RiArrowRightSLine />
+              <ChevronRight />
             </Button>
           </div>
         </div>

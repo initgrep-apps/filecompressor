@@ -16,11 +16,7 @@
 
 import { invoke } from '@tauri-apps/api/core'
 import { toast } from 'sonner'
-import {
-  RiFolder3Line,
-  RiFolderOpenLine,
-  RiHistoryLine,
-} from '@remixicon/react'
+import { Folder, FolderOpen, History } from 'lucide-react'
 import type { Category, FileStatus, HistoryFile, HistorySession } from '@/types'
 import {
   activeFilterCount,
@@ -289,7 +285,7 @@ function BatchFiles({ session }: { session: HistorySession }) {
                     if (file.outputPath) void revealFile(file.outputPath)
                   }}
                 >
-                  <RiFolderOpenLine />
+                  <FolderOpen />
                 </Button>
                 <Button
                   variant="ghost"
@@ -297,7 +293,7 @@ function BatchFiles({ session }: { session: HistorySession }) {
                   aria-label="Reveal source"
                   onClick={() => void revealFile(file.path)}
                 >
-                  <RiFolder3Line />
+                  <Folder />
                 </Button>
               </div>
             </li>
@@ -357,7 +353,7 @@ export function HistoryView() {
                   size="sm"
                   onClick={() => void openSessionFolder(session.outputFolder)}
                 >
-                  <RiFolderOpenLine data-icon="inline-start" />
+                  <FolderOpen data-icon="inline-start" />
                   Reveal folder
                 </Button>
               )}
@@ -404,7 +400,7 @@ export function HistoryView() {
             <Empty>
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  <RiHistoryLine />
+                  <History />
                 </EmptyMedia>
                 <EmptyTitle>
                   {unreadable

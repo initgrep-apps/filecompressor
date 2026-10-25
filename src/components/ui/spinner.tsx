@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { cn } from "cn"
-import { RiLoaderLine } from "@remixicon/react"
+import { LoaderCircle } from "lucide-react"
 
 type SpinnerProps = Omit<
   React.ComponentProps<"svg">,
@@ -29,7 +29,7 @@ type SpinnerProps = Omit<
 
 function Spinner({ className, ...props }: SpinnerProps) {
   return (
-    <RiLoaderLine
+    <LoaderCircle
       className={cn("size-4 animate-spin", className)}
       {...props}
       role={undefined}

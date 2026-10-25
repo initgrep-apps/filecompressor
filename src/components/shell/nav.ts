@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import type { ComponentType } from "react"
-import { RiContractLeftRightLine, RiTimelineView } from "@remixicon/react"
+import { FoldHorizontal, Timeline } from "lucide-react"
 import type { ViewId } from "@/types"
 
 export interface ShellNavProps {
@@ -27,8 +27,8 @@ export interface ShellNavProps {
 export type DialogId = "settings" | "about"
 
 export const NAV_ITEMS = [
-  { id: "compress", label: "Compress", icon: RiContractLeftRightLine },
-  { id: "history", label: "History", icon: RiTimelineView },
+  { id: "compress", label: "Compress", icon: FoldHorizontal },
+  { id: "history", label: "History", icon: Timeline },
 ] as const satisfies readonly {
   id: ViewId
   label: string

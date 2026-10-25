@@ -14,9 +14,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { RiMoonLine, RiSunLine } from "@remixicon/react"
 import { Button } from "@/components/ui/button"
 import { useTheme } from "@/hooks/useTheme"
+import { Moon, Sun } from "lucide-react"
 
 export function ThemeToggle() {
   const { theme, toggleTheme } = useTheme()
@@ -29,7 +29,7 @@ export function ThemeToggle() {
       title="Toggle theme"
       onClick={toggleTheme}
     >
-      {theme === "dark" ? <RiMoonLine /> : <RiSunLine />}
+      {theme === "dark" ? <Moon /> : <Sun />}
     </Button>
   )
 }

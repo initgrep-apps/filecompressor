@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { NumberField } from '@base-ui/react/number-field'
-import { RiAddLine, RiSubtractLine } from '@remixicon/react'
+import { Minus, Plus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface NumberStepperProps {
@@ -54,7 +54,7 @@ export function NumberStepper({
           aria-label={`Decrease ${ariaLabel}`}
           className="flex h-full w-8 shrink-0 items-center justify-center rounded-l-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
         >
-          <RiSubtractLine data-icon="inline-start" />
+          <Minus data-icon="inline-start" />
         </NumberField.Decrement>
         <NumberField.Input
           id={id}
@@ -65,7 +65,7 @@ export function NumberStepper({
           aria-label={`Increase ${ariaLabel}`}
           className="flex h-full w-8 shrink-0 items-center justify-center rounded-r-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
         >
-          <RiAddLine data-icon="inline-start" />
+          <Plus data-icon="inline-start" />
         </NumberField.Increment>
       </NumberField.Group>
     </NumberField.Root>
