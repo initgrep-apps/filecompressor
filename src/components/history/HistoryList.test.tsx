@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 
 const { useHistoryMock } = vi.hoisted(() => ({
@@ -200,7 +200,7 @@ function renderList({
 
 const scrollArea = () =>
   document.querySelector('[data-slot="scroll-area"]') as HTMLElement | null
-const batchList = () => screen.getByRole("group", { name: "Batches" })
+const batchList = () => screen.getByLabelText("Batches")
 
 beforeEach(() => {
   useHistoryMock.mockReset()
@@ -208,28 +208,28 @@ beforeEach(() => {
 })
 
 describe("HistoryList", () => {
-  it("pins the search above, and the pagination below, the only scroller", () => {
+  it("pins the pagination below the only scroller", () => {
     renderList({ totalSessions: 120 })
 
     const area = scrollArea()
     expect(area).not.toBeNull()
     expect(area!.className).toContain("min-h-0")
     expect(area!.className).toContain("flex-1")
-    expect(
-      area!.querySelector('[data-slot="sidebar-menu-sub"]'),
-    ).not.toBeNull()
-    expect(area).not.toContainElement(
-      screen.getByLabelText("Search history"),
-    )
+    expect(batchList()).toBeInTheDocument()
+    expect(area).toContainElement(batchList())
     expect(area).not.toContainElement(screen.getByText(/Page \d+ of/))
 
     const root = area!.parentElement!
     const children = [...root.children]
-    const search = screen.getByLabelText("Search history").parentElement!
     const pagination = screen.getByText(/Page \d+ of/).parentElement!
 
-    expect(children.indexOf(search)).toBeLessThan(children.indexOf(area!))
     expect(children.indexOf(area!)).toBeLessThan(children.indexOf(pagination))
+  })
+
+  it("does not render a history search field", () => {
+    renderList()
+
+    expect(screen.queryByRole("textbox", { name: /search/i })).toBeNull()
   })
 
   it("renders each batch with its label, meta line, and saved percent", () => {
@@ -260,8 +260,10 @@ describe("HistoryList", () => {
 
     const row = screen.getByTestId("batch-s1")
     expect(row.className).toContain("w-full")
-    expect(row.className).toContain("px-2")
-    expect(row.className).toContain("py-1")
+    expect(row.className).toContain("px-2.5")
+    expect(row.className).toContain("py-2")
+    expect(row.getAttribute("data-slot")).toBe("item")
+    expect(row.className).toContain("data-active:bg-sidebar-accent")
   })
 
   it("uses totalSavedBytes for an unfiltered session", () => {
@@ -376,25 +378,11 @@ describe("HistoryList", () => {
 
     expect(screen.getByTestId("selected-session")).toHaveTextContent("s2")
     expect(row.hasAttribute("data-active")).toBe(true)
+    expect(row.className).toContain("data-active:bg-sidebar-accent")
     expect(screen.getByTestId("batch-s1").hasAttribute("data-active")).toBe(
       false,
     )
     expect(onOpenHistory).toHaveBeenCalledTimes(1)
-  })
-
-  it("debounces the search into the history filters", async () => {
-    const user = userEvent.setup()
-    const { setFilters } = renderList()
-
-    await user.type(screen.getByLabelText("Search history"), "hero")
-
-    await waitFor(
-      () =>
-        expect(setFilters).toHaveBeenCalledWith(
-          expect.objectContaining({ search: "hero" }),
-        ),
-      { timeout: 2_000 },
-    )
   })
 
   it("disables Previous on the first page and pages forward", async () => {
@@ -470,8 +458,8 @@ describe("HistoryList", () => {
     expect(batchList()).toHaveAttribute("aria-busy", "true")
     expect(screen.getAllByTestId("batch-skeleton")).toHaveLength(3)
     const skeletonRow = screen.getAllByTestId("batch-skeleton")[0].firstElementChild!
-    expect(skeletonRow.className).toContain("px-2")
-    expect(skeletonRow.className).toContain("py-1")
+    expect(skeletonRow.className).toContain("px-2.5")
+    expect(skeletonRow.className).toContain("py-2")
     expect(
       document.querySelectorAll('[data-slot="skeleton"]').length,
     ).toBeGreaterThan(0)
@@ -503,7 +491,7 @@ describe("HistoryList", () => {
     renderList()
 
     expect(screen.getByText("No batches yet.")).toBeInTheDocument()
-    expect(screen.getByText("No batches yet.").className).toContain("px-2 py-1")
+    expect(screen.getByText("No batches yet.").className).toContain("px-2.5 py-2")
     expect(screen.queryByText(/Page \d+ of/)).toBeNull()
     expect(screen.queryByRole("button", { name: "Previous page" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Next page" })).toBeNull()
@@ -548,7 +536,7 @@ describe("HistoryList", () => {
     const alert = screen.getByRole("alert")
     expect(alert).toHaveTextContent("Could not load history: boom")
     expect(alert.className).toContain("text-muted-foreground")
-    expect(alert.className).toContain("px-2 py-1")
+    expect(alert.className).toContain("px-2.5 py-2")
     expect(screen.queryByText(/Page \d+ of/)).toBeNull()
     expect(screen.queryByRole("button", { name: "Previous page" })).toBeNull()
     expect(screen.queryByRole("button", { name: "Next page" })).toBeNull()

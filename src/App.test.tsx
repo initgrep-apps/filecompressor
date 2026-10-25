@@ -225,13 +225,21 @@ describe("App shell", () => {
     ).toContain("overflow-hidden")
   })
 
-  it("keeps the macOS toggle in both states and reveals ☰ with clearance when collapsed", async () => {
+  it("moves the toggle from the sidebar header to the top bar when collapsed", async () => {
     const user = userEvent.setup()
     renderApp("darwin")
 
     expect(
-      within(topBar()).getByRole("button", { name: "Collapse sidebar" }),
+      within(sidebarHeader()).getByRole("button", {
+        name: "Collapse sidebar",
+      }),
     ).toBeInTheDocument()
+    expect(
+      within(sidebarHeader()).getByTestId("sidebar-actions"),
+    ).toBeInTheDocument()
+    expect(
+      within(topBar()).queryByRole("button", { name: /sidebar/i }),
+    ).toBeNull()
     expect(
       within(topBar()).queryByRole("button", { name: "Open navigation" }),
     ).toBeNull()
@@ -239,10 +247,11 @@ describe("App shell", () => {
       within(topBar()).queryByRole("button", { name: "Minimize" }),
     ).toBeNull()
     expect(topBar().className).not.toContain("pl-22")
-    expect(sidebarHeader().textContent).toBe("")
 
     await user.click(
-      within(topBar()).getByRole("button", { name: "Collapse sidebar" }),
+      within(sidebarHeader()).getByRole("button", {
+        name: "Collapse sidebar",
+      }),
     )
 
     const root = sidebar()!
@@ -256,6 +265,19 @@ describe("App shell", () => {
       within(topBar()).getByRole("button", { name: "Open navigation" }),
     ).toBeInTheDocument()
     expect(within(topBar()).getByText("Compress")).toBeInTheDocument()
+    expect(document.activeElement).toBe(
+      within(topBar()).getByRole("button", { name: "Expand sidebar" }),
+    )
+
+    await user.click(
+      within(topBar()).getByRole("button", { name: "Expand sidebar" }),
+    )
+
+    expect(document.activeElement).toBe(
+      within(sidebarHeader()).getByRole("button", {
+        name: "Collapse sidebar",
+      }),
+    )
   })
 
   it("shows window controls on Windows and hides the top-bar toggle while visible", async () => {
@@ -293,13 +315,18 @@ describe("App shell", () => {
 
   it("updates the breadcrumb when switching views", async () => {
     const user = userEvent.setup()
+    const session = makeSession(new Date().getTime())
+    stubInvoke({
+      ...emptyHistory,
+      sessions: [session],
+      totalSessions: 1,
+      totalFiles: 2,
+    })
     renderApp("darwin")
 
     expect(within(topBar()).getByText("Compress")).toBeInTheDocument()
 
-    await user.click(
-      within(sidebar()!).getByRole("button", { name: /History/ }),
-    )
+    await user.click(await screen.findByTestId("batch-s1"))
 
     expect(within(topBar()).getByText("History")).toBeInTheDocument()
     expect(within(topBar()).queryByText("Compress")).toBeNull()
@@ -324,9 +351,7 @@ describe("App shell", () => {
     })
     renderApp("darwin")
 
-    await user.click(
-      within(sidebar()!).getByRole("button", { name: /History/ }),
-    )
+    await user.click(await screen.findByTestId("batch-s1"))
 
     const label = batchLabel(started.getTime(), new Date())
     await waitFor(() =>
@@ -347,7 +372,7 @@ describe("App shell", () => {
     expect(win.onCloseRequested).toHaveBeenCalled()
   })
 
-  it("uses the stock Sheet below 768px and closes it when a nav row is chosen", async () => {
+  it("keeps the mobile Sheet open while History expands and closes it from the header", async () => {
     window.innerWidth = 760
     const user = userEvent.setup()
     renderApp("darwin")
@@ -369,38 +394,47 @@ describe("App shell", () => {
       return element as HTMLElement
     })
 
+    expect(
+      within(sheet).getByRole("button", { name: "Collapse sidebar" }),
+    ).toBeInTheDocument()
+
     await user.click(within(sheet).getByRole("button", { name: /History/ }))
 
-    await waitFor(() =>
-      expect(
-        document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
-      ).toBeNull(),
-    )
-    expect(within(topBar()).getByText("History")).toBeInTheDocument()
-    expect(topBar().className).toContain("pl-22")
+    expect(
+      document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
+    ).not.toBeNull()
+    expect(
+      within(sheet).getByRole("button", { name: /History/ }),
+    ).toHaveAttribute("aria-expanded", "true")
+    expect(within(topBar()).getByText("Compress")).toBeInTheDocument()
 
     await user.click(
-      within(topBar()).getByRole("button", { name: "Expand sidebar" }),
+      within(sheet).getByRole("button", { name: "Collapse sidebar" }),
     )
-    const reopenedSheet = await waitFor(() => {
-      const element = document.querySelector(
-        '[data-slot="sidebar"][data-mobile="true"]',
-      )
-      expect(element).not.toBeNull()
-      return element as HTMLElement
-    })
-    const activeHistoryRow = within(reopenedSheet).getByRole("button", {
-      name: /History/,
-    })
-    expect(activeHistoryRow).toHaveAttribute("aria-expanded", "true")
-
-    await user.click(activeHistoryRow)
 
     await waitFor(() =>
       expect(
         document.querySelector('[data-slot="sidebar"][data-mobile="true"]'),
       ).toBeNull(),
     )
+    expect(topBar().className).toContain("pl-22")
+  })
+
+  it("keeps Compress and shows the empty batch list when History has no sessions", async () => {
+    const user = userEvent.setup()
+    renderApp("darwin")
+
+    const row = within(sidebar()!).getByRole("button", { name: /History/ })
+
+    await user.click(row)
+    expect(within(sidebar()!).queryByText("No batches yet.")).toBeNull()
+
+    await user.click(row)
+    expect(screen.getByTestId("view-container")).toHaveAttribute(
+      "data-view",
+      "compress",
+    )
+    expect(within(sidebar()!).getByText("No batches yet.")).toBeInTheDocument()
   })
 
   it("caps the shell height and keeps the view container clipped", () => {
@@ -604,6 +638,13 @@ describe("App shell", () => {
 
   it("renders the matching view when navigating", async () => {
     const user = userEvent.setup()
+    const session = makeSession(new Date().getTime())
+    stubInvoke({
+      ...emptyHistory,
+      sessions: [session],
+      totalSessions: 1,
+      totalFiles: 2,
+    })
     renderApp("darwin")
 
     expect(screen.getByTestId("view-container")).toHaveAttribute(
@@ -614,13 +655,12 @@ describe("App shell", () => {
       screen.getByRole("button", { name: /drop files/i }),
     ).toBeInTheDocument()
 
-    await user.click(within(sidebar()!).getByRole("button", { name: /History/ }))
+    await user.click(await screen.findByTestId("batch-s1"))
 
     expect(screen.getByTestId("view-container")).toHaveAttribute(
       "data-view",
       "history",
     )
-    expect(await screen.findByText("No history yet")).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /drop files/i })).toBeNull()
 
     await user.click(
@@ -652,10 +692,7 @@ describe("App shell", () => {
     })
     renderApp("darwin")
 
-    await user.click(
-      await screen.findByRole("button", { name: "Select second session" }),
-    )
-    await user.click(within(sidebar()!).getByRole("button", { name: /History/ }))
+    await user.click(await screen.findByTestId("batch-s2"))
 
     const secondLabel = batchLabel(secondSession.startedAt, new Date())
     const firstLabel = batchLabel(firstSession.startedAt, new Date())
@@ -739,7 +776,9 @@ describe("App shell", () => {
     renderApp("darwin")
 
     await user.click(
-      within(topBar()).getByRole("button", { name: "Collapse sidebar" }),
+      within(sidebarHeader()).getByRole("button", {
+        name: "Collapse sidebar",
+      }),
     )
     await user.click(
       within(topBar()).getByRole("button", { name: "Open navigation" }),

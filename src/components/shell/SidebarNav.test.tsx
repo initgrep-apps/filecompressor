@@ -149,6 +149,7 @@ const scrollArea = () =>
   document.querySelector('[data-slot="scroll-area"]') as HTMLElement | null
 
 beforeEach(() => {
+  window.innerWidth = 1024
   compressionMock.mockReset()
   historyMock.mockReset()
 })
@@ -176,17 +177,17 @@ describe("SidebarNav", () => {
     expect(onNavigate).not.toHaveBeenCalled()
   })
 
-  it("navigates to History without collapsing the list from another view", async () => {
+  it("toggles the batch list without navigating", async () => {
     const user = userEvent.setup()
     const { onNavigate, setExpanded } = renderNav()
 
     await user.click(screen.getByRole("button", { name: /History/ }))
 
-    expect(onNavigate).toHaveBeenCalledWith("history")
-    expect(setExpanded).not.toHaveBeenCalled()
+    expect(setExpanded).toHaveBeenCalledWith(true)
+    expect(onNavigate).not.toHaveBeenCalled()
   })
 
-  it("toggles the expanded list when History is already active", async () => {
+  it("collapses the expanded list when History is clicked again", async () => {
     const user = userEvent.setup()
     const { onNavigate, setExpanded } = renderNav({
       activeView: "history",
@@ -213,6 +214,9 @@ describe("SidebarNav", () => {
   it("marks the active row", () => {
     renderNav({ activeView: "history" })
 
+    expect(screen.getByTestId("nav-history").getAttribute("data-slot")).toBe(
+      "item",
+    )
     expect(screen.getByTestId("nav-compress").hasAttribute("data-active")).toBe(
       false,
     )
@@ -228,26 +232,41 @@ describe("SidebarNav", () => {
     )
   })
 
-  it("renders a glyph in every nav row", () => {
+  it("renders an icon in every nav row", () => {
     renderNav()
 
-    for (const id of ["nav-compress", "nav-history"]) {
+    for (const id of ["nav-compress", "nav-history", "nav-settings"]) {
       const row = screen.getByTestId(id)
-      expect(row.firstElementChild?.querySelector("svg")).not.toBeNull()
+      expect(row.querySelector('[data-slot="item-media"] svg')).not.toBeNull()
     }
   })
 
-  it("reserves room for the funnel beside the chevron", () => {
-    renderNav()
+  it("puts the chevron beside the label and the funnel at the far edge", () => {
+    renderNav({ expanded: false })
 
     const row = screen.getByTestId("nav-history")
-    const last = row.lastElementChild
-    expect(last?.tagName).toBe("SPAN")
-    expect(last).toHaveClass("ml-auto")
-    expect(last?.querySelector("svg")).not.toBeNull()
+    expect(
+      row.querySelector('[data-slot="item-title"] svg'),
+    ).not.toBeNull()
 
     const funnel = screen.getByRole("button", { name: "Filter history" })
     expect(funnel.className).toContain("size-6!")
+    expect(funnel.className).toContain("opacity-0")
+    expect(funnel.className).toContain("pointer-events-none")
+    expect(funnel.className).toContain("group-hover/menu-item:opacity-100")
+    expect(funnel.className).toContain("focus-visible:opacity-100")
+    expect(funnel.className).toContain("group-focus-within/menu-item:opacity-100")
+    expect(funnel.className).toContain("right-2")
+    expect(
+      funnel.closest('[data-slot="sidebar-menu-item"]')!.className,
+    ).toContain("group/menu-item")
+  })
+
+  it("keeps the funnel visible while filters are active", () => {
+    renderNav({ filters: { categories: ["image"] } })
+
+    const funnel = screen.getByRole("button", { name: "Filter history" })
+    expect(funnel.className).not.toContain("opacity-0")
   })
 
   it("shows the staged file count on the Compress row", () => {
@@ -255,28 +274,33 @@ describe("SidebarNav", () => {
 
     const badge = screen.getByTestId("nav-count")
     expect(badge).toHaveTextContent("3")
+    expect(badge.className).toContain("top-1/2")
+    expect(badge.className).toContain("-translate-y-1/2")
+    expect(badge.className).toContain("right-2")
     expect(badge.closest('[data-slot="sidebar-menu-item"]')).not.toBeNull()
     expect(badge.closest('[data-slot="sidebar-menu-button"]')).toBeNull()
   })
 
   it("renders the history list only while expanded", () => {
     renderNav({ expanded: false })
-    expect(screen.queryByLabelText("Search history")).toBeNull()
+    expect(document.getElementById(HISTORY_LIST_ID)).toBeNull()
 
     renderNav({ expanded: true })
-    expect(screen.getAllByLabelText("Search history")).toHaveLength(1)
+    expect(document.getElementById(HISTORY_LIST_ID)).not.toBeNull()
   })
 
   it("links the History row to the batch list", () => {
     renderNav({ expanded: true })
 
     const row = screen.getByTestId("nav-history")
+    expect(row.className).toContain("pr-9")
     expect(row).toHaveAttribute("aria-controls", HISTORY_LIST_ID)
     expect(row).toHaveAttribute("aria-expanded", "true")
 
     const list = document.getElementById(HISTORY_LIST_ID)
     expect(list).not.toBeNull()
-    expect(list).toHaveAttribute("role", "group")
+    expect(list).toHaveAccessibleName("Batches")
+    expect(list).not.toHaveAttribute("role")
   })
 
   it("opens the filter from the History row without navigating", async () => {
@@ -291,6 +315,40 @@ describe("SidebarNav", () => {
 
     expect(onOpenFilter).toHaveBeenCalledTimes(1)
     expect(onNavigate).not.toHaveBeenCalled()
+  })
+
+  it("reveals the funnel from the keyboard and on hover", () => {
+    renderNav({ expanded: false })
+
+    const funnel = screen.getByRole("button", { name: "Filter history" })
+    expect(funnel.className).toContain("focus-visible:pointer-events-auto")
+    expect(funnel.className).toContain(
+      "group-focus-within/menu-item:pointer-events-auto",
+    )
+  })
+
+  it("rotates the chevron while collapsed", () => {
+    renderNav({ expanded: false })
+    const collapsed = screen
+      .getByTestId("nav-history")
+      .querySelector('[data-slot="item-title"] svg')!
+    expect(collapsed.getAttribute("class")).toContain("-rotate-90")
+  })
+
+  it("draws the expanded chevron upright", () => {
+    renderNav({ expanded: true })
+    const expanded = screen
+      .getByTestId("nav-history")
+      .querySelector('[data-slot="item-title"] svg')!
+    expect(expanded.getAttribute("class")).not.toContain("-rotate-90")
+  })
+
+  it("keeps the funnel visible on touch layouts", () => {
+    window.innerWidth = 760
+    renderNav({ expanded: false })
+
+    const funnel = screen.getByRole("button", { name: "Filter history" })
+    expect(funnel.className).not.toContain("opacity-0")
   })
 
   it("leaves the funnel unmarked by default", () => {
@@ -367,7 +425,7 @@ describe("SidebarNav", () => {
     expect(onNavigate).toHaveBeenCalledWith("history")
   })
 
-  it("pins the nav, search, pagination, and footer around the list", () => {
+  it("pins the nav, pagination, and footer around the list", () => {
     renderNav({ expanded: true, totalSessions: 120 })
 
     const area = scrollArea()
@@ -381,20 +439,18 @@ describe("SidebarNav", () => {
     const navGroup = screen
       .getByTestId("nav-compress")
       .closest('[data-slot="sidebar-group"]')
-    const search = screen.getByLabelText("Search history")
     const pagination = screen.getByText(/Page 1 of/)
     const footer = screen
       .getByTestId("nav-settings")
       .closest('[data-slot="sidebar-footer"]')
 
-    for (const sibling of [navGroup, search, pagination, footer]) {
+    for (const sibling of [navGroup, pagination, footer]) {
       expect(sibling).not.toBeNull()
       expect(area).not.toContainElement(sibling as HTMLElement)
     }
 
     expect(navGroup!.parentElement).toBe(root)
     expect(footer!.parentElement).toBe(root)
-    expect(search.closest('[data-slot="sidebar-content"]')).toBe(root)
     expect(pagination.closest('[data-slot="sidebar-content"]')).toBe(root)
   })
 })

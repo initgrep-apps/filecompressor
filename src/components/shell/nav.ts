@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import type { ComponentType } from "react"
-import { RiContractUpDownLine, RiHistoryLine } from "@remixicon/react"
+import { RiContractLeftRightLine, RiTimelineView } from "@remixicon/react"
 import type { ViewId } from "@/types"
 
 export interface ShellNavProps {
@@ -27,8 +27,8 @@ export interface ShellNavProps {
 export type DialogId = "settings" | "about"
 
 export const NAV_ITEMS = [
-  { id: "compress", label: "Compress", icon: RiContractUpDownLine },
-  { id: "history", label: "History", icon: RiHistoryLine },
+  { id: "compress", label: "Compress", icon: RiContractLeftRightLine },
+  { id: "history", label: "History", icon: RiTimelineView },
 ] as const satisfies readonly {
   id: ViewId
   label: string

@@ -15,12 +15,12 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { useEffect, useRef, useState } from "react"
+import { startOfDay } from "date-fns"
 import {
   RiArrowDownSLine,
   RiCalendarLine,
   RiCloseLine,
 } from "@remixicon/react"
-import { startOfDay } from "date-fns"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
@@ -53,6 +53,10 @@ import {
   type FileStatus,
   type HistoryFilters,
 } from "@/types"
+
+
+const CHIP_CLASS =
+  "rounded-full px-3 data-[pressed]:border-primary/50 data-[pressed]:bg-primary/15 data-[pressed]:text-foreground"
 
 const EMPTY_DRAFT: HistoryFilters = Object.freeze({
   search: undefined,
@@ -236,7 +240,7 @@ export function HistoryFilterDialog({
                   value={value}
                   variant="outline"
                   size="sm"
-                  className="rounded-full px-3"
+                  className={CHIP_CLASS}
                 >
                   <span
                     aria-hidden="true"
@@ -270,7 +274,7 @@ export function HistoryFilterDialog({
                   value={value}
                   variant="outline"
                   size="sm"
-                  className="rounded-full px-3"
+                  className={CHIP_CLASS}
                 >
                   <CategoryIcon
                     category={value}

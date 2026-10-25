@@ -130,6 +130,19 @@ describe("SettingsDialog", () => {
     )
   })
 
+  it("keeps General to the output folder with an icon-only picker", async () => {
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await screen.findByRole("tab", { name: "General" })
+
+    expect(screen.queryByText("Category targets")).toBeNull()
+
+    const picker = screen.getByRole("button", {
+      name: "Choose output folder",
+    })
+    expect(picker).toHaveTextContent("")
+    expect(picker.querySelector("svg")).not.toBeNull()
+  })
+
   it("lists the four target categories with controls and no badges", async () => {
     render(<SettingsDialog open onOpenChange={vi.fn()} />)
     await screen.findByRole("tab", { name: "General" })
@@ -440,13 +453,13 @@ describe("SettingsDialog", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
 
-  it("saves a folder picked with Choose…", async () => {
+  it("saves a folder picked with the folder button", async () => {
     vi.mocked(open).mockResolvedValueOnce("/tmp/picked")
     render(<SettingsDialog open onOpenChange={vi.fn()} />)
     await screen.findByRole("tab", { name: "General" })
     vi.useFakeTimers()
 
-    fireEvent.click(screen.getByRole("button", { name: "Choose…" }))
+    fireEvent.click(screen.getByRole("button", { name: "Choose output folder" }))
     await act(async () => {})
     await act(async () => {
       vi.advanceTimersByTime(400)
@@ -745,7 +758,7 @@ describe("SettingsDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Reset defaults" }))
     await act(async () => {})
-    fireEvent.click(screen.getByRole("button", { name: "Choose…" }))
+    fireEvent.click(screen.getByRole("button", { name: "Choose output folder" }))
     await act(async () => {})
     fireEvent.click(screen.getByRole("button", { name: "Done" }))
     await act(async () => {})

@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import {
   RiEqualizerLine,
   RiFlashlightLine,
+  RiFolderOpenLine,
   RiSettings3Line,
   RiShieldCheckLine,
   RiTimeLine,
@@ -119,33 +120,16 @@ function GeneralSection({
               value={draft.outputFolder}
               className="flex-1"
             />
-            <Button variant="outline" onClick={onChoose}>
-              Choose…
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Choose output folder"
+              title="Choose folder"
+              onClick={onChoose}
+            >
+              <RiFolderOpenLine />
             </Button>
           </div>
-        </Field>
-        <Field>
-          <FieldLabel>Category targets</FieldLabel>
-          <FieldDescription>
-            One size ceiling per category. Each file is compressed toward this
-            target.
-          </FieldDescription>
-          <ul className="flex flex-col gap-1.5 text-sm">
-            {CATEGORIES.map((category) => {
-              const target = targetFor(draft, category.key)
-              return (
-                <li
-                  key={category.key}
-                  className="flex items-center justify-between gap-4"
-                >
-                  <span>{category.label}</span>
-                  <span className="text-muted-foreground tabular-nums">
-                    {target.size} {target.unit}
-                  </span>
-                </li>
-              )
-            })}
-          </ul>
         </Field>
       </FieldGroup>
     </FieldSet>

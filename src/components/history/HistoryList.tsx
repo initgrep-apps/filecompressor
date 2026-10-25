@@ -14,17 +14,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { RiArrowLeftSLine, RiArrowRightSLine } from "@remixicon/react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
-  SidebarInput,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-  useSidebar,
-} from "@/components/ui/sidebar"
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemTitle,
+} from "@/components/ui/item"
+import { useSidebar } from "@/components/ui/sidebar"
 import {
   activeFilterCount,
   batchLabel,
@@ -33,7 +33,9 @@ import {
   sessionSummary,
 } from "@/lib/historyFormat"
 import { useHistoryContext } from "@/providers/HistoryProvider"
+import { cn } from "@/lib/utils"
 import type { HistorySession } from "@/types"
+import { RiArrowLeftSLine, RiArrowRightSLine } from "@remixicon/react"
 
 export const HISTORY_LIST_ID = "history-batch-list"
 
@@ -65,8 +67,6 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
     loading,
     error,
     filters,
-    searchText,
-    setSearchText,
     page,
     setPage,
     selectedSessionId,
@@ -95,26 +95,20 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
 
   return (
     <>
-      <div className="px-2">
-        <SidebarInput
-          aria-label="Search history"
-          placeholder="Search history"
-          value={searchText}
-          onChange={(event) => setSearchText(event.target.value)}
-        />
-      </div>
       <ScrollArea className="min-h-0 flex-1">
-        <SidebarMenuSub
+        <ul
           id={HISTORY_LIST_ID}
-          role="group"
           aria-label="Batches"
           aria-busy={loading}
-          className={loading && response !== null ? "opacity-60" : undefined}
+          className={cn(
+            "flex min-w-0 flex-col gap-0.5 px-2 py-1",
+            loading && response !== null && "opacity-60",
+          )}
         >
           {error !== null ? (
             <li
               role="alert"
-              className="flex items-start gap-2 px-2 py-1 text-xs text-muted-foreground"
+              className="flex items-start gap-2 px-2.5 py-2 text-xs text-muted-foreground"
             >
               <span className="min-w-0 flex-1">{error}</span>
               <Button
@@ -130,60 +124,63 @@ export function HistoryList({ onOpenHistory }: HistoryListProps) {
             </li>
           ) : initialLoading ? (
             Array.from({ length: 3 }, (_, index) => (
-              <SidebarMenuSubItem
-                key={`skeleton-${index}`}
-                data-testid="batch-skeleton"
-                aria-hidden
-              >
-                <div className="flex flex-col gap-1.5 px-2 py-1">
+              <li key={`skeleton-${index}`} data-testid="batch-skeleton" aria-hidden>
+                <div className="flex flex-col gap-1.5 px-2.5 py-2">
                   <Skeleton className="h-3.5 w-3/4" />
                   <Skeleton className="h-2.5 w-1/2" />
                 </div>
-              </SidebarMenuSubItem>
+              </li>
             ))
           ) : filteredEmpty ? (
-            <li className="px-2 py-1 text-xs text-muted-foreground">
+            <li className="px-2.5 py-2 text-xs text-muted-foreground">
               No batches match these filters.
             </li>
           ) : response !== null && sessions.length === 0 ? (
-            <li className="px-2 py-1 text-xs text-muted-foreground">
+            <li className="px-2.5 py-2 text-xs text-muted-foreground">
               No batches yet.
             </li>
           ) : (
             sessions.map((session) => {
               const row = sessionRow(session)
               return (
-                <SidebarMenuSubItem key={session.sessionId}>
-                  <SidebarMenuSubButton
+                <li key={session.sessionId}>
+                  <Item
                     render={<button type="button" />}
-                    isActive={selectedSessionId === session.sessionId}
-                    className="h-auto w-full items-start px-2 py-1"
+                    size="xs"
+                    data-active={
+                      selectedSessionId === session.sessionId
+                        ? ""
+                        : undefined
+                    }
+                    className="text-muted-foreground hover:bg-sidebar-accent data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
                     data-testid={`batch-${session.sessionId}`}
                     onClick={() => openSession(session.sessionId)}
                   >
-                    <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
-                      <span className="w-full truncate text-left">
+                    <ItemContent>
+                      <ItemTitle className="w-full text-left">
                         {batchLabel(session.startedAt, now)}
-                      </span>
-                      <span className="w-full truncate text-left text-xs text-muted-foreground">
+                      </ItemTitle>
+                      <ItemDescription className="line-clamp-1 text-xs">
                         {row.meta}
+                      </ItemDescription>
+                    </ItemContent>
+                    <ItemActions>
+                      <span
+                        className={
+                          session.cancelled || session.interrupted
+                            ? "text-xs text-destructive tabular-nums"
+                            : "text-xs text-muted-foreground tabular-nums"
+                        }
+                      >
+                        {row.right}
                       </span>
-                    </span>
-                    <span
-                      className={
-                        session.cancelled || session.interrupted
-                          ? "ml-auto text-xs text-destructive tabular-nums"
-                          : "ml-auto text-xs text-muted-foreground tabular-nums"
-                      }
-                    >
-                      {row.right}
-                    </span>
-                  </SidebarMenuSubButton>
-                </SidebarMenuSubItem>
+                    </ItemActions>
+                  </Item>
+                </li>
               )
             })
           )}
-        </SidebarMenuSub>
+        </ul>
       </ScrollArea>
       {response !== null && totalPages > 1 && (
         <div className="flex items-center justify-between px-3 pb-1">
