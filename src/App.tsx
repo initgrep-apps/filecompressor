@@ -21,7 +21,7 @@ import {
   type ComponentType,
   type MouseEvent,
 } from "react"
-import { RiFileShield2Line } from "@remixicon/react"
+import { FileLock2 } from "lucide-react"
 import {
   Sidebar,
   SidebarContent,
@@ -70,7 +70,7 @@ function ShellSidebarHeader() {
             onDoubleClick={stopPropagation}
           >
             <span className="flex size-7 items-center justify-center rounded-lg bg-primary/15 text-primary">
-              <RiFileShield2Line size={16} />
+              <FileLock2 size={16} />
             </span>
           </div>
         )}

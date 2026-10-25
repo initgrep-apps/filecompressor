@@ -14,11 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import {
-  RiArrowDownSLine,
-  RiFilter3Line,
-  RiSettings3Line,
-} from "@remixicon/react"
+import { ChevronDown, Funnel, Settings } from "lucide-react"
 import {
   SidebarFooter,
   SidebarGroup,
@@ -116,7 +112,7 @@ export function SidebarNav({
                       <ItemTitle>
                         {item.label}
                         {item.id === "history" && (
-                          <RiArrowDownSLine
+                          <ChevronDown
                             aria-hidden
                             className={cn(
                               "size-4 shrink-0 text-muted-foreground transition-transform",
@@ -139,7 +135,7 @@ export function SidebarNav({
                       )}
                       onClick={onOpenFilter}
                     >
-                      <RiFilter3Line />
+                      <Funnel />
                       {hasActiveFilters && (
                         <span
                           data-testid="history-filter-dot"
@@ -176,7 +172,7 @@ export function SidebarNav({
               className="text-muted-foreground hover:bg-sidebar-accent"
             >
               <ItemMedia variant="icon">
-                <RiSettings3Line />
+                <Settings />
               </ItemMedia>
               <ItemContent>
                 <ItemTitle>Settings</ItemTitle>

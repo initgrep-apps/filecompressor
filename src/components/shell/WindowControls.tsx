@@ -15,11 +15,11 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import type { MouseEvent } from "react"
-import { RiCloseLine, RiSubtractLine, RiWindowLine } from "@remixicon/react"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import { X, Minus, AppWindow } from "lucide-react"
 
 const stopPropagation = (event: MouseEvent) => event.stopPropagation()
 
@@ -50,7 +50,7 @@ export function WindowControls() {
           })
         }}
       >
-        <RiSubtractLine />
+        <Minus />
       </Button>
       <Button
         variant="ghost"
@@ -66,7 +66,7 @@ export function WindowControls() {
           })
         }}
       >
-        <RiWindowLine />
+        <AppWindow />
       </Button>
       <Button
         variant="ghost"
@@ -82,7 +82,7 @@ export function WindowControls() {
           })
         }}
       >
-        <RiCloseLine />
+        <X />
       </Button>
     </div>
   )

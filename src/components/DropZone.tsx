@@ -27,7 +27,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { CategoryIcon } from '@/components/CategoryIcon'
-import { RiUploadCloud2Line } from '@remixicon/react'
+import { CloudUpload } from 'lucide-react'
 import type { Category } from '@/types'
 import { CATEGORY_TONES } from '@/lib/tokens'
 
@@ -216,7 +216,7 @@ export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZ
       >
         <div className="flex items-center gap-3">
           <div className="flex size-[34px] shrink-0 items-center justify-center rounded-[9px] bg-primary text-primary-foreground">
-            <RiUploadCloud2Line size={16} />
+            <CloudUpload size={16} />
           </div>
           <span
             data-testid="compact-label"
@@ -252,7 +252,7 @@ export function DropZone({ onBrowse, onDrop, className, compact = false }: DropZ
           isDragging ? 'scale-110' : ''
         }`}
       >
-        <RiUploadCloud2Line />
+        <CloudUpload />
       </EmptyMedia>
       <EmptyHeader>
         <EmptyTitle>

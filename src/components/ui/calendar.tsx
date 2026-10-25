@@ -10,7 +10,7 @@ import {
 } from "react-day-picker"
 
 import { Button, buttonVariants } from "@/components/ui/button"
-import { RiArrowLeftSLine, RiArrowRightSLine, RiArrowDownSLine } from "@remixicon/react"
+import { ChevronLeft, ChevronRight, ChevronDown } from "lucide-react"
 
 function Calendar({
   className,
@@ -147,18 +147,18 @@ function Calendar({
         Chevron: ({ className, orientation, ...props }) => {
           if (orientation === "left") {
             return (
-              <RiArrowLeftSLine className={cn("size-4", className)} {...props} />
+              <ChevronLeft className={cn("size-4", className)} {...props} />
             )
           }
 
           if (orientation === "right") {
             return (
-              <RiArrowRightSLine className={cn("size-4", className)} {...props} />
+              <ChevronRight className={cn("size-4", className)} {...props} />
             )
           }
 
           return (
-            <RiArrowDownSLine className={cn("size-4", className)} {...props} />
+            <ChevronDown className={cn("size-4", className)} {...props} />
           )
         },
         DayButton: ({ ...props }) => (

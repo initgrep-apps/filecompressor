@@ -16,11 +16,7 @@
 
 import { useEffect, useRef, useState } from "react"
 import { startOfDay } from "date-fns"
-import {
-  RiArrowDownSLine,
-  RiCalendarLine,
-  RiCloseLine,
-} from "@remixicon/react"
+import { Calendar as CalendarIcon, ChevronDown, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Calendar } from "@/components/ui/calendar"
@@ -53,7 +49,6 @@ import {
   type FileStatus,
   type HistoryFilters,
 } from "@/types"
-
 
 const CHIP_CLASS =
   "rounded-full px-3 data-[pressed]:border-primary/50 data-[pressed]:bg-primary/15 data-[pressed]:text-foreground"
@@ -197,7 +192,7 @@ export function HistoryFilterDialog({
               />
             }
           >
-            <RiCloseLine />
+            <X />
           </DialogClose>
         </DialogHeader>
 
@@ -299,9 +294,9 @@ export function HistoryFilterDialog({
                   />
                 }
               >
-                <RiCalendarLine aria-hidden="true" />
+                <CalendarIcon aria-hidden="true" />
                 {describeSince(draft.sinceMs, now)}
-                <RiArrowDownSLine className="ml-auto" aria-hidden="true" />
+                <ChevronDown className="ml-auto" aria-hidden="true" />
               </PopoverTrigger>
               <PopoverContent
                 align="start"

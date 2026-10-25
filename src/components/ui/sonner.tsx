@@ -1,5 +1,5 @@
 import { Toaster as Sonner, type ToasterProps } from "sonner"
-import { RiCheckboxCircleLine, RiInformationLine, RiErrorWarningLine, RiCloseCircleLine, RiLoaderLine } from "@remixicon/react"
+import { CircleCheck, Info, LoaderCircle, OctagonX, TriangleAlert } from "lucide-react"
 
 const Toaster = ({ ...props }: ToasterProps) => {
   return (
@@ -8,19 +8,19 @@ const Toaster = ({ ...props }: ToasterProps) => {
       className="toaster group"
       icons={{
         success: (
-          <RiCheckboxCircleLine className="size-4" />
+          <CircleCheck className="size-4" />
         ),
         info: (
-          <RiInformationLine className="size-4" />
+          <Info className="size-4" />
         ),
         warning: (
-          <RiErrorWarningLine className="size-4" />
+          <TriangleAlert className="size-4" />
         ),
         error: (
-          <RiCloseCircleLine className="size-4" />
+          <OctagonX className="size-4" />
         ),
         loading: (
-          <RiLoaderLine className="size-4 animate-spin" />
+          <LoaderCircle className="size-4 animate-spin" />
         ),
       }}
       style={

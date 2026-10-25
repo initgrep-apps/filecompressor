@@ -14,7 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { RiMore2Fill } from "@remixicon/react"
+import { Ellipsis } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -43,7 +43,7 @@ export function AppMenu({ onAbout, onQuit }: AppMenuProps) {
           />
         }
       >
-        <RiMore2Fill />
+        <Ellipsis />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuGroup>

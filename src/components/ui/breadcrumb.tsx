@@ -2,7 +2,7 @@ import * as React from "react"
 import { mergeProps } from "@base-ui/react/merge-props"
 import { useRender } from "@base-ui/react/use-render"
 import { cn } from "cn"
-import { RiArrowRightSLine, RiMoreLine } from "@remixicon/react"
+import { ChevronRight, Ellipsis } from "lucide-react"
 
 function Breadcrumb({ className, ...props }: React.ComponentProps<"nav">) {
   return (
@@ -85,7 +85,7 @@ function BreadcrumbSeparator({
       {...props}
     >
       {children ?? (
-        <RiArrowRightSLine />
+        <ChevronRight />
       )}
     </li>
   )
@@ -106,7 +106,7 @@ function BreadcrumbEllipsis({
       )}
       {...props}
     >
-      <RiMoreLine
+      <Ellipsis
       />
       <span className="sr-only">More</span>
     </span>
