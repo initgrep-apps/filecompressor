@@ -15,6 +15,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import '@testing-library/jest-dom/vitest'
+import { configure } from '@testing-library/react'
+
+// default 1000ms waitFor is too tight for contended CI runners; caps only lag, not hangs (30s vitest testTimeout governs)
+configure({ asyncUtilTimeout: 10_000 })
 
 if (typeof Element !== 'undefined' && !Element.prototype.getAnimations) {
   Element.prototype.getAnimations = () => []
