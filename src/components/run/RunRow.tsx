@@ -122,7 +122,7 @@ export function RunRow({ file, percent, onCancel, onReveal, onRemove }: RunRowPr
       exit={{ opacity: 0, scale: 0.98 }}
       transition={{ duration: 0.18, ease: 'easeOut' }}
       className={cn(
-        'relative rounded-[calc(var(--radius)+2px)] border bg-card px-2.5 py-[9px]',
+        'relative shrink-0 rounded-[calc(var(--radius)+2px)] border bg-card px-2.5 py-[9px]',
         status === 'failed' && 'border-destructive/25 bg-destructive/5 shadow-[inset_3px_0_0_var(--destructive)]',
         status === 'done' && ACCENT_SHADOW_PRIMARY,
         status === 'pending' && 'border-dashed'

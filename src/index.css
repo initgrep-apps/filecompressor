@@ -132,6 +132,21 @@
   [role="button"]:not(:disabled) {
     cursor: pointer;
   }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: var(--border);
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 
 @keyframes run-shimmer {

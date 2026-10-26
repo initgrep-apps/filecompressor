@@ -79,7 +79,7 @@ export function Lane({ category, files, progress, onCancel, onReveal, onRemove }
   const live = files.some((file) => file.status === 'compressing')
 
   return (
-    <div className="flex w-[318px] shrink-0 flex-col overflow-hidden rounded-[calc(var(--radius)+4px)] border border-border bg-card">
+    <div className="flex h-full w-[318px] shrink-0 flex-col overflow-hidden rounded-[calc(var(--radius)+4px)] border border-border bg-card">
       <div className="flex items-center gap-[9px] border-b border-border/65 px-3 py-[11px]">
         <div
           className={cn(
