@@ -204,7 +204,7 @@ describe("release-version-check main (env export)", () => {
 
       const result = await main([], {
         confPath: conf.path,
-        envFile: undefined,
+        envFile: null,
         env: { GITHUB_EVENT_NAME: "push", GITHUB_REF_NAME: "v0.2.0" },
       });
 
@@ -222,7 +222,7 @@ describe("release-version-check main (env export)", () => {
       await expect(
         main([], {
           confPath: conf.path,
-          envFile: undefined,
+          envFile: null,
           env: { GITHUB_EVENT_NAME: "workflow_dispatch", DISPATCH_TAG: "v1.0.0" },
         }),
       ).rejects.toThrow("does not match");

@@ -52,7 +52,7 @@ if (isMain(import.meta.url)) {
     const argv = process.argv.slice(2);
     const validateOnly = argv.includes("--validate-only");
     const positional = argv.filter((arg) => arg !== "--validate-only");
-    await main(positional, { envFile: validateOnly ? undefined : process.env.GITHUB_ENV, env: process.env });
+    await main(positional, { envFile: validateOnly ? null : process.env.GITHUB_ENV, env: process.env });
   } catch (error) {
     console.error(`::error::release-version-check: ${error.message}`);
     process.exit(1);
