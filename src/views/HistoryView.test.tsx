@@ -319,6 +319,30 @@ describe("HistoryView", () => {
     })
   })
 
+  it("shows a status-specific message when the selected batch has no files", () => {
+    const cancelled = renderView({
+      sessions: [session({ files: [], fileCount: 0, cancelled: true })],
+    })
+    expect(
+      screen.getByText("No files finished before this batch was cancelled."),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole("columnheader", { name: "File" })).not.toBeInTheDocument()
+    cancelled.unmount()
+
+    const interrupted = renderView({
+      sessions: [session({ files: [], fileCount: 0, interrupted: true })],
+    })
+    expect(
+      screen.getByText("No files finished before this batch was interrupted."),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole("columnheader", { name: "File" })).not.toBeInTheDocument()
+    interrupted.unmount()
+
+    renderView({ sessions: [session({ files: [], fileCount: 0 })] })
+    expect(screen.getByText("No files in this batch.")).toBeInTheDocument()
+    expect(screen.queryByRole("columnheader", { name: "File" })).not.toBeInTheDocument()
+  })
+
   it("shows a corruption empty state without a clear action", () => {
     renderView({ response: { ...responseWith([]), skippedLines: 3 } })
 

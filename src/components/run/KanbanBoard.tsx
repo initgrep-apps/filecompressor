@@ -78,6 +78,7 @@ export function KanbanBoard({
             data-testid="kanban-board"
             className="flex h-full items-start gap-3 select-none overflow-x-auto pb-3 pr-6"
             onWheel={(event) => {
+              if ((event.target as HTMLElement).closest('[data-lane-scroll]')) return
               if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
                 event.currentTarget.scrollLeft += event.deltaY
               }

@@ -260,6 +260,14 @@ export function HistoryView() {
                   </Button>
                 )}
               </Empty>
+            ) : session.files.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {session.cancelled
+                  ? "No files finished before this batch was cancelled."
+                  : session.interrupted
+                    ? "No files finished before this batch was interrupted."
+                    : "No files in this batch."}
+              </p>
             ) : (
               <HistoryFilesTable session={session} />
             )}

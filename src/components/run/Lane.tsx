@@ -114,7 +114,7 @@ export function Lane({ category, files, progress, onCancel, onReveal, onRemove }
           {pill.done}/{pill.total} done
         </span>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-[7px] overflow-y-auto p-[9px]">
+      <div data-lane-scroll className="flex min-h-0 flex-1 flex-col gap-[7px] overflow-y-auto p-[9px]">
         <AnimatePresence mode="popLayout">
           {files.map((file) => (
             <RunRow

@@ -27,6 +27,7 @@ import { Ellipsis, Folder, FolderOpen } from "lucide-react"
 import type { FileStatus, HistoryFile, HistorySession } from "@/types"
 import { formatSize } from "@/lib/sizeFormat"
 import { CATEGORY_TONES, STATUS_TONES } from "@/lib/tokens"
+import { cn } from "@/lib/utils"
 import { CategoryIcon } from "@/components/CategoryIcon"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -105,6 +106,7 @@ export function HistoryFilesTable({
   const columns = useMemo<ColumnDef<HistoryFile>[]>(
     () => [
       {
+        id: "file",
         header: "File",
         cell: ({ row }) => {
           const file = row.original
@@ -134,6 +136,7 @@ export function HistoryFilesTable({
         },
       },
       {
+        id: "size",
         header: "Size",
         cell: ({ row }) => {
           const file = row.original
@@ -148,6 +151,7 @@ export function HistoryFilesTable({
         },
       },
       {
+        id: "method",
         header: "Method",
         cell: ({ row }) => {
           const file = row.original
@@ -157,6 +161,7 @@ export function HistoryFilesTable({
         },
       },
       {
+        id: "status",
         header: "Status",
         cell: ({ row }) => <StatusMarker status={row.original.status} />,
       },
@@ -209,17 +214,28 @@ export function HistoryFilesTable({
     getCoreRowModel: getCoreRowModel(),
   })
 
+  const columnWidths: Record<string, string> = {
+    file: "w-[38%]",
+    size: "w-[15%]",
+    method: "w-[20%]",
+    status: "w-[15%]",
+    actions: "w-12",
+  }
+
   return (
     <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-card">
       <div className="min-h-0 flex-1 overflow-auto">
-        <Table className="min-w-[640px]">
+        <Table className="overflow-visible" tableClassName="min-w-[640px] table-fixed">
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
                   <TableHead
                     key={header.id}
-                    className="sticky top-0 z-10 bg-card"
+                    className={cn(
+                      "sticky top-0 z-10 bg-card",
+                      columnWidths[header.column.id]
+                    )}
                   >
                     {header.isPlaceholder
                       ? null

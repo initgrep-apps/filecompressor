@@ -222,6 +222,15 @@ describe('KanbanBoard', () => {
     expect(board.scrollLeft).toBe(240)
   })
 
+  it("does not pan the board when wheeling inside a lane scroll list", () => {
+    render(boardFor([makeFile()]))
+    const board = document.querySelector('[data-testid="kanban-board"]') as HTMLElement
+    const laneScroll = document.querySelector('[data-lane-scroll]') as HTMLElement
+    Object.defineProperty(board, "scrollLeft", { value: 0, writable: true })
+    fireEvent.wheel(laneScroll, { deltaY: 240 })
+    expect(board.scrollLeft).toBe(0)
+  })
+
   it('lane rows receive progress percent', () => {
     render(
       <KanbanBoard

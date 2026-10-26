@@ -108,10 +108,12 @@ describe("HistoryFilesTable", () => {
     expect(screen.getByText("quality=70")).toBeTruthy()
   })
 
-  it("truncates long file names", () => {
+  it("truncates long file names with a fixed table layout", () => {
     render(<HistoryFilesTable session={session([doneFile({ name: "x".repeat(300) + ".pdf" })])} />)
     const name = screen.getByText(/\.pdf$/)
     expect(name.className).toContain("truncate")
+    const table = document.querySelector('[data-slot="table"]')
+    expect(table?.className).toContain("table-fixed")
   })
 
   it("disables 'Show compressed file' for failed rows and keeps 'Show original file' enabled", async () => {
