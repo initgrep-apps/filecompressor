@@ -17,6 +17,17 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Clock, FolderOpen, Settings as SettingsIcon, ShieldCheck, SlidersHorizontal, Zap } from "lucide-react"
 import { toast } from "sonner"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -45,6 +56,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { NumberStepper } from "@/components/NumberStepper"
 import { useSettings } from "@/hooks/useSettings"
+import { useHistoryContext } from "@/providers/HistoryProvider"
 import type {
   Category,
   CategoryTarget,
@@ -365,7 +377,7 @@ function PerformanceSection({ draft, onChange }: SectionProps) {
   )
 }
 
-function HistorySection({ draft, onChange }: SectionProps) {
+function HistorySection({ draft, onChange, clearHistory }: SectionProps & { clearHistory: () => Promise<void> }) {
   return (
     <FieldSet>
       <FieldLegend>History</FieldLegend>
@@ -390,6 +402,29 @@ function HistorySection({ draft, onChange }: SectionProps) {
             className="w-32"
           />
         </Field>
+        <Field orientation="horizontal">
+          <FieldContent>
+            <FieldLabel>Clear history</FieldLabel>
+            <FieldDescription>Permanently deletes all compression history. Files on disk are not affected.</FieldDescription>
+          </FieldContent>
+          <AlertDialog>
+            <AlertDialogTrigger render={<Button variant="destructive" size="sm" />}>Clear history</AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Clear history?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Permanently deletes all compression history. Files on disk are not affected.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction variant="destructive" onClick={() => void clearHistory()}>
+                  Delete history
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </Field>
       </FieldGroup>
     </FieldSet>
   )
@@ -405,6 +440,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     resetSettings,
     browseFolder,
   } = useSettings()
+  const { clearHistory } = useHistoryContext()
   const [draft, setDraft] = useState<Settings | null>(null)
   const [section, setSection] = useState<SectionId>("general")
   const [flushVersion, setFlushVersion] = useState(0)
@@ -574,12 +610,12 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     }
   }
 
-  const panelsFor = (current: Settings): Record<SectionId, ReactNode> => ({
+  const panelsFor = (current: Settings, clearHistory: () => Promise<void>): Record<SectionId, ReactNode> => ({
     general: <GeneralSection draft={current} onChoose={handleChoose} />,
     targets: <TargetsSection draft={current} onChange={commit} />,
     floors: <FloorsSection draft={current} onChange={commit} />,
     performance: <PerformanceSection draft={current} onChange={commit} />,
-    history: <HistorySection draft={current} onChange={commit} />,
+    history: <HistorySection draft={current} onChange={commit} clearHistory={clearHistory} />,
   })
 
   return (
@@ -621,7 +657,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               <ScrollArea className="min-h-0 flex-1">
                 {SECTIONS.map(({ value }) => (
                   <TabsContent key={value} value={value} className="p-6">
-                    {panelsFor(draft)[value]}
+                    {panelsFor(draft, clearHistory)[value]}
                   </TabsContent>
                 ))}
               </ScrollArea>

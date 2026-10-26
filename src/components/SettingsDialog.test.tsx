@@ -23,6 +23,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { invoke } from "@tauri-apps/api/core"
 import { open } from "@tauri-apps/plugin-dialog"
@@ -33,6 +34,12 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }))
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }))
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn(), dismiss: vi.fn() },
+}))
+const { useHistoryContextMock } = vi.hoisted(() => ({
+  useHistoryContextMock: vi.fn(),
+}))
+vi.mock("@/providers/HistoryProvider", () => ({
+  useHistoryContext: useHistoryContextMock,
 }))
 
 import { SettingsDialog } from "@/components/SettingsDialog"
@@ -101,6 +108,9 @@ beforeEach(() => {
   vi.mocked(open).mockReset()
   vi.mocked(toast.error).mockReset()
   vi.mocked(toast.dismiss).mockReset()
+  useHistoryContextMock.mockReturnValue({
+    clearHistory: vi.fn().mockResolvedValue(undefined),
+  })
   vi.mocked(invoke).mockImplementation((command: string) =>
     command === "get_settings"
       ? Promise.resolve(structuredClone(baseSettings))
@@ -912,5 +922,25 @@ describe("SettingsDialog", () => {
     expect(screen.getByLabelText("Output folder")).toHaveValue(
       "/defaults/Compressed",
     )
+  })
+
+  it("offers clear history in the History section behind a destructive confirm", async () => {
+    const clearHistory = useHistoryContextMock().clearHistory
+    const user = userEvent.setup()
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await user.click(await screen.findByRole("tab", { name: "History" }))
+    await user.click(screen.getByRole("button", { name: "Clear history" }))
+    await user.click(await screen.findByRole("button", { name: "Delete history" }))
+    await waitFor(() => expect(clearHistory).toHaveBeenCalledOnce())
+  })
+
+  it("does not clear history when the confirm is dismissed", async () => {
+    const clearHistory = useHistoryContextMock().clearHistory
+    const user = userEvent.setup()
+    render(<SettingsDialog open onOpenChange={vi.fn()} />)
+    await user.click(await screen.findByRole("tab", { name: "History" }))
+    await user.click(screen.getByRole("button", { name: "Clear history" }))
+    await user.click(await screen.findByRole("button", { name: "Cancel" }))
+    expect(clearHistory).not.toHaveBeenCalled()
   })
 })
