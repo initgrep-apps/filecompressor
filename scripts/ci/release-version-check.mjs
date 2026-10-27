@@ -5,17 +5,22 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(HERE, "..", "..");
 const DEFAULT_CONF = join(REPO_ROOT, "src-tauri", "tauri.conf.json");
+const DEFAULT_PACKAGE = join(REPO_ROOT, "package.json");
 const TAG_PATTERN = /^v(\d+\.\d+\.\d+)(-[A-Za-z][A-Za-z0-9.-]*)?$/;
 
-export function resolveVersion(tag, confVersion) {
+export function resolveVersion(tag, packageVersion, confVersion) {
   const match = TAG_PATTERN.exec(tag ?? "");
   if (!match) {
     throw new Error(`tag '${tag}' is not a v-prefixed semver release tag (expected '^v<semver>[-<prerelease>]')`);
   }
-  if (confVersion !== match[1]) {
-    throw new Error(`tag '${tag}' does not match src-tauri/tauri.conf.json version '${confVersion}' — move the tag (or bump the manifest to '${match[1]}') before building the release`);
+  const version = match[1] + (match[2] ?? "");
+  if (packageVersion !== version) {
+    throw new Error(`tag '${tag}' does not match package.json version '${packageVersion}' — bump package.json to '${version}' before tagging`);
   }
-  return { version: confVersion, prerelease: match[2] !== undefined };
+  if (confVersion !== match[1]) {
+    throw new Error(`tag '${tag}' needs src-tauri/tauri.conf.json at '${match[1]}' (the Windows MSI bundler rejects non-numeric prereleases), found '${confVersion}'`);
+  }
+  return { version, prerelease: match[2] !== undefined };
 }
 
 export function resolveTagFromEnv(env = process.env) {
@@ -34,10 +39,11 @@ export function resolveTagFromEnv(env = process.env) {
   return refName;
 }
 
-export async function main(argv = [], { confPath = DEFAULT_CONF, envFile = process.env.GITHUB_ENV, env = process.env } = {}) {
+export async function main(argv = [], { confPath = DEFAULT_CONF, packagePath = DEFAULT_PACKAGE, envFile = process.env.GITHUB_ENV, env = process.env } = {}) {
   const tag = argv[0] ?? resolveTagFromEnv(env);
   const confVersion = JSON.parse(readFileSync(confPath, "utf8")).version;
-  const resolved = resolveVersion(tag, confVersion);
+  const packageVersion = JSON.parse(readFileSync(packagePath, "utf8")).version;
+  const resolved = resolveVersion(tag, packageVersion, confVersion);
   if (!envFile) {
     console.log(`release-version-check (validate-only): tag=${tag} version=${resolved.version} prerelease=${resolved.prerelease}`);
     return resolved;
