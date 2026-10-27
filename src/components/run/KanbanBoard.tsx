@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import { useRef } from 'react'
 import { LayoutGroup, MotionConfig, motion } from 'motion/react'
 import { Lane } from '@/components/run/Lane'
 import { filterFiles, groupByCategory, type StatusFilter } from '@/lib/grouping'
@@ -48,6 +49,7 @@ export function KanbanBoard({
   onRemove,
   removeDisabled,
 }: KanbanBoardProps) {
+  const boardRef = useRef<HTMLDivElement | null>(null)
   const lanes = groupByCategory(filterFiles(roster, statusFilter))
 
   return (
@@ -72,8 +74,15 @@ export function KanbanBoard({
           </div>
         ) : (
           <div
+            ref={boardRef}
             data-testid="kanban-board"
-            className="flex items-start gap-3 overflow-x-auto pb-3 pr-6"
+            className="flex h-full items-start gap-3 select-none overflow-x-auto pb-3 pr-6"
+            onWheel={(event) => {
+              if ((event.target as HTMLElement).closest('[data-lane-scroll]')) return
+              if (Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+                event.currentTarget.scrollLeft += event.deltaY
+              }
+            }}
           >
             {lanes.map((lane) => (
               <motion.div
@@ -81,7 +90,7 @@ export function KanbanBoard({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
-                className="shrink-0 [&>*]:max-h-[533px]"
+                className="shrink-0 h-full"
               >
                 <Lane
                   category={lane.category}

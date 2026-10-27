@@ -207,10 +207,28 @@ describe('KanbanBoard', () => {
     expect(onFilterChange).toHaveBeenCalledWith('all')
   })
 
-  it('lane bodies cap at max height and scroll vertically inside the board', () => {
-    render(boardFor([makeFile({ status: 'done' })]))
-    const laneWrapper = document.querySelector('[data-testid="kanban-board"] > div')
-    expect(laneWrapper?.className).toContain('max-h-[533px]')
+  it("fills its container height and drops the fixed lane cap", () => {
+    render(boardFor([makeFile()]))
+    const board = document.querySelector('[data-testid="kanban-board"]') as HTMLElement
+    expect(board.className).toContain("h-full")
+    expect(document.body.innerHTML).not.toContain("max-h-[533px]")
+  })
+
+  it("pans horizontally from a vertical wheel", () => {
+    render(boardFor([makeFile()]))
+    const board = document.querySelector('[data-testid="kanban-board"]') as HTMLElement
+    Object.defineProperty(board, "scrollLeft", { value: 0, writable: true })
+    fireEvent.wheel(board, { deltaY: 240 })
+    expect(board.scrollLeft).toBe(240)
+  })
+
+  it("does not pan the board when wheeling inside a lane scroll list", () => {
+    render(boardFor([makeFile()]))
+    const board = document.querySelector('[data-testid="kanban-board"]') as HTMLElement
+    const laneScroll = document.querySelector('[data-lane-scroll]') as HTMLElement
+    Object.defineProperty(board, "scrollLeft", { value: 0, writable: true })
+    fireEvent.wheel(laneScroll, { deltaY: 240 })
+    expect(board.scrollLeft).toBe(0)
   })
 
   it('lane rows receive progress percent', () => {

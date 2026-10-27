@@ -72,4 +72,12 @@ describe("AppMenu", () => {
     expect(onQuit).toHaveBeenCalledTimes(1)
     expect(onAbout).not.toHaveBeenCalled()
   })
+
+  it("renders the popup without a forced dark palette", async () => {
+    renderMenu()
+
+    await openMenu()
+
+    expect(screen.getByRole("menu").className).not.toMatch(/(^|\s)dark(\s|$)/)
+  })
 })
