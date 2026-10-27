@@ -47,7 +47,7 @@ export function AppMenu({ onAbout, onQuit }: AppMenuProps) {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
         <DropdownMenuGroup>
-          <DropdownMenuItem onClick={onAbout}>About Yard</DropdownMenuItem>
+          <DropdownMenuItem onClick={onAbout}>About</DropdownMenuItem>
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>

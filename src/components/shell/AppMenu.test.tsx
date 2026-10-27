@@ -50,7 +50,7 @@ describe("AppMenu", () => {
 
     await openMenu()
 
-    expect(menuOrder()).toEqual(["About Yard", "—", "Quit"])
+    expect(menuOrder()).toEqual(["About", "—", "Quit"])
   })
 
   it("opens About without quitting", async () => {

@@ -14,14 +14,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type ComponentType,
-  type MouseEvent,
-} from "react"
-import { FileLock2 } from "lucide-react"
+import { useEffect, useRef, useState, type ComponentType } from "react"
 import {
   Sidebar,
   SidebarContent,
@@ -42,7 +35,6 @@ import { QuitGuard } from "@/components/shell/QuitGuard"
 import { TopBar } from "@/components/shell/TopBar"
 import { CompressionProvider } from "@/providers/CompressionProvider"
 import { HistoryProvider, useHistoryContext } from "@/providers/HistoryProvider"
-import { usePlatform } from "@/providers/PlatformProvider"
 import { CompressView } from "@/views/CompressView"
 import { HistoryView } from "@/views/HistoryView"
 import type { ViewId } from "@/types"
@@ -52,29 +44,13 @@ const VIEWS: Record<ViewId, ComponentType> = {
   history: HistoryView,
 }
 
-const stopPropagation = (event: MouseEvent) => event.stopPropagation()
-
 function ShellSidebarHeader() {
-  const platform = usePlatform()
   const { isMobile, open } = useSidebar()
-  const showBrand = isMobile || platform !== "darwin"
   const showActions = isMobile || open
 
   return (
     <SidebarHeader className="h-12 flex-row items-center gap-1 p-2">
-      <DragSurface className="flex h-full flex-1 items-center gap-1">
-        {showBrand && (
-          <div
-            className="flex items-center gap-1"
-            onMouseDown={stopPropagation}
-            onDoubleClick={stopPropagation}
-          >
-            <span className="flex size-7 items-center justify-center rounded-lg bg-primary/15 text-primary">
-              <FileLock2 size={16} />
-            </span>
-          </div>
-        )}
-      </DragSurface>
+      <DragSurface className="flex h-full flex-1 items-center gap-1" />
       {showActions && <SidebarActions />}
     </SidebarHeader>
   )

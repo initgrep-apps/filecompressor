@@ -284,6 +284,8 @@ describe("App shell", () => {
     const user = userEvent.setup()
     renderApp("win32")
 
+    expect(sidebarHeader().firstElementChild!.childElementCount).toBe(0)
+
     const bar = topBar()
     expect(
       within(bar).getByRole("button", { name: "Minimize" }),
@@ -727,9 +729,7 @@ describe("App shell", () => {
     renderApp("darwin")
 
     await user.click(within(topBar()).getByRole("button", { name: "App menu" }))
-    await user.click(
-      await screen.findByRole("menuitem", { name: "About Yard" }),
-    )
+    await user.click(await screen.findByRole("menuitem", { name: "About" }))
 
     const dialog = await screen.findByRole("dialog")
     expect(
@@ -756,18 +756,14 @@ describe("App shell", () => {
     renderApp("darwin")
 
     await user.click(within(topBar()).getByRole("button", { name: "App menu" }))
-    await user.click(
-      await screen.findByRole("menuitem", { name: "About Yard" }),
-    )
+    await user.click(await screen.findByRole("menuitem", { name: "About" }))
     expect(await screen.findByRole("dialog")).toBeInTheDocument()
 
     await user.keyboard("{Escape}")
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
 
     await user.click(within(topBar()).getByRole("button", { name: "App menu" }))
-    await user.click(
-      await screen.findByRole("menuitem", { name: "About Yard" }),
-    )
+    await user.click(await screen.findByRole("menuitem", { name: "About" }))
     expect(await screen.findByRole("dialog")).toBeInTheDocument()
   })
 

@@ -206,7 +206,7 @@ describe("release-please.yml changelog automation", () => {
     expect(stepsOf(job)[0].env?.GITHUB_TOKEN).toBe("${{ secrets.GITHUB_TOKEN }}");
   });
 
-  it("config keeps tags v-prefixed (release.yml trigger intact), automates alpha bumps, drafts the release PR, and syncs tauri.conf.json", async () => {
+  it("config keeps tags v-prefixed (release.yml trigger intact), automates alpha bumps, drafts the release PR, and leaves the numeric tauri.conf.json alone", async () => {
     const config = JSON.parse(await readFile(join(HERE, "..", "..", "release-please-config.json"), "utf8"));
     const pkg = config.packages["."];
     expect(pkg["release-type"]).toBe("node");
@@ -214,16 +214,18 @@ describe("release-please.yml changelog automation", () => {
     expect(pkg.prerelease).toBe(true);
     expect(pkg["prerelease-type"]).toBe("alpha");
     expect(pkg["draft-pull-request"]).toBe(true);
-    expect(pkg["extra-files"]).toEqual([
-      { type: "json", path: "src-tauri/tauri.conf.json", jsonpath: "$.version" },
-    ]);
+    expect(
+      pkg["extra-files"],
+      "release-please must not write a prerelease into tauri.conf.json — the Windows MSI bundler only accepts a numeric core",
+    ).toBeUndefined();
   });
 
-  it("manifest is seeded at the live v0.1.0-alpha.1 tag so no history predating the first release enters the changelog", async () => {
+  it("manifest is seeded at the live tag so no history predating the current release enters the changelog", async () => {
     const manifest = JSON.parse(
       await readFile(join(HERE, "..", "..", ".release-please-manifest.json"), "utf8"),
     );
-    expect(manifest["."]).toBe("0.1.0-alpha.1");
+    const pkg = JSON.parse(await readFile(join(HERE, "..", "..", "package.json"), "utf8"));
+    expect(manifest["."]).toBe(pkg.version);
   });
 
   it("CHANGELOG.md is seeded with the hand-written first entry, not a historic commit dump", async () => {
