@@ -23,6 +23,7 @@ What shipped, in the order the slices were built. This replaces the per-slice sp
 | 17 | Yard rename | Product, package, crate, identifier and temp folder are all `yard` | Repo slug remains `initgrep-apps/filecompressor` |
 | 18 | App shell redesign | Native window chrome (macOS overlay, frameless Windows), stock shadcn sidebar with history batch list, filter dialog, settings/About dialogs, pre-paint theme | ADR 0007; Linux chrome unverified (`docs/bugs.md`) |
 | 19 | Lucide icons | Every icon from `lucide-react`; `@remixicon/react` dropped, `components.json` declares `iconLibrary: lucide` | ADR 0008; sonner keeps shadcn's `OctagonX`/`TriangleAlert`, brand is `FileLock2` |
+| 20 | History data table + scroll fixes | History detail is a TanStack table (File · Size · Method · Status · ⋮ menu with reveal actions), sticky header, working scroll; kanban lanes fill available height with wheel panning; dropdown menus follow theme; buttons show the hand cursor; clear history moved to Settings → History behind a destructive confirm | Flex-shrink RCA: scroll containers must not let children collapse (`shrink-0`); menus had a stray `dark` popup class; Windows wheel/scrollbar check pending (`docs/bugs.md`) |
 
 ## Not shipped (deliberately)
 

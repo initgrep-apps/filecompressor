@@ -4,7 +4,9 @@ Open items only. Resolved investigations belong in git history or as a durable r
 
 ## Bugs
 
-No open bugs; the known gaps and accepted limitations below still apply.
+1. **Windows kanban input unverified** — slice #20's wheel-to-horizontal panning, thin scrollbar styling, and `select-none` need a real Windows build check (WebView2); cua-driver cannot synthesize wheel events on WebKit on macOS. Trackpad scroll feel on the new history table likewise needs a human pass.
+
+No other open bugs; the known gaps and accepted limitations below still apply.
 
 ## Known gaps
 
