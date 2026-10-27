@@ -19,7 +19,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import { X, Minus, AppWindow } from "lucide-react"
+import { X, Minus, Square } from "lucide-react"
 
 const stopPropagation = (event: MouseEvent) => event.stopPropagation()
 
@@ -66,7 +66,7 @@ export function WindowControls() {
           })
         }}
       >
-        <AppWindow />
+        <Square />
       </Button>
       <Button
         variant="ghost"
