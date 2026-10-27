@@ -129,7 +129,13 @@ fn snapshot_archive(input: &Path) -> Result<Vec<ZipEntry>, CompressionError> {
             );
             CompressionError::SidecarFailed(CORRUPT.to_string())
         })?;
-        let name = entry.name().to_string();
+        let name = entry.name().map_err(|e| {
+            eprintln!(
+                "warn: cannot read entry name {index} of {}: {e}",
+                input.display()
+            );
+            CompressionError::SidecarFailed(CORRUPT.to_string())
+        })?.into_owned();
         let is_dir = entry.is_dir();
         let mut content = Vec::new();
         if !is_dir {
@@ -582,7 +588,7 @@ mod tests {
         let mut out = Vec::with_capacity(archive.len());
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i).unwrap();
-            let name = entry.name().to_string();
+            let name = entry.name().unwrap().into_owned();
             let mut content = Vec::new();
             if !entry.is_dir() {
                 entry.read_to_end(&mut content).unwrap();
@@ -598,7 +604,7 @@ mod tests {
         let mut archive = ZipArchive::new(file).unwrap();
         for i in 0..archive.len() {
             let entry = archive.by_index(i).unwrap();
-            if entry.name() == name {
+            if entry.name().unwrap().as_ref() == name {
                 return entry.compressed_size();
             }
         }
@@ -849,7 +855,7 @@ awk -v n="$n" 'BEGIN { s = 12345; for (i = 0; i < n; i++) { s = (s * 16807 + 11)
                 entry.compression(),
                 CompressionMethod::Deflated,
                 "entry {} must be deflated",
-                entry.name()
+                entry.name().unwrap()
             );
         }
 
