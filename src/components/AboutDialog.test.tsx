@@ -51,9 +51,7 @@ describe("AboutDialog", () => {
 
     expect(screen.getByRole("heading", { name: "Yard" })).toBeInTheDocument()
     expect(screen.getByText("Offline file compression tool")).toBeInTheDocument()
-    expect(screen.getByText("No accounts and no telemetry.")).toBeInTheDocument()
-    expect(screen.getByText(`Version ${version}`)).toBeInTheDocument()
-    expect(screen.getByText("© 2026 Yard Contributors")).toBeInTheDocument()
+    expect(screen.getByText(version)).toBeInTheDocument()
   })
 
   it("shows the official app icon", () => {
@@ -100,7 +98,7 @@ describe("AboutDialog", () => {
     const notices = screen.getByRole("dialog").querySelector("pre")
 
     expect(notices).toHaveClass("whitespace-pre-wrap")
-    expect(notices).toHaveClass("break-words")
+    expect(notices).toHaveClass("wrap-break-word")
 
     const scrollArea = notices?.closest('[data-slot="scroll-area"]')
 

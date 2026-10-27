@@ -59,13 +59,17 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
           <DialogTitle>Yard</DialogTitle>
         </DialogHeader>
         <div className="flex flex-col gap-1 text-center">
-          <p>Offline file compression tool</p>
-          <p className="text-muted-foreground">No accounts and no telemetry.</p>
-          <p className="text-muted-foreground">Version {version}</p>
+          <p className="text-muted-foreground text-sm">
+            Offline file compression tool
+          </p>
+          <p className="text-muted-foreground text-xs">{version}</p>
         </div>
         <ul className="flex flex-col gap-2 text-sm">
           {LICENSE_ROWS.map((row) => (
-            <li key={row.name} className="flex items-center justify-between gap-4">
+            <li
+              key={row.name}
+              className="flex items-center justify-between gap-4"
+            >
               <span>{row.name}</span>
               <span className="text-muted-foreground">{row.license}</span>
             </li>
@@ -78,7 +82,7 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
           aria-controls="third-party-notices"
           onClick={() => setShowNotices((shown) => !shown)}
         >
-          Third-party notices…
+          Third-party notices
         </Button>
         {showNotices && (
           <ScrollArea
@@ -87,16 +91,13 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
           >
             <pre
               data-testid="third-party-notices"
-              className="p-3 whitespace-pre-wrap break-words font-mono text-xs"
+              className="p-3 whitespace-pre-wrap wrap-break-word font-mono text-xs"
             >
               {thirdPartyNotices}
             </pre>
           </ScrollArea>
         )}
-        <p className="text-center text-xs text-muted-foreground">
-          © 2026 Yard Contributors
-        </p>
       </DialogContent>
     </Dialog>
-  )
+  );
 }
