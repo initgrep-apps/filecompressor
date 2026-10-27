@@ -104,8 +104,26 @@ describe("HistoryFilesTable", () => {
     expect(screen.getByRole("columnheader", { name: "Method" })).toBeTruthy()
     expect(screen.getByRole("columnheader", { name: "Status" })).toBeTruthy()
     expect(screen.getByText("a.jpg")).toBeTruthy()
-    expect(screen.getByText("1 KB → 512 B")).toBeTruthy()
+    expect(screen.getAllByText("1 KB → 512 B")).toHaveLength(2)
     expect(screen.getByText("quality=70")).toBeTruthy()
+  })
+
+  it("collapses Size and Method into a compact line instead of overlapping on narrow widths", () => {
+    render(<HistoryFilesTable session={session([doneFile()])} />)
+
+    const meta = screen.getByTestId("file-meta")
+    expect(meta.textContent).toContain("1 KB → 512 B")
+    expect(meta.textContent).toContain("quality=70")
+    expect(meta.className).toContain("@3xl:hidden")
+
+    for (const name of ["Size", "Method"]) {
+      const head = screen.getByRole("columnheader", { name })
+      expect(head.className).toContain("hidden")
+      expect(head.className).toContain("@3xl:table-cell")
+    }
+
+    const table = document.querySelector('[data-slot="table"]')
+    expect(table!.className).not.toContain("min-w-[640px]")
   })
 
   it("truncates long file names with a fixed table layout", () => {

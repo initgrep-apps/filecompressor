@@ -97,6 +97,12 @@ function fileMethod(file: HistoryFile): string {
   )
 }
 
+function sizeLabel(file: HistoryFile): string {
+  const compressed =
+    file.compressedSize === null ? "—" : formatSize(file.compressedSize)
+  return `${formatSize(file.originalSize)} → ${compressed}`
+}
+
 export function HistoryFilesTable({
   session,
 }: {
@@ -122,6 +128,14 @@ export function HistoryFilesTable({
                 <div className="truncate text-sm font-medium" title={file.name}>
                   {file.name}
                 </div>
+                <div
+                  data-testid="file-meta"
+                  className="whitespace-normal text-xs text-muted-foreground @3xl:hidden"
+                >
+                  <span className="tabular-nums">{sizeLabel(file)}</span>
+                  {" · "}
+                  {fileMethod(file)}
+                </div>
                 {file.error !== null && (
                   <div
                     className="truncate text-xs text-destructive"
@@ -141,11 +155,8 @@ export function HistoryFilesTable({
         cell: ({ row }) => {
           const file = row.original
           return (
-            <span className="tabular-nums">
-              {formatSize(file.originalSize)} →{" "}
-              {file.compressedSize === null
-                ? "—"
-                : formatSize(file.compressedSize)}
+            <span className="block whitespace-normal tabular-nums">
+              {sizeLabel(file)}
             </span>
           )
         },
@@ -154,9 +165,14 @@ export function HistoryFilesTable({
         id: "method",
         header: "Method",
         cell: ({ row }) => {
-          const file = row.original
+          const method = fileMethod(row.original)
           return (
-            <span className="text-muted-foreground">{fileMethod(file)}</span>
+            <span
+              className="block truncate text-muted-foreground"
+              title={method}
+            >
+              {method}
+            </span>
           )
         },
       },
@@ -214,18 +230,17 @@ export function HistoryFilesTable({
     getCoreRowModel: getCoreRowModel(),
   })
 
-  const columnWidths: Record<string, string> = {
-    file: "w-[38%]",
-    size: "w-[15%]",
-    method: "w-[20%]",
-    status: "w-[15%]",
+  const columnClasses: Record<string, string> = {
+    size: "hidden w-36 @3xl:table-cell",
+    method: "hidden w-40 @3xl:table-cell",
+    status: "w-44",
     actions: "w-12",
   }
 
   return (
-    <div className="flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-card">
+    <div className="@container flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-card">
       <div className="min-h-0 flex-1 overflow-auto">
-        <Table className="overflow-visible" tableClassName="min-w-[640px] table-fixed">
+        <Table className="overflow-visible" tableClassName="table-fixed">
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
@@ -234,7 +249,7 @@ export function HistoryFilesTable({
                     key={header.id}
                     className={cn(
                       "sticky top-0 z-10 bg-card",
-                      columnWidths[header.column.id]
+                      columnClasses[header.column.id]
                     )}
                   >
                     {header.isPlaceholder
@@ -252,7 +267,10 @@ export function HistoryFilesTable({
             {table.getRowModel().rows.map((row) => (
               <TableRow key={row.id}>
                 {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>
+                  <TableCell
+                    key={cell.id}
+                    className={columnClasses[cell.column.id]}
+                  >
                     {flexRender(
                       cell.column.columnDef.cell,
                       cell.getContext()
