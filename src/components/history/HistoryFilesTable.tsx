@@ -183,7 +183,7 @@ export function HistoryFilesTable({
               >
                 <Ellipsis />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuItem
                   disabled={file.outputPath === null}
                   onClick={() =>
@@ -191,13 +191,13 @@ export function HistoryFilesTable({
                   }
                 >
                   <FolderOpen />
-                  Show compressed file
+                  Show compressed
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => void revealFile(file.path)}
                 >
                   <Folder />
-                  Show original file
+                  Show original
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

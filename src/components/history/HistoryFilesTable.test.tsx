@@ -116,15 +116,15 @@ describe("HistoryFilesTable", () => {
     expect(table?.className).toContain("table-fixed")
   })
 
-  it("disables 'Show compressed file' for failed rows and keeps 'Show original file' enabled", async () => {
+  it("disables 'Show compressed' for failed rows and keeps 'Show original' enabled", async () => {
     const user = userEvent.setup()
     render(<HistoryFilesTable session={session([failedFile(), doneFile()])} />)
     const kebabs = screen.getAllByRole("button", { name: "File actions" })
     await user.click(kebabs[0])
     const menu = await screen.findByRole("menu")
-    const showCompressed = within(menu).getByRole("menuitem", { name: "Show compressed file" })
+    const showCompressed = within(menu).getByRole("menuitem", { name: "Show compressed" })
     expect(showCompressed).toHaveAttribute("aria-disabled")
-    await user.click(within(menu).getByRole("menuitem", { name: "Show original file" }))
+    await user.click(within(menu).getByRole("menuitem", { name: "Show original" }))
     await waitFor(() =>
       expect(invokeMockTyped).toHaveBeenCalledWith("reveal_in_folder", { filePath: "/in/broken.pdf" })
     )
@@ -135,7 +135,7 @@ describe("HistoryFilesTable", () => {
     invokeMockTyped.mockResolvedValue(undefined)
     render(<HistoryFilesTable session={session([doneFile()])} />)
     await user.click(screen.getByRole("button", { name: "File actions" }))
-    await user.click(await screen.findByRole("menuitem", { name: "Show compressed file" }))
+    await user.click(await screen.findByRole("menuitem", { name: "Show compressed" }))
     await waitFor(() =>
       expect(invokeMockTyped).toHaveBeenCalledWith("reveal_in_folder", { filePath: "/out/a.jpg" })
     )
