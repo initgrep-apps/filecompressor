@@ -91,7 +91,7 @@ export function AboutDialog({ open, onOpenChange }: AboutDialogProps) {
           >
             <pre
               data-testid="third-party-notices"
-              className="p-3 whitespace-pre-wrap wrap-break-wordsfont-mono text-xs"
+              className="p-3 whitespace-pre-wrap wrap-break-word font-mono text-xs"
             >
               {thirdPartyNotices}
             </pre>
