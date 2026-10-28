@@ -18,6 +18,7 @@ import {
   Fragment,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactElement,
 } from "react"
@@ -28,8 +29,10 @@ import {
   useReactTable,
   type Column,
   type ColumnDef,
+  type Row,
   type SortingState,
 } from "@tanstack/react-table"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
 import {
@@ -51,6 +54,7 @@ import {
   currentSizeLabel,
   filterHistoryFiles,
   historyOutcomeCounts,
+  shouldVirtualizeRows,
   type HistoryOutcomeFilter,
   type HistoryTypeFilter,
 } from "@/lib/historyTable"
@@ -333,6 +337,86 @@ export function HistoryFilesTable({
   }
 
   const rows = table.getRowModel().rows
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const virtualize = shouldVirtualizeRows(rows.length)
+  const detailRowIndex =
+    expandedPath === null ? -1 : rows.findIndex((row) => row.original.path === expandedPath)
+  const virtualizer = useVirtualizer({
+    count: rows.length + (detailRowIndex >= 0 ? 1 : 0),
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) =>
+      detailRowIndex >= 0 && index === detailRowIndex + 1 ? 180 : 43,
+    overscan: 8,
+    initialRect: { width: 900, height: 480 },
+  })
+  const virtualItems = virtualizer.getVirtualItems()
+  const firstVirtual = virtualItems[0]
+  const lastVirtual = virtualItems[virtualItems.length - 1]
+  const topSpacer = firstVirtual?.start ?? 0
+  const bottomSpacer = lastVirtual ? virtualizer.getTotalSize() - lastVirtual.end : 0
+
+  const renderFileRow = (row: Row<HistoryFile>) => {
+    const file = row.original
+    const failed = file.status === "failed"
+    return (
+      <TableRow
+        key={`row-${row.id}`}
+        data-testid="history-file-row"
+        className={cn(
+          "h-[43px] border-b border-border/60 hover:bg-muted/40",
+          failed && "bg-destructive/5 hover:bg-destructive/10"
+        )}
+      >
+        {row.getVisibleCells().map((cell) => (
+          <TableCell
+            key={cell.id}
+            className={cn(
+              "h-[43px] overflow-hidden px-[9px] py-0 whitespace-nowrap",
+              cell.column.id === "actions" && "text-right"
+            )}
+          >
+            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+          </TableCell>
+        ))}
+      </TableRow>
+    )
+  }
+
+  const renderDetailRow = (
+    row: Row<HistoryFile>,
+    virtualIndex?: number
+  ) => (
+    <TableRow
+      key={`detail-${row.id}`}
+      id={`history-detail-${row.id}`}
+      data-testid="history-detail-row"
+      className="border-b border-border/60 bg-muted/10 hover:bg-muted/10"
+    >
+      <TableCell colSpan={5} className="p-0 whitespace-normal">
+        {virtualIndex === undefined ? (
+          <HistoryFileDetail
+            file={row.original}
+            onReveal={(path) => void revealFile(path)}
+          />
+        ) : (
+          <div ref={virtualizer.measureElement} data-index={virtualIndex}>
+            <HistoryFileDetail
+              file={row.original}
+              onReveal={(path) => void revealFile(path)}
+            />
+          </div>
+        )}
+      </TableCell>
+    </TableRow>
+  )
+
+  const virtualEntry = (index: number) => {
+    if (detailRowIndex >= 0 && index === detailRowIndex + 1) {
+      return { kind: "detail" as const, row: rows[detailRowIndex] }
+    }
+    const rowIndex = detailRowIndex >= 0 && index > detailRowIndex + 1 ? index - 1 : index
+    return { kind: "row" as const, row: rows[rowIndex] }
+  }
 
   return (
     <div
@@ -355,8 +439,9 @@ export function HistoryFilesTable({
       </div>
 
       <div
+        ref={scrollRef}
         data-testid="history-table-scroll"
-        data-virtualized="false"
+        data-virtualized={virtualize ? "true" : "false"}
         className="mt-2 min-h-0 flex-1 overflow-x-hidden overflow-y-auto border-t border-border/60"
       >
         <Table className="overflow-visible" tableClassName="table-fixed">
@@ -393,7 +478,29 @@ export function HistoryFilesTable({
             ))}
           </TableHeader>
           <TableBody>
-            {rows.length === 0 ? (
+            {virtualize ? (
+              <>
+                {topSpacer > 0 && (
+                  <tr aria-hidden="true" className="border-0">
+                    <td colSpan={5} className="p-0" style={{ height: topSpacer }} />
+                  </tr>
+                )}
+                {virtualItems.map((item) => {
+                  const entry = virtualEntry(item.index)
+                  if (entry.row === undefined) return null
+                  return entry.kind === "detail" ? (
+                    renderDetailRow(entry.row, item.index)
+                  ) : (
+                    renderFileRow(entry.row)
+                  )
+                })}
+                {bottomSpacer > 0 && (
+                  <tr aria-hidden="true" className="border-0">
+                    <td colSpan={5} className="p-0" style={{ height: bottomSpacer }} />
+                  </tr>
+                )}
+              </>
+            ) : rows.length === 0 ? (
               <TableRow className="hover:bg-transparent">
                 <TableCell colSpan={5} className="h-[120px] p-0 text-center whitespace-normal">
                   <div className="flex flex-col items-center justify-center gap-3">
@@ -407,48 +514,12 @@ export function HistoryFilesTable({
                 </TableCell>
               </TableRow>
             ) : (
-              rows.map((row) => {
-                const file = row.original
-                const failed = file.status === "failed"
-                const detailId = `history-detail-${row.id}`
-                return (
-                  <Fragment key={row.id}>
-                    <TableRow
-                      data-testid="history-file-row"
-                      className={cn(
-                        "h-[43px] border-b border-border/60 hover:bg-muted/40",
-                        failed && "bg-destructive/5 hover:bg-destructive/10"
-                      )}
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell
-                          key={cell.id}
-                          className={cn(
-                            "h-[43px] overflow-hidden px-[9px] py-0 whitespace-nowrap",
-                            cell.column.id === "actions" && "text-right"
-                          )}
-                        >
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                    {expandedPath === file.path && (
-                      <TableRow
-                        id={detailId}
-                        data-testid="history-detail-row"
-                        className="border-b border-border/60 bg-muted/10 hover:bg-muted/10"
-                      >
-                        <TableCell colSpan={5} className="p-0 whitespace-normal">
-                          <HistoryFileDetail
-                            file={file}
-                            onReveal={(path) => void revealFile(path)}
-                          />
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </Fragment>
-                )
-              })
+              rows.map((row) => (
+                <Fragment key={row.id}>
+                  {renderFileRow(row)}
+                  {expandedPath === row.original.path && renderDetailRow(row)}
+                </Fragment>
+              ))
             )}
           </TableBody>
         </Table>

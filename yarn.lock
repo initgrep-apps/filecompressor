@@ -758,10 +758,22 @@
   dependencies:
     "@tanstack/table-core" "8.21.3"
 
+"@tanstack/react-virtual@^3.14.23":
+  version "3.14.23"
+  resolved "https://registry.yarnpkg.com/@tanstack/react-virtual/-/react-virtual-3.14.23.tgz#190b60c13f5a54000bcae096292a9d6f4461e980"
+  integrity sha512-Oyy58qQwdaQieA+A4WUDtnh9D1rv5FZvGdw8og9Xeyh88V6HH94vMSyV5i9ATIbYNe9t5Ix0WXRo9NOTpHDkYw==
+  dependencies:
+    "@tanstack/virtual-core" "3.19.8"
+
 "@tanstack/table-core@8.21.3":
   version "8.21.3"
   resolved "https://registry.yarnpkg.com/@tanstack/table-core/-/table-core-8.21.3.tgz#2977727d8fc8dfa079112d9f4d4c019110f1732c"
   integrity sha512-ldZXEhOBb8Is7xLs01fR3YEc3DERiz5silj8tnGkFZytt1abEvl/GhUmCE0PMLaMPTa3Jk4HbKmRlHmu+gCftg==
+
+"@tanstack/virtual-core@3.19.8":
+  version "3.19.8"
+  resolved "https://registry.yarnpkg.com/@tanstack/virtual-core/-/virtual-core-3.19.8.tgz#94ab275e2d94a35dadf5464581d0fa809704a04a"
+  integrity sha512-Oz/SYBo/aVPyQkwtOw7Q23myITUgFIof2glQqydYJAPL6mH2SkJDkvDKZTklB+7gv5jGLZQhyTcd7SO1A1EODQ==
 
 "@tauri-apps/api@2.12.x", "@tauri-apps/api@^2.12.0":
   version "2.12.4"

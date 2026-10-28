@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, expect, it } from "vitest"
-import type { Category, FileStatus, HistoryFile } from "@/types"
+import type { FileStatus, HistoryFile } from "@/types"
 import { STATUS_TONES } from "@/lib/tokens"
 import {
   HISTORY_STATUS_LABELS,
@@ -37,7 +37,6 @@ import {
 } from "@/lib/historyTable"
 
 const KB = 1024
-const MB = 1024 * 1024
 
 function file(overrides: Partial<HistoryFile> = {}): HistoryFile {
   return {

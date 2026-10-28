@@ -17,7 +17,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import type { FileStatus, HistoryFile, HistorySession } from "@/types"
+import type { HistoryFile, HistorySession } from "@/types"
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }))
 
@@ -51,23 +51,6 @@ function file(overrides: Partial<HistoryFile> = {}): HistoryFile {
   }
 }
 
-function failedFile(overrides: Partial<HistoryFile> = {}): HistoryFile {
-  return file({
-    name: "broken.pdf",
-    path: "/in/broken.pdf",
-    outputPath: null,
-    category: "pdf",
-    targetBytes: 2_097_152,
-    originalSize: 10,
-    compressedSize: null,
-    status: "failed",
-    qualityUsed: null,
-    strategyUsed: null,
-    error: "Cannot read file: locked",
-    durationMs: 3,
-    ...overrides,
-  })
-}
 
 function session(files: HistoryFile[]): HistorySession {
   return {
@@ -250,7 +233,7 @@ describe("HistoryFilesTable", () => {
     const sizeSort = screen.getByRole("button", { name: "Sort by Size" })
     await user.click(sizeSort)
     expect(fileNames()[0]).toBe("z-done.jpg")
-    expect(fileNames().at(-1)).toBe("a-failed.pdf")
+    expect(fileNames()[fileNames().length - 1]).toBe("a-failed.pdf")
 
     const statusSort = screen.getByRole("button", { name: "Sort by Status" })
     await user.click(statusSort)
@@ -342,6 +325,31 @@ describe("HistoryFilesTable", () => {
       .find((node) => node !== null)!
     expect(badge.className).toContain("text-muted-foreground")
     expect(badge.className).not.toContain("text-primary")
+  })
+
+  it("does not virtualize 200 or fewer rows", () => {
+    const files = Array.from({ length: 200 }, (_, index) =>
+      file({ name: `file-${index}.png`, path: `/in/file-${index}.png` })
+    )
+    render(<HistoryFilesTable session={session(files)} />)
+
+    expect(screen.getByTestId("history-table-scroll")).toHaveAttribute(
+      "data-virtualized",
+      "false"
+    )
+    expect(fileNames()).toHaveLength(200)
+  })
+
+  it("virtualizes above 200 rows", () => {
+    const files = Array.from({ length: 201 }, (_, index) =>
+      file({ name: `file-${index}.png`, path: `/in/file-${index}.png` })
+    )
+    render(<HistoryFilesTable session={session(files)} />)
+
+    expect(screen.getByTestId("history-table-scroll")).toHaveAttribute(
+      "data-virtualized",
+      "true"
+    )
   })
 
   it("closes an expanded detail when the keyed session changes", async () => {
