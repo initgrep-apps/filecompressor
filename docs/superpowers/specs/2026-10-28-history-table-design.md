@@ -99,8 +99,11 @@ Compute from the selected session files:
   - A successfully compressed file contributes its compressed size.
 - `savedBytes = max(0, originalBytes - currentBytes)`
 - `percent = originalBytes > 0 ? Math.round(savedBytes / originalBytes * 100) : 0`
+- `currentPercent = Math.min(100, Math.max(0, 100 - percent))` drives the green current bar; `percent` drives the saved caption and gray gone bar. Never let current + gone drift from 100.
 
 This keeps `original → current` and `saved` mathematically consistent. Do not mix the session’s `totalSavedBytes` into card 1 if it diverges from the file-derived values.
+
+The batch dashboard describes the selected session’s loaded files: use `session.files.length` for the Files card and the table total, not `session.fileCount`. A filtered batch (`matchedFiles`) shows the loaded subset.
 
 ### 3.2 Per-file size summary
 
@@ -119,6 +122,8 @@ For failed/unsupported/cancelled files with no output, the size card is replaced
 - **Failed:** `failed`
 - **Needs attention:** `failed + best_effort + unsupported + cancelled`
 - **Other:** any remaining terminal status not represented by Done/Under/Best/Failed. Only render an “Other” pill if its count is greater than zero.
+
+Under target is a neutral/muted outcome in History. `STATUS_TONES.already_under_target` is primary green for the Compress view; the History components must override it to the muted tone locally rather than changing shared tokens. Add `HISTORY_STATUS_TONES` for this.
 
 The Files card shows the four main pills in a 2×2 grid. If `other > 0`, add a fifth pill and let the grid grow to a third row; do not silently drop files.
 
@@ -166,7 +171,8 @@ Use **Under target** consistently in the new table, pills, chips and the session
 
 - Duration: use a new precise duration formatter for the new History UI — one decimal below one minute, e.g. `2.1 s`, `26.4 s`; at 60s and above use the established `1m 42s` / `2h 05m` shape. The existing `formatDuration` (floored seconds) stays where already used; do not silently change its public behavior.
 - Completed: absolute `MMM D · h:mm A` — `Oct 25 · 8:02 PM`. Do not use relative `Today`/`Yesterday` labels for the per-file completed timestamp.
-- Batch header duration: `Completed in {precise duration}`; if no `endedAt`, use `—`.
+- Batch header title: absolute `MMM D · h:mm A` from `session.startedAt`, not `Today`/`Yesterday`.
+- Batch header duration: `Completed in {precise duration}`; if no `endedAt`, use `Completed in —`. The subtitle carries no file count.
 
 ---
 
@@ -185,14 +191,16 @@ At the wide mock content width **906px**:
 
 The actual app must let the table card fill the available height and let the table body scroll; do not hard-code the mock’s scroll heights.
 
+The History view does not wrap the batch header, summary and table card in another Card. They sit directly on the page background (`p-6`, 14px vertical gaps). The content wrapper keeps `min-h-0 flex-1` and carries `aria-busy` for refresh; the table card is the only bordered surface.
+
 ### 4.1 Batch header
 
 Above the summary cards, not inside the table card.
 
 - Left:
-  - Batch title: `Oct 25 · 8:02 PM` — 16px, 600 weight, `text-foreground`.
+  - Batch title: absolute `Oct 25 · 8:02 PM` from `session.startedAt` — 16px, 600 weight, `text-foreground`. Do not use the relative `Today`/`Yesterday` helper here.
   - Badges next to title, 10px: `Needs attention` (amber tone) when `needsAttention > 0`; existing `Cancelled` / `Interrupted` badges remain.
-  - Subtitle: `Completed in 26.4 s` — 10px, `text-muted-foreground`.
+  - Subtitle: `Completed in 26.4 s` — 10px, `text-muted-foreground`; no file count.
 - Right:
   - Reveal-folder icon button: 28×28px outline button, `FolderOpen` icon, tooltip “Reveal folder”, existing `open_folder` action.
 
@@ -203,7 +211,7 @@ Grid:
 - 4 columns, `2.2fr 1.6fr .9fr .9fr`, 12px gap.
 - Each card: `bg-muted/40`, radius 14px, padding 13px 14px, min-height 112px, no border.
 - Card 1 and 2 receive width from the square status tiles.
-- At content ≤700px: 2×2 equal grid, 12px gap; card 1 scale width 150px; current reading 20px. Detail remains 3-up (§8).
+- At content ≤860px: 2×2 equal grid, 12px gap; card 1 scale width 150px; current reading 20px. Detail remains 3-up (§8). The 4-up layout needs ≥~870px to fit a 190px scale plus the 24px current reading; 860 is the safe threshold. At 760px with the sidebar collapsed (~712px content) the summary is therefore 2×2, not clipped 4-up.
 - Numbers in cards 2/3/4 are centered horizontally and vertically in their remaining space; card 1’s current reading sits at the right.
 
 #### Card 1 — Size scale
@@ -219,7 +227,7 @@ Layout inside card:
     - `13.7 MB` at 19% (current marker; translated `-50%`).
     - `72.2 MB` right (original).
   - Bar: 7px high, radius 999.
-    - `0 → 13.7 MB` green/current: `bg-primary`/primary gradient.
+    - `0 → 13.7 MB` green/current: `bg-primary`/primary gradient, width `currentPercent`.
     - `13.7 MB → 72.2 MB` gray/gone: muted gray.
     - White 2px tick at 19% (current marker), extending 3px above/below the bar.
   - Foot: `81% saved` in primary green, 9px, 650 weight.
@@ -227,6 +235,7 @@ Layout inside card:
   - `13.7 MB` — 24px, 650 weight; `MB` 11px muted.
   - `CURRENT` — 7px uppercase, letter-spacing .08em, muted.
   - `58.5 MB saved` — 9px muted; 4px top margin.
+  - Hide the middle current label when `currentPercent` is 0 or 100 so it cannot overlap the `0` or original label. The right reading always shows the current size.
 
 Do not render a “Saved” label next to the scale; the `58.5 MB saved` line is the only saved caption. No old `72.2 MB → 13.7 MB` sub-line.
 
@@ -264,7 +273,7 @@ Accessibility: the bar has `role="img"` and `aria-label="Current size 13.7 MB of
 
 Card:
 
-- `bg-card`, 1px `border-border`, radius 16px, padding 14px 16px 0.
+- `bg-card`, 1px `border-border`, radius 16px, padding 14px 16px 0; 12px 13px 0 at ≤860px content.
 - Fills available height.
 - Header/toolbar at top; table scrolls; footer hint at bottom.
 
@@ -297,7 +306,7 @@ Table:
   - Size: 92px; right aligned; tabular.
   - Status: 142px; left.
   - Actions: 34px; right.
-- Body row: height 43px; 12px text; padding 0 9px; bottom border.
+- Body row: height 43px; 12px text; padding 0 9px; bottom border. At ≤860px content the Size column is 78px and Status 126px.
 - Hover: `bg-muted/40` (existing table hover).
 - Failed row: `bg-destructive/5`; error text under the file name in `text-destructive`, 9.5px, truncate with `title`.
 - File cell: 24px rounded category icon tile; 8px gap; name 12px, 550 weight, truncate with `title`; error under.
@@ -316,7 +325,7 @@ Footer hint:
 
 - Right aligned; 9px muted; `Expand a row for saved data, target, method and timing.`
 - No batch totals or saved-percent in the footer; those live only in the summary cards.
-- Narrow variant: `Table scrolls vertically.`
+- Narrow variant: `Table scrolls vertically.` at ≤860px content.
 
 ### 4.4 Empty filtered table
 
@@ -354,6 +363,7 @@ Each of the three cards:
 - Bar: 7px; `0 → 259 KB` green/current; `259 KB → 1.8 MB` gray/gone; white 2px tick at 14%.
 - Foot: `86% saved` green, 9px, 650; `1.5 MB saved` muted, 9px, right.
 - This is the inverted progress: current size primary; the gone size is not.
+- Under target: 0% saved, current = original, full green bar, no gray gone section. Hide the middle current label when `currentPercent` is 0 or 100 so it cannot overlap the `0` or original label.
 - No 0-saved file hides the size card; failed uses the error card (§5.4).
 - Accessibility: `role="img"`, `aria-label="Current size 259 KB of 1.8 MB original; 86% saved"`.
 
@@ -375,7 +385,7 @@ Each of the three cards:
 
 ### 5.4 Failed / no-output rows
 
-- The Size card is replaced by an error card with the full error text (`text-destructive`), no progress bar.
+- The Size card is replaced by an error card with the full error text (`text-destructive`), no progress bar. Use `file.error ?? 'No output file.'` so unsupported/cancelled rows with no error still explain the missing size.
 - Target & method and Timing cards remain.
 - Footer actions remain; `Show compressed` disabled.
 - Original path is still revealable.
@@ -449,9 +459,9 @@ Reset filters, sort and expanded row when the selected session changes. Prefer `
 
 Content container query width is the area right of the sidebar, after page padding.
 
-- **> 700px content:** summary 4-up (`2.2fr 1.6fr .9fr .9fr`); scale width 190; current 24; table search max 300.
-- **≤ 700px content:** summary 2×2 equal; scale width 150; current 20; table search max 220; table remains 3 columns + expand/actions; no horizontal scroll.
-- **Detail:** remains 3-up at all supported widths (900 window with sidebar open ≈592px content; 760 window with sidebar collapsed ≈712px content). Cards shrink; fact rows are stacked so `PNG palette · Lossy` and `Oct 25 · 8:02 PM` never truncate.
+- **> 860px content:** summary 4-up (`2.2fr 1.6fr .9fr .9fr`); scale width 190; current 24; table search max 300.
+- **≤ 860px content:** summary 2×2 equal; scale width 150; current 20; table search max 220; table card padding 12px 13px 0; Size column 78px; Status column 126px; table remains 3 columns + expand/actions; no horizontal scroll.
+- **Detail:** remains 3-up at all supported widths (900 window with sidebar open ≈592px content; 760 window with sidebar collapsed ≈712px content). Cards shrink; fact rows are stacked so `PNG palette · Lossy` and `Oct 25 · 8:02 PM` never truncate. At ≤860px content use 10px gap and 30px left padding (down from 12px / 40px).
 - **Table:** fills available height; vertical scroll; sticky header; no horizontal scroll. File names truncate; values do not.
 - **Summary cards 3/4:** square-ish at wide (140×113); 2×2 at narrow (equal width).
 
@@ -476,7 +486,7 @@ Use the app’s existing shadcn tokens and `src/lib/tokens.ts` status tones. The
   - Saved % text = `text-primary`.
 - Status:
   - Done = primary/green.
-  - Under target = muted/secondary.
+  - Under target = muted/secondary. Use the History-local override; do not change the shared Compress-view `STATUS_TONES.already_under_target` primary mapping.
   - Best effort = amber (`text-amber-600`, `bg-amber-500/10`, border amber/25) — only small dots, pills, badges.
   - Failed = destructive red — only small dots, pills, row badge/error.
   - Numbers in summary status cards are foreground, not amber/red.
@@ -507,7 +517,7 @@ Use the app’s existing shadcn tokens and `src/lib/tokens.ts` status tones. The
 - Filter chips: `aria-pressed`; search input label; type filter label; visible focus rings.
 - Color is never the only signal: every status/percentage has text.
 - Keyboard: `/` focuses search; Escape clears search; table buttons reachable; focus visible.
-- Truncated names use `title`; detail values are not truncated.
+- Truncated names use `title`; detail values are not truncated. Hide the current scale label at 0% and 100% instead of letting it overlap the endpoint labels.
 - `prefers-reduced-motion`: no decorative animation; any expand transition ≤150ms and disabled when reduced motion.
 
 ---
@@ -518,7 +528,8 @@ Use the app’s existing shadcn tokens and `src/lib/tokens.ts` status tones. The
 - **Filters return zero:** table empty row with clear action; summary cards still visible.
 - **Failed/unsupported/cancelled file:** size `—` in table; detail error card replaces size card; Show compressed disabled.
 - **Under target:** size = original; detail size card shows 0% saved; current = original; green current bar full; gray gone 0; target/method/timing; Show compressed enabled if output exists.
-- **Zero-byte/zero-original file:** percent 0; do not divide by zero.
+- **Zero-byte/zero-original file:** percent 0; do not divide by zero; hide the current scale label at 0%.
+- **All files under target:** current = original, 0% saved, full green bar; hide the middle current label at 100% so it does not overlap the original label.
 - **Long file names:** truncate in table with `title`; full name visible in detail? The detail does not repeat the name; the table name title. 
 - **Long method/completed:** stacked fact rows; no truncation at supported widths.
 - **1000-file batch:** table scrolling must remain responsive; see §12 performance.
@@ -546,10 +557,10 @@ Use the app’s existing shadcn tokens and `src/lib/tokens.ts` status tones. The
 
 ### Component
 
-- `HistorySummaryCards`: 4 cards; card 1 labels 0/current/original/percent/saved; card 2 pills 2×2; cards 3/4 centered numbers/no sub; responsive class contract.
-- `HistoryFileDetail`: 3 cards; scale labels/tick/aria; target/method/timing; footer actions; failed error replaces size card; Show compressed disabled; no new/status duplication (only current in size card as designed).
+- `HistorySummaryCards`: 4 cards; card 1 labels 0/current/original/percent/saved; current label hidden at 0/100; card 2 pills 2×2; cards 3/4 centered numbers/no sub; responsive class contract at 860.
+- `HistoryFileDetail`: 3 cards; scale labels/tick/aria; target/method/timing; footer actions; failed error replaces size card with fallback copy; Show compressed disabled; under-target 0% / full bar / hidden middle label; no new/status duplication (only current in size card as designed).
 - `HistoryFilesTable`: three column headers only (File/Size/Status); no Saved/Method columns; sort toggles/aria-sort; search/type/outcome filters; result count; chips; expand/collapse; one expanded; detail; empty filtered row; failed/under-target rows; row menu; reveal calls.
-- `HistoryView`: batch header; Needs attention badge; summary; table; key session reset; no old stat cards; empty/loading/error states preserved.
+- `HistoryView`: absolute batch header with `Completed in …` and no file count; Needs attention badge; summary; table; key session reset; no outer Card and no old stat cards; `aria-busy` on the content wrapper; empty/loading/error states preserved; history filter dialog uses the History under-target tone.
 
 ### Manual visual verification
 
@@ -581,14 +592,14 @@ Implementation requirement:
 
 The implementation is accepted when:
 
-1. History shows the batch header + 4-card summary + table card, matching the mock hierarchy.
+1. History shows the batch header + 4-card summary + table card directly on the page background, matching the mock hierarchy (no outer Card).
 2. Card 1 is a **linear** scale with `0 → current MB → original MB`; green current, gray gone; current big right; saved below; 81% saved example.
 3. Files card uses the 2×2 outcome pills; card numbers 13/1/1 centered; no “1 file”.
 4. Table has only File, Size, Status data columns + expand/actions, and no Saved/Method columns.
 5. Search, type filter, outcome chips, Clear, sortable headers, result count work client-side.
 6. Row expansion shows the 3-card detail: Size scale / Target & method / Timing; footer actions right; failed error state.
 7. New size and status are not repeated in a way that violates the mock (current size is intentionally in the size card; status stays in the row).
-8. Responsive behavior matches §7 at 900/760 content widths; no horizontal table scroll, no clipped detail values.
+8. Responsive behavior matches §7 at 900/760 content widths; summary switches to 2×2 at ≤860 content so card 1 never clips; no horizontal table scroll; no clipped detail values.
 9. Colors use the app tokens: neutral surfaces, green progress, amber/red only small status accents.
 10. All listed tests pass; manual visual comparison against the saved mock passes.
 11. No CSV, paths, retry, ring summary, pagination, selection, or Saved/Method columns.

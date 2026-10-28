@@ -15,6 +15,12 @@
 ## Global Constraints
 
 - Match the mock visually, but use app tokens: neutral surfaces, green primary progress, amber/red only as small status accents. No yellow/orange cards.
+- The History view is not wrapped in another Card: batch header, summary and table card sit on the page background. Keep `min-h-0 flex-1` and put `aria-busy` on the content wrapper.
+- Summary switches to 2×2 at ≤860px content (not 700); 4-up needs ≥~870px to fit the 190px scale plus the 24px current reading.
+- Batch title is absolute `MMM D · h:mm A` from `startedAt`; subtitle is `Completed in …` with no file count.
+- Under target uses a History-local muted tone; do not change shared `STATUS_TONES.already_under_target` (Compress view).
+- Hide the current scale label at 0% and 100% so it cannot overlap endpoint labels.
+- Files card and table total use `session.files.length`, not `session.fileCount`.
 - Three **data** columns only: File · Size (current/new) · Status. No Saved or Method columns.
 - No CSV, no paths, no retry, no row selection, no pagination.
 - Card 1 is a **linear** size scale, not a ring.
@@ -42,7 +48,7 @@
 ## File Structure
 
 **Create**
-- `src/lib/historyTable.ts` — status labels/order, batch/file size summaries, method labels, filters, precise duration, completed label, outcome groups, virtualization threshold.
+- `src/lib/historyTable.ts` — status labels/order, History status tones, batch/file size summaries, method labels, filters, precise duration, completed label, outcome groups, virtualization threshold.
 - `src/lib/historyTable.test.ts`
 - `src/components/history/HistorySummaryCards.tsx` — four-card batch dashboard.
 - `src/components/history/HistorySummaryCards.test.tsx`
@@ -74,6 +80,7 @@
 - Produces:
   - `HISTORY_STATUS_LABELS: Record<FileStatus, string>`
   - `HISTORY_STATUS_ORDER: Record<FileStatus, number>`
+  - `HISTORY_STATUS_TONES: Record<FileStatus, Tone>` — same as `STATUS_TONES` except `already_under_target` uses the muted `cancelled` tone
   - `type HistoryOutcomeFilter = 'all' | 'attention' | 'done' | 'under_target'`
   - `type HistoryTypeFilter = Category | 'all'`
   - `interface BatchSizeSummary { originalBytes: number; currentBytes: number; savedBytes: number; percent: number }`
@@ -110,6 +117,10 @@ it('returns — for failed/under-target method and humanizes strategies', () => 
 it('filters by search/type/outcome and needs attention', () => { /* exact values */ })
 it('counts outcome pills including Other', () => { /* exact values */ })
 it('ranks status severity', () => { /* exact order */ })
+it('maps under target to the muted history tone without changing STATUS_TONES', () => {
+  expect(HISTORY_STATUS_TONES.already_under_target.text).toBe('text-muted-foreground')
+  expect(STATUS_TONES.already_under_target.text).toBe('text-primary')
+})
 it('formats precise durations and completed dates', () => {
   expect(formatPreciseDuration(2_100)).toBe('2.1 s')
   expect(formatPreciseDuration(26_400)).toBe('26.4 s')
@@ -137,6 +148,7 @@ Rules:
 - `type` uses `file.category`; `all` matches all.
 - Status order: `failed:0, best_effort:1, unsupported:2, cancelled:3, done:4, already_under_target:5, pending:6, compressing:7`.
 - `other` count = files whose status is not done/best_effort/failed/already_under_target.
+- `HISTORY_STATUS_TONES` must not mutate `STATUS_TONES`; spread and override only `already_under_target`.
 - `completedLabel` uses an absolute month/day + time (`MMM D · h:mm A`), not relative Today/Yesterday.
 - `formatPreciseDuration`: under 60s, one decimal + ` s`; ≥60s, `m ss s` style consistent with existing duration semantics; invalid/≤0 → `—`.
 - `shouldVirtualizeRows(count) => count > 200`.
@@ -182,7 +194,8 @@ it('renders target/method and timing cards', () => { /* 200 KB, PNG palette · L
 it('reveals original and compressed from footer actions', async () => { /* user click; onReveal paths */ })
 it('disables compressed action when outputPath is null', () => { /* failed */ })
 it('replaces size card with full error for failed file', () => { /* error text; no progress img */ })
-it('shows 0% and current=original for under-target file', () => { /* 0% saved; no NaN */ })
+it('shows 0% and current=original for under-target file', () => { /* 0% saved; no NaN; full bar; middle current label hidden */ })
+it('shows fallback error copy for a no-output file with no error', () => { /* No output file. */ })
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -198,7 +211,8 @@ Match spec §5:
 - Size scale: `0 → current → original`; green current; gray gone; tick; labels; `% saved` and saved MB.
 - Fact rows stacked (`label` above `value`), values never truncated.
 - Footer right: `Show original` (Folder) and `Show compressed` (FolderOpen); disabled compressed when null.
-- Failed: error card replaces the size card; target/method/timing remain; footer remains.
+- Failed: error card replaces the size card with `file.error ?? 'No output file.'`; target/method/timing remain; footer remains.
+- Under target: 0% saved, current = original, full green bar, middle current label hidden.
 - Progress `role="img"` with the full aria-label; visual bar/tick `aria-hidden`.
 
 - [ ] **Step 4: Run tests**
@@ -265,12 +279,14 @@ Expected: FAIL.
 - [ ] **Step 3: Implement `HistorySummaryCards`**
 
 Match spec §4.2:
-- Grid 4-up `2.2fr 1.6fr .9fr .9fr`, 12px gap; 2×2 at container ≤700.
-- Card 1 linear scale + current reading; exact labels and green/gray split; no ring.
+- Grid 4-up `2.2fr 1.6fr .9fr .9fr`, 12px gap; 2×2 at container ≤860 (`@min-[860px]` for the wide grid).
+- Card 1 linear scale + current reading; exact labels and green/gray split; no ring; hide the middle current label at 0/100.
 - Card 2 Files + 2×2 pills; Other optional.
 - Cards 3/4 centered numbers, no sub-line, neutral surface, colored dot only.
 - `role="img"` aria-label on the scale; `data-testid="summary-scale"`.
 - Test ids: `summary-current`, `summary-files`, `summary-pill-done|under|best|failed`, `summary-best-effort`, `summary-failed`.
+- Under-target pill/dot uses `HISTORY_STATUS_TONES`, not the primary shared tone.
+- Files count is `session.files.length`.
 - No “Saved” label; no “1 file”; no amber/red card surfaces.
 
 - [ ] **Step 4: Run tests**
@@ -320,7 +336,8 @@ Expected: FAIL.
 Match spec §4.3 and §6.1–6.4:
 - Title `Files` 12.5/600; search 28px with `/` hint; All types control; right count.
 - Chips 22px; active All; Needs attention neutral + amber dot/count; Done/Under target; Clear.
-- `/` focuses search; Escape clears.
+- `/` focuses search unless focus is in an input/textarea/select/contenteditable; Escape clears search.
+- Counts are session-wide; visible/total count from props.
 - Counts are session-wide; visible/total count from props.
 - Accessible labels; `aria-pressed`.
 
@@ -361,7 +378,8 @@ it('expands one row at a time and renders HistoryFileDetail', async () => { /* c
 it('closes detail when its row is filtered out', async () => { /* expand then search no match */ })
 it('shows empty filtered state with Clear', async () => { /* no files match */ })
 it('keeps failed reveal in row menu and detail footer disabled for compressed', async () => { /* actions */ })
-it('renders sticky header/scroll/no horizontal scroll contract', () => { /* classes */ })
+it('renders sticky header/vertical scroll/no horizontal scroll contract', () => { /* classes include overflow-x-hidden, sticky, table-fixed */ })
+it('uses the History muted tone for Under target badges', () => { /* no text-primary on under-target badge */ })
 it('closes expanded detail on session key change', () => { /* key remount; no detail */ })
 ```
 
@@ -373,14 +391,14 @@ Expected: FAIL against the old table.
 - [ ] **Step 3: Implement the table**
 
 Match spec §4.3, §6:
-- Columns: expand, File, Size, Status, actions; no Saved/Method.
+- Columns: expand, File, Size, Status, actions; no Saved/Method. Status badges use `HISTORY_STATUS_TONES`; failed rows get `bg-destructive/5`.
 - Sorting: TanStack `getSortedRowModel`; default source order; File locale, Size numeric/null-last, Status severity rank; single active sort; `aria-sort`.
 - Local state: search/type/outcome/sorting/expanded path; reset via remount key from HistoryView.
 - Filter via Task 1 helpers; visible/total count; toolbar props.
 - One expanded row; detail after row; close if no longer visible.
 - Row kebab: existing Show compressed/Show original; toast handling.
 - Empty filtered row with Clear.
-- Table fills card; sticky header; vertical scroll; no horizontal.
+- Table fills card; sticky header; vertical scroll; no horizontal; narrow widths Size 78 / Status 126; table card 12px 13px 0 at ≤860.
 - Footer hint right; no batch aggregate.
 - Keep the summary outside this component.
 
@@ -468,11 +486,12 @@ git commit -m "perf(history): virtualize large table bodies"
 - [ ] **Step 1: Write failing integration tests**
 
 ```ts
-it('shows batch header, Needs attention badge, and summary cards', () => { /* summary values */ })
+it('shows absolute batch header, Completed in duration, Needs attention badge, and summary cards', () => { /* no relative Today/Yesterday; no file count in subtitle */ })
+it('does not wrap the view in an outer card and marks the content busy', () => { /* [data-testid=history-content] aria-busy; no card-content */ })
 it('shows linear size scale and current 13.7 MB at right', () => { /* getByTestId('summary-current'); no "Saved" label; 58.5 MB saved */ })
 it('shows the three-column table below the summary', () => { /* headers; no Saved/Method */ })
 it('keeps old empty/loading/error/cancelled/interrupted states', () => { /* existing coverage */ })
-it('uses Under target in the history filter dialog', () => { /* label */ })
+it('uses Under target and the History muted tone in the filter dialog', () => { /* label; muted dot */ })
 it('resets table state when the selected session changes', () => { /* key/remount or filter reset */ })
 ```
 
@@ -483,13 +502,14 @@ Expected: FAIL against the old `BatchStats`/labels.
 
 - [ ] **Step 3: Implement integration**
 
-- Remove `BatchStats` and the old stat-card markup.
-- Batch header: title, attention badge, completed-in precise duration, reveal folder icon button.
-- Place `HistorySummaryCards` above the table card, 14px gaps; use content container query for 2×2 at ≤700.
+- Remove `BatchStats`, the old stat-card markup, and the outer `Card` wrapper around the selected-session layout.
+- Batch header: absolute title from `startedAt`, attention badge, `Completed in …` subtitle (no file count), 28px reveal folder icon button.
+- Place `HistorySummaryCards` above the table card, 14px gaps; content container query 2×2 at ≤860.
 - `HistoryFilesTable` as the table card; `key={session.sessionId}` to reset local state.
-- Keep the existing TooltipProvider/Card/Empty/Skeleton/error behavior and the reveal folder action.
-- Update the history filter dialog label to `Under target`; update test.
-- Update `docs/FEATURES.md` row 20 (History data table) and row 11 if needed with the new summary/table/detail/filter behavior.
+- Keep the existing TooltipProvider/Empty/Skeleton/error behavior and the reveal folder action. Put `aria-busy` on `[data-testid="history-content"]` and update the old `[data-slot="card-content"]` tests.
+- Update the history filter dialog label to `Under target`, use `HISTORY_STATUS_TONES` for its status dots, and update tests.
+- Update existing HistoryView tests that expected `batchLabel` (relative), `2 files · 45s`, `Method`, and the old stat test ids.
+- Update `docs/FEATURES.md` row 20 (History data table) and row 11 if needed with the new summary/table/detail/filter behavior. Keep the spec/plan until the PR merges; delete them only after merge per AGENTS.md documentation lifecycle.
 - Update affected App tests.
 
 - [ ] **Step 4: Run tests**
@@ -523,12 +543,12 @@ Run: `yarn tauri dev`
 
 At 1800, 1250, 900 and 760px window widths, dark and light, check:
 
-- Summary card 1 linear: 0 → 13.7 MB current → 72.2 MB original; green current; gray gone; 81% saved; current 13.7 right; 58.5 saved below; no ring, no “Saved” label.
+- Summary card 1 linear: 0 → 13.7 MB current → 72.2 MB original; 19% green current; 81% gray gone; 81% saved; current 13.7 right; 58.5 saved below; no ring, no “Saved” label.
 - Files card: 13 centered; 2×2 outcome pills; no “1 file”.
 - Status cards: 1/1 centered; white number; dots only.
 - Table: exactly File/Size/Status; no Saved/Method; sort; search/type/chips; expand; row menu; footer hint.
 - Detail: three cards; size scale current green/gone gray; target/method; timing; actions right; failed error state.
-- No horizontal scroll; file names truncate; detail values never truncate; sticky header; table scroll; footer visible.
+- No horizontal scroll; file names truncate; detail values never truncate; sticky header; table scroll; footer visible. Hide the current scale label at 0/100 and show fallback error copy for no-output files.
 - Colors: neutral cards, green progress, amber/red only small status accents; no yellow/orange cards.
 - Light theme contrast and semantic tokens.
 
@@ -542,7 +562,7 @@ If a visual mismatch is found, fix it in the owning component and rerun the rele
 
 - **Spec coverage:** Tasks 1–8 cover data rules, card 1–4 visuals, table/toolbar/chips/sorting/filters/expansion, 3-card detail, actions, failed/under-target/empty states, responsive, tokens, accessibility, virtualization, tests, docs and manual verification.
 - **Type consistency:** `HistoryOutcomeFilter`, `HistoryTypeFilter`, `BatchSizeSummary`, `FileSizeSummary`, `HistorySummaryCards`, `HistoryFileDetail`, `HistoryTableToolbar` are defined once and consumed by later tasks.
-- **Review Focus tests:** failed/unsupported/cancelled, under-target/zero-original, filtered-empty + expanded, long values/narrow, session reset, 1000-file virtualization each have a task test or manual check.
+- **Review Focus tests:** failed/unsupported/cancelled, under-target/zero-original, 0/100 scale labels, filtered-empty + expanded, long values/narrow, header copy/no outer Card, session reset, 1000-file virtualization each have a task test or manual check.
 - **Proportion:** The plan names files, interfaces, tests and key values; it leaves implementation bodies to the implementer. Visual values live in the locked spec and mock.
 
 ---

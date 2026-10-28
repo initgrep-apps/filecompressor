@@ -313,31 +313,37 @@
 
           <div class="summary hero">
             <div class="sum-card saved-card">
-              <div class="ring"><div class="ring-inner"><b>81%</b><span>smaller</span></div></div>
-              <div style="min-width:0">
-                <div class="label">Saved</div>
-                <div class="num">58.5 <small>MB</small></div>
-                <div class="sub"><b>72.2 MB → 13.7 MB</b></div>
+              <div class="summary-size">
+                <div class="card-eyebrow">Size</div>
+                <div class="scale-labels"><span class="zero">0</span><span class="new">13.7 MB</span><span class="orig">72.2 MB</span></div>
+                <div class="scale-track"><span class="scale-current" style="width:19%"></span><span class="scale-gone" style="width:81%"></span><span class="scale-tick" style="left:19%"></span></div>
+                <div class="scale-foot"><span class="pct">81% saved</span></div>
+              </div>
+              <div class="saved-reading">
+                <div class="current-mb">13.7 <small>MB</small></div>
+                <div class="current-label">current</div>
+                <div class="saved-small">58.5 MB saved</div>
               </div>
             </div>
-            <div class="sum-card">
+            <div class="sum-card files-card">
               <div class="label">Files</div>
               <div class="num">13</div>
-              <div class="sub"><b>7 done</b> · 4 under target</div>
-              <div class="micro-seg"><div class="done" style="width:53.8%"></div><div class="unchanged" style="width:30.8%"></div><div class="best" style="width:7.7%"></div><div class="failed" style="width:7.7%"></div></div>
+              <div class="pills">
+                <span class="pill done"><i></i><span>Done</span><b>7</b></span>
+                <span class="pill under"><i></i><span>Under target</span><b>4</b></span>
+                <span class="pill best"><i></i><span>Best</span><b>1</b></span>
+                <span class="pill failed"><i></i><span>Failed</span><b>1</b></span>
+              </div>
             </div>
             <div class="sum-card status-card">
               <div class="label"><span class="big-dot" style="background:var(--amber)"></span>Best effort</div>
-              <div class="num amber">1</div>
-              <div class="sub">1 file</div>
+              <div class="num">1</div>
             </div>
             <div class="sum-card status-card">
               <div class="label"><span class="big-dot" style="background:var(--red)"></span>Failed</div>
-              <div class="num red">1</div>
-              <div class="sub">1 file</div>
+              <div class="num">1</div>
             </div>
           </div>
-
           <div class="table-card">
             <div class="table-toolbar">
               <div class="table-title">Files</div>
@@ -381,10 +387,37 @@
         <p>Linear size scale leads with current MB at right; Files grows for pills; status tiles shrink to squares.</p>
         <div class="concept-body">
           <div class="summary hero">
-            <div class="sum-card saved-card"><div class="ring"><div class="ring-inner"><b>81%</b><span>smaller</span></div></div><div style="min-width:0"><div class="label">Saved</div><div class="num">58.5 <small>MB</small></div><div class="sub"><b>72.2 MB → 13.7 MB</b></div></div></div>
-            <div class="sum-card"><div class="label">Files</div><div class="num">13</div><div class="sub"><b>7 done</b> · 4 under target</div><div class="micro-seg"><div class="done" style="width:53.8%"></div><div class="unchanged" style="width:30.8%"></div><div class="best" style="width:7.7%"></div><div class="failed" style="width:7.7%"></div></div></div>
-            <div class="sum-card status-card"><div class="label"><span class="big-dot" style="background:var(--amber)"></span>Best effort</div><div class="num amber">1</div><div class="sub">1 file</div></div>
-            <div class="sum-card status-card"><div class="label"><span class="big-dot" style="background:var(--red)"></span>Failed</div><div class="num red">1</div><div class="sub">1 file</div></div>
+            <div class="sum-card saved-card">
+              <div class="summary-size">
+                <div class="card-eyebrow">Size</div>
+                <div class="scale-labels"><span class="zero">0</span><span class="new">13.7 MB</span><span class="orig">72.2 MB</span></div>
+                <div class="scale-track"><span class="scale-current" style="width:19%"></span><span class="scale-gone" style="width:81%"></span><span class="scale-tick" style="left:19%"></span></div>
+                <div class="scale-foot"><span class="pct">81% saved</span></div>
+              </div>
+              <div class="saved-reading">
+                <div class="current-mb">13.7 <small>MB</small></div>
+                <div class="current-label">current</div>
+                <div class="saved-small">58.5 MB saved</div>
+              </div>
+            </div>
+            <div class="sum-card files-card">
+              <div class="label">Files</div>
+              <div class="num">13</div>
+              <div class="pills">
+                <span class="pill done"><i></i><span>Done</span><b>7</b></span>
+                <span class="pill under"><i></i><span>Under target</span><b>4</b></span>
+                <span class="pill best"><i></i><span>Best</span><b>1</b></span>
+                <span class="pill failed"><i></i><span>Failed</span><b>1</b></span>
+              </div>
+            </div>
+            <div class="sum-card status-card">
+              <div class="label"><span class="big-dot" style="background:var(--amber)"></span>Best effort</div>
+              <div class="num">1</div>
+            </div>
+            <div class="sum-card status-card">
+              <div class="label"><span class="big-dot" style="background:var(--red)"></span>Failed</div>
+              <div class="num">1</div>
+            </div>
           </div>
         </div>
         <div class="note-line">Chosen. At 900px it becomes 2×2; the scale, pills and tiles keep their hierarchy.</div>
@@ -411,8 +444,8 @@
   </section>
 
   <section class="section">
-    <div class="section-head"><h2>Narrow layout</h2><span class="hint">sidebar open · cards 2×2 · detail stacks</span></div>
-    <p class="section-sub">No horizontal scroll. Table scrolls vertically. The saved card stacks above the facts; footer moves below. New size and status are not repeated.</p>
+    <div class="section-head"><h2>Narrow layout</h2><span class="hint">sidebar open · cards 2×2 · detail 3-up</span></div>
+    <p class="section-sub">No horizontal scroll. Table scrolls vertically. Summary cards reflow to 2×2; the table keeps three data columns; detail stays 3-up and footer actions stay right. New size and status are not repeated.</p>
     <div class="app narrow">
       <aside class="sidebar">
         <div class="traffic"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span></div>
@@ -439,10 +472,37 @@
             <span class="control icon-control" title="Reveal folder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 14l1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h5a2 2 0 0 1 2 2v2"/></svg></span>
           </div>
           <div class="summary hero">
-            <div class="sum-card saved-card"><div class="ring"><div class="ring-inner"><b>81%</b><span>smaller</span></div></div><div style="min-width:0"><div class="label">Saved</div><div class="num">58.5 <small>MB</small></div><div class="sub"><b>72.2 → 13.7 MB</b></div></div></div>
-            <div class="sum-card"><div class="label">Files</div><div class="num">13</div><div class="sub"><b>7 done</b> · 4 under target</div><div class="micro-seg"><div class="done" style="width:53.8%"></div><div class="unchanged" style="width:30.8%"></div><div class="best" style="width:7.7%"></div><div class="failed" style="width:7.7%"></div></div></div>
-            <div class="sum-card status-card"><div class="label"><span class="big-dot" style="background:var(--amber)"></span>Best effort</div><div class="num amber">1</div><div class="sub">1 file</div></div>
-            <div class="sum-card status-card"><div class="label"><span class="big-dot" style="background:var(--red)"></span>Failed</div><div class="num red">1</div><div class="sub">1 file</div></div>
+            <div class="sum-card saved-card">
+              <div class="summary-size">
+                <div class="card-eyebrow">Size</div>
+                <div class="scale-labels"><span class="zero">0</span><span class="new">13.7 MB</span><span class="orig">72.2 MB</span></div>
+                <div class="scale-track"><span class="scale-current" style="width:19%"></span><span class="scale-gone" style="width:81%"></span><span class="scale-tick" style="left:19%"></span></div>
+                <div class="scale-foot"><span class="pct">81% saved</span></div>
+              </div>
+              <div class="saved-reading">
+                <div class="current-mb">13.7 <small>MB</small></div>
+                <div class="current-label">current</div>
+                <div class="saved-small">58.5 MB saved</div>
+              </div>
+            </div>
+            <div class="sum-card files-card">
+              <div class="label">Files</div>
+              <div class="num">13</div>
+              <div class="pills">
+                <span class="pill done"><i></i><span>Done</span><b>7</b></span>
+                <span class="pill under"><i></i><span>Under target</span><b>4</b></span>
+                <span class="pill best"><i></i><span>Best</span><b>1</b></span>
+                <span class="pill failed"><i></i><span>Failed</span><b>1</b></span>
+              </div>
+            </div>
+            <div class="sum-card status-card">
+              <div class="label"><span class="big-dot" style="background:var(--amber)"></span>Best effort</div>
+              <div class="num">1</div>
+            </div>
+            <div class="sum-card status-card">
+              <div class="label"><span class="big-dot" style="background:var(--red)"></span>Failed</div>
+              <div class="num">1</div>
+            </div>
           </div>
           <div class="table-card">
             <div class="table-toolbar">
@@ -532,11 +592,11 @@ function summaryCardsHTML() {
     </div>
     <div class="sum-card status-card">
       <div class="label"><span class="big-dot" style="background:var(--amber)"></span>Best effort</div>
-      <div class="num amber">1</div>
+      <div class="num">1</div>
     </div>
     <div class="sum-card status-card">
       <div class="label"><span class="big-dot" style="background:var(--red)"></span>Failed</div>
-      <div class="num red">1</div>
+      <div class="num">1</div>
     </div>`;
 }
 document.querySelectorAll(".summary.hero").forEach((el) => { el.innerHTML = summaryCardsHTML(); });
