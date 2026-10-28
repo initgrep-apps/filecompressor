@@ -15,11 +15,10 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import { describe, it, expect, vi } from 'vitest'
-import type { Category, FileEntry, FileStatus } from '@/types'
+import type { FileEntry, FileStatus } from '@/types'
 import {
   LANE_ORDER,
   isTerminal,
-  groupByCategory,
   batchCounts,
   laneDonePill,
   filterFiles,
@@ -59,61 +58,13 @@ describe('grouping', () => {
     for (const status of active) expect(isTerminal(status)).toBe(false)
   })
 
-  it('groupByCategory orders lane rows compressing, then terminal, then queued', () => {
-    const files = [
-      makeFile({ id: 'z-done', status: 'done' }),
-      makeFile({ id: 'b-queued', status: 'pending' }),
-      makeFile({ id: 'c-zulu', status: 'compressing' }),
-      makeFile({ id: 'm-failed', status: 'failed' }),
-      makeFile({ id: 'a-queued', status: 'pending' }),
-      makeFile({ id: 'c-alpha', status: 'compressing' }),
-      makeFile({ id: 'q-best', status: 'best_effort' }),
-      makeFile({ id: 'e-under', status: 'already_under_target' }),
-      makeFile({ id: 'r-cancelled', status: 'cancelled' }),
-    ]
-    const lanes = groupByCategory(files)
-    expect(lanes).toHaveLength(1)
-    expect(lanes[0].category).toBe('image')
-    expect(lanes[0].files.map((f) => f.id)).toEqual([
-      'c-zulu',
-      'c-alpha',
-      'z-done',
-      'm-failed',
-      'q-best',
-      'e-under',
-      'r-cancelled',
-      'b-queued',
-      'a-queued',
-    ])
-  })
-
-  it('groupByCategory omits lanes for categories not present and collapses all-one-category input to a single lane', () => {
-    const files = [
-      makeFile({ id: 'o', category: 'other', status: 'pending' }),
-      makeFile({ id: 'v', category: 'video', status: 'compressing' }),
-      makeFile({ id: 'd', category: 'document', status: 'done' }),
-      makeFile({ id: 'v2', category: 'video', status: 'done' }),
-    ]
-    const lanes = groupByCategory(files)
-    expect(lanes.map((l) => l.category)).toEqual(['video', 'document', 'other'])
-    expect(lanes[0].files.map((f) => f.id)).toEqual(['v', 'v2'])
-
-    const single = groupByCategory([makeFile({ id: 'p', category: 'pdf', status: 'pending' })])
-    expect(single).toHaveLength(1)
-    expect(single[0].category).toBe('pdf')
-  })
-
-  it('groupByCategory and batchCounts exclude unsupported files from lanes and counts', () => {
+  it('batchCounts excludes unsupported files from counts', () => {
     const files = [
       makeFile({ id: 'u1', category: 'pdf', status: 'unsupported' }),
       makeFile({ id: 'k', category: 'pdf', status: 'done' }),
       makeFile({ id: 'u2', category: 'other', status: 'unsupported' }),
       makeFile({ id: 'q', category: 'pdf', status: 'pending' }),
     ]
-    const lanes = groupByCategory(files)
-    expect(lanes).toHaveLength(1)
-    expect(lanes[0].category).toBe('pdf')
-    expect(lanes[0].files.map((f) => f.id)).toEqual(['k', 'q'])
     expect(batchCounts(files)).toEqual({
       all: 2,
       processing: 0,
@@ -198,7 +149,6 @@ describe('grouping', () => {
     const snapshot = files.map((f) => ({ ...f }))
     filterFiles(files, 'complete')
     filterFiles(files, 'all')
-    groupByCategory(files)
     expect(files.map((f) => f.id)).toEqual(['c', 'd', 'q'])
     expect(files).toEqual(snapshot)
   })
@@ -226,23 +176,7 @@ describe('grouping', () => {
     }
   })
 
-  it('unknown runtime categories are filed under the other lane', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const rawCategory: string = 'archive'
-    const file = makeFile({ id: 'w', category: rawCategory as Category, status: 'done' })
-    try {
-      const lanes = groupByCategory([file])
-      expect(lanes).toHaveLength(1)
-      expect(lanes[0].category).toBe('other')
-      expect(lanes[0].files.map((f) => f.id)).toEqual(['w'])
-      expect(warn).toHaveBeenCalledWith('unknown file category "archive" filed under other')
-    } finally {
-      warn.mockRestore()
-    }
-  })
-
-  it('empty input yields no lanes and zero counts', () => {
-    expect(groupByCategory([])).toEqual([])
+  it('empty input yields zero counts', () => {
     expect(batchCounts([])).toEqual({
       all: 0,
       processing: 0,
