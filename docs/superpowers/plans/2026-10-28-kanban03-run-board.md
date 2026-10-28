@@ -89,7 +89,7 @@ git commit -m "feat(run): add stock kanban-03 base component and deps"
 ```ts
 export interface BoardState {
   laneOrder: Category[]
-  cardOrder: Record<Category, string[]>
+  cardOrder: Partial<Record<Category, string[]>>
 }
 
 export function initialBoardState(files: FileEntry[]): BoardState
@@ -101,7 +101,8 @@ export function derivedColumns(
 ): Array<{ category: Category; files: FileEntry[] }>
 export function applyCardMove(
   state: BoardState,
-  move: { activeId: string; overId: string; activeContainer: string; overContainer: string; overIsColumn: boolean }
+  move: { activeId: string; overId: string; activeContainer: string; overContainer: string; overIsColumn: boolean },
+  files: FileEntry[]
 ): BoardState
 export function applyLaneOrder(state: BoardState, keys: string[]): BoardState
 ```
@@ -110,7 +111,8 @@ Semantics fixed by the spec:
 - `initialBoardState`: lanes in `LANE_ORDER` order for categories present; per-lane ids in arrival order except compressing ids first. Ids with `status === 'unsupported'` excluded.
 - `syncBoardState`: merge — **files whose `status === 'unsupported'` are never admitted (skip on arrival, drop if present)**; new file ids appended to their lane's order (compressing new ids jump to front), removed ids dropped, **any compressing id forced to the front of its lane (stable among multiple)**, lanes emptied of all ids dropped from `laneOrder`. **Returns the same `BoardState` object reference when the roster id-set is unchanged** (React bailout — no setState→render loop when wired in an effect).
 - `derivedColumns`: group roster by `cardOrder`, apply `filterFiles` with `statusFilter`, **omit empty lanes**, lane sequence = `laneOrder` filtered to visible lanes; **a roster category missing from `laneOrder` (never saw a sync, or stale state) is appended in `LANE_ORDER` order after the known lanes — nothing vanishes**.
-- `applyCardMove`: returns state unchanged when `activeContainer !== overContainer`, when `activeContainer`/`overContainer` are not category keys, or when `activeId` is not in `cardOrder[activeContainer]`. `overIndex = cardOrder[overContainer].indexOf(overId)`; **`overIndex < 0` (unknown overId) → return state unchanged**; `cardOrder[overContainer].length` when `overIsColumn`; then **clamp `overIndex` to ≥ 1 when index 0 holds a compressing id** (if `activeId` itself is a compressing id, return unchanged), `arrayMove`.
+- `applyCardMove`: takes the roster `files` as required third parameter — the **status source** for the compressing rules (an optional param would silently drop the rules when omitted; tsc-enforced at call sites). Returns state unchanged when `activeContainer !== overContainer`, when `activeContainer`/`overContainer` are not category keys, or when `activeId` is not in `cardOrder[activeContainer]`. `overIndex = cardOrder[overContainer].indexOf(overId)`; **`overIndex < 0` (unknown overId) → return state unchanged**; `cardOrder[overContainer].length` when `overIsColumn`; then **clamp `overIndex` to ≥ 1 when index 0 holds a compressing id** (if `activeId` itself is a compressing id, return unchanged), `arrayMove`.
+- `cardOrder` is `Partial<Record<Category, string[]>>` (lanes are dynamically dropped/added — absence is representable).
 - `applyLaneOrder`: reorder the **subset of `laneOrder` present in `keys`**, keeping lanes absent from `keys` in their previous relative order (visible lane counts are a subset when a filter is active — dropping absent lanes would lose categories behind the filter). Unknown keys ignored.
 
 - [ ] **Step 1: Write failing tests** — `src/lib/boardState.test.ts`, cases:
@@ -128,9 +130,10 @@ Semantics fixed by the spec:
   - `applyCardMove appends to the lane end on column-body drop` (`overIsColumn: true`)
   - `applyLaneOrder reorders the visible subset and keeps lanes absent from keys in place`
   - `applyCardMove is a no-op for a compressing active id`
+  - `applyCardMove pinning depends only on files contents` (proves the roster param is the status source)
 - [ ] **Step 2: Run** `yarn vitest run src/lib/boardState.test.ts` — Expected: FAIL (module not found)
 - [ ] **Step 3: Implement `src/lib/boardState.ts`** per signatures above; GPL header; `arrayMove` from `@dnd-kit/sortable`.
-- [ ] **Step 4: Run** `yarn vitest run src/lib/boardState.test.ts` — Expected: PASS (14/14)
+- [ ] **Step 4: Run** `yarn vitest run src/lib/boardState.test.ts` — Expected: PASS (15/15)
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -218,7 +221,7 @@ export function RunBoard(props: RunBoardProps): ReactElement
 Structure:
 - Inner `useState<BoardState>` seeded via `initialBoardState(roster)`. `rosterFiles = useMemo(files.filter(f => roster.includes(f.id)), [files, roster])`, keyed by `const rosterKey = rosterFiles.map(f => f.id).join(',')` (useMemo'd). Sync effect: `useEffect(() => { const next = syncBoardState(stateRef.current, rosterFiles); if (next !== stateRef.current) setState(next); }, [rosterKey])` — effect reads state through a ref (`stateRef.current = state` each render) so re-runs of the effect reuse latest state without adding it to deps; `syncBoardState`'s same-reference guarantee (Task 2) prevents the setState→render→identity-change loop.
 - `columns` = `useMemo(() => derivedColumns(state, rosterFiles, statusFilter))` → `Record<string, FileEntry[]>`; `<Kanban value onValueChange getItemValue={(f) => f.id} onMove>`:
-  - `onMove`: `setState(applyCardMove(state, { activeId: String(event.active.id), overId: over ? String(over.id) : '', activeContainer, overContainer, overIsColumn: over ? Object.keys(columns).includes(String(over.id)) : false }))` — `overIsColumn` = the drop target id is a column key (stock `kanban.tsx` passes the column's `value` as `over.id` for column-body drops).
+  - `onMove`: `setState(applyCardMove(state, { activeId: String(event.active.id), overId: over ? String(over.id) : '', activeContainer, overContainer, overIsColumn: over ? Object.keys(columns).includes(String(over.id)) : false }, rosterFiles))` — third arg REQUIRED (tsc-enforced): the roster is the status source for the compressing clamp/active-id rules. `overIsColumn` = the drop target id is a column key (stock `kanban.tsx` passes the column's `value` as `over.id` for column-body drops).
   - `onValueChange`: keys of the incoming value → `setState(applyLaneOrder(state, Object.keys(value)))`.
 - `<KanbanOverlay>` after `KanbanBoard` inside `<Kanban>` (render-prop `({ value, variant })`): `variant === 'column'` → lane markup with `isOverlay` (the same lane-header + column-content structure, reading `columns[String(value)]`); else locate the file by id across `rosterFiles` and render `<RunCard file isOverlay isOverlay-variant />`. Lookup miss → `null`. This is also what keeps drag ghosts out of the scroll containers (spec §Scrolling).
 - `KanbanBoard` (stock default className carries `sm:grid-cols-3` — it must not win): pass `className` `cn('h-full gap-3 w-max min-w-full')` **and** `style={{ gridTemplateColumns: `repeat(<n>, 16rem)` }}` inline where `<n>` = visible lane count. Inline style beats the stock utility at every breakpoint; dynamic Tailwind arbitrary values are not generated (no safelist) — never set grid columns via class.
@@ -237,7 +240,7 @@ Structure:
 ```bash
 yarn build && yarn test && cd src-tauri && cargo test
 ```
-Expected: PASS (boardState 14, RunCard 13, RunBoard ~15, updated `grouping.test.ts` green, all other pre-existing suites green).
+Expected: PASS (boardState 15, RunCard 13, RunBoard ~15, updated `grouping.test.ts` green, all other pre-existing suites green).
 
 - [ ] **Step 5: Commit**
 

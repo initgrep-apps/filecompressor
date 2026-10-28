@@ -14,8 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { describe, expect, it } from 'vitest'
-import type { FileEntry } from '@/types'
+import { describe, expect, it, vi } from 'vitest'
+import type { Category, FileEntry } from '@/types'
 import type { StatusFilter } from '@/lib/grouping'
 import {
   applyCardMove,
@@ -75,6 +75,23 @@ describe('boardState', () => {
       makeFile({ id: 'f3', category: 'image', status: 'unsupported' }),
     ])
     expect(next.cardOrder.image).toEqual(['f1'])
+  })
+
+  it('unknown runtime categories are filed under the other lane without warning', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const rawCategory: string = 'archive'
+    const file = makeFile({ id: 'w', category: rawCategory as Category, status: 'done' })
+    try {
+      const state = syncBoardState(initialBoardState([]), [file])
+      expect(state.laneOrder).toEqual(['other'])
+      expect(state.cardOrder.other).toEqual(['w'])
+      const columns = derivedColumns(state, [file], 'all' as StatusFilter)
+      expect(columns.map((c) => c.category)).toEqual(['other'])
+      expect(columns[0].files.map((f) => f.id)).toEqual(['w'])
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('sync appends new ids, drops removed ids, and drops an emptied lane', () => {

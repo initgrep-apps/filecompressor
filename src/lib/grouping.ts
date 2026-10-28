@@ -14,21 +14,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import type { Category, FileEntry, FileStatus } from '@/types'
+import type { FileEntry, FileStatus } from '@/types'
 import { CATEGORIES } from '@/types'
 
 export type StatusFilter = 'all' | 'compressing' | 'complete' | 'below_target' | 'failed' | 'queued'
 
 export const LANE_ORDER = CATEGORIES
-
-type MissingLanes = Exclude<Category, (typeof LANE_ORDER)[number]>
-type AssertNever<T extends never> = T
-export type LaneOrderCoverage = AssertNever<MissingLanes>
-
-export interface CategoryLane {
-  category: Category
-  files: FileEntry[]
-}
 
 export interface BatchCounts {
   all: number
@@ -69,46 +60,12 @@ function bucketOf(status: FileStatus): StatusBucket {
   return 'processedOnly'
 }
 
-function laneOf(category: Category): Category {
-  if (LANE_ORDER.includes(category)) return category
-  warnOnce(`unknown file category "${category}" filed under other`)
-  return 'other'
-}
-
 function countsTowardProcessed(bucket: StatusBucket): boolean {
   return bucket !== 'unsupported' && bucket !== 'processing' && bucket !== 'queued'
 }
 
 export function isTerminal(status: FileStatus): boolean {
   return countsTowardProcessed(bucketOf(status))
-}
-
-function laneRank(status: FileStatus): number {
-  const bucket = bucketOf(status)
-  if (bucket === 'processing') return 0
-  if (countsTowardProcessed(bucket)) return 1
-  return 2
-}
-
-export function groupByCategory(files: FileEntry[]): Array<CategoryLane> {
-  const lanes = new Map<Category, FileEntry[]>()
-  for (const file of files) {
-    if (bucketOf(file.status) === 'unsupported') continue
-    const category = laneOf(file.category)
-    const lane = lanes.get(category)
-    if (lane) {
-      lane.push(file)
-    } else {
-      lanes.set(category, [file])
-    }
-  }
-  return LANE_ORDER.flatMap((category) => {
-    const lane = lanes.get(category)
-    if (!lane) return []
-    const ranked = lane.map((file) => ({ file, rank: laneRank(file.status) }))
-    ranked.sort((a, b) => a.rank - b.rank)
-    return [{ category, files: ranked.map((entry) => entry.file) }]
-  })
 }
 
 export function batchCounts(files: FileEntry[]): BatchCounts {

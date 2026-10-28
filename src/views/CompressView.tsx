@@ -22,7 +22,7 @@ import { DropZone } from '@/components/DropZone'
 import { FileList } from '@/components/FileList'
 import { formatSize } from '@/lib/sizeFormat'
 import { RunHeader } from '@/components/run/RunHeader'
-import { KanbanBoard } from '@/components/run/KanbanBoard'
+import { RunBoard } from '@/components/run/RunBoard'
 import { batchCounts, type StatusFilter } from '@/lib/grouping'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter } from '@/components/ui/card'
@@ -101,7 +101,7 @@ function RunMonitor() {
         onNewBatch={endRun}
       />
       <div className="min-h-0 flex-1 overflow-hidden">
-        <KanbanBoard
+        <RunBoard
           roster={rosterFiles}
           statusFilter={statusFilter}
           onFilterChange={setStatusFilter}
