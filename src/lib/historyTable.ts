@@ -238,6 +238,10 @@ export function completedLabel(ms: number): string {
   return `${day} · ${time}`
 }
 
+export function virtualItemKey(kind: "row" | "detail", path: string): string {
+  return `${kind}:${path}`
+}
+
 export function shouldVirtualizeRows(count: number): boolean {
   return count > 200
 }

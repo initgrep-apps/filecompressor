@@ -55,6 +55,7 @@ import {
   filterHistoryFiles,
   historyOutcomeCounts,
   shouldVirtualizeRows,
+  virtualItemKey,
   type HistoryOutcomeFilter,
   type HistoryTypeFilter,
 } from "@/lib/historyTable"
@@ -341,11 +342,23 @@ export function HistoryFilesTable({
   const virtualize = shouldVirtualizeRows(rows.length)
   const detailRowIndex =
     expandedPath === null ? -1 : rows.findIndex((row) => row.original.path === expandedPath)
+  const virtualEntry = (index: number) => {
+    if (detailRowIndex >= 0 && index === detailRowIndex + 1) {
+      return { kind: "detail" as const, row: rows[detailRowIndex] }
+    }
+    const rowIndex = detailRowIndex >= 0 && index > detailRowIndex + 1 ? index - 1 : index
+    return { kind: "row" as const, row: rows[rowIndex] }
+  }
+
   const virtualizer = useVirtualizer({
     count: rows.length + (detailRowIndex >= 0 ? 1 : 0),
     getScrollElement: () => scrollRef.current,
     estimateSize: (index) =>
       detailRowIndex >= 0 && index === detailRowIndex + 1 ? 180 : 43,
+    getItemKey: (index) => {
+      const entry = virtualEntry(index)
+      return virtualItemKey(entry.kind, entry.row.original.path)
+    },
     overscan: 8,
     initialRect: { width: 900, height: 480 },
   })
@@ -410,15 +423,8 @@ export function HistoryFilesTable({
     </TableRow>
   )
 
-  const virtualEntry = (index: number) => {
-    if (detailRowIndex >= 0 && index === detailRowIndex + 1) {
-      return { kind: "detail" as const, row: rows[detailRowIndex] }
-    }
-    const rowIndex = detailRowIndex >= 0 && index > detailRowIndex + 1 ? index - 1 : index
-    return { kind: "row" as const, row: rows[rowIndex] }
-  }
-
   return (
+
     <div
       data-testid="history-table-card"
       className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[16px] border border-border bg-card px-4 pt-3.5 pb-0 @max-[860px]:px-[13px] @max-[860px]:pt-3"

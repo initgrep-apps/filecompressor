@@ -30,6 +30,7 @@ import {
   formatPreciseDuration,
   historyMethodLabel,
   historyOutcomeCounts,
+  virtualItemKey,
   matchesOutcomeFilter,
   needsAttention,
   outcomePillCounts,
@@ -276,6 +277,20 @@ describe("completedLabel", () => {
   it("uses an absolute month/day and 12-hour time", () => {
     expect(completedLabel(new Date(2026, 9, 25, 20, 2).getTime())).toBe("Oct 25 · 8:02 PM")
     expect(completedLabel(Number.NaN)).toBe("—")
+  })
+})
+
+describe("virtualItemKey", () => {
+  it("keys rows and details by path, never by index", () => {
+    expect(virtualItemKey("row", "/in/a.png")).toBe("row:/in/a.png")
+    expect(virtualItemKey("detail", "/in/a.png")).toBe("detail:/in/a.png")
+    expect(
+      new Set([
+        virtualItemKey("row", "/in/a.png"),
+        virtualItemKey("detail", "/in/a.png"),
+        virtualItemKey("row", "/in/b.png"),
+      ]).size
+    ).toBe(3)
   })
 })
 
