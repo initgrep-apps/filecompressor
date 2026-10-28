@@ -174,7 +174,8 @@ describe("HistoryFilesTable", () => {
     await user.click(screen.getByRole("button", { name: "Clear" }))
     expect(fileNames()).toHaveLength(6)
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by type" }), "pdf")
+    await user.click(screen.getByRole("combobox", { name: "Filter by type" }))
+    await user.click(await screen.findByRole("option", { name: "PDF" }))
     expect(screen.getByTestId("history-table-count")).toHaveTextContent("2 of 6")
     expect(fileNames()).toEqual(["a-failed.pdf", "b-under.pdf"])
 
@@ -314,6 +315,9 @@ describe("HistoryFilesTable", () => {
 
     const header = screen.getByRole("columnheader", { name: "File" })
     expect(header.className).toContain("sticky")
+    expect(
+      screen.queryByText("Expand a row for saved data, target, method and timing.")
+    ).not.toBeInTheDocument()
   })
 
   it("uses the History muted tone for Under target badges", () => {

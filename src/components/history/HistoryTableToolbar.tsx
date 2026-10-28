@@ -14,13 +14,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useEffect, useRef, type ReactElement } from "react"
-import { ChevronDown, Search } from "lucide-react"
+import type { ReactElement } from "react"
+import { Search } from "lucide-react"
 import { CATEGORIES, type Category } from "@/types"
 import type {
   HistoryOutcomeFilter,
   HistoryTypeFilter,
 } from "@/lib/historyTable"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 const CATEGORY_LABELS: Record<Category, string> = {
   image: "Image",
@@ -29,6 +37,14 @@ const CATEGORY_LABELS: Record<Category, string> = {
   document: "Document",
   other: "Other",
 }
+
+const TYPE_ITEMS = [
+  { value: "all", label: "All types" },
+  ...CATEGORIES.map((category) => ({
+    value: category,
+    label: CATEGORY_LABELS[category],
+  })),
+]
 
 const CHIP_BASE =
   "inline-flex h-[22px] items-center gap-[5px] rounded-full border px-2 text-[10.5px] whitespace-nowrap transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
@@ -104,28 +120,6 @@ export function HistoryTableToolbar({
   totalCount,
   onClear,
 }: HistoryTableToolbarProps): ReactElement {
-  const searchRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return
-      const target = event.target as HTMLElement | null
-      if (
-        target !== null &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.tagName === "SELECT" ||
-          target.isContentEditable)
-      ) {
-        return
-      }
-      event.preventDefault()
-      searchRef.current?.focus()
-    }
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [])
-
   const clearSearch = () => {
     if (search.length > 0) onSearchChange("")
   }
@@ -143,7 +137,6 @@ export function HistoryTableToolbar({
             className="pointer-events-none absolute top-1/2 left-2 size-3 -translate-y-1/2 text-muted-foreground"
           />
           <input
-            ref={searchRef}
             type="search"
             aria-label="Search files"
             placeholder="Search files…"
@@ -155,32 +148,35 @@ export function HistoryTableToolbar({
                 clearSearch()
               }
             }}
-            className="h-7 w-full rounded-[7px] border border-border bg-background pr-7 pl-7 text-[10.5px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="h-7 w-full rounded-[7px] border border-border bg-background px-2.5 pl-7 text-[10.5px] outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/40"
           />
-          <kbd className="pointer-events-none absolute top-1/2 right-1.5 -translate-y-1/2 rounded-[4px] border border-border px-1 text-[9px] text-muted-foreground">
-            /
-          </kbd>
         </div>
 
-        <div className="relative">
-          <select
+        <Select
+          items={TYPE_ITEMS}
+          value={type}
+          onValueChange={(value) => {
+            if (value !== null) onTypeChange(value as HistoryTypeFilter)
+          }}
+        >
+          <SelectTrigger
+            size="sm"
             aria-label="Filter by type"
-            value={type}
-            onChange={(event) => onTypeChange(event.target.value as HistoryTypeFilter)}
-            className="h-7 appearance-none rounded-[7px] border border-border bg-background pr-6 pl-2 text-[10.5px] text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+            className="h-7 w-fit rounded-[7px] border-border bg-background px-2 text-[10.5px] [&_svg]:size-3"
           >
-            <option value="all">All types</option>
-            {CATEGORIES.map((category) => (
-              <option key={category} value={category}>
-                {CATEGORY_LABELS[category]}
-              </option>
-            ))}
-          </select>
-          <ChevronDown
-            aria-hidden="true"
-            className="pointer-events-none absolute top-1/2 right-1.5 size-3 -translate-y-1/2 text-muted-foreground"
-          />
-        </div>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent align="start" className="min-w-[130px]">
+            <SelectGroup>
+              <SelectItem value="all">All types</SelectItem>
+              {CATEGORIES.map((category) => (
+                <SelectItem key={category} value={category}>
+                  {CATEGORY_LABELS[category]}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
 
         <span
           data-testid="history-table-count"
