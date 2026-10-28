@@ -534,13 +534,6 @@ export function HistoryFilesTable({
           </TableBody>
         </Table>
       </div>
-
-      <div className="flex shrink-0 justify-end py-[7px] text-[9px] text-muted-foreground">
-        <span className="@max-[860px]:hidden">
-          Expand a row for saved data, target, method and timing.
-        </span>
-        <span className="hidden @max-[860px]:inline">Table scrolls vertically.</span>
-      </div>
     </div>
   )
 }

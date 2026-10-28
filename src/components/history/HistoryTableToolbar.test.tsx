@@ -46,7 +46,9 @@ describe("HistoryTableToolbar", () => {
       "placeholder",
       "Search files…"
     )
-    expect(screen.getByRole("combobox", { name: "Filter by type" })).toHaveValue("all")
+    const typeFilter = screen.getByRole("combobox", { name: "Filter by type" })
+    expect(typeFilter).toHaveAttribute("data-slot", "select-trigger")
+    expect(typeFilter).toHaveTextContent("All types")
     expect(screen.getByTestId("history-table-count")).toHaveTextContent("13 of 13")
     expect(screen.getByRole("button", { name: /^All/ })).toHaveTextContent("13")
     expect(screen.getByRole("button", { name: /Needs attention/ })).toHaveTextContent("2")
@@ -64,7 +66,8 @@ describe("HistoryTableToolbar", () => {
     })
     expect(props.onSearchChange).toHaveBeenLastCalledWith("png")
 
-    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by type" }), "pdf")
+    await user.click(screen.getByRole("combobox", { name: "Filter by type" }))
+    await user.click(await screen.findByRole("option", { name: "PDF" }))
     expect(props.onTypeChange).toHaveBeenCalledWith("pdf")
 
     await user.click(screen.getByRole("button", { name: /^Done/ }))
@@ -88,27 +91,21 @@ describe("HistoryTableToolbar", () => {
     expect(props.onClear).toHaveBeenCalledTimes(1)
   })
 
-  it("focuses search on / and clears with Escape", () => {
+  it("does not render or capture the / shortcut", () => {
+    renderToolbar()
+    const search = screen.getByRole("searchbox", { name: "Search files" })
+
+    expect(screen.queryByText("/")).not.toBeInTheDocument()
+    fireEvent.keyDown(window, { key: "/" })
+    expect(search).not.toHaveFocus()
+  })
+
+  it("clears search with Escape", () => {
     const { props } = renderToolbar({ search: "png" })
     const search = screen.getByRole("searchbox", { name: "Search files" })
 
-    fireEvent.keyDown(window, { key: "/" })
-    expect(search).toHaveFocus()
-
     fireEvent.keyDown(search, { key: "Escape" })
     expect(props.onSearchChange).toHaveBeenCalledWith("")
-  })
-
-  it("does not steal / from another input", () => {
-    renderToolbar()
-    const other = document.createElement("input")
-    document.body.append(other)
-    other.focus()
-
-    fireEvent.keyDown(other, { key: "/" })
-
-    expect(other).toHaveFocus()
-    other.remove()
   })
 
   it("keeps the Needs attention chip neutral with an amber dot and count", () => {
