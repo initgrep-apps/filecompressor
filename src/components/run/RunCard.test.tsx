@@ -91,6 +91,17 @@ describe('RunCard', () => {
     expect(screen.getByTestId('run-card-percent')).toHaveTextContent('100%')
   })
 
+  it('compressing card shows a Processing chip bound to primary tone', () => {
+    render(
+      <WithKanban>
+        <RunCard file={makeFile({ status: 'compressing' })} percent={10} />
+      </WithKanban>
+    )
+    const chip = screen.getByTestId('run-chip')
+    expect(chip.textContent).toBe('Processing')
+    expect(chip.className).toContain('bg-primary/10')
+  })
+
   it('done card shows sizes, -% chip, strategy label, and Reveal bound to onReveal(outputPath)', () => {
     const onReveal = vi.fn()
     render(

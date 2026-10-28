@@ -399,4 +399,10 @@ describe('RunBoard', () => {
     )
     expect(screen.getByTestId('lane-pill').textContent).toBe('1/1 done')
   })
+
+  it('lane grip handle is always visible', () => {
+    render(boardFor([makeFile({ status: 'done', compressedSize: 700_000 })]))
+    const handle = document.querySelector('[data-slot="kanban-column-handle"]') as HTMLElement
+    expect(handle.className).toContain('opacity-100')
+  })
 })

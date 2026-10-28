@@ -98,7 +98,7 @@ function LaneView({ category, files, laneRoster, progress, onCancel, onReveal, o
           >
             {pill.done}/{pill.total} done
           </span>
-          <KanbanColumnHandle>
+          <KanbanColumnHandle className="opacity-100">
             <Button size="icon-xs" variant="ghost" aria-label={`Reorder ${LANE_LABELS[category]} lane`}>
               <GripVerticalIcon />
             </Button>

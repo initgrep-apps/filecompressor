@@ -68,6 +68,8 @@ function chipFor(file: FileEntry): { label: string; tone: ChipTone } | null {
       return { label: 'Cancelled', tone: 'muted' }
     case 'pending':
       return { label: 'Queued', tone: 'muted' }
+    case 'compressing':
+      return { label: 'Processing', tone: 'primary' }
     default:
       return null
   }
@@ -183,7 +185,7 @@ export function RunCard({
                 {Math.round(clampedPercent)}%
               </span>
             </div>
-            <Progress value={clampedPercent} className="h-1" />
+            <Progress value={clampedPercent} />
             <div className="font-mono text-xs tabular-nums text-muted-foreground">
               {sizes}
             </div>
