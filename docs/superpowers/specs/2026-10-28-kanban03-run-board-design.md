@@ -42,12 +42,15 @@ mock-only; final code uses `bg`, `bg-card`, `muted`, `primary`, `destructive` to
   **lucide icons** — `Image`, `Film`, `FileText`, `File`, `FileQuestion` — replacing the custom
   SVG glyphs; + lane title + done/total count pill + always-visible grip handle
   (`KanbanColumnHandle`).
+  - **Behavior change (acknowledged):** the count pill always reflects the **unfiltered** lane
+    roster (matches `RunHeader`'s roster-based counts under an active filter); `unsupported`
+    files are always excluded from both card rendering and the pill.
 - **Cards**: kanban-03 card with these slot mappings:
 
 | kanban-03 slot | Yard field |
 |---|---|
 | area badge (top) | strategy note, hidden until known |
-| title (2-line clamp) | filename |
+| title | filename (truncate single line + tooltip) |
 | avatar (top-right) | action buttons: Cancel / Reveal / Remove |
 | progress + % | live while compressing: spinner + "Progress" + % + solid bar (no gradient); terminal cards omit this block |
 | health badge (bottom-left) | status chip |
@@ -87,6 +90,9 @@ dnd-kit:
 - Durable session state: `laneOrder: Category[]`, `cardOrder: Record<Category, string[]>`
 - `columns` (the controlled value) derived from `{ laneOrder, cardOrder, roster, statusFilter }`
 - Roster diff merge, preserving user order:
+  - files with `status === 'unsupported'` are never admitted into `BoardState` (excluded in
+    `initialBoardState`, `syncBoardState`, and `derivedColumns` — same as today's
+    `groupByCategory` skip)
   - new files → appended to their lane's order; compressing ones jump to front
   - removed files → dropped
   - empty lanes → omitted from columns (current behavior: empty lanes hidden)
@@ -117,7 +123,9 @@ dnd-kit:
 - npm: `@dnd-kit/core`, `@dnd-kit/sortable`, `@dnd-kit/utilities` (new)
 - shadcn: `progress` (new; avatar/badge/button/card/separator already installed)
 - `avatar` is NOT installed — the avatar slot becomes action buttons
-- `@base-ui/react`, `lucide-react`, `motion` (stays for other views), `react-dom` present
+- `@base-ui/react`, `lucide-react`, `react-dom` present. `motion` has no remaining importers
+  after this slice's merge (its only importers were the three deleted files) — dep stays in
+  `package.json` for now; candidate for removal in a later cleanup slice.
 - kanban-03's demo CSS additions: none required by the registry component beyond existing
   tokens; `Card size='sm'` variant and `Progress` need to exist in `src/components/ui/`
 
