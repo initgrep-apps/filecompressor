@@ -208,6 +208,32 @@ describe('boardState', () => {
     expect(next.cardOrder.image).toEqual(['comp', 'b', 'a'])
   })
 
+  it('applyCardMove pinning depends only on files contents', () => {
+    const state: BoardState = {
+      laneOrder: ['image'],
+      cardOrder: {
+        image: ['pin', 'a', 'b'],
+      },
+    }
+    const files = [
+      makeFile({ id: 'pin', category: 'image', status: 'compressing' }),
+      makeFile({ id: 'a', category: 'image', status: 'done' }),
+      makeFile({ id: 'b', category: 'image', status: 'done' }),
+    ]
+    const next = applyCardMove(
+      state,
+      {
+        activeId: 'b',
+        overId: 'pin',
+        activeContainer: 'image',
+        overContainer: 'image',
+        overIsColumn: false,
+      },
+      files
+    )
+    expect(next.cardOrder.image).toEqual(['pin', 'b', 'a'])
+  })
+
   it('applyCardMove ignores cross-lane moves and returns the same state', () => {
     const state: BoardState = {
       laneOrder: ['image', 'video'],

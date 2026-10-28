@@ -196,7 +196,7 @@ export function applyCardMove(
     overContainer: string
     overIsColumn: boolean
   },
-  files?: FileEntry[]
+  files: FileEntry[]
 ): BoardState {
   if (!isCategory(move.activeContainer) || !isCategory(move.overContainer)) return state
   if (move.activeContainer !== move.overContainer) return state
