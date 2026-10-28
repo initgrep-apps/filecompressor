@@ -222,7 +222,7 @@ export function HistoryTableToolbar({
         />
         <button
           type="button"
-          aria-label="Clear filters"
+          aria-label="Clear"
           className="h-[22px] rounded-full px-1 text-[10.5px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
           onClick={onClear}
         >

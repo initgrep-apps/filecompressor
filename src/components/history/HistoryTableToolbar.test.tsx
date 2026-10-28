@@ -52,7 +52,7 @@ describe("HistoryTableToolbar", () => {
     expect(screen.getByRole("button", { name: /Needs attention/ })).toHaveTextContent("2")
     expect(screen.getByRole("button", { name: /^Done/ })).toHaveTextContent("7")
     expect(screen.getByRole("button", { name: /Under target/ })).toHaveTextContent("4")
-    expect(screen.getByRole("button", { name: "Clear filters" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Clear" })).toBeInTheDocument()
   })
 
   it("calls search, type and outcome handlers", async () => {
@@ -84,7 +84,7 @@ describe("HistoryTableToolbar", () => {
       "false"
     )
 
-    await user.click(screen.getByRole("button", { name: "Clear filters" }))
+    await user.click(screen.getByRole("button", { name: "Clear" }))
     expect(props.onClear).toHaveBeenCalledTimes(1)
   })
 
