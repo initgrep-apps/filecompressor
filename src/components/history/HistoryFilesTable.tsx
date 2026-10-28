@@ -363,7 +363,7 @@ export function HistoryFilesTable({
         key={`row-${row.id}`}
         data-testid="history-file-row"
         className={cn(
-          "h-[43px] border-b border-border/60 hover:bg-muted/40",
+          "h-[43px] border-b border-border/60 hover:bg-muted/40 has-aria-expanded:bg-muted/20",
           failed && "bg-destructive/5 hover:bg-destructive/10"
         )}
       >
@@ -462,8 +462,12 @@ export function HistoryFilesTable({
                       key={header.id}
                       aria-label={label}
                       aria-sort={label ? ariaSort(header.column) : undefined}
+                      style={{
+                        backgroundColor:
+                          "color-mix(in oklch, var(--card) 94%, var(--foreground) 6%)",
+                      }}
                       className={cn(
-                        "sticky top-0 z-10 h-8 bg-muted/60 px-[9px] text-[9.5px] font-semibold tracking-[0.06em] text-muted-foreground uppercase backdrop-blur-sm",
+                        "sticky top-0 z-10 h-8 px-[9px] text-[9.5px] font-semibold tracking-[0.06em] text-muted-foreground uppercase",
                         header.column.id === "size" && "text-right",
                         header.column.id === "actions" && "text-right"
                       )}

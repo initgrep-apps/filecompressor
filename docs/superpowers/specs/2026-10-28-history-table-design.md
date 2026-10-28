@@ -6,6 +6,8 @@
 **Reference mock:** [`mock.html`](2026-10-28-history-table/mock.html)
 **Visuals:** [wide](2026-10-28-history-table/mock-wide.png) · [900](2026-10-28-history-table/mock-900.png) · [reference crop](2026-10-28-history-table/reference-wide.png) · [summary cards](2026-10-28-history-table/summary-cards.png) · [detail cards](2026-10-28-history-table/detail-cards.png) · [narrow](2026-10-28-history-table/narrow.png)
 
+**Implementation evidence (2026-10-28):** [wide](2026-10-28-history-table/app-wide.png) · [900](2026-10-28-history-table/app-900.png) · [detail](2026-10-28-history-table/app-detail.png) · [failed detail](2026-10-28-history-table/app-failed-detail.png) · [under-target detail](2026-10-28-history-table/app-under-detail.png) · [light](2026-10-28-history-table/app-light.png) · [light detail](2026-10-28-history-table/app-light-detail.png) · [1000-row virtualized](2026-10-28-history-table/app-virtual-bottom.png)
+
 This document is the visual and behavioral source of truth. The saved mock is the pixel reference; this spec names every value, label, interaction and edge case that must survive implementation.
 
 ---
