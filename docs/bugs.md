@@ -12,7 +12,7 @@ No other open bugs; the known gaps and accepted limitations below still apply.
 
 | Gap | Impact |
 |---|---|
-| No row memoization, list virtualization, or progress throttling | 1000-file batches re-render the active view on every `file:progress`; measurable webview CPU |
+| No row memoization or progress throttling | 1000-file history tables virtualize above 200 rows; compression views still re-render the active view on every `file:progress`; measurable webview CPU |
 | File picker passes `filters: []` | Unsupported files are only rejected after selection |
 | `history.jsonl` is re-folded on every `get_history` call | Acceptable while history stays small; cache the fold in `HistoryStore` keyed by `(mtime, len)` if history grows past ~10k records |
 | Linux chrome unverified | Linux builds from source with native decorations while the shell renders non-macOS controls and drag surfaces; no packaging or acceptance run |

@@ -23,7 +23,7 @@ What shipped, in the order the slices were built. This replaces the per-slice sp
 | 17 | Yard rename | Product, package, crate, identifier and temp folder are all `yard` | Repo slug remains `initgrep-apps/filecompressor` |
 | 18 | App shell redesign | Native window chrome (macOS overlay, frameless Windows), stock shadcn sidebar with history batch list, filter dialog, settings/About dialogs, pre-paint theme | ADR 0007; Linux chrome unverified (`docs/bugs.md`) |
 | 19 | Lucide icons | Every icon from `lucide-react`; `@remixicon/react` dropped, `components.json` declares `iconLibrary: lucide` | ADR 0008; sonner keeps shadcn's `OctagonX`/`TriangleAlert`, brand is `FileLock2` |
-| 20 | History data table + scroll fixes | History detail is a TanStack table (File · Size · Method · Status · ⋮ menu with reveal actions), sticky header, working scroll; kanban lanes fill available height with wheel panning; dropdown menus follow theme; buttons show the hand cursor; clear history moved to Settings → History behind a destructive confirm | Flex-shrink RCA: scroll containers must not let children collapse (`shrink-0`); menus had a stray `dark` popup class; Windows wheel/scrollbar check pending (`docs/bugs.md`) |
+| 20 | History batch dashboard | Four summary cards (linear size scale, Files outcome pills, Best effort, Failed), absolute batch header, 3-column sortable table (File · Size · Status), search/type/outcome filters, expandable 3-card row detail (size scale · target/method · timing) with reveal actions; virtualizes above 200 rows; kanban lanes fill available height with wheel panning; clear history moved to Settings → History behind a destructive confirm | Under target uses the History muted tone; summary reflows to 2×2 at ≤860px content; Windows wheel/scrollbar check pending (`docs/bugs.md`) |
 
 ## Not shipped (deliberately)
 
@@ -45,4 +45,4 @@ From the 2026-10-18 architecture review. Pick one, grill it, then design:
 
 ## Known performance debt
 
-No row memoization, list virtualization, or progress-event throttling. Fine for typical batches, measurable on 1000-file batches (`docs/bugs.md`).
+No row memoization or progress-event throttling. History tables virtualize above 200 filtered rows; compression views still re-render on every `file:progress`, measurable on 1000-file batches (`docs/bugs.md`).

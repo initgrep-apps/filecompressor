@@ -181,8 +181,16 @@ describe("HistoryFilterDialog", () => {
       within(statusGroup as HTMLElement).getAllByRole("button"),
     ).toHaveLength(6)
     expect(button("Best effort")).toBeInTheDocument()
-    expect(button("Already under target")).toBeInTheDocument()
+    expect(button("Under target")).toBeInTheDocument()
     expect(button("Unsupported")).toBeInTheDocument()
+  })
+
+  it("uses the History muted dot for Under target", () => {
+    renderDialog()
+
+    const chip = button("Under target")
+    expect(chip.querySelector(".bg-muted-foreground")).not.toBeNull()
+    expect(chip.querySelector(".bg-primary")).toBeNull()
   })
 
   it("omits the active badge for filters this dialog cannot show", () => {
