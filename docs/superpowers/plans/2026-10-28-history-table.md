@@ -60,7 +60,6 @@
 - `src/components/history/HistoryFilterDialog.test.tsx`
 - `src/App.test.tsx` — only selectors/queries affected by the History layout.
 - `docs/FEATURES.md` — update the History feature row.
-- `docs/bugs.md` — record the large-batch/virtualization status if the final implementation does not cover it (it should be covered by Task 6).
 
 ---
 
