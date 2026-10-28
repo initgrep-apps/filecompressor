@@ -10,7 +10,7 @@ Offline desktop app for batch-optimizing files to maximum size limits. Tauri 2 +
 
 ## Orchestrator Config
 
-- `PLAN_GLOB` — `docs/superpowers/plans/*.md` (working files only; delete after the slice merges — see Documentation lifecycle)
+- `PLAN_GLOB` — `docs/superpowers/plans/*.md` (durable design records; keep after merge)
 - `TECH_SPEC_PATH` — `docs/ARCHITECTURE.md`
 - `PRD_PATH` — `docs/FEATURES.md`
 - `GATE_COMMAND` — `yarn build && yarn test && cd src-tauri && cargo test`
@@ -21,9 +21,9 @@ Offline desktop app for batch-optimizing files to maximum size limits. Tauri 2 +
 
 ## Documentation lifecycle
 
-Canonical, always-current docs: `README.md`, `docs/ARCHITECTURE.md`, `docs/FEATURES.md`, `GLOSSARY.md`, `docs/adr/`, `docs/bugs.md`, `docs/ci-process.md`, `docs/distribution-acceptance.md`.
+Canonical, always-current docs: `README.md`, `docs/ARCHITECTURE.md`, `docs/FEATURES.md`, `GLOSSARY.md`, `docs/adr/`, `docs/bugs.md`, `docs/ci-process.md`, `docs/distribution-acceptance.md`, `docs/reference/`.
 
-Superpowers specs and plans are working artifacts. When a slice merges: digest the outcome into `docs/FEATURES.md`, record any decision that passes the ADR three-test filter in `docs/adr/`, move open work to `docs/bugs.md`, then delete the spec and plan. Resolved investigations leave no document behind.
+Superpowers specs and plans are durable design records. When a slice merges, digest the outcome into `docs/FEATURES.md`, record any decision that passes the ADR three-test filter in `docs/adr/`, and move open work to `docs/bugs.md`; keep the spec and plan as the design record.
 
 ## Tech Stack
 
