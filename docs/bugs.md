@@ -5,6 +5,7 @@ Open items only. Resolved investigations belong in git history or as a durable r
 ## Bugs
 
 1. **Windows kanban input unverified** — slice #20's wheel-to-horizontal panning, thin scrollbar styling, and `select-none` need a real Windows build check (WebView2); cua-driver cannot synthesize wheel events on WebKit on macOS. Trackpad scroll feel on the new history table likewise needs a human pass.
+2. **kanban-03 run board human-check pending** — dev-build pass on the new stock-kanban board: drag overlay ghost (item + column variants), always-visible lane grip opacity, pinned-card focus affordance (stock inert sortable attributes), and live compressing re-pin jump. dnd-kit cannot be drag-tested in jsdom; unit-level drag semantics are test-pinned in `src/lib/boardState.test.ts`.
 
 No other open bugs; the known gaps and accepted limitations below still apply.
 
@@ -16,6 +17,7 @@ No other open bugs; the known gaps and accepted limitations below still apply.
 | File picker passes `filters: []` | Unsupported files are only rejected after selection |
 | `history.jsonl` is re-folded on every `get_history` call | Acceptable while history stays small; cache the fold in `HistoryStore` keyed by `(mtime, len)` if history grows past ~10k records |
 | Linux chrome unverified | Linux builds from source with native decorations while the shell renders non-macOS controls and drag surfaces; no packaging or acceptance run |
+| `motion` dependency has zero product importers | Board rewrite landed on dnd-kit; `motionStubs.ts` still serves `RunHeader`/`CompressView` tests. Remove dep + stubs in one cleanup slice after confirming no other usage |
 | Manual acceptance matrix not yet run on released builds | CI proves packages start and compress; the UI matrix in `docs/distribution-acceptance.md` is manual |
 
 ## Accepted limitations
