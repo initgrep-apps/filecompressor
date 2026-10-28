@@ -138,11 +138,19 @@ export function RunBoard({
   const rosterRef = useRef(roster)
   rosterRef.current = roster
   const rosterKey = useMemo(() => roster.map((file) => file.id).join(','), [roster])
+  const compressKey = useMemo(
+    () =>
+      roster
+        .filter((file) => file.status === 'compressing')
+        .map((file) => file.id)
+        .join(','),
+    [roster]
+  )
 
   useEffect(() => {
     const next = syncBoardState(stateRef.current, rosterRef.current)
     if (next !== stateRef.current) setState(next)
-  }, [rosterKey])
+  }, [rosterKey, compressKey])
 
   const columnsList = useMemo(() => derivedColumns(state, roster, statusFilter), [state, roster, statusFilter])
   const columns = useMemo(() => Object.fromEntries(columnsList.map((c) => [c.category, c.files])), [columnsList])

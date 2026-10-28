@@ -344,6 +344,52 @@ describe('RunBoard', () => {
     expect(document.querySelectorAll('[data-slot="kanban-item"]')).toHaveLength(1)
   })
 
+  it('pending card jumps to lane front when its status becomes compressing mid-batch', () => {
+    const props = (files: FileEntry[]) => ({
+      roster: files,
+      statusFilter: 'all' as StatusFilter,
+      onFilterChange: vi.fn(),
+      onCancel: vi.fn(),
+      onReveal: vi.fn(),
+      onRemove: vi.fn(),
+    })
+    const laneOrder = () => {
+      const lane = document.querySelector('[data-lane-scroll]') as HTMLElement
+      const text = lane.textContent ?? ''
+      return (name: string) => text.indexOf(name)
+    }
+    const { rerender } = render(
+      <RunBoard
+        {...props([
+          makeFile({ id: 'a', name: 'Alpha_Done.mov', status: 'done', compressedSize: 700_000 }),
+          makeFile({ id: 'b', name: 'Beta_Queue.mov', status: 'pending' }),
+        ])}
+      />
+    )
+    expect(laneOrder()('Alpha_Done.mov')).toBeLessThan(laneOrder()('Beta_Queue.mov'))
+
+    rerender(
+      <RunBoard
+        {...props([
+          makeFile({ id: 'a', name: 'Alpha_Done.mov', status: 'done', compressedSize: 700_000 }),
+          makeFile({ id: 'b', name: 'Beta_Queue.mov', status: 'compressing' }),
+        ])}
+      />
+    )
+    expect(laneOrder()('Beta_Queue.mov')).toBeLessThan(laneOrder()('Alpha_Done.mov'))
+
+    rerender(
+      <RunBoard
+        {...props([
+          makeFile({ id: 'a', name: 'Alpha_Done.mov', status: 'done', compressedSize: 700_000 }),
+          makeFile({ id: 'b', name: 'Beta_Done.mov', status: 'done', compressedSize: 700_000 }),
+        ])}
+      />
+    )
+    expect(screen.getByText('Beta_Done.mov')).toBeInTheDocument()
+    expect(laneOrder()('Beta_Done.mov')).toBeLessThan(laneOrder()('Alpha_Done.mov'))
+  })
+
   it('lane pill excludes unsupported files from its counts', () => {
     render(
       boardFor([
