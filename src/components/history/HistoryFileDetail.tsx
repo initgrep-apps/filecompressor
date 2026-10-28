@@ -23,6 +23,7 @@ import {
   fileSizeSummary,
   formatPreciseDuration,
   historyMethodLabel,
+  isNoOutputFile,
 } from "@/lib/historyTable"
 import { formatSize } from "@/lib/sizeFormat"
 import { Button } from "@/components/ui/button"
@@ -40,14 +41,6 @@ function Fact({ label, value }: { label: string; value: string }) {
       <span className={LABEL_CLASS}>{label}</span>
       <b className={`${VALUE_CLASS} font-medium`}>{value}</b>
     </div>
-  )
-}
-
-function isNoOutput(file: HistoryFile): boolean {
-  return (
-    file.status === "failed" ||
-    file.status === "unsupported" ||
-    file.status === "cancelled"
   )
 }
 
@@ -133,7 +126,7 @@ export function HistoryFileDetail({
       className="grid grid-cols-[1.4fr_1fr_1fr] gap-3 p-[13px_16px_13px_40px] @max-[860px]:gap-2.5 @max-[860px]:pl-[30px]"
       data-testid="history-file-detail"
     >
-      {isNoOutput(file) ? <ErrorCard file={file} /> : <SizeCard file={file} />}
+      {isNoOutputFile(file) ? <ErrorCard file={file} /> : <SizeCard file={file} />}
 
       <div className={CARD_CLASS}>
         <div className={EYEBROW_CLASS}>Target &amp; method</div>

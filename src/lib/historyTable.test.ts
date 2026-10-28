@@ -23,6 +23,8 @@ import {
   HISTORY_STATUS_TONES,
   batchSizeSummary,
   completedLabel,
+  currentSizeBytes,
+  currentSizeLabel,
   fileSizeSummary,
   filterHistoryFiles,
   formatPreciseDuration,
@@ -125,6 +127,16 @@ describe("fileSizeSummary", () => {
       savedBytes: 1_541 * KB,
       percent: 86,
     })
+  })
+})
+
+describe("currentSizeBytes and currentSizeLabel", () => {
+  it("uses the compressed size, the original for under-target, and null for no output", () => {
+    expect(currentSizeBytes(file({ status: "done", compressedSize: 512 }))).toBe(512)
+    expect(currentSizeBytes(file({ status: "already_under_target", compressedSize: null, originalSize: 950 }))).toBe(950)
+    expect(currentSizeBytes(file({ status: "failed", compressedSize: null }))).toBeNull()
+    expect(currentSizeLabel(file({ status: "failed", compressedSize: null }))).toBe("—")
+    expect(currentSizeLabel(file({ status: "done", compressedSize: 512 }))).toBe("512 B")
   })
 })
 

@@ -17,6 +17,7 @@
 import type { Category, FileStatus, HistoryFile } from "@/types"
 import { STATUS_TONES } from "@/lib/tokens"
 import { strategyLabel } from "@/lib/strategyLabels"
+import { formatSize } from "@/lib/sizeFormat"
 
 export const HISTORY_STATUS_LABELS: Record<FileStatus, string> = {
   pending: "Pending",
@@ -83,6 +84,24 @@ export function batchSizeSummary(files: HistoryFile[]): BatchSizeSummary {
 
 export function fileSizeSummary(file: HistoryFile): FileSizeSummary {
   return summarize(file.originalSize, file.compressedSize ?? file.originalSize)
+}
+
+export function isNoOutputFile(file: HistoryFile): boolean {
+  return (
+    file.status === "failed" ||
+    file.status === "unsupported" ||
+    file.status === "cancelled"
+  )
+}
+
+export function currentSizeBytes(file: HistoryFile): number | null {
+  if (isNoOutputFile(file)) return file.compressedSize
+  return file.compressedSize ?? file.originalSize
+}
+
+export function currentSizeLabel(file: HistoryFile): string {
+  const bytes = currentSizeBytes(file)
+  return bytes === null ? "—" : formatSize(bytes)
 }
 
 export function historyMethodLabel(file: HistoryFile): string {

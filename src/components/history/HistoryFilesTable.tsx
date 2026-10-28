@@ -14,19 +14,47 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import { useMemo, type ReactElement } from "react"
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactElement,
+} from "react"
 import {
   flexRender,
   getCoreRowModel,
+  getSortedRowModel,
   useReactTable,
+  type Column,
   type ColumnDef,
+  type SortingState,
 } from "@tanstack/react-table"
 import { invoke } from "@tauri-apps/api/core"
 import { toast } from "sonner"
-import { Ellipsis, Folder, FolderOpen } from "lucide-react"
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
+  ChevronRight,
+  ChevronsUpDown,
+  Ellipsis,
+  Folder,
+  FolderOpen,
+} from "lucide-react"
 import type { FileStatus, HistoryFile, HistorySession } from "@/types"
-import { formatSize } from "@/lib/sizeFormat"
-import { CATEGORY_TONES, STATUS_TONES } from "@/lib/tokens"
+import {
+  HISTORY_STATUS_LABELS,
+  HISTORY_STATUS_ORDER,
+  HISTORY_STATUS_TONES,
+  currentSizeBytes,
+  currentSizeLabel,
+  filterHistoryFiles,
+  historyOutcomeCounts,
+  type HistoryOutcomeFilter,
+  type HistoryTypeFilter,
+} from "@/lib/historyTable"
+import { CATEGORY_TONES } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 import { CategoryIcon } from "@/components/CategoryIcon"
 import { Badge } from "@/components/ui/badge"
@@ -45,23 +73,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { HistoryFileDetail } from "@/components/history/HistoryFileDetail"
+import { HistoryTableToolbar } from "@/components/history/HistoryTableToolbar"
 
-const STATUS_LABELS: Record<FileStatus, string> = {
-  pending: "Pending",
-  compressing: "Compressing",
-  done: "Done",
-  best_effort: "Best effort",
-  failed: "Failed",
-  cancelled: "Cancelled",
-  unsupported: "Unsupported",
-  already_under_target: "Already under target",
-}
-
-const MUTED_TONE = {
-  tint: "bg-muted",
-  text: "text-muted-foreground",
-  border: "border-border",
-  accent: "bg-muted-foreground",
+const HEADER_LABELS: Record<string, string> = {
+  file: "File",
+  size: "Size",
+  status: "Status",
 }
 
 function toastOpenError(err: unknown, prefix: string) {
@@ -79,28 +97,87 @@ async function revealFile(filePath: string) {
   }
 }
 
-function StatusMarker({ status }: { status: FileStatus }) {
-  const tone = STATUS_TONES[status] ?? MUTED_TONE
+function ariaSort(column: Column<HistoryFile, unknown>): "ascending" | "descending" | "none" {
+  const sorted = column.getIsSorted()
+  if (sorted === "asc") return "ascending"
+  if (sorted === "desc") return "descending"
+  return "none"
+}
+
+function SortHeader({
+  column,
+  label,
+}: {
+  column: Column<HistoryFile, unknown>
+  label: string
+}) {
+  const sorted = column.getIsSorted()
   return (
-    <Badge variant="secondary" className={`${tone.tint} ${tone.border} ${tone.text}`}>
-      <span className={`size-1.5 rounded-full ${tone.accent}`} />
-      {STATUS_LABELS[status] ?? status}
+    <button
+      type="button"
+      aria-label={`Sort by ${label}`}
+      className="inline-flex items-center gap-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+      onClick={() => column.toggleSorting()}
+    >
+      {label}
+      {sorted === "asc" ? (
+        <ArrowUp aria-hidden="true" className="size-2 text-primary" />
+      ) : sorted === "desc" ? (
+        <ArrowDown aria-hidden="true" className="size-2 text-primary" />
+      ) : (
+        <ChevronsUpDown aria-hidden="true" className="size-2 opacity-50" />
+      )}
+    </button>
+  )
+}
+
+function StatusBadge({ status }: { status: FileStatus }) {
+  const tone = HISTORY_STATUS_TONES[status] ?? HISTORY_STATUS_TONES.cancelled
+  return (
+    <Badge
+      variant="secondary"
+      className={`h-[19px] gap-[5px] rounded-full border px-[7px] text-[10px] font-semibold ${tone.tint} ${tone.border} ${tone.text}`}
+    >
+      <span aria-hidden="true" className={`size-[5px] rounded-full ${tone.accent}`} />
+      {HISTORY_STATUS_LABELS[status] ?? status}
     </Badge>
   )
 }
 
-function fileMethod(file: HistoryFile): string {
+function RevealMenu({ file }: { file: HistoryFile }) {
   return (
-    file.strategyUsed ??
-    (file.qualityUsed !== null ? `quality ${file.qualityUsed}` : null) ??
-    "—"
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="File actions"
+            className="size-6"
+          />
+        }
+      >
+        <Ellipsis />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem
+          disabled={file.outputPath === null}
+          onClick={() => file.outputPath && void revealFile(file.outputPath)}
+        >
+          <FolderOpen />
+          Show compressed
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => void revealFile(file.path)}>
+          <Folder />
+          Show original
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
 
-function sizeLabel(file: HistoryFile): string {
-  const compressed =
-    file.compressedSize === null ? "—" : formatSize(file.compressedSize)
-  return `${formatSize(file.originalSize)} → ${compressed}`
+function sizeSortValue(file: HistoryFile): number | null {
+  return currentSizeBytes(file)
 }
 
 export function HistoryFilesTable({
@@ -108,37 +185,87 @@ export function HistoryFilesTable({
 }: {
   session: HistorySession
 }): ReactElement {
-  const data = session.files
+  const [search, setSearch] = useState("")
+  const [type, setType] = useState<HistoryTypeFilter>("all")
+  const [outcome, setOutcome] = useState<HistoryOutcomeFilter>("all")
+  const [sorting, setSorting] = useState<SortingState>([])
+  const [expandedPath, setExpandedPath] = useState<string | null>(null)
+
+  const filtered = useMemo(
+    () => filterHistoryFiles(session.files, { search, type, outcome }),
+    [session.files, search, type, outcome]
+  )
+  const counts = useMemo(() => historyOutcomeCounts(session.files), [session.files])
+
+  useEffect(() => {
+    setSearch("")
+    setType("all")
+    setOutcome("all")
+    setSorting([])
+    setExpandedPath(null)
+  }, [session.sessionId])
+
+  useEffect(() => {
+    if (expandedPath !== null && !filtered.some((file) => file.path === expandedPath)) {
+      setExpandedPath(null)
+    }
+  }, [expandedPath, filtered])
+
   const columns = useMemo<ColumnDef<HistoryFile>[]>(
     () => [
       {
-        id: "file",
-        header: "File",
+        id: "expand",
+        header: () => null,
+        enableSorting: false,
         cell: ({ row }) => {
           const file = row.original
-          const tone = CATEGORY_TONES[file.category] ?? MUTED_TONE
+          const open = expandedPath === file.path
+          const detailId = `history-detail-${row.id}`
           return (
-            <div className="flex items-center gap-3">
+            <button
+              type="button"
+              aria-label={open ? `Collapse ${file.name}` : `Expand ${file.name}`}
+              aria-expanded={open}
+              aria-controls={open ? detailId : undefined}
+              className="flex size-[17px] items-center justify-center rounded-[5px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+              onClick={() =>
+                setExpandedPath((current) => (current === file.path ? null : file.path))
+              }
+            >
+              {open ? (
+                <ChevronDown aria-hidden="true" className="size-2.5" />
+              ) : (
+                <ChevronRight aria-hidden="true" className="size-2.5" />
+              )}
+            </button>
+          )
+        },
+      },
+      {
+        id: "file",
+        accessorFn: (row) => row.name,
+        header: ({ column }) => <SortHeader column={column} label="File" />,
+        cell: ({ row }) => {
+          const file = row.original
+          const tone = CATEGORY_TONES[file.category] ?? CATEGORY_TONES.other
+          return (
+            <div className="flex min-w-0 items-center gap-2">
               <span
-                className={`flex size-7 shrink-0 items-center justify-center rounded-lg ${tone.tint} ${tone.text}`}
+                className={`flex size-6 shrink-0 items-center justify-center rounded-[7px] ${tone.tint} ${tone.text}`}
               >
-                <CategoryIcon category={file.category} size={14} />
+                <CategoryIcon category={file.category} size={12} />
               </span>
               <div className="min-w-0">
-                <div className="truncate text-sm font-medium" title={file.name}>
-                  {file.name}
-                </div>
                 <div
-                  data-testid="file-meta"
-                  className="whitespace-normal text-xs text-muted-foreground @3xl:hidden"
+                  data-testid="history-file-name"
+                  className="truncate text-[12px] font-[550] text-foreground"
+                  title={file.name}
                 >
-                  <span className="tabular-nums">{sizeLabel(file)}</span>
-                  {" · "}
-                  {fileMethod(file)}
+                  {file.name}
                 </div>
                 {file.error !== null && (
                   <div
-                    className="truncate text-xs text-destructive"
+                    className="truncate text-[9.5px] text-destructive"
                     title={file.error}
                   >
                     {file.error}
@@ -148,139 +275,190 @@ export function HistoryFilesTable({
             </div>
           )
         },
+        sortingFn: (a, b) => a.original.name.localeCompare(b.original.name),
+        sortDescFirst: false,
       },
       {
         id: "size",
-        header: "Size",
-        cell: ({ row }) => {
-          const file = row.original
-          return (
-            <span className="block whitespace-normal tabular-nums">
-              {sizeLabel(file)}
-            </span>
-          )
-        },
-      },
-      {
-        id: "method",
-        header: "Method",
-        cell: ({ row }) => {
-          const method = fileMethod(row.original)
-          return (
-            <span
-              className="block truncate text-muted-foreground"
-              title={method}
-            >
-              {method}
-            </span>
-          )
+        accessorFn: (row) => sizeSortValue(row),
+        header: ({ column }) => <SortHeader column={column} label="Size" />,
+        cell: ({ row }) => (
+          <span className="block text-right tabular-nums">
+            {currentSizeLabel(row.original)}
+          </span>
+        ),
+        sortDescFirst: false,
+        sortingFn: (a, b) => {
+          const left = sizeSortValue(a.original)
+          const right = sizeSortValue(b.original)
+          if (left === null && right === null) return 0
+          if (left === null) return 1
+          if (right === null) return -1
+          return left - right
         },
       },
       {
         id: "status",
-        header: "Status",
-        cell: ({ row }) => <StatusMarker status={row.original.status} />,
+        accessorFn: (row) => HISTORY_STATUS_ORDER[row.status] ?? 99,
+        header: ({ column }) => <SortHeader column={column} label="Status" />,
+        cell: ({ row }) => <StatusBadge status={row.original.status} />,
+        sortDescFirst: false,
+        sortingFn: (a, b) =>
+          (HISTORY_STATUS_ORDER[a.original.status] ?? 99) -
+          (HISTORY_STATUS_ORDER[b.original.status] ?? 99),
       },
       {
         id: "actions",
-        header: "",
-        cell: ({ row }) => {
-          const file = row.original
-          return (
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label="File actions"
-                  />
-                }
-              >
-                <Ellipsis />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuItem
-                  disabled={file.outputPath === null}
-                  onClick={() =>
-                    file.outputPath && void revealFile(file.outputPath)
-                  }
-                >
-                  <FolderOpen />
-                  Show compressed
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => void revealFile(file.path)}
-                >
-                  <Folder />
-                  Show original
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )
-        },
+        header: () => null,
+        enableSorting: false,
+        cell: ({ row }) => <RevealMenu file={row.original} />,
       },
     ],
-    []
+    [expandedPath]
   )
 
   const table = useReactTable({
-    data,
+    data: filtered,
     columns,
+    state: { sorting },
+    onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
   })
 
-  const columnClasses: Record<string, string> = {
-    size: "hidden w-36 @3xl:table-cell",
-    method: "hidden w-40 @3xl:table-cell",
-    status: "w-44",
-    actions: "w-12",
+  const clearFilters = () => {
+    setSearch("")
+    setType("all")
+    setOutcome("all")
   }
 
+  const rows = table.getRowModel().rows
+
   return (
-    <div className="@container flex min-h-0 flex-col overflow-hidden rounded-2xl border bg-card">
-      <div className="min-h-0 flex-1 overflow-auto">
+    <div
+      data-testid="history-table-card"
+      className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[16px] border border-border bg-card px-4 pt-3.5 pb-0 @max-[860px]:px-[13px] @max-[860px]:pt-3"
+    >
+      <div className="shrink-0">
+        <HistoryTableToolbar
+          search={search}
+          onSearchChange={setSearch}
+          type={type}
+          onTypeChange={setType}
+          outcome={outcome}
+          onOutcomeChange={setOutcome}
+          counts={counts}
+          visibleCount={filtered.length}
+          totalCount={session.files.length}
+          onClear={clearFilters}
+        />
+      </div>
+
+      <div
+        data-testid="history-table-scroll"
+        data-virtualized="false"
+        className="mt-2 min-h-0 flex-1 overflow-x-hidden overflow-y-auto border-t border-border/60"
+      >
         <Table className="overflow-visible" tableClassName="table-fixed">
+          <colgroup>
+            <col className="w-6" />
+            <col />
+            <col className="w-[92px] @max-[860px]:w-[78px]" />
+            <col className="w-[142px] @max-[860px]:w-[126px]" />
+            <col className="w-[34px]" />
+          </colgroup>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <TableHead
-                    key={header.id}
-                    className={cn(
-                      "sticky top-0 z-10 bg-card",
-                      columnClasses[header.column.id]
-                    )}
-                  >
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(
-                          header.column.columnDef.header,
-                          header.getContext()
-                        )}
-                  </TableHead>
-                ))}
+              <TableRow key={headerGroup.id} className="hover:bg-transparent">
+                {headerGroup.headers.map((header) => {
+                  const label = HEADER_LABELS[header.column.id]
+                  return (
+                    <TableHead
+                      key={header.id}
+                      aria-label={label}
+                      aria-sort={label ? ariaSort(header.column) : undefined}
+                      className={cn(
+                        "sticky top-0 z-10 h-8 bg-muted/60 px-[9px] text-[9.5px] font-semibold tracking-[0.06em] text-muted-foreground uppercase backdrop-blur-sm",
+                        header.column.id === "size" && "text-right",
+                        header.column.id === "actions" && "text-right"
+                      )}
+                    >
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(header.column.columnDef.header, header.getContext())}
+                    </TableHead>
+                  )
+                })}
               </TableRow>
             ))}
           </TableHeader>
           <TableBody>
-            {table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id}>
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell
-                    key={cell.id}
-                    className={columnClasses[cell.column.id]}
-                  >
-                    {flexRender(
-                      cell.column.columnDef.cell,
-                      cell.getContext()
-                    )}
-                  </TableCell>
-                ))}
+            {rows.length === 0 ? (
+              <TableRow className="hover:bg-transparent">
+                <TableCell colSpan={5} className="h-[120px] p-0 text-center whitespace-normal">
+                  <div className="flex flex-col items-center justify-center gap-3">
+                    <p className="text-[12px] text-muted-foreground">
+                      No files match these filters.
+                    </p>
+                    <Button variant="outline" size="sm" onClick={clearFilters}>
+                      Clear filters
+                    </Button>
+                  </div>
+                </TableCell>
               </TableRow>
-            ))}
+            ) : (
+              rows.map((row) => {
+                const file = row.original
+                const failed = file.status === "failed"
+                const detailId = `history-detail-${row.id}`
+                return (
+                  <Fragment key={row.id}>
+                    <TableRow
+                      data-testid="history-file-row"
+                      className={cn(
+                        "h-[43px] border-b border-border/60 hover:bg-muted/40",
+                        failed && "bg-destructive/5 hover:bg-destructive/10"
+                      )}
+                    >
+                      {row.getVisibleCells().map((cell) => (
+                        <TableCell
+                          key={cell.id}
+                          className={cn(
+                            "h-[43px] overflow-hidden px-[9px] py-0 whitespace-nowrap",
+                            cell.column.id === "actions" && "text-right"
+                          )}
+                        >
+                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                    {expandedPath === file.path && (
+                      <TableRow
+                        id={detailId}
+                        data-testid="history-detail-row"
+                        className="border-b border-border/60 bg-muted/10 hover:bg-muted/10"
+                      >
+                        <TableCell colSpan={5} className="p-0 whitespace-normal">
+                          <HistoryFileDetail
+                            file={file}
+                            onReveal={(path) => void revealFile(path)}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </Fragment>
+                )
+              })
+            )}
           </TableBody>
         </Table>
+      </div>
+
+      <div className="flex shrink-0 justify-end py-[7px] text-[9px] text-muted-foreground">
+        <span className="@max-[860px]:hidden">
+          Expand a row for saved data, target, method and timing.
+        </span>
+        <span className="hidden @max-[860px]:inline">Table scrolls vertically.</span>
       </div>
     </div>
   )
