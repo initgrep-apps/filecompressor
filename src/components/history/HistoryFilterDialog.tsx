@@ -41,6 +41,7 @@ import {
   describeSince,
   presetSinceMs,
 } from "@/lib/historyFormat"
+import { HISTORY_STATUS_TONES } from "@/lib/historyTable"
 import { CATEGORY_TONES, STATUS_TONES } from "@/lib/tokens"
 import { cn } from "@/lib/utils"
 import {
@@ -69,7 +70,7 @@ const STATUS_LABELS: Record<FilterableStatus, string> = {
   best_effort: "Best effort",
   failed: "Failed",
   cancelled: "Cancelled",
-  already_under_target: "Already under target",
+  already_under_target: "Under target",
   unsupported: "Unsupported",
 }
 
@@ -241,7 +242,7 @@ export function HistoryFilterDialog({
                     aria-hidden="true"
                     className={cn(
                       "size-1.5 shrink-0 rounded-full",
-                      STATUS_TONES[value].accent,
+                      HISTORY_STATUS_TONES[value].accent,
                     )}
                   />
                   {label}
