@@ -358,4 +358,30 @@ describe('boardState', () => {
     )
     expect(next).toBe(state)
   })
+
+  it('applyCardMove ignores column-body drop when the active id is compressing', () => {
+    const state: BoardState = {
+      laneOrder: ['image'],
+      cardOrder: {
+        image: ['comp', 'a', 'b'],
+      },
+    }
+    const files = [
+      makeFile({ id: 'comp', category: 'image', status: 'compressing' }),
+      makeFile({ id: 'a', category: 'image', status: 'done' }),
+      makeFile({ id: 'b', category: 'image', status: 'done' }),
+    ]
+    const next = applyCardMove(
+      state,
+      {
+        activeId: 'comp',
+        overId: 'image',
+        activeContainer: 'image',
+        overContainer: 'image',
+        overIsColumn: true,
+      },
+      files
+    )
+    expect(next).toBe(state)
+  })
 })

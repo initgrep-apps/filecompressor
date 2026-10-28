@@ -206,11 +206,13 @@ export function applyCardMove(
   if (activeIndex < 0) return state
 
   const statusById = new Map<string, FileEntry['status']>()
-  for (const file of files ?? []) {
+  for (const file of files) {
     statusById.set(file.id, file.status)
   }
 
   const isCompressing = (id: string): boolean => statusById.get(id) === 'compressing'
+
+  if (isCompressing(move.activeId)) return state
 
   let overIndex: number
   if (move.overIsColumn) {
@@ -218,7 +220,6 @@ export function applyCardMove(
   } else {
     overIndex = lane.indexOf(move.overId)
     if (overIndex < 0) return state
-    if (isCompressing(move.activeId)) return state
     if (lane.length > 0 && isCompressing(lane[0])) {
       overIndex = Math.max(1, overIndex)
     }
