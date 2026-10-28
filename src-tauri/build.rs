@@ -6,6 +6,13 @@ fn is_windows_msvc() -> bool {
 }
 
 fn main() {
+    println!("cargo:rerun-if-changed=icons");
+    if let Ok(entries) = std::fs::read_dir("icons") {
+        for entry in entries.flatten() {
+            println!("cargo:rerun-if-changed={}", entry.path().display());
+        }
+    }
+
     if is_windows_msvc() {
         let manifest =
             PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set"))
