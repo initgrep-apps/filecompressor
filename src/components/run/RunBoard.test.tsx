@@ -236,7 +236,9 @@ describe('RunBoard', () => {
     expect(column.className).toContain('min-h-0')
     const inner = column.firstElementChild as HTMLElement
     expect(inner.className).toContain('h-full')
+    expect(inner.className).toContain('p-2')
     const content = document.querySelector('[data-slot="kanban-column-content"]') as HTMLElement
+    expect(content.className).toContain('mt-2')
     expect(content.className).toContain('min-h-0')
     expect(content.className).toContain('flex-1')
     expect(content.className).toContain('overflow-y-auto')
