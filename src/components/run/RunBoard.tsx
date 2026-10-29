@@ -16,10 +16,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
+import { KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core'
 import { File, FileQuestion, FileText, Film, GripVerticalIcon, Image, type LucideIcon } from 'lucide-react'
 import { RunCard } from '@/components/run/RunCard'
 import { Button } from '@/components/ui/button'
 import { Kanban, KanbanBoard, KanbanColumn, KanbanColumnContent, KanbanColumnHandle, KanbanOverlay } from '@/components/ui/kanban'
+import { laneKeyboardCoordinates } from '@/lib/boardKeyboard'
 import { applyCardMove, applyLaneOrder, derivedColumns, initialBoardState, syncBoardState, type BoardState } from '@/lib/boardState'
 import { LANE_ORDER, laneDonePill, type StatusFilter } from '@/lib/grouping'
 import { CATEGORY_TONES } from '@/lib/tokens'
@@ -91,8 +93,8 @@ function LaneView({ category, files, laneRoster, progress, onCancel, onReveal, o
       className={isOverlay ? 'w-64' : 'h-full min-h-0'}
       style={isOverlay && ghostHeight ? { height: ghostHeight } : undefined}
     >
-      <div className={cn('flex flex-col', !isOverlay && 'h-full')}>
-        <div className="flex items-center gap-[9px] border-b border-border/65 px-3 py-[11px]">
+      <div className={cn('flex flex-col', !isOverlay && 'h-full', 'p-2')}>
+        <div className="flex items-center gap-[9px] border-b border-border/65 px-1 py-1.5">
           <div className={cn('flex size-6 shrink-0 items-center justify-center rounded-md border', tone.tint, tone.text, tone.border)}>
             <Icon className="size-[13px]" />
           </div>
@@ -109,7 +111,7 @@ function LaneView({ category, files, laneRoster, progress, onCancel, onReveal, o
             </Button>
           </KanbanColumnHandle>
         </div>
-        <KanbanColumnContent value={category} className="min-h-0 flex-1 gap-2.5 overflow-y-auto" data-lane-scroll>
+        <KanbanColumnContent value={category} className="mt-2 min-h-0 flex-1 gap-2.5 overflow-y-auto pr-1" data-lane-scroll>
           {files.map((file) => (
             <RunCard
               key={file.id}
@@ -153,6 +155,7 @@ export function RunBoard({
   )
   const boardRef = useRef<HTMLDivElement | null>(null)
   const [laneHeight, setLaneHeight] = useState(0)
+  const columnKeysRef = useRef<string[]>([])
 
   useEffect(() => {
     const next = syncBoardState(stateRef.current, rosterRef.current)
@@ -162,6 +165,21 @@ export function RunBoard({
   const columnsList = useMemo(() => derivedColumns(state, roster, statusFilter), [state, roster, statusFilter])
   const columns = useMemo(() => Object.fromEntries(columnsList.map((c) => [c.category, c.files])), [columnsList])
   const hasLanes = columnsList.length !== 0
+
+  columnKeysRef.current = columnsList.map((column) => column.category)
+
+  const laneCoordinateGetter = useMemo(
+    () =>
+      laneKeyboardCoordinates(
+        (id) => columnKeysRef.current.includes(String(id)),
+        () => columnKeysRef.current
+      ),
+    []
+  )
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 10 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: laneCoordinateGetter })
+  )
 
   useEffect(() => {
     const el = boardRef.current
@@ -175,6 +193,7 @@ export function RunBoard({
     <Kanban
       value={columns}
       className="h-full min-h-0"
+      sensors={sensors}
       onValueChange={(value) => setState((prev) => applyLaneOrder(prev, Object.keys(value)))}
       getItemValue={(file) => file.id}
       onMove={({ event, activeContainer, overContainer }) => {
