@@ -93,8 +93,8 @@ function LaneView({ category, files, laneRoster, progress, onCancel, onReveal, o
       className={isOverlay ? 'w-64' : 'h-full min-h-0'}
       style={isOverlay && ghostHeight ? { height: ghostHeight } : undefined}
     >
-      <div className={cn('flex flex-col', !isOverlay && 'h-full', 'p-2')}>
-        <div className="flex items-center gap-[9px] border-b border-border/65 px-1 py-1.5">
+      <div className={cn('flex flex-col', !isOverlay && 'h-full')}>
+        <div className="flex items-center gap-[9px] border-b border-border/65 px-3 py-[11px]">
           <div className={cn('flex size-6 shrink-0 items-center justify-center rounded-md border', tone.tint, tone.text, tone.border)}>
             <Icon className="size-[13px]" />
           </div>
@@ -111,7 +111,7 @@ function LaneView({ category, files, laneRoster, progress, onCancel, onReveal, o
             </Button>
           </KanbanColumnHandle>
         </div>
-        <KanbanColumnContent value={category} className="mt-2 min-h-0 flex-1 gap-2.5 overflow-y-auto pr-1" data-lane-scroll>
+        <KanbanColumnContent value={category} className="mt-2 min-h-0 flex-1 gap-2.5 overflow-y-auto pl-3 pr-3.5 pb-3" data-lane-scroll>
           {files.map((file) => (
             <RunCard
               key={file.id}
