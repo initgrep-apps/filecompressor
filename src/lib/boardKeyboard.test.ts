@@ -161,12 +161,48 @@ describe('laneKeyboardCoordinates', () => {
     expect(next).toBeUndefined()
   })
 
-  it('re-press with over on the closest lane skips it to the lane beyond', () => {
+  it('steps to the adjacent lane regardless of the current over target (no skipping)', () => {
     const next = getter(event('ArrowRight'), {
       active: 'laneA',
       currentCoordinates: { x: 268, y: 0 },
       context: ctx('laneA', boardOf, { collisionRect: rect(0, 0, 256, 468), over: { id: 'laneB' } }),
     })
-    expect(next).toEqual({ x: 536, y: 0 })
+    expect(next).toEqual({ x: 268, y: 0 })
+  })
+
+  it('a lane dragged to the last slot walks back through every slot to its original one', () => {
+    const stepBackOne = getter(event('ArrowLeft'), {
+      active: 'laneA',
+      currentCoordinates: { x: 536, y: 0 },
+      context: ctx('laneA', boardOf, { collisionRect: rect(0, 536, 256, 468) }),
+    })
+    expect(stepBackOne).toEqual({ x: 268, y: 0 })
+    const stepBackTwo = getter(event('ArrowLeft'), {
+      active: 'laneA',
+      currentCoordinates: { x: 268, y: 0 },
+      context: ctx('laneA', boardOf, { collisionRect: rect(0, 268, 256, 468) }),
+    })
+    expect(stepBackTwo).toEqual({ x: 0, y: 0 })
+    const stepBackThree = getter(event('ArrowLeft'), {
+      active: 'laneA',
+      currentCoordinates: { x: 0, y: 0 },
+      context: ctx('laneA', boardOf, { collisionRect: rect(0, 0, 256, 468) }),
+    })
+    expect(stepBackThree).toBeUndefined()
+  })
+
+  it('lane drag beyond the last lane and item drag beyond the lane top are no-ops', () => {
+    const laneBeyond = getter(event('ArrowRight'), {
+      active: 'laneC',
+      currentCoordinates: { x: 536, y: 0 },
+      context: ctx('laneC', boardOf, { collisionRect: rect(0, 536, 256, 468) }),
+    })
+    expect(laneBeyond).toBeUndefined()
+    const itemTop = getter(event('ArrowUp'), {
+      active: 'a1',
+      currentCoordinates: { x: 0, y: 0 },
+      context: ctx('a1', { ...boardOf, a1: 'laneA', a2: 'laneA', b1: 'laneB' }),
+    })
+    expect(itemTop).toBeUndefined()
   })
 })

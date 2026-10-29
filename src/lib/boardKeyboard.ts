@@ -15,7 +15,7 @@
 // along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import type { KeyboardCoordinateGetter, UniqueIdentifier } from '@dnd-kit/core'
-import { KeyboardCode, closestCorners, getFirstCollision } from '@dnd-kit/core'
+import { KeyboardCode } from '@dnd-kit/core'
 
 const DIRECTION_CODES = new Set<string>([KeyboardCode.Up, KeyboardCode.Down, KeyboardCode.Left, KeyboardCode.Right])
 
@@ -45,7 +45,7 @@ export function laneKeyboardCoordinates(
 ): KeyboardCoordinateGetter {
   return (event, { active, context }) => {
     if (!DIRECTION_CODES.has(event.code)) return
-    const { collisionRect, droppableRects, droppableContainers, over } = context as unknown as SensorContextLike & {
+    const { collisionRect, droppableRects, droppableContainers } = context as unknown as SensorContextLike & {
       collisionRect: RectLike
       droppableRects: Map<UniqueIdentifier, RectLike>
       droppableContainers: { getEnabled: () => Iterable<DroppableEntry>; get: (id: UniqueIdentifier) => DroppableEntry | undefined }
@@ -69,7 +69,7 @@ export function laneKeyboardCoordinates(
     for (const entry of droppableContainers.getEnabled()) {
       if (!entry || entry.disabled) continue
       const rect = droppableRects.get(entry.id)
-      if (!rect || !scoped(entry) || String(entry.id) === String(activeId)) continue
+      if (!rect || !scoped(entry)) continue
       switch (event.code) {
         case KeyboardCode.Down:
           if (collisionRect.top < rect.top) candidates.push(entry)
@@ -86,33 +86,38 @@ export function laneKeyboardCoordinates(
       }
     }
 
-    const collisions = closestCorners({
-      active: activeId,
-      collisionRect,
-      droppableRects,
-      droppableContainers: candidates,
-      pointerCoordinates: null,
-    } as never) as Array<{ id: UniqueIdentifier }>
+    if (candidates.length === 0) return undefined
 
-    let closestId = getFirstCollision(collisions as never, 'id') as UniqueIdentifier | null
-    if (closestId === over?.id && collisions.length > 1) {
-      closestId = collisions[1].id
-    }
-
-    const newDroppable = closestId != null ? droppableContainers.get(closestId) : undefined
-    const sameContainer = newDroppable
-      ? activeIsLane || newDroppable.data.current?.sortable?.containerId === activeContainerId
+    // Deterministic ordered pick: the closest candidate in the pressed direction.
+    // closestCorners ties break on DOM order and mis-target lanes that share a row,
+    // which deadlocks the original position and skips intermediate lanes.
+    const best = candidates.reduce((best, entry) => {
+      const rect = droppableRects.get(entry.id) as RectLike
+      const bestRect = droppableRects.get(best.id) as RectLike
+      switch (event.code) {
+        case KeyboardCode.Down:
+          return rect.top < bestRect.top ? entry : best
+        case KeyboardCode.Up:
+          return rect.top > bestRect.top ? entry : best
+        case KeyboardCode.Left:
+          return rect.left > bestRect.left ? entry : best
+        case KeyboardCode.Right:
+          return rect.left < bestRect.left ? entry : best
+      }
+      return best
+    })
+    const sameContainer = best
+      ? activeIsLane || best.data.current?.sortable?.containerId === activeContainerId
       : false
-    if (!newDroppable || !sameContainer) return undefined
+    if (!best || !sameContainer) return undefined
 
-    const newRect = droppableRects.get(newDroppable.id)
-    const activeRect = droppableRects.get(activeId)
-    if (!newRect || !newDroppable.node.current || !activeRect) return undefined
+    const newRect = droppableRects.get(best.id)
+    if (!newRect || !best.node.current) return undefined
 
-    const afterActive = isAfter(activeEntry, newDroppable)
+    const afterActive = isAfter(activeEntry, best)
     return {
-      x: newRect.left - (afterActive ? activeRect.width - newRect.width : 0),
-      y: newRect.top - (afterActive ? activeRect.height - newRect.height : 0),
+      x: newRect.left - (afterActive ? collisionRect.width - newRect.width : 0),
+      y: newRect.top - (afterActive ? collisionRect.height - newRect.height : 0),
     }
   }
 }
