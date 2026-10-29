@@ -76,16 +76,21 @@ interface LaneViewProps {
   onReveal: (path: string) => void
   onRemove?: (fileId: string) => void
   isOverlay?: boolean
+  ghostHeight?: number
 }
 
-function LaneView({ category, files, laneRoster, progress, onCancel, onReveal, onRemove, isOverlay }: LaneViewProps) {
+function LaneView({ category, files, laneRoster, progress, onCancel, onReveal, onRemove, isOverlay, ghostHeight }: LaneViewProps) {
   const tone = CATEGORY_TONES[category]
   const Icon = LANE_ICONS[category]
   const pill = laneDonePill(laneRoster)
   const live = laneRoster.some((file) => file.status === 'compressing')
 
   return (
-    <KanbanColumn value={category} className={isOverlay ? 'w-64' : 'h-full min-h-0'}>
+    <KanbanColumn
+      value={category}
+      className={isOverlay ? 'w-64' : 'h-full min-h-0'}
+      style={isOverlay && ghostHeight ? { height: ghostHeight } : undefined}
+    >
       <div className={cn('flex flex-col', !isOverlay && 'h-full')}>
         <div className="flex items-center gap-[9px] border-b border-border/65 px-3 py-[11px]">
           <div className={cn('flex size-6 shrink-0 items-center justify-center rounded-md border', tone.tint, tone.text, tone.border)}>
@@ -146,6 +151,8 @@ export function RunBoard({
         .join(','),
     [roster]
   )
+  const boardRef = useRef<HTMLDivElement | null>(null)
+  const [laneHeight, setLaneHeight] = useState(0)
 
   useEffect(() => {
     const next = syncBoardState(stateRef.current, rosterRef.current)
@@ -154,10 +161,20 @@ export function RunBoard({
 
   const columnsList = useMemo(() => derivedColumns(state, roster, statusFilter), [state, roster, statusFilter])
   const columns = useMemo(() => Object.fromEntries(columnsList.map((c) => [c.category, c.files])), [columnsList])
+  const hasLanes = columnsList.length !== 0
+
+  useEffect(() => {
+    const el = boardRef.current
+    if (!el || typeof window.ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => setLaneHeight(el.clientHeight))
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hasLanes])
 
   return (
     <Kanban
       value={columns}
+      className="h-full min-h-0"
       onValueChange={(value) => setState((prev) => applyLaneOrder(prev, Object.keys(value)))}
       getItemValue={(file) => file.id}
       onMove={({ event, activeContainer, overContainer }) => {
@@ -193,6 +210,7 @@ export function RunBoard({
         </div>
       ) : (
         <div
+          ref={boardRef}
           data-testid="kanban-board"
           className="h-full overflow-x-auto select-none pb-3 pr-6"
           onWheel={(event) => {
@@ -235,6 +253,7 @@ export function RunBoard({
                 onReveal={onReveal}
                 onRemove={removeDisabled ? undefined : onRemove}
                 isOverlay
+                ghostHeight={laneHeight}
               />
             )
           }
