@@ -22,6 +22,7 @@ import { RunCard } from '@/components/run/RunCard'
 import { Button } from '@/components/ui/button'
 import { Kanban, KanbanBoard, KanbanColumn, KanbanColumnContent, KanbanColumnHandle, KanbanOverlay } from '@/components/ui/kanban'
 import { laneKeyboardCoordinates } from '@/lib/boardKeyboard'
+import { dragAxisModifiers } from '@/lib/boardModifiers'
 import { applyCardMove, applyLaneOrder, derivedColumns, initialBoardState, syncBoardState, type BoardState } from '@/lib/boardState'
 import { LANE_ORDER, laneDonePill, type StatusFilter } from '@/lib/grouping'
 import { CATEGORY_TONES } from '@/lib/tokens'
@@ -111,7 +112,7 @@ function LaneView({ category, files, laneRoster, progress, onCancel, onReveal, o
             </Button>
           </KanbanColumnHandle>
         </div>
-        <KanbanColumnContent value={category} className="mt-2 min-h-0 flex-1 gap-2.5 overflow-y-auto pl-3 pr-3.5 pb-3" data-lane-scroll>
+        <KanbanColumnContent value={category} className="mt-2 min-h-0 flex-1 gap-2.5 overflow-y-auto pt-2 pl-3 pr-3.5 pb-3" data-lane-scroll>
           {files.map((file) => (
             <RunCard
               key={file.id}
@@ -176,16 +177,19 @@ export function RunBoard({
       ),
     []
   )
+  const modifiers = useMemo(() => dragAxisModifiers((id) => columnKeysRef.current.includes(String(id))), [])
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 10 } }),
     useSensor(KeyboardSensor, { coordinateGetter: laneCoordinateGetter })
   )
 
   useEffect(() => {
-    const el = boardRef.current
-    if (!el || typeof window.ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(() => setLaneHeight(el.clientHeight))
-    observer.observe(el)
+    const wrapper = boardRef.current
+    if (!wrapper || typeof window.ResizeObserver === 'undefined') return
+    const firstLane = wrapper.querySelector('[data-slot="kanban-column"]')
+    if (!firstLane) return
+    const observer = new ResizeObserver(() => setLaneHeight(firstLane.clientHeight))
+    observer.observe(firstLane)
     return () => observer.disconnect()
   }, [hasLanes])
 
@@ -194,6 +198,7 @@ export function RunBoard({
       value={columns}
       className="h-full min-h-0"
       sensors={sensors}
+      modifiers={modifiers}
       onValueChange={(value) => setState((prev) => applyLaneOrder(prev, Object.keys(value)))}
       getItemValue={(file) => file.id}
       onMove={({ event, activeContainer, overContainer }) => {
