@@ -228,6 +228,9 @@ describe('RunBoard', () => {
     expect(board.className).toContain('pr-6')
     expect(document.body.innerHTML).not.toContain('max-h-[533px]')
     expect(document.querySelectorAll('[class*="to-card"]')).toHaveLength(0)
+    const kanbanRoot = document.querySelector('[data-slot="kanban"]') as HTMLElement
+    expect(kanbanRoot.className).toContain('h-full')
+    expect(kanbanRoot.className).toContain('min-h-0')
     const column = document.querySelector('[data-slot="kanban-column"]') as HTMLElement
     expect(column.className).toContain('h-full')
     expect(column.className).toContain('min-h-0')
