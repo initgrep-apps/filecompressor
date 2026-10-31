@@ -462,9 +462,9 @@
   integrity sha512-OupL48va4JNofb97w6NYeF9S7W/kHNKM0Er8Dem5nqi4jeOLrVJDoE8tZEpnMJmtkvNbB1EIPPwHcdkF6b1oUA==
 
 "@hono/node-server@^1.19.9 || ^2.0.5":
-  version "2.1.1"
-  resolved "https://registry.yarnpkg.com/@hono/node-server/-/node-server-2.1.1.tgz#9cfa8649e9ecbcd48edf505b103002402ea51e70"
-  integrity sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg==
+  version "2.1.5"
+  resolved "https://registry.yarnpkg.com/@hono/node-server/-/node-server-2.1.5.tgz#273db93e8bfb44ef361e55f3d00048013668aa09"
+  integrity sha512-MgP/I06GdvsilDspMk/qmRzpk8LOUStP6jFAbSRi40W09DhoyUn+Mj7eyKICPqeYKybOjVFLVIAQzvu1bfIa7Q==
 
 "@jridgewell/gen-mapping@^0.3.12", "@jridgewell/gen-mapping@^0.3.5":
   version "0.3.13"
